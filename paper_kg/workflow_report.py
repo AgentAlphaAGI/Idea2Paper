@@ -5,14 +5,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from paper_kg.models import NoveltyCheckResult, Pattern, StoryDraft, Trick
-from paper_kg.paper_reviewers import PaperReviewResult
 
 
 @dataclass
 class PaperWorkflowReport:
     """
     功能：论文工作流最终输出报告。
-    参数：status/core_idea/domain/patterns/tricks/novelty/draft/reviews/metrics/warnings。
+    参数：status/core_idea/domain/patterns/tricks/novelty/draft/metrics/warnings。
     返回：PaperWorkflowReport。
     流程：作为纯数据载体被 controller/CLI 生成与序列化。
     说明：to_dict 会将 Pydantic 对象转换为可 JSON 序列化结构。
@@ -25,7 +24,6 @@ class PaperWorkflowReport:
     tricks: List[Trick] = field(default_factory=list)
     novelty_report: Optional[NoveltyCheckResult] = None
     draft: Optional[StoryDraft] = None
-    reviews: List[PaperReviewResult] = field(default_factory=list)
     metrics: Dict[str, Any] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
@@ -45,7 +43,6 @@ class PaperWorkflowReport:
             "tricks": [trick.model_dump() for trick in self.tricks],
             "novelty_report": self.novelty_report.model_dump() if self.novelty_report else None,
             "draft": self.draft.model_dump() if self.draft else None,
-            "reviews": [review.model_dump() for review in self.reviews],
             "metrics": self.metrics,
             "warnings": list(self.warnings),
         }

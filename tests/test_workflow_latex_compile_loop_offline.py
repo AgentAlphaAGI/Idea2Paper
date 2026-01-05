@@ -14,17 +14,9 @@ from paper_kg.orchestrator import PaperDraftWriter
 from workflow.paper_controller import PaperFeedbackLoopController
 
 
-class _NoopReviewerGroup:
-    def review(self, _draft):  # noqa: ANN001
-        return []
-
-
 class _FakeLatexToolchain:
     def __init__(self) -> None:
         self.calls = 0
-
-    def lint_tex(self, _target):  # noqa: ANN001
-        raise NotImplementedError
 
     def compile_project(self, project_dir: Path, engine: str, timeout_sec: int) -> CompileResult:
         self.calls += 1
@@ -46,9 +38,6 @@ class _FakeLatexToolchain:
             cmd=["latexmk"],
         )
 
-    def compile_minimal_section(self, _project_dir, _section_relpath, _engine, _timeout_sec):  # noqa: ANN001
-        raise NotImplementedError
-
 
 def _build_controller(tmp_path) -> PaperFeedbackLoopController:
     snapshot_path = tmp_path / "paper_kg_snapshot.json"
@@ -63,11 +52,8 @@ def _build_controller(tmp_path) -> PaperFeedbackLoopController:
     config = PaperWorkflowConfig(
         seed=123,
         output_format="latex",
-        latex_generation_mode="final_only",
-        latex_final_compile=True,
         latex_require_tools=True,
         latex_format_max_retries=2,
-        format_only_mode=True,
     )
 
     return PaperFeedbackLoopController(
@@ -78,7 +64,6 @@ def _build_controller(tmp_path) -> PaperFeedbackLoopController:
         rng=random.Random(123),
         input_parser=PaperInputParser(llm=None),
         draft_writer=PaperDraftWriter(llm=None),
-        reviewer_group=_NoopReviewerGroup(),
         section_llm=None,
         latex_toolchain=_FakeLatexToolchain(),
     )

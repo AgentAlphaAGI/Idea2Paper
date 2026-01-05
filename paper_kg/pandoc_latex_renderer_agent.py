@@ -37,7 +37,7 @@ class PandocLatexRendererAgent:
         fail_on_content_loss: bool = True,
     ) -> None:
         self.pandoc_runner = pandoc_runner
-        self.fix_agent = LatexRendererAgent(llm=None, fix_llm=fix_llm) if fix_llm else None
+        self.fix_agent = LatexRendererAgent(fix_llm=fix_llm) if fix_llm else None
         self.fallback_renderer = fallback_renderer
         self.consistency_threshold = consistency_threshold
         self.fail_on_content_loss = fail_on_content_loss
@@ -133,7 +133,7 @@ class PandocLatexRendererAgent:
         citation_map: Dict[str, str],
     ) -> Tuple[List[PaperSectionOutput], str]:
         if self.fallback_renderer is not None:
-            logger.info("PANDOC_RENDER_FALLBACK: 使用 LLM 渲染器回退")
+            logger.info("PANDOC_RENDER_FALLBACK: 使用备用渲染器回退")
             return self.fallback_renderer.render_sections(sections, citation_map)
         logger.info("PANDOC_RENDER_FALLBACK: 使用内置确定性渲染回退")
         return render_sections_to_latex(sections, citation_map)

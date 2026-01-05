@@ -26,11 +26,9 @@ from core.logging import setup_logging
 from paper_kg.graph_networkx import NetworkXGraphStore
 from paper_kg.embedding_mock import MockEmbeddingModel
 from paper_kg.input_parser import PaperInputParser
-from paper_kg.latex_fixer import LatexFixer
 from paper_kg.latex_toolchain import LocalLatexToolchain
 from paper_kg.orchestrator import PaperDraftWriter
 from paper_kg.paper_template import load_paper_template
-from paper_kg.paper_reviewers import aggregate_reviews, build_default_paper_reviewers
 from paper_kg.vectorstore_memory import InMemoryVectorStore
 from workflow.paper_controller import PaperFeedbackLoopController
 
@@ -191,21 +189,6 @@ def _summarize_step(node: str, update: Dict[str, Any], state: Dict[str, Any]) ->
         attempt = int(state.get("draft_attempts") or 0)
         return f"生成/改写草稿完成（draft_attempts={attempt}）"
 
-    if node == "review":
-        reviews = state.get("reviews") or []
-        if not reviews:
-            return "评审完成（无评审输出）"
-        # 中文注释：这里复用聚合逻辑生成更直观的评分摘要。
-        avg_score, pass_check, issue = aggregate_reviews(
-            reviews,
-            pass_threshold=float(state.get("_pass_threshold", 0.0) or 0.0),
-            require_individual_threshold=bool(state.get("_require_individual_threshold", False)),
-        )
-        return f"评审完成：avg_score={avg_score:.2f}；通过={pass_check}；主问题={issue}"
-
-    if node == "decide":
-        return f"决策：status={state.get('status','')}；next_step={state.get('next_step','')}"
-
     return f"完成节点：{node}"
 
 
@@ -339,10 +322,6 @@ def paper_job_events(job_id: str) -> StreamingResponse:
             parse_llm = create_chat_model("paper_parse") if req.use_llm else None
             story_llm = create_chat_model("paper_story") if req.use_llm else None
             section_llm = create_chat_model("paper_section_writer") if req.use_llm else None
-            reviewer_theory_llm = create_chat_model("paper_reviewer_theory") if req.use_llm else None
-            reviewer_experiment_llm = create_chat_model("paper_reviewer_experiment") if req.use_llm else None
-            reviewer_novelty_llm = create_chat_model("paper_reviewer_novelty") if req.use_llm else None
-            reviewer_practical_llm = create_chat_model("paper_reviewer_practical") if req.use_llm else None
 
             input_parser = PaperInputParser(llm=parse_llm)
             draft_writer = PaperDraftWriter(
@@ -351,27 +330,12 @@ def paper_job_events(job_id: str) -> StreamingResponse:
                 max_guides=int(config.paper_workflow.writing_guide_max_guides),
             )
             paper_template = load_paper_template(config.paper_workflow.template_path)
-            reviewer_group = build_default_paper_reviewers(
-                llm_map={
-                    "theory": reviewer_theory_llm,
-                    "experiment": reviewer_experiment_llm,
-                    "novelty": reviewer_novelty_llm,
-                    "practical": reviewer_practical_llm,
-                }
-            )
 
-            # 中文注释：LaTeX 模式下初始化工具链与修复器（用于编译闸门与自动修复）。
+            # 中文注释：LaTeX 模式下初始化工具链（用于编译闸门）。
             latex_toolchain = None
-            latex_fixer = None
             if str(config.paper_workflow.output_format) == "latex":
                 latex_toolchain = LocalLatexToolchain(
                     require_tools=bool(config.paper_workflow.latex_require_tools),
-                    use_chktex=bool(config.paper_workflow.latex_use_chktex),
-                    use_lacheck=bool(config.paper_workflow.latex_use_lacheck),
-                )
-                latex_fixer = LatexFixer(
-                    llm=section_llm if req.use_llm else None,
-                    force_todo_cite=bool(config.paper_workflow.latex_force_todo_cite),
                 )
 
             controller = PaperFeedbackLoopController(
@@ -382,17 +346,12 @@ def paper_job_events(job_id: str) -> StreamingResponse:
                 rng=random.Random(int(config.paper_workflow.seed)),
                 input_parser=input_parser,
                 draft_writer=draft_writer,
-                reviewer_group=reviewer_group,
                 section_llm=section_llm,
                 paper_template=paper_template,
                 latex_toolchain=latex_toolchain,
-                latex_fixer=latex_fixer,
             )
 
-            # 中文注释：把阈值注入 state，便于 _summarize_step 生成评分摘要（不影响工作流本身）。
             state = controller.init_state(str(req.text))
-            state["_pass_threshold"] = float(config.paper_workflow.pass_threshold)  # type: ignore[index]
-            state["_require_individual_threshold"] = bool(config.paper_workflow.require_individual_threshold)  # type: ignore[index]
 
             recursion_limit = controller.estimate_recursion_limit()
 

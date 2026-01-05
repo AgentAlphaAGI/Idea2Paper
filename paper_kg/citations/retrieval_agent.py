@@ -14,7 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from paper_kg.citations.bibtex_utils import build_bibtex, make_bibkey
 from paper_kg.citations.guards import contains_forbidden_citation_facts
 from paper_kg.citations.models import CitationCandidate, CitationNeed, RetrievedCitation
-from paper_kg.citations.semantic_scholar_tool import PaperCandidate, SemanticScholarTool
+from paper_kg.citations.semantic_scholar_tool import PaperCandidate, MockSemanticScholarTool
 from paper_kg.prompts import load_paper_prompt
 
 
@@ -23,17 +23,17 @@ _LLM_CALL_DELAY_SEC = 5.0
 
 
 class CitationRetrievalAgent:
-    """LLM + Semantic Scholar 的检索代理。"""
+    """LLM + 离线工具的检索代理。"""
 
     def __init__(
         self,
         llm: Optional[BaseChatModel],
-        tool: Optional[SemanticScholarTool] = None,
+        tool: Optional[MockSemanticScholarTool] = None,
         require_verifiable: bool = True,
         max_candidates: int = 5,
     ) -> None:
         self.llm = llm
-        self.tool = tool or SemanticScholarTool()
+        self.tool = tool or MockSemanticScholarTool()
         self.require_verifiable = require_verifiable
         self.max_candidates = max_candidates
         self.query_prompt: Optional[ChatPromptTemplate] = None

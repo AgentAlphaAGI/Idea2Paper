@@ -56,11 +56,9 @@ def test_section_writer_repairs_empty_markdown() -> None:
 
     config = PaperWorkflowConfig(
         output_format="latex",
-        latex_generation_mode="final_only",
         strict_markdown_validation=True,
         section_min_word_ratio=0.0,
         section_min_quality_max_retries=1,
-        format_only_mode=True,
     )
     writer = PaperSectionWriter(llm=llm, config=config, pattern_guides="")
     plan = PaperPlan(template_name="t", sections=[])

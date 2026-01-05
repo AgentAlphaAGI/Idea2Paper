@@ -58,7 +58,7 @@ class SubprocessPandocRunner:
             self.available = False
             logger.warning("PANDOC_RENDER_FAIL: 未找到 pandoc 可执行文件")
             if self.require:
-                raise RuntimeError("请安装 pandoc 或切换 latex_renderer_backend=llm") from exc
+                raise RuntimeError("请安装 pandoc 或配置 PANDOC_BIN") from exc
             return ""
         except subprocess.CalledProcessError as exc:
             stderr = (exc.stderr or "").strip()

@@ -51,13 +51,11 @@ def test_section_writer_spec_backend_renders_markdown() -> None:
 
     config = PaperWorkflowConfig(
         output_format="latex",
-        latex_generation_mode="final_only",
         markdown_writer_backend="spec",
         spec_cite_token="[[CITE]]",
         spec_render_require_cite_ids=True,
         strict_markdown_validation=True,
         section_min_word_ratio=0.0,
-        format_only_mode=True,
     )
     writer = PaperSectionWriter(llm=llm, config=config, pattern_guides="")
     plan = PaperPlan(template_name="t", sections=[])

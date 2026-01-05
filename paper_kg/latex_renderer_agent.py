@@ -1,4 +1,4 @@
-# 中文注释: LLM LaTeX 渲染与格式修复 Agent。
+# 中文注释: LaTeX 格式修复 Agent。
 from __future__ import annotations
 
 import difflib
@@ -21,24 +21,16 @@ _CITE_RE = re.compile(r"\\cite[a-zA-Z]*\{([^}]+)\}")
 
 
 class LatexRendererAgent:
-    """LLM 渲染 + LaTeX-only 修复。"""
+    """LaTeX-only 修复（基于 LLM 的格式修复）。"""
 
     def __init__(
         self,
-        llm: Optional[BaseChatModel],
         fix_llm: Optional[BaseChatModel] = None,
         similarity_threshold: float = 0.6,
     ) -> None:
-        self.llm = llm
-        self.fix_llm = fix_llm or llm
+        self.fix_llm = fix_llm
         self.similarity_threshold = similarity_threshold
-        self.render_prompt: Optional[ChatPromptTemplate] = None
         self.fix_prompt: Optional[ChatPromptTemplate] = None
-        if llm is not None:
-            system = load_paper_prompt("latex_renderer_system.txt")
-            self.render_prompt = ChatPromptTemplate.from_messages(
-                [SystemMessage(content=system), ("human", "输入：{payload}")]
-            )
         if self.fix_llm is not None:
             system = load_paper_prompt("latex_format_fix_system.txt")
             self.fix_prompt = ChatPromptTemplate.from_messages(
@@ -48,35 +40,7 @@ class LatexRendererAgent:
     def render_sections(
         self, sections: List[PaperSectionOutput], citation_map: Dict[str, str]
     ) -> Tuple[List[PaperSectionOutput], str]:
-        if self.llm is None or self.render_prompt is None:
-            return render_sections_to_latex(sections, citation_map)
-
-        updated: List[PaperSectionOutput] = []
-        parts: List[str] = []
-        for section in sections:
-            section_cites = _extract_section_citations(section.content_markdown, citation_map)
-            md_body = _strip_section_heading(section.content_markdown or "")
-            md_body = _replace_markers_with_cites(md_body, section_cites)
-            payload = {
-                "section_id": section.section_id,
-                "title": section.title or section.section_id,
-                "markdown": md_body,
-                "citations": section_cites,
-            }
-            response = self.llm.invoke(self.render_prompt.format_messages(payload=json.dumps(payload, ensure_ascii=False)))
-            latex_body = getattr(response, "content", "") or ""
-            latex_body = normalize_latex_newlines(latex_body)
-            latex_body = _sanitize_latex_body(latex_body, set(section_cites.values()))
-            if not latex_body.strip():
-                latex_body = "TODO: 内容待补充。\n"
-            if section.section_id == "abstract":
-                section_tex = latex_body
-            else:
-                title = section.title or section.section_id
-                section_tex = f"\\section{{{_escape_latex_title(title)}}}\n{latex_body}"
-            updated.append(section.model_copy(update={"content_latex": section_tex}))
-            parts.append(section_tex)
-        return updated, "\n\n".join([p for p in parts if p.strip()])
+        return render_sections_to_latex(sections, citation_map)
 
     def fix_sections(
         self,
@@ -122,36 +86,6 @@ class LatexRendererAgent:
             if fixed.strip():
                 parts.append(fixed)
         return updated, "\n\n".join([p for p in parts if p.strip()])
-
-
-def _replace_markers_with_cites(text: str, citation_map: Dict[str, str]) -> str:
-    def _replace(match: re.Match) -> str:
-        cand_id = (match.group(1) or "").strip()
-        bibkey = citation_map.get(cand_id, "")
-        return f"\\cite{{{bibkey}}}" if bibkey else ""
-
-    return _MARKER_RE.sub(_replace, text)
-
-
-def _extract_section_citations(markdown: str, citation_map: Dict[str, str]) -> Dict[str, str]:
-    if not markdown:
-        return {}
-    found: Dict[str, str] = {}
-    for match in _MARKER_RE.finditer(markdown):
-        cand_id = (match.group(1) or "").strip()
-        if not cand_id:
-            continue
-        bibkey = citation_map.get(cand_id, "")
-        if bibkey:
-            found[cand_id] = bibkey
-    return found
-
-
-def _strip_section_heading(markdown: str) -> str:
-    lines = markdown.splitlines()
-    if lines and lines[0].lstrip().startswith("#"):
-        return "\n".join(lines[1:]).lstrip()
-    return markdown
 
 
 def _sanitize_latex_body(latex: str, allowed_cites: Set[str]) -> str:

@@ -24,7 +24,7 @@ def test_latex_fix_adds_math_mode() -> None:
         content_latex="\\section{方法}\n多维注意力机制的计算复杂度为 O(n^3)。",
     )
     fix_llm = _FakeLLM("\\section{方法}\n多维注意力机制的计算复杂度为 $O(n^3)$。")
-    agent = LatexRendererAgent(llm=None, fix_llm=fix_llm)
+    agent = LatexRendererAgent(fix_llm=fix_llm)
 
     updated, _ = agent.fix_sections(
         [section],

@@ -82,7 +82,6 @@ def test_quality_rewrite_path_skips_structured_repair() -> None:
 
     config = PaperWorkflowConfig(
         output_format="latex",
-        latex_generation_mode="final_only",
         markdown_writer_backend="spec",
         spec_cite_token="[[CITE]]",
         spec_render_require_cite_ids=True,
@@ -90,7 +89,6 @@ def test_quality_rewrite_path_skips_structured_repair() -> None:
         section_min_word_ratio=1.0,
         section_min_quality_max_retries=1,
         section_max_retries=1,
-        format_only_mode=True,
     )
     writer = PaperSectionWriter(llm=llm, config=config, pattern_guides="")
     plan = PaperPlan(template_name="t", sections=[])

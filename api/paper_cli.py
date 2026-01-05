@@ -32,13 +32,10 @@ from paper_kg.models import (
 from paper_kg.novelty import encode_pattern_config
 from paper_kg.orchestrator import PaperDraftWriter, StoryOrchestrator
 from paper_kg.paper_template import load_paper_template
-from paper_kg.paper_reviewers import build_default_paper_reviewers
 from paper_kg.embedding_mock import MockEmbeddingModel
 from paper_kg.citations.claim_resolution_agent import ClaimResolutionAgent
 from paper_kg.citations.retrieval_agent import CitationRetrievalAgent
-from paper_kg.citations.semantic_scholar_tool import MockSemanticScholarTool, SemanticScholarTool
-from paper_kg.latex_fixer import LatexFixer
-from paper_kg.latex_renderer_agent import LatexRendererAgent
+from paper_kg.citations.semantic_scholar_tool import MockSemanticScholarTool
 from paper_kg.pandoc_latex_renderer_agent import PandocLatexRendererAgent
 from paper_kg.pandoc_renderer import SubprocessPandocRunner
 from paper_kg.latex_toolchain import LocalLatexToolchain
@@ -711,11 +708,7 @@ def paper_workflow_cmd(
             build_mock_kg(str(snapshot), raw_path=None)
         else:
             raise FileNotFoundError(f"Snapshot not found: {snapshot}")
-    logger.info(
-        "PAPER_WORKFLOW_START: snapshot=%s format_only=%s",
-        snapshot.as_posix(),
-        config.paper_workflow.format_only_mode,
-    )
+    logger.info("PAPER_WORKFLOW_START: snapshot=%s", snapshot.as_posix())
 
     graph = NetworkXGraphStore()
     graph.load_dict(json.loads(snapshot.read_text(encoding="utf-8")))
@@ -737,33 +730,14 @@ def paper_workflow_cmd(
 
         vector_store = _build_vector_store(graph, embedding_model)
 
-    if bool(config.paper_workflow.citations_enable):
-        provider = str(config.paper_workflow.citations_provider or "").lower()
-        if (
-            provider in {"semantic_scholar", "semanticscholar", "s2"}
-            and bool(config.paper_workflow.citations_require_api_key)
-            and not os.getenv("S2_API_KEY")
-        ):
-            raise RuntimeError("S2_API_KEY is required for citations_provider=semantic_scholar")
-
     # 中文注释：为每个 Agent 单独创建 LLM，支持按 agent 前缀配置 API/model/base_url。
-    latex_backend = str(config.paper_workflow.latex_renderer_backend or "pandoc").lower()
     parse_llm = create_chat_model("paper_parse") if use_llm else None
     story_llm = create_chat_model("paper_story") if use_llm else None
     section_llm = create_chat_model("paper_section_writer") if use_llm else None
     citation_need_llm = create_chat_model("paper_citation_need") if use_llm else None
     citation_retrieval_llm = create_chat_model("paper_citation_retrieval") if use_llm else None
     claim_resolution_llm = create_chat_model("paper_claim_resolution") if use_llm else None
-    need_renderer_llm = bool(
-        use_llm
-        and (latex_backend == "llm" or not bool(config.paper_workflow.pandoc_require))
-    )
-    latex_renderer_llm = create_chat_model("paper_latex_renderer") if need_renderer_llm else None
     latex_fix_llm = create_chat_model("paper_latex_fix") if use_llm else None
-    reviewer_theory_llm = create_chat_model("paper_reviewer_theory") if use_llm else None
-    reviewer_experiment_llm = create_chat_model("paper_reviewer_experiment") if use_llm else None
-    reviewer_novelty_llm = create_chat_model("paper_reviewer_novelty") if use_llm else None
-    reviewer_practical_llm = create_chat_model("paper_reviewer_practical") if use_llm else None
 
     input_parser = PaperInputParser(llm=parse_llm)
     draft_writer = PaperDraftWriter(
@@ -772,37 +746,18 @@ def paper_workflow_cmd(
         max_guides=int(config.paper_workflow.writing_guide_max_guides),
     )
     paper_template = load_paper_template(config.paper_workflow.template_path)
-    reviewers = build_default_paper_reviewers(
-        llm_map={
-            "theory": reviewer_theory_llm,
-            "experiment": reviewer_experiment_llm,
-            "novelty": reviewer_novelty_llm,
-            "practical": reviewer_practical_llm,
-        }
-    )
 
-    # 中文注释：LaTeX 模式下初始化工具链与修复器，用于编译闸门与自动修复。
+    # 中文注释：LaTeX 模式下初始化工具链，用于编译闸门。
     latex_toolchain = None
-    latex_fixer = None
     if str(config.paper_workflow.output_format) == "latex":
         latex_toolchain = LocalLatexToolchain(
             require_tools=bool(config.paper_workflow.latex_require_tools),
-            use_chktex=bool(config.paper_workflow.latex_use_chktex),
-            use_lacheck=bool(config.paper_workflow.latex_use_lacheck),
-        )
-        latex_fixer = LatexFixer(
-            llm=section_llm if use_llm else None,
-            force_todo_cite=bool(config.paper_workflow.latex_force_todo_cite),
         )
 
     citation_retrieval_agent = None
     if citation_retrieval_llm is not None:
-        provider = str(config.paper_workflow.citations_provider).lower()
-        if provider in {"mock", "fake", "fixture"}:
-            logger.warning("CITATIONS_MOCK_ENABLED: provider=%s", provider)
-            tool = MockSemanticScholarTool()
-        else:
-            tool = SemanticScholarTool()
+        logger.warning("CITATIONS_MOCK_ENABLED: provider=fixed_mock")
+        tool = MockSemanticScholarTool()
         citation_retrieval_agent = CitationRetrievalAgent(
             llm=citation_retrieval_llm,
             tool=tool,
@@ -814,28 +769,15 @@ def paper_workflow_cmd(
         ClaimResolutionAgent(claim_resolution_llm) if claim_resolution_llm is not None else None
     )
 
-    latex_renderer_agent = None
-    if latex_backend == "pandoc":
-        pandoc_runner = SubprocessPandocRunner(
+    latex_renderer_agent = PandocLatexRendererAgent(
+        pandoc_runner=SubprocessPandocRunner(
             pandoc_bin=str(config.paper_workflow.pandoc_bin),
-            require=bool(config.paper_workflow.pandoc_require),
-        )
-        fallback_renderer = None
-        if not bool(config.paper_workflow.pandoc_require) and latex_renderer_llm is not None:
-            fallback_renderer = LatexRendererAgent(latex_renderer_llm, fix_llm=latex_fix_llm)
-        latex_renderer_agent = PandocLatexRendererAgent(
-            pandoc_runner=pandoc_runner,
-            fix_llm=latex_fix_llm,
-            fallback_renderer=fallback_renderer,
-            consistency_threshold=float(config.paper_workflow.pandoc_consistency_threshold),
-            fail_on_content_loss=bool(config.paper_workflow.pandoc_fail_on_content_loss),
-        )
-    else:
-        latex_renderer_agent = (
-            LatexRendererAgent(latex_renderer_llm, fix_llm=latex_fix_llm)
-            if latex_renderer_llm is not None
-            else None
-        )
+            require=True,
+        ),
+        fix_llm=latex_fix_llm,
+        consistency_threshold=float(config.paper_workflow.pandoc_consistency_threshold),
+        fail_on_content_loss=bool(config.paper_workflow.pandoc_fail_on_content_loss),
+    )
 
     controller = PaperFeedbackLoopController(
         config=config.paper_workflow,
@@ -845,7 +787,6 @@ def paper_workflow_cmd(
         rng=random.Random(config.paper_workflow.seed),
         input_parser=input_parser,
         draft_writer=draft_writer,
-        reviewer_group=reviewers,
         section_llm=section_llm,
         citation_need_llm=citation_need_llm,
         citation_retrieval_agent=citation_retrieval_agent,
@@ -853,7 +794,6 @@ def paper_workflow_cmd(
         latex_renderer_agent=latex_renderer_agent,
         paper_template=paper_template,
         latex_toolchain=latex_toolchain,
-        latex_fixer=latex_fixer,
     )
 
     try:

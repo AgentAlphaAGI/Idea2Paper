@@ -8,7 +8,6 @@ from paper_kg.section_writer import PaperSectionWriter
 def test_english_ratio_gate_flags_cjk() -> None:
     config = PaperWorkflowConfig(
         output_format="latex",
-        latex_generation_mode="final_only",
         enforce_english=True,
         max_cjk_ratio=0.01,
         section_min_word_ratio=0.0,

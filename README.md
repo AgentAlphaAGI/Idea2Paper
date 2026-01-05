@@ -1,8 +1,10 @@
 # 论文生成链路（Paper Workflow）
 
-这是一个“从一句想法到可编译 LaTeX/Overleaf 工程”的多阶段工作流：选套路/（可选）查重 → 写稿 →（可选）多 Reviewer 评审回退 → 导出 Overleaf 工程并本地编译验证。
+这是一个“从一句想法到可编译 LaTeX/Overleaf 工程”的多阶段工作流：选套路/（可选）查重 → 写稿 → 引用检索/渲染 → 导出 Overleaf 工程并本地编译验证。
 
 本仓库的核心入口是 CLI：`python -m api.paper_cli workflow ...`
+
+更详细的“当前默认启用链路”与排障说明见：`README-Workflow.md`。
 
 ---
 
@@ -49,14 +51,12 @@ sudo apt-get install -y \
   texlive-xetex \
   texlive-latex-extra \
   texlive-fonts-recommended \
-  texlive-fonts-extra \
-  chktex \
-  lacheck
+  texlive-fonts-extra
 ```
 
 说明：
 - 你遇到过的 `inconsolata.sty not found`，通常通过安装 `texlive-fonts-extra` 解决。
-- 若你只想导出 Overleaf 工程、不在本机编译，可在配置里将 `latex_require_tools: false` 或 `latex_final_compile: false`，跳过本地工具链依赖。
+- 若你只想导出 Overleaf 工程、不在本机编译，可在配置里将 `latex_require_tools: false`，跳过本地工具链依赖。
 
 #### macOS（示例）
 
@@ -90,9 +90,6 @@ cp .env.example .env
 提示词目录：
 - `PROMPT_DIR`：非论文模块的提示词目录覆盖（如果你不用其他模块可以忽略）。
 - `PAPER_PROMPT_DIR`：论文链路提示词目录覆盖；一般不手动设，CLI 会根据 `paper_language` 自动指向 `prompts_paper_en/` 或 `prompts_paper/`。
-
-引用检索：
-- `S2_API_KEY`：Semantic Scholar API Key（当 `citations_provider=semantic_scholar` 且 `citations_require_api_key: true` 时必填）。
 
 Pandoc：
 - `PANDOC_BIN`：pandoc 可执行文件路径覆盖（默认直接用 `pandoc`）。
@@ -145,47 +142,12 @@ Pandoc：
   - `PAPER_CLAIM_RESOLUTION_OPENAI_TEMPERATURE`
   - `PAPER_CLAIM_RESOLUTION_OPENAI_TIMEOUT`
 
-- LaTeX 渲染（当 `latex_renderer_backend=llm` 或 Pandoc 不可用时）（`paper_latex_renderer`）：
-  - `PAPER_LATEX_RENDERER_OPENAI_API_KEY`
-  - `PAPER_LATEX_RENDERER_OPENAI_MODEL`
-  - `PAPER_LATEX_RENDERER_OPENAI_BASE_URL`
-  - `PAPER_LATEX_RENDERER_OPENAI_TEMPERATURE`
-  - `PAPER_LATEX_RENDERER_OPENAI_TIMEOUT`
-
 - LaTeX 修复（`paper_latex_fix`）：
   - `PAPER_LATEX_FIX_OPENAI_API_KEY`
   - `PAPER_LATEX_FIX_OPENAI_MODEL`
   - `PAPER_LATEX_FIX_OPENAI_BASE_URL`
   - `PAPER_LATEX_FIX_OPENAI_TEMPERATURE`
   - `PAPER_LATEX_FIX_OPENAI_TIMEOUT`
-
-- Reviewer：理论（`paper_reviewer_theory`）
-  - `PAPER_REVIEWER_THEORY_OPENAI_API_KEY`
-  - `PAPER_REVIEWER_THEORY_OPENAI_MODEL`
-  - `PAPER_REVIEWER_THEORY_OPENAI_BASE_URL`
-  - `PAPER_REVIEWER_THEORY_OPENAI_TEMPERATURE`
-  - `PAPER_REVIEWER_THEORY_OPENAI_TIMEOUT`
-
-- Reviewer：实验（`paper_reviewer_experiment`）
-  - `PAPER_REVIEWER_EXPERIMENT_OPENAI_API_KEY`
-  - `PAPER_REVIEWER_EXPERIMENT_OPENAI_MODEL`
-  - `PAPER_REVIEWER_EXPERIMENT_OPENAI_BASE_URL`
-  - `PAPER_REVIEWER_EXPERIMENT_OPENAI_TEMPERATURE`
-  - `PAPER_REVIEWER_EXPERIMENT_OPENAI_TIMEOUT`
-
-- Reviewer：新颖性（`paper_reviewer_novelty`）
-  - `PAPER_REVIEWER_NOVELTY_OPENAI_API_KEY`
-  - `PAPER_REVIEWER_NOVELTY_OPENAI_MODEL`
-  - `PAPER_REVIEWER_NOVELTY_OPENAI_BASE_URL`
-  - `PAPER_REVIEWER_NOVELTY_OPENAI_TEMPERATURE`
-  - `PAPER_REVIEWER_NOVELTY_OPENAI_TIMEOUT`
-
-- Reviewer：实用性（`paper_reviewer_practical`）
-  - `PAPER_REVIEWER_PRACTICAL_OPENAI_API_KEY`
-  - `PAPER_REVIEWER_PRACTICAL_OPENAI_MODEL`
-  - `PAPER_REVIEWER_PRACTICAL_OPENAI_BASE_URL`
-  - `PAPER_REVIEWER_PRACTICAL_OPENAI_TEMPERATURE`
-  - `PAPER_REVIEWER_PRACTICAL_OPENAI_TIMEOUT`
 
 Embedding（当 `skip_novelty_check: false` 且需要构建向量库时）：
 - `PAPER_EMBEDDING_OPENAI_API_KEY`：Embedding API Key（可与聊天模型不同）。
@@ -247,31 +209,18 @@ paper_workflow:
 - `section_max_retries`：每个章节写作/修复的最大重试次数。
 - `section_summary_max_chars`：章节摘要的最大长度（用于后续章节的上下文输入）。
 
-### 4.5 评审与回退循环
-
-- `format_only_mode`：格式优先模式；跳过 reviewers 与内容质量自检/回退（但 LaTeX 编译闸门仍可能执行）。
-- `pass_threshold`：多 reviewer 聚合后的通过阈值（avg_score >= pass_threshold 视为通过）。
-- `require_individual_threshold`：是否要求每个 reviewer 的单独评分也达标（见 reviewer 配置的 threshold）。
-- `max_iterations`：评审-回退的最大轮数；到上限仍未通过则失败。
-- `max_rewrite_retry`：当主问题为 CLARITY/SOUNDNESS/SIGNIFICANCE 时，最多允许触发“改稿回退”的次数。
-- `max_global_retry`：当主问题为 NOVELTY_LOW 时，最多允许回退到“重新 plan_from_kg”的次数。
-
-### 4.6 输出格式与 Markdown 质量闸门
+### 4.5 输出格式与 Markdown 质量闸门
 
 - `output_format`：`markdown` 或 `latex`（当前你用的是 `latex`）。
-- `markdown_writer_backend`：`markdown`（直接写 Markdown）或 `spec`（结构化 spec → 渲染为 Markdown/LaTeX）。
+- `markdown_writer_backend`：`markdown`（直接写 Markdown）或 `spec`（结构化 spec → 渲染为 Markdown）。
 - `spec_cite_token`：spec 写作中引用占位 token（默认 `[[CITE]]`）。
 - `spec_render_require_cite_ids`：spec 渲染时是否强制 cite marker 带 id（便于后续引用链路定位）。
 - `strict_markdown_validation`：是否启用 Markdown 硬校验（质量优先模式常开）。
 - `section_min_word_ratio`：章节最低字数比例（相对模板的 `target_words_min`）。
 - `section_min_quality_max_retries`：章节质量不足时的额外重试次数。
-- `coverage_enable`：是否启用“章节覆盖验收器”（检查 required_points 覆盖情况）。
-- `coverage_validator_backend`：覆盖验收器后端：`llm`/`rule`/`off`。
-- `coverage_validator_max_retries`：覆盖验收失败的最大重试次数。
-- `coverage_validator_require_evidence`：是否要求给出证据（更严格，通常更慢）。
 - `quality_fail_fast`：质量优先失败即中止（避免长时间循环）。
 
-### 4.7 LaTeX 渲染、模板与导出（Overleaf）
+### 4.6 LaTeX 渲染、模板与导出（Overleaf）
 
 - `latex_template_preset`：导出 main.tex 的预设模板：`article_ctex` / `colm2024_conference`。
 - `latex_titlepage_style`：当 `latex_template_preset=colm2024_conference` 时的第一页样式：`qwen` / `agentalpha`。
@@ -281,31 +230,20 @@ paper_workflow:
 - `latex_hflink` / `latex_mslink` / `latex_ghlink`：首页三行链接表格中的 URL 覆盖。
 - `latex_output_dir`：导出工程输出目录（默认 `./outputs/overleaf`）。
 
-### 4.8 LaTeX 工具链（本地编译闸门）
+### 4.7 LaTeX 工具链（本地编译闸门）
 
 - `latex_engine`：编译引擎（传给 latexmk），常用 `xelatex`。
-- `latex_require_tools`：是否强制要求本机安装 `latexmk/chktex/lacheck`；否则会报错。
-- `latex_use_chktex`：是否运行 chktex 静态检查。
-- `latex_use_lacheck`：是否运行 lacheck 静态检查。
-- `latex_section_compile`：是否对单章节做最小编译（用于定位章节级错误）。
-- `latex_final_compile`：是否对最终 Overleaf 工程执行编译验证（latexmk）。
+- `latex_require_tools`：是否强制要求本机安装 `latexmk`；否则会报错。
 - `latex_compile_timeout_sec`：单次编译超时时间（秒）。
-- `latex_max_fix_retries`：LaTeX 修复最大重试次数（章节/最终稿修复循环）。
 - `latex_format_max_retries`：仅 LaTeX 编译失败时的“自动修复+重编译”最大轮数。
-- `latex_force_todo_cite`：是否把引用 key 强制规范化为 `TODO_` 前缀（防止无效 bibkey 导致编译失败）。
-- `latex_generation_mode`：`per_section`（逐章生成 LaTeX）/ `final_only`（最终统一转换/修复）。
-- `latex_renderer_backend`：`pandoc`（推荐）/ `llm`（Pandoc 不可用时的备选）。
-- `pandoc_require`：Pandoc 缺失时是否直接失败（否则可能回退到 LLM 渲染）。
 - `pandoc_bin`：Pandoc 可执行文件名或路径（也可用环境变量 `PANDOC_BIN` 覆盖）。
 - `pandoc_consistency_threshold`：Pandoc 渲染一致性阈值（内容丢失检测）。
 - `pandoc_fail_on_content_loss`：当检测到内容丢失时是否直接失败。
 
-### 4.9 引用链路（Citations pipeline）
+### 4.8 引用链路（Citations pipeline）
 
 - `citations_enable`：是否启用引用链路（抽取引用需求 → 检索候选 → 选择条目 → 写入 refs.bib）。
 - `citations_require_verifiable`：是否要求引用可验证（更严格，可能更慢）。
-- `citations_require_api_key`：是否要求引用提供方必须有 API Key（例如 Semantic Scholar）。
-- `citations_provider`：引用检索提供方：`mock`（离线/演示）或 `semantic_scholar` 等。
 - `citations_year_range`：引用年份范围过滤（字符串，例如 `"2018-2026"`）。
 - `citations_max_rounds`：引用检索的最大轮次（避免无限循环）。
 
@@ -361,9 +299,8 @@ sudo apt-get install -y texlive-fonts-extra
 
 ### 7.2 引用链路报错 / API 限制
 
-如果你不需要真实引用，可在 `config_paper.yaml` 里设置：
-- `citations_provider: mock`
-- 或直接 `citations_enable: false`
+如果你不需要引用链路，可在 `config_paper.yaml` 里设置：
+- `citations_enable: false`
 
 ---
 

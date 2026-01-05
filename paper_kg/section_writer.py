@@ -5,8 +5,6 @@ import json
 import logging
 import re
 import secrets
-import tempfile
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -15,14 +13,6 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.config import PaperWorkflowConfig
 from core.llm_utils import coerce_model, extract_json, log_llm_output, safe_content
-from paper_kg.coverage_validator import build_coverage_validator
-from paper_kg.latex_fixer import LatexFixer
-from paper_kg.latex_toolchain import (
-    CompileResult,
-    ILatexToolchain,
-    _extract_nonfatal_ref_cite_warnings,
-    is_nonfatal_minimal_compile_issue,
-)
 from paper_kg.markdown_renderer import (
     inject_cite_markers,
     normalize_markdown_for_pandoc,
@@ -32,7 +22,6 @@ from paper_kg.models import (
     PaperPlan,
     PaperSectionOutput,
     PaperSectionPlan,
-    RequiredPoint,
     SectionContentSpec,
 )
 from paper_kg.prompts import load_paper_prompt
@@ -46,10 +35,10 @@ _MARKDOWN_FENCE_RE = re.compile(r"^```")
 class PaperSectionWriter:
     """
     功能：论文分章节写作器（逐章生成 + 自检 + 局部重写 + LaTeX 格式保证）。
-    参数：llm/config/pattern_guides/latex_toolchain/latex_fixer。
+    参数：llm/config/pattern_guides。
     返回：PaperSectionOutput。
     流程：结构化输出 → 自检 → 缺失则重写 → 兜底模板。
-    说明：当 output_format=latex 时启用 LaTeX 生成与编译闸门。
+    说明：LaTeX 由后续 Pandoc 渲染阶段统一生成。
     """
 
     def __init__(
@@ -57,12 +46,10 @@ class PaperSectionWriter:
         llm: Optional[BaseChatModel],
         config: PaperWorkflowConfig,
         pattern_guides: str,
-        latex_toolchain: Optional[ILatexToolchain] = None,
-        latex_fixer: Optional[LatexFixer] = None,
     ) -> None:
         """
         功能：初始化 Section Writer。
-        参数：llm、config、pattern_guides、latex_toolchain、latex_fixer。
+        参数：llm、config、pattern_guides。
         返回：无。
         流程：构建 structured_llm 与提示词模板。
         说明：llm=None 时仅走兜底模板生成。
@@ -70,11 +57,7 @@ class PaperSectionWriter:
         self.llm = llm
         self.config = config
         self.pattern_guides = pattern_guides
-        self.latex_toolchain = latex_toolchain
-        self.latex_fixer = latex_fixer
-        self.coverage_validator = build_coverage_validator(llm, config)
         self.write_prompt = None
-        self.rewrite_prompt = None
         self.quality_rewrite_prompt = None
         self.fix_prompt = None
 
@@ -82,17 +65,11 @@ class PaperSectionWriter:
             return
 
         self.structured_llm = llm.with_structured_output(PaperSectionOutput, method="json_mode")
-        if self.config.output_format == "latex" and self.config.latex_generation_mode != "final_only":
-            write_system = load_paper_prompt("write_section_latex_system.txt")
-            rewrite_system = load_paper_prompt("rewrite_section_latex_system.txt")
+        markdown_backend = (self.config.markdown_writer_backend or "markdown").lower()
+        if markdown_backend == "spec":
+            write_system = load_paper_prompt("write_section_spec_system.txt")
         else:
-            markdown_backend = (self.config.markdown_writer_backend or "markdown").lower()
-            if markdown_backend == "spec":
-                write_system = load_paper_prompt("write_section_spec_system.txt")
-                rewrite_system = load_paper_prompt("rewrite_section_spec_system.txt")
-            else:
-                write_system = load_paper_prompt("write_section_system.txt")
-                rewrite_system = load_paper_prompt("rewrite_section_system.txt")
+            write_system = load_paper_prompt("write_section_system.txt")
         quality_rewrite_system = load_paper_prompt("rewrite_section_quality_system.txt")
         fix_system = load_paper_prompt("section_fix_system.txt")
 
@@ -108,23 +85,6 @@ class PaperSectionWriter:
                     "全局术语/主张：{global_terms}\n"
                     "写作指导（pattern_guides）：{pattern_guides}\n"
                     "请输出 JSON（PaperSectionOutput）。",
-                ),
-            ]
-        )
-        self.rewrite_prompt = ChatPromptTemplate.from_messages(
-            [
-                SystemMessage(content=rewrite_system),
-                (
-                    "human",
-                    "变体标识：{nonce}\n"
-                    "尝试次数：{attempt}\n"
-                    "章节计划：{section_plan}\n"
-                    "依赖摘要：{prior_summaries}\n"
-                    "缺失要点：{missing_points}\n"
-                    "缺失技巧：{missing_tricks}\n"
-                    "原始章节：{current_section}\n"
-                    "写作指导（pattern_guides）：{pattern_guides}\n"
-                    "请输出修订后的 JSON（PaperSectionOutput）。",
                 ),
             ]
         )
@@ -164,7 +124,7 @@ class PaperSectionWriter:
         参数：plan、section_plan、prior_summaries、attempt。
         返回：PaperSectionOutput。
         流程：LLM 生成 → 自检 → 缺失重写 → 兜底模板。
-        说明：format_only_mode=true 时跳过自检与重写。
+        说明：llm=None 时会使用兜底输出。
         """
         if self.llm is None or self.write_prompt is None:
             logger.warning(
@@ -230,56 +190,6 @@ class PaperSectionWriter:
                 attempt=attempt,
             )
 
-        # 中文注释：LaTeX 模式下先做格式保证与编译闸门。
-        if self.config.output_format == "latex" and self.config.latex_generation_mode != "final_only":
-            output = self._ensure_latex(section_plan, output)
-
-        # 中文注释：format_only_mode=true 时跳过内容自检与局部重写。
-        if self.config.format_only_mode:
-            return output
-        if not bool(self.config.coverage_enable):
-            logger.info(
-                "COVERAGE_SKIP: id=%s reason=disabled_by_config",
-                section_plan.section_id,
-            )
-            return output
-
-        backend = (self.config.coverage_validator_backend or "off").lower()
-        max_coverage_retries = (
-            int(self.config.coverage_validator_max_retries) if backend != "off" else 1
-        )
-        for retry in range(max_coverage_retries):
-            missing_points, missing_tricks = self._evaluate_section_requirements(
-                section_plan, output
-            )
-            if not missing_points and not missing_tricks:
-                return output
-            logger.info(
-                "SECTION_VALIDATE_FAIL: id=%s missing_points=%s missing_tricks=%s",
-                section_plan.section_id,
-                missing_points,
-                missing_tricks,
-            )
-            output = self._rewrite_section(
-                section_plan,
-                prior_summaries,
-                output,
-                missing_points,
-                missing_tricks,
-                attempt=attempt + retry,
-            )
-            output = self._normalize_output(section_plan, output)
-            output = self._normalize_markdown_heading(section_plan, output)
-
-        missing_points, missing_tricks = self._evaluate_section_requirements(
-            section_plan, output
-        )
-        if missing_points or missing_tricks:
-            if self._should_fail_fast():
-                raise RuntimeError(
-                    f"Section coverage failed: {section_plan.section_id} "
-                    f"missing_points={missing_points} missing_tricks={missing_tricks}"
-                )
         return output
 
     def _repair_output(
@@ -341,80 +251,6 @@ class PaperSectionWriter:
             logger.warning("SECTION_STRUCTURED_REPAIR_JSON_FIX_FAIL: id=%s error=%s", section_id, exc)
             return None
 
-    def _rewrite_section(
-        self,
-        section_plan: PaperSectionPlan,
-        prior_summaries: Dict[str, str],
-        current_output: PaperSectionOutput,
-        missing_points: List[str],
-        missing_tricks: List[str],
-        attempt: int,
-    ) -> PaperSectionOutput:
-        """
-        功能：基于缺失要点/技巧的局部重写。
-        参数：section_plan/prior_summaries/current_output/missing_points/missing_tricks/attempt。
-        返回：PaperSectionOutput。
-        流程：LLM 重写 → 自检 → 达标则返回 → 否则兜底。
-        说明：重试次数由 config.section_max_retries 控制。
-        """
-        if self.llm is None or self.rewrite_prompt is None:
-            return self._fallback_section(section_plan, "缺失要点，规则兜底")
-
-        for retry in range(1, int(self.config.section_max_retries) + 1):
-            logger.info(
-                "SECTION_REWRITE_START: id=%s attempt=%s",
-                section_plan.section_id,
-                f"{attempt}-{retry}",
-            )
-            nonce = secrets.token_hex(4)
-            payload = {
-                "nonce": nonce,
-                "attempt": f"{attempt}-{retry}",
-                "section_plan": json.dumps(section_plan.model_dump(), ensure_ascii=False),
-                "prior_summaries": json.dumps(prior_summaries, ensure_ascii=False),
-                "missing_points": "；".join(missing_points) or "无",
-                "missing_tricks": "；".join(missing_tricks) or "无",
-                "current_section": self._select_content(current_output),
-                "pattern_guides": self.pattern_guides,
-            }
-            try:
-                logger.info(
-                    "SECTION_REWRITE_LLM_START: id=%s attempt=%s reason=missing_points_or_tricks",
-                    section_plan.section_id,
-                    f"{attempt}-{retry}",
-                )
-                response = self.structured_llm.invoke(self.rewrite_prompt.format_messages(**payload))
-                if bool(self.config.log_llm_outputs):
-                    log_llm_output(
-                        logger,
-                        f"SECTION_REWRITE:{section_plan.section_id}:{attempt}-{retry}",
-                        response,
-                        int(self.config.log_llm_output_max_chars),
-                    )
-                output = coerce_model(response, PaperSectionOutput)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("SECTION_REWRITE_FAIL: %s", exc)
-                return self._fallback_section(section_plan, "重写失败，兜底输出")
-
-            output = self._normalize_output(section_plan, output)
-            if self.config.output_format == "latex" and self.config.latex_generation_mode != "final_only":
-                output = self._ensure_latex(section_plan, output)
-            missing_points, missing_tricks = self._evaluate_section_requirements(
-                section_plan, output
-            )
-            if not missing_points and not missing_tricks:
-                logger.info("SECTION_REWRITE_OK: id=%s", section_plan.section_id)
-                return output
-            logger.info(
-                "SECTION_REWRITE_VALIDATE_FAIL: id=%s missing_points=%s missing_tricks=%s",
-                section_plan.section_id,
-                missing_points,
-                missing_tricks,
-            )
-
-        logger.warning("SECTION_REWRITE_FAIL: exceed retries")
-        return self._fallback_section(section_plan, "重写多次仍缺失要点，兜底输出")
-
     def _rewrite_for_markdown_quality(
         self,
         section_plan: PaperSectionPlan,
@@ -471,8 +307,6 @@ class PaperSectionWriter:
                 return self._fallback_section(section_plan, "Markdown 质量修复失败，兜底输出")
 
             output = self._normalize_output(section_plan, output)
-            if self.config.output_format == "latex" and self.config.latex_generation_mode != "final_only":
-                output = self._ensure_latex(section_plan, output)
             issues = self._validate_markdown_output(section_plan, output)
             if not issues:
                 logger.info("SECTION_QUALITY_REWRITE_OK: id=%s", section_plan.section_id)
@@ -573,8 +407,6 @@ class PaperSectionWriter:
     def _render_markdown_if_needed(
         self, section_plan: PaperSectionPlan, output: PaperSectionOutput
     ) -> PaperSectionOutput:
-        if self.config.output_format == "latex" and self.config.latex_generation_mode != "final_only":
-            return output
         backend = (self.config.markdown_writer_backend or "markdown").lower()
         if backend != "spec":
             return output
@@ -692,100 +524,12 @@ class PaperSectionWriter:
         return issues
 
     def _should_validate_markdown(self) -> bool:
-        if str(self.config.output_format) != "latex":
-            return True
-        return str(self.config.latex_generation_mode) == "final_only"
+        return True
 
     def _should_fail_fast(self) -> bool:
         if not bool(self.config.quality_fail_fast):
             return False
         return str(self.config.paper_language or "").lower().startswith("en")
-
-    def _use_coverage_validator(self) -> bool:
-        if not bool(self.config.coverage_enable):
-            return False
-        backend = (self.config.coverage_validator_backend or "off").lower()
-        if backend == "off":
-            return False
-        return self.coverage_validator is not None
-
-    def _resolve_required_point_items(
-        self, section_plan: PaperSectionPlan
-    ) -> List[RequiredPoint]:
-        if section_plan.required_point_items:
-            return list(section_plan.required_point_items)
-        items: List[RequiredPoint] = []
-        for idx, text in enumerate(section_plan.required_points or [], start=1):
-            items.append(RequiredPoint(id=f"{section_plan.section_id}_p{idx}", text=text))
-        return items
-
-    def _format_missing_points(
-        self, section_plan: PaperSectionPlan, missing_ids: List[str]
-    ) -> List[str]:
-        if not missing_ids:
-            return []
-        item_map = {item.id: item.text for item in self._resolve_required_point_items(section_plan)}
-        formatted: List[str] = []
-        for point_id in missing_ids:
-            text = item_map.get(point_id, "")
-            if text:
-                formatted.append(f"{point_id}: {text}")
-            else:
-                formatted.append(point_id)
-        return formatted
-
-    def _evaluate_section_requirements(
-        self, section_plan: PaperSectionPlan, output: PaperSectionOutput
-    ) -> Tuple[List[str], List[str]]:
-        if not bool(self.config.coverage_enable):
-            return [], []
-        backend = (self.config.coverage_validator_backend or "off").lower()
-        if backend != "off":
-            if self.coverage_validator is None:
-                if bool(self.config.quality_fail_fast):
-                    raise RuntimeError(
-                        f"Coverage validator unavailable: section={section_plan.section_id}"
-                    )
-                return self._validate_section(section_plan, output)
-            result = self.coverage_validator.check(section_plan, output)
-            missing_points = self._format_missing_points(
-                section_plan, result.missing_point_ids or []
-            )
-            missing_tricks = result.missing_trick_names or []
-            return missing_points, missing_tricks
-        return self._validate_section(section_plan, output)
-
-    def _validate_section(
-        self, section_plan: PaperSectionPlan, output: PaperSectionOutput
-    ) -> Tuple[List[str], List[str]]:
-        """
-        功能：检查章节输出是否覆盖必需要点/技巧。
-        参数：section_plan、output。
-        返回：(missing_points, missing_tricks)。
-        流程：比对 required_points 与 covered_points/内容；比对 required_tricks 与 used_tricks。
-        说明：仅做轻量自检，避免过度依赖 LLM。
-        """
-        missing_points = []
-        content = self._select_content(output)
-        covered_points = set(output.covered_points or [])
-        for item in self._resolve_required_point_items(section_plan):
-            if item.id in covered_points or item.text in covered_points:
-                continue
-            if item.text and item.text in content:
-                continue
-            missing_points.append(item.text or item.id)
-
-        used_tricks = [t.strip() for t in (output.used_tricks or []) if t.strip()]
-        required_trick_names = section_plan.required_trick_names or [
-            _extract_trick_name(req) for req in section_plan.required_tricks
-        ]
-        missing_tricks = []
-        for required_name in required_trick_names:
-            if required_name and required_name in used_tricks:
-                continue
-            missing_tricks.append(required_name)
-
-        return missing_points, missing_tricks
 
     def _fallback_section(self, section_plan: PaperSectionPlan, reason: str) -> PaperSectionOutput:
         """
@@ -817,7 +561,7 @@ class PaperSectionWriter:
                     "(Content pending.)",
                 ]
             )
-            todo = ["Content pending", "Check required coverage"]
+            todo = ["Content pending", "Check required points"]
         else:
             content_markdown = "\n".join(
                 [
@@ -834,7 +578,7 @@ class PaperSectionWriter:
                     "（正文待补充）",
                 ]
             )
-            todo = ["待补充正文", "检查要点覆盖情况"]
+            todo = ["待补充正文", "检查要点/技巧"]
         content_latex = _latex_placeholder_section(section_plan.section_id, title, reason)
         return PaperSectionOutput(
             section_id=section_plan.section_id,
@@ -853,144 +597,9 @@ class PaperSectionWriter:
         功能：根据输出格式选择内容字段。
         参数：output。
         返回：文本内容。
-        说明：LaTeX 模式下使用 content_latex。
+        说明：优先使用 Markdown，必要时回退到 LaTeX。
         """
-        if self.config.output_format == "latex" and self.config.latex_generation_mode != "final_only":
-            return output.content_latex or ""
         return output.content_markdown or output.content_latex or ""
-
-    def _ensure_latex(
-        self,
-        section_plan: PaperSectionPlan,
-        output: PaperSectionOutput,
-    ) -> PaperSectionOutput:
-        """
-        功能：对 LaTeX 章节进行格式保证（lint/编译/修复循环）。
-        参数：section_plan/output。
-        返回：更新后的 PaperSectionOutput。
-        说明：当未提供 toolchain 时仅做确定性修复。
-        """
-        tex = output.content_latex or ""
-        fixer = self.latex_fixer
-        if fixer:
-            tex = fixer.deterministic_fix(tex)
-
-        latex_check: Dict[str, object] = {}
-        fix_attempts = 0
-
-        # 中文注释：若未配置 toolchain，则仅返回修复后的 tex。
-        if not self.latex_toolchain or not bool(self.config.latex_section_compile):
-            reason = "toolchain_missing" if not self.latex_toolchain else "latex_section_compile=false"
-            logger.info("SECTION_LATEX_GUARD_SKIP: id=%s reason=%s", section_plan.section_id, reason)
-            output.content_latex = tex
-            output.latex_check = {"lint": {}, "compile": {}, "fix_attempts": fix_attempts, "skipped": True}
-            return output
-
-        logger.info("SECTION_LATEX_LINT_START: id=%s", section_plan.section_id)
-        lint_result = self.latex_toolchain.lint_tex(_write_temp_tex(tex, section_plan.section_id))
-        logger.info(
-            "SECTION_LATEX_LINT_RESULT: id=%s ok=%s warnings=%s",
-            section_plan.section_id,
-            lint_result.ok,
-            lint_result.warnings,
-        )
-        latex_check["lint"] = {
-            "ok": lint_result.ok,
-            "warnings": lint_result.warnings,
-            "output": lint_result.output,
-        }
-
-        for retry in range(int(self.config.latex_max_fix_retries) + 1):
-            logger.info(
-                "SECTION_LATEX_COMPILE_START: id=%s attempt=%s",
-                section_plan.section_id,
-                retry,
-            )
-            compile_result = self._compile_section_minimal(section_plan.section_id, tex)
-            compile_text = "\n".join([compile_result.stderr, compile_result.stdout, compile_result.log_excerpt])
-            nonfatal_warnings: List[str] = []
-            lenient_ok = False
-            if not compile_result.ok and is_nonfatal_minimal_compile_issue(compile_text):
-                lenient_ok = True
-                nonfatal_warnings = _extract_nonfatal_ref_cite_warnings(compile_text)
-            latex_check["compile"] = {
-                "ok": compile_result.ok or lenient_ok,
-                "errors": compile_result.errors,
-                "log_excerpt": compile_result.log_excerpt,
-            }
-            if nonfatal_warnings:
-                latex_check["compile"]["nonfatal_warnings"] = nonfatal_warnings
-                latex_check["compile"]["lenient_ok"] = True
-            if compile_result.ok or lenient_ok:
-                if lenient_ok:
-                    logger.info(
-                        "SECTION_LATEX_COMPILE_LENIENT_OK: id=%s attempt=%s warnings=%s",
-                        section_plan.section_id,
-                        retry,
-                        nonfatal_warnings,
-                    )
-                logger.info("SECTION_LATEX_COMPILE_OK: id=%s attempt=%s", section_plan.section_id, retry)
-                output.content_latex = tex
-                output.latex_check = {**latex_check, "fix_attempts": fix_attempts}
-                return output
-
-            logger.warning(
-                "SECTION_LATEX_COMPILE_FAIL: id=%s attempt=%s errors=%s",
-                section_plan.section_id,
-                retry,
-                compile_result.errors,
-            )
-            fix_attempts += 1
-            if fixer:
-                logger.info(
-                    "SECTION_LATEX_FIX_START: id=%s attempt=%s reason=compile_failed",
-                    section_plan.section_id,
-                    fix_attempts,
-                )
-                tex = fixer.deterministic_fix(tex)
-                tex = fixer.llm_fix_from_log(tex, compile_result.log_excerpt)
-            else:
-                tex = tex
-
-        # 中文注释：超出修复上限，兜底为可编译章节。
-        logger.warning(
-            "SECTION_LATEX_FIX_EXHAUSTED: id=%s max_retries=%s",
-            section_plan.section_id,
-            self.config.latex_max_fix_retries,
-        )
-        output.content_latex = _latex_placeholder_section(
-            section_plan.section_id, section_plan.title, "格式修复失败，兜底输出"
-        )
-        output.latex_check = {**latex_check, "fix_attempts": fix_attempts, "fallback": True}
-        return output
-
-    def _compile_section_minimal(self, section_id: str, tex: str):
-        """
-        功能：创建临时工程并编译单章节。
-        参数：section_id/tex。
-        返回：CompileResult。
-        说明：减少全篇编译成本。
-        """
-        if not self.latex_toolchain:
-            return CompileResult(
-                ok=False,
-                stdout="",
-                stderr="latex toolchain missing",
-                log_excerpt="latex toolchain missing",
-                errors=[{"message": "latex toolchain missing"}],
-                cmd=[],
-            )
-        with tempfile.TemporaryDirectory(prefix="latex_section_") as tmp:
-            project_dir = Path(tmp)
-            sections_dir = project_dir / "sections"
-            sections_dir.mkdir(parents=True, exist_ok=True)
-            (sections_dir / f"{section_id}.tex").write_text(tex, encoding="utf-8")
-            return self.latex_toolchain.compile_minimal_section(
-                project_dir=project_dir,
-                section_relpath=f"sections/{section_id}.tex",
-                engine=self.config.latex_engine,
-                timeout_sec=int(self.config.latex_compile_timeout_sec),
-            )
 
 
 def _first_non_empty_index(lines: List[str]) -> Optional[int]:
@@ -1061,19 +670,6 @@ def _count_words(text: str) -> int:
     if _CJK_RE.search(text):
         return len("".join(text.split()))
     return len([w for w in re.split(r"\s+", text.strip()) if w])
-
-
-def _write_temp_tex(content: str, section_id: str) -> Path:
-    """
-    功能：写入临时 tex 文件供 lint 使用。
-    参数：content/section_id。
-    返回：临时 tex 文件路径。
-    说明：文件写入系统临时目录，函数返回路径供 lint 调用。
-    """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="latex_lint_"))
-    tex_path = tmp_dir / f"{section_id}.tex"
-    tex_path.write_text(content or "", encoding="utf-8")
-    return tex_path
 
 
 def _latex_placeholder_section(section_id: str, title: str, reason: str) -> str:

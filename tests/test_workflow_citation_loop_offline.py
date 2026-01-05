@@ -14,11 +14,6 @@ from paper_kg.orchestrator import PaperDraftWriter
 from workflow.paper_controller import PaperFeedbackLoopController
 
 
-class _NoopReviewerGroup:
-    def review(self, _draft):  # noqa: ANN001
-        return []
-
-
 class _FakeCitationProvider:
     def search_and_resolve(self, need):  # noqa: ANN001
         return RetrievedCitation(candidate_id=need.candidate_id, status="NOT_FOUND")
@@ -46,12 +41,9 @@ def _build_controller(tmp_path) -> PaperFeedbackLoopController:
     config = PaperWorkflowConfig(
         seed=123,
         output_format="latex",
-        latex_generation_mode="final_only",
         citations_enable=True,
         citations_max_rounds=2,
-        format_only_mode=True,
         latex_require_tools=False,
-        latex_final_compile=False,
     )
 
     return PaperFeedbackLoopController(
@@ -62,7 +54,6 @@ def _build_controller(tmp_path) -> PaperFeedbackLoopController:
         rng=random.Random(123),
         input_parser=PaperInputParser(llm=None),
         draft_writer=PaperDraftWriter(llm=None),
-        reviewer_group=_NoopReviewerGroup(),
         section_llm=None,
         citation_provider=_FakeCitationProvider(),
         claim_resolver=_fake_claim_resolver,

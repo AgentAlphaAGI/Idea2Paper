@@ -1,4 +1,4 @@
-# 中文注释: 本文件实现论文链路的 LangGraph 状态机 + 多 Reviewer 评审反馈循环。
+# 中文注释: 本文件实现论文链路的 LangGraph 状态机（到导出/编译闸门即结束）。
 from __future__ import annotations
 
 import logging
@@ -19,9 +19,7 @@ from paper_kg.citations.models import CitationCandidate, CitationNeed, Retrieved
 from paper_kg.citations.need_reviewer import CitationNeedReviewer
 from paper_kg.citations.retriever import ICitationProvider, get_citation_provider
 from paper_kg.latex_renderer import render_sections_to_latex
-from paper_kg.latex_fixer import LatexFixer
 from paper_kg.latex_toolchain import ILatexToolchain
-from paper_kg.llm_schemas import PaperIssueType, PaperReviewDefect
 from paper_kg.models import (
     Domain,
     NoveltyCheckResult,
@@ -38,13 +36,6 @@ from paper_kg.orchestrator import PaperDraftWriter
 from paper_kg.overleaf_project import build_overleaf_project
 from paper_kg.paper_plan_builder import build_paper_plan
 from paper_kg.paper_template import load_paper_template
-from paper_kg.paper_reviewers import (
-    PaperReviewResult,
-    PaperReviewerGroup,
-    aggregate_defects,
-    aggregate_reviews,
-    pick_fix_tricks_for_defects,
-)
 from paper_kg.section_writer import PaperSectionWriter
 from paper_kg.sampling import downweight_scores, select_patterns_diverse
 from paper_kg.workflow_report import PaperWorkflowReport
@@ -138,15 +129,7 @@ class PaperWorkflowStateData(TypedDict):
     novelty_report: Optional[NoveltyCheckResult]
 
     draft: Optional[StoryDraft]
-    reviews: List[PaperReviewResult]
-
-    defects_agg: List[PaperReviewDefect]
-    fix_tricks: List[Trick]
-
     plan_retry: int
-    rewrite_retry: int
-    global_retry: int
-    review_iterations: int
     draft_attempts: int
     warnings: List[str]
     status: str
@@ -155,8 +138,8 @@ class PaperWorkflowStateData(TypedDict):
 
 class PaperFeedbackLoopController:
     """
-    功能：论文链路 LangGraph 控制器（选套路→查重→蓝图→分章节→拼接→多审稿→回退/通过）。
-    参数：config、graph_store、vector_store、embedding_model、rng、input_parser、draft_writer、reviewer_group。
+    功能：论文链路 LangGraph 控制器（选套路→查重→蓝图→分章节→拼接→导出/编译）。
+    参数：config、graph_store、vector_store、embedding_model、rng、input_parser、draft_writer。
     返回：PaperWorkflowReport。
     流程：构建 LangGraph → invoke → 汇总 report。
     说明：该控制器不做 Router/意图识别，CLI 负责决定走论文链路。
@@ -171,7 +154,6 @@ class PaperFeedbackLoopController:
         rng: random.Random,
         input_parser: PaperInputParser,
         draft_writer: PaperDraftWriter,
-        reviewer_group: PaperReviewerGroup,
         section_llm: Optional[BaseChatModel] = None,
         citation_need_llm: Optional[BaseChatModel] = None,
         citation_llm: Optional[BaseChatModel] = None,
@@ -182,11 +164,10 @@ class PaperFeedbackLoopController:
         latex_renderer_agent: Optional[ILatexRendererAgent] = None,
         paper_template: Optional[PaperPlan] = None,
         latex_toolchain: Optional[ILatexToolchain] = None,
-        latex_fixer: Optional[LatexFixer] = None,
     ) -> None:
         """
         功能：初始化论文工作流控制器。
-        参数：同类属性 + section_llm + paper_template + latex_toolchain + latex_fixer。
+        参数：同类属性 + section_llm + paper_template + latex_toolchain。
         返回：无。
         流程：保存依赖 → 编译 LangGraph。
         说明：所有阈值与重试次数由 config 控制。
@@ -198,7 +179,6 @@ class PaperFeedbackLoopController:
         self.rng = rng
         self.input_parser = input_parser
         self.draft_writer = draft_writer
-        self.reviewer_group = reviewer_group
         self.section_llm = section_llm
         self.citation_llm = citation_need_llm or citation_llm
         self.citation_provider = citation_provider
@@ -209,7 +189,6 @@ class PaperFeedbackLoopController:
         self.latex_renderer_agent = latex_renderer_agent
         self.paper_template = paper_template
         self.latex_toolchain = latex_toolchain
-        self.latex_fixer = latex_fixer
         self.graph = self._build_graph()
 
     def init_state(self, user_input: str) -> PaperWorkflowStateData:
@@ -274,8 +253,6 @@ class PaperFeedbackLoopController:
         graph.add_node("render_latex", self._render_latex_node)
         graph.add_node("export_overleaf", self._export_overleaf_node)
         graph.add_node("compile_overleaf", self._compile_overleaf_node)
-        graph.add_node("review", self._review_node)
-        graph.add_node("decide", self._decide_node)
 
         graph.set_entry_point("parse_input")
         graph.add_edge("parse_input", "plan_from_kg")
@@ -303,7 +280,6 @@ class PaperFeedbackLoopController:
             "assemble_paper",
             self._post_assemble_route,
             {
-                "review": "review",
                 "complete": END,
                 "export_overleaf": "export_overleaf",
                 "extract_cite_candidates": "extract_cite_candidates",
@@ -335,20 +311,7 @@ class PaperFeedbackLoopController:
         graph.add_conditional_edges(
             "compile_overleaf",
             self._post_compile_route,
-            {"review": "review", "complete": END, "render_latex": "render_latex", "failed": END},
-        )
-        graph.add_edge("review", "decide")
-        graph.add_conditional_edges(
-            "decide",
-            self._decide_route,
-            {
-                "complete": END,
-                "failed": END,
-                "write_abstract": "write_abstract",
-                "write_method": "write_method",
-                "write_experiments": "write_experiments",
-                "plan_from_kg": "plan_from_kg",
-            },
+            {"complete": END, "render_latex": "render_latex", "failed": END},
         )
         return graph.compile()
 
@@ -408,13 +371,7 @@ class PaperFeedbackLoopController:
             "novelty_candidates": [],
             "novelty_report": None,
             "draft": None,
-            "reviews": [],
-            "defects_agg": [],
-            "fix_tricks": [],
             "plan_retry": 0,
-            "rewrite_retry": 0,
-            "global_retry": 0,
-            "review_iterations": 0,
             "draft_attempts": 0,
             "warnings": [],
             "status": "RUNNING",
@@ -430,16 +387,12 @@ class PaperFeedbackLoopController:
         说明：该值用于 graph.invoke 的 config，避免默认 25 过低导致提前失败。
         """
         base = 40
-        # 每次迭代可能触发：plan/novelty 循环 + write + review + decide
-        # 中文注释：新增分章节节点后，单次迭代的节点数明显增多，适度提高估算值。
-        per_iter = 16 + int(self.config.max_plan_retry) * 3
-        total = base + per_iter * (int(self.config.max_iterations) + 1)
-        # 额外覆盖 global/rewrite 重试的增量空间
-        total += 5 * (int(self.config.max_global_retry) + int(self.config.max_rewrite_retry))
-        # 中文注释：引用检索/降级与 LaTeX 格式自循环的额外空间。
+        # 中文注释：当前链路主要回路来自 novelty 与 citations/latex 修复。
+        total = base
+        total += 6 * (int(self.config.max_plan_retry) + 1)
         total += 4 * int(self.config.citations_max_rounds)
         total += 3 * int(self.config.latex_format_max_retries)
-        return max(80, total)
+        return max(60, total)
 
     def _build_report(self, state: PaperWorkflowStateData) -> PaperWorkflowReport:
         """
@@ -457,12 +410,8 @@ class PaperFeedbackLoopController:
             tricks=state.get("selected_tricks", []),
             novelty_report=state.get("novelty_report"),
             draft=state.get("draft"),
-            reviews=state.get("reviews", []),
             metrics={
                 "plan_retry": state.get("plan_retry", 0),
-                "rewrite_retry": state.get("rewrite_retry", 0),
-                "global_retry": state.get("global_retry", 0),
-                "review_iterations": state.get("review_iterations", 0),
                 "draft_attempts": state.get("draft_attempts", 0),
                 "sections_written": len(state.get("paper_sections", [])),
                 "paper_markdown_chars": len(state.get("paper_markdown", "") or ""),
@@ -517,23 +466,6 @@ class PaperFeedbackLoopController:
                 for pattern in candidates
             ]
 
-        # 中文注释：根据 defects_agg/fix_tricks 对候选分数进行轻量引导（只在回退后更有意义）。
-        fix_trick_ids = {trick.id for trick in state.get("fix_tricks", [])}
-        if fix_trick_ids:
-            boosted: List[float] = []
-            for pattern, score in zip(candidates, scores):
-                trick_nodes = self.graph_store.get_tricks_for_pattern(pattern.id)
-                trick_ids = {
-                    str(node.get("id") or node.get("node_id") or "")
-                    for node in trick_nodes
-                    if node.get("id") or node.get("node_id")
-                }
-                if trick_ids & fix_trick_ids:
-                    boosted.append(score * 1.25 + 0.05)
-                else:
-                    boosted.append(score)
-            scores = boosted
-
         selected = select_patterns_diverse(
             candidates=candidates,
             effectiveness_scores=scores,
@@ -557,7 +489,6 @@ class PaperFeedbackLoopController:
             "novelty_candidates": [],
             "novelty_report": None,
             "draft": None,
-            "reviews": [],
             "paper_plan": None,
             "paper_sections": [],
             "paper_markdown": "",
@@ -908,8 +839,6 @@ class PaperFeedbackLoopController:
             llm=self.section_llm,
             config=self.config,
             pattern_guides=state.get("pattern_guides", ""),
-            latex_toolchain=self.latex_toolchain,
-            latex_fixer=self.latex_fixer,
         )
         output = writer.write_section(
             plan=plan,
@@ -1002,12 +931,11 @@ class PaperFeedbackLoopController:
             "draft": draft,
             "rewrite_targets": [],
         }
-        # 中文注释：assemble 阶段只负责拼接内容；
-        # 若非 LaTeX 且 format_only_mode=true，可直接结束；
-        # 若为 LaTeX 模式，需进入导出/编译闸门。
-        if bool(self.config.format_only_mode) and str(self.config.output_format) != "latex":
+        if str(self.config.output_format) != "latex":
             updates["status"] = "PASS"
             updates["next_step"] = "complete"
+        # 中文注释：assemble 阶段只负责拼接内容；
+        # LaTeX 模式进入导出/编译闸门，非 LaTeX 直接完成。
         logger.info(
             "PAPER_ASSEMBLE_OK: sections=%s chars=%s",
             len(parts_md),
@@ -1021,23 +949,17 @@ class PaperFeedbackLoopController:
         参数：state。
         返回：下一节点名。
         说明：
-        - LaTeX 模式：进入 export_overleaf（随后 compile_overleaf）；
-        - 非 LaTeX：format_only_mode 可直接结束，否则进入 review。
+        - LaTeX 模式：进入引用抽取/渲染 → export_overleaf（随后 compile_overleaf）；
+        - 非 LaTeX：直接完成。
         """
         if str(self.config.output_format) == "latex":
-            if self.config.latex_generation_mode == "final_only":
-                if bool(self.config.citations_enable):
-                    logger.info("PAPER_ROUTE: assemble -> extract_cite_candidates (latex final_only)")
-                    return "extract_cite_candidates"
-                logger.info("PAPER_ROUTE: assemble -> render_latex (latex final_only)")
-                return "render_latex"
-            logger.info("PAPER_ROUTE: assemble -> export_overleaf (latex)")
-            return "export_overleaf"
-        if bool(self.config.format_only_mode):
-            logger.info("PAPER_ROUTE: assemble -> complete (format_only_mode, markdown)")
-            return "complete"
-        logger.info("PAPER_ROUTE: assemble -> review")
-        return "review"
+            if bool(self.config.citations_enable):
+                logger.info("PAPER_ROUTE: assemble -> extract_cite_candidates")
+                return "extract_cite_candidates"
+            logger.info("PAPER_ROUTE: assemble -> render_latex")
+            return "render_latex"
+        logger.info("PAPER_ROUTE: assemble -> complete")
+        return "complete"
 
     def _extract_cite_candidates_node(self, state: PaperWorkflowStateData) -> Dict:
         """
@@ -1127,7 +1049,6 @@ class PaperFeedbackLoopController:
             results = self.citation_retrieval_agent.retrieve(needs, candidates)
         else:
             provider = self.citation_provider or get_citation_provider(
-                str(self.config.citations_provider),
                 require_verifiable=bool(self.config.citations_require_verifiable),
             )
             for need in needs:
@@ -1361,7 +1282,7 @@ class PaperFeedbackLoopController:
         参数：state。
         返回：更新 latex_compile_report/draft。
         流程：根据配置调用 latex_toolchain.compile；可选跳过。
-        说明：format_only_mode 也必须执行格式闸门（除非显式关闭 require_tools）。
+        说明：仅在 latex_require_tools=false 且未提供 toolchain 时跳过。
         """
         logger.info("PAPER_COMPILE_LATEX_NODE_ENTER")
         project_dir = str(state.get("overleaf_project_dir") or "")
@@ -1380,23 +1301,12 @@ class PaperFeedbackLoopController:
             if draft is not None:
                 draft = draft.model_copy(update={"latex_compile_report": report})
             logger.info("PAPER_COMPILE_LATEX_SKIP: %s", report["reason"])
-            updates: Dict[str, object] = {"latex_compile_report": report, "draft": draft}
-            if bool(self.config.format_only_mode):
-                updates["status"] = "PASS"
-            updates["next_step"] = ""
-            return updates
-
-        if not bool(self.config.latex_final_compile):
-            report = {"ok": True, "skipped": True, "reason": "latex_final_compile=false，已跳过全量编译。"}
-            draft = state.get("draft")
-            if draft is not None:
-                draft = draft.model_copy(update={"latex_compile_report": report})
-            logger.info("PAPER_COMPILE_LATEX_SKIP: %s", report["reason"])
-            updates = {"latex_compile_report": report, "draft": draft}
-            if bool(self.config.format_only_mode):
-                updates["status"] = "PASS"
-            updates["next_step"] = ""
-            return updates
+            return {
+                "latex_compile_report": report,
+                "draft": draft,
+                "status": "PASS",
+                "next_step": "complete",
+            }
 
         logger.info("PAPER_COMPILE_LATEX_START: dir=%s engine=%s", project_dir, self.config.latex_engine)
         result = self.latex_toolchain.compile_project(
@@ -1413,9 +1323,8 @@ class PaperFeedbackLoopController:
         updates = {"latex_compile_report": report, "draft": draft}
         if result.ok:
             logger.info("PAPER_COMPILE_LATEX_OK")
-            if bool(self.config.format_only_mode):
-                updates["status"] = "PASS"
-            updates["next_step"] = ""
+            updates["status"] = "PASS"
+            updates["next_step"] = "complete"
             return updates
 
         logger.warning("PAPER_COMPILE_LATEX_FAIL: %s", report.get("log_excerpt", "")[:200])
@@ -1437,16 +1346,13 @@ class PaperFeedbackLoopController:
         功能：compile_overleaf 后的路由选择。
         参数：state。
         返回：下一节点名。
-        说明：format_only_mode=true 时直接结束，否则进入 review。
+        说明：默认进入 complete。
         """
         next_step = state.get("next_step") or ""
         if next_step:
             return str(next_step)
-        if bool(self.config.format_only_mode):
-            logger.info("PAPER_ROUTE: compile_overleaf -> complete (format_only_mode)")
-            return "complete"
-        logger.info("PAPER_ROUTE: compile_overleaf -> review")
-        return "review"
+        logger.info("PAPER_ROUTE: compile_overleaf -> complete")
+        return "complete"
 
     def _extract_latex_fix_targets(self, report: Dict[str, object]) -> Optional[Set[str]]:
         targets: Set[str] = set()
@@ -1487,124 +1393,6 @@ class PaperFeedbackLoopController:
         if "待补充正文" in todo_text or "Content pending" in todo_text:
             return True
         return False
-
-    def _review_node(self, state: PaperWorkflowStateData) -> Dict:
-        """
-        功能：多 Reviewer 评审节点。
-        参数：state。
-        返回：更新 reviews/review_iterations。
-        流程：reviewer_group.review → aggregate_reviews 打印 avg_score。
-        说明：评审输出将驱动下一步回退决策。
-        """
-        draft = state.get("draft")
-        if draft is None:
-            raise ValueError("Draft must exist before review")
-
-        reviews = self.reviewer_group.review(draft)
-        avg_score, _pass_check, _issue = aggregate_reviews(
-            reviews, pass_threshold=float(self.config.pass_threshold), require_individual_threshold=bool(self.config.require_individual_threshold)
-        )
-        iterations = state.get("review_iterations", 0) + 1
-        logger.info("PAPER_REVIEW: avg_score=%.2f", avg_score)
-        return {"reviews": reviews, "review_iterations": iterations}
-
-    def _decide_node(self, state: PaperWorkflowStateData) -> Dict:
-        """
-        功能：根据评审结果做通过/回退/失败决策。
-        参数：state。
-        返回：更新 status/next_step 与各类 retry 计数，以及 defects_agg/fix_tricks。
-        流程：
-        - PASS：结束；
-        - CLARITY_ISSUE：回退重写 Abstract/Introduction；
-        - SOUNDNESS_RISK：回退重写 Method/Experiments；
-        - SIGNIFICANCE_LOW：回退重写 Experiments/Conclusion；
-        - NOVELTY_LOW：回退 plan_from_kg；
-        - 超过 max_iterations 则失败。
-        说明：缺陷修复动作通过 KG 的 Defect->fixed_by 边查得（fix_tricks）。
-        """
-        reviews = state.get("reviews", [])
-        avg_score, pass_check, main_issue = aggregate_reviews(
-            reviews,
-            pass_threshold=float(self.config.pass_threshold),
-            require_individual_threshold=bool(self.config.require_individual_threshold),
-        )
-
-        updates: Dict = {"next_step": ""}
-
-        if pass_check:
-            updates["status"] = "PASS"
-            updates["next_step"] = "complete"
-            return updates
-
-        # 中文注释：达到最大迭代次数直接失败，避免无限循环。
-        if state.get("review_iterations", 0) >= int(self.config.max_iterations):
-            updates["status"] = "FAILED"
-            updates["next_step"] = "failed"
-            return updates
-
-        defects = aggregate_defects(reviews)
-        fix_tricks = pick_fix_tricks_for_defects(defects, self.graph_store, top_k_per_defect=2)
-        updates["defects_agg"] = defects
-        updates["fix_tricks"] = fix_tricks
-
-        # 中文注释：若 avg_score 低但 main_issue 仍为 PASS，默认当作“表达问题”处理，回退改稿。
-        if main_issue == "PASS" and avg_score < float(self.config.pass_threshold):
-            main_issue = "CLARITY_ISSUE"
-
-        if main_issue in {"CLARITY_ISSUE", "SOUNDNESS_RISK", "SIGNIFICANCE_LOW"}:
-            rewrite_retry = state.get("rewrite_retry", 0) + 1
-            updates["rewrite_retry"] = rewrite_retry
-            if rewrite_retry > int(self.config.max_rewrite_retry):
-                updates["status"] = "FAILED"
-                updates["next_step"] = "failed"
-                return updates
-
-            if main_issue == "CLARITY_ISSUE":
-                updates["rewrite_targets"] = ["abstract", "introduction"]
-                updates["next_step"] = "write_abstract"
-            elif main_issue == "SOUNDNESS_RISK":
-                updates["rewrite_targets"] = ["method", "experiments"]
-                updates["next_step"] = "write_method"
-            else:
-                updates["rewrite_targets"] = ["experiments", "conclusion"]
-                updates["next_step"] = "write_experiments"
-            return updates
-
-        # 中文注释：NOVELTY 仍回退到 plan。
-        global_retry = state.get("global_retry", 0) + 1
-        updates["global_retry"] = global_retry
-        if global_retry > int(self.config.max_global_retry):
-            updates["status"] = "FAILED"
-            updates["next_step"] = "failed"
-            return updates
-
-        # 中文注释：回退 plan 时，清空改稿计数，并重置 plan_retry（重新开始 novelty 降权循环）。
-        updates["rewrite_retry"] = 0
-        updates["plan_retry"] = 0
-        updates["candidate_pattern_scores"] = []
-        updates["next_step"] = "plan_from_kg"
-        return updates
-
-    def _decide_route(self, state: PaperWorkflowStateData) -> str:
-        """
-        功能：把 decide 节点给出的 next_step 映射到 LangGraph 边。
-        参数：state。
-        返回：节点名或 END。
-        流程：读取 next_step → 返回对应 key。
-        说明：complete/failed 会终止工作流。
-        """
-        step = state.get("next_step", "")
-        if step in {
-            "complete",
-            "failed",
-            "write_abstract",
-            "write_method",
-            "write_experiments",
-            "plan_from_kg",
-        }:
-            return step
-        return "failed"
-
 
 def _find_section_plan(plan: PaperPlan, section_id: str) -> Optional[PaperSectionPlan]:
     """

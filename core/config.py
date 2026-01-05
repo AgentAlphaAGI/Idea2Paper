@@ -40,9 +40,6 @@ class PaperWorkflowConfig:
     novelty_threshold: float = 0.85
     # 中文注释：测试模式下可强制跳过查重（默认 True，便于端到端跑通）
     force_novelty_pass: bool = False
-    pass_threshold: float = 1.0
-    # 中文注释：质量控制开关（跳过 reviewers 与内容自检，但不删除逻辑）
-    format_only_mode: bool = False
     # 中文注释：查重开关（跳过 embedding 构建与 novelty 检索/判定）
     skip_novelty_check: bool = False
     # 中文注释：输出格式，可选 markdown/latex。
@@ -76,23 +73,13 @@ class PaperWorkflowConfig:
     latex_mslink: str = "https://modelscope.cn/organization/qwen"
     latex_ghlink: str = "https://github.com/QwenLM/Qwen3"
     latex_template_assets_dir: str = "arXiv-2505.09388v1"
-    # 中文注释：LaTeX 生成模式：per_section=逐章生成；final_only=最终统一转换。
-    latex_generation_mode: str = "final_only"
-    # 中文注释：LaTeX 渲染器后端：pandoc/llm。
-    latex_renderer_backend: str = "pandoc"
     # 中文注释：Pandoc 可执行文件路径（可被环境变量覆盖）。
     pandoc_bin: str = "pandoc"
-    # 中文注释：Pandoc 缺失时是否直接失败。
-    pandoc_require: bool = True
-    max_iterations: int = 3
-    max_rewrite_retry: int = 2
-    max_global_retry: int = 2
     max_plan_retry: int = 3
     max_patterns: int = 3
     temperature: float = 0.8
     retriever_top_k: int = 10
     penalty: float = 0.3
-    require_individual_threshold: bool = False
     writing_guide_limit_chars: int = 2000
     writing_guide_max_guides: int = 3
     section_max_retries: int = 2
@@ -102,15 +89,8 @@ class PaperWorkflowConfig:
     # 中文注释：LaTeX 工具链参数（格式保证专用，不属于内容质量开关）
     latex_engine: str = "xelatex"
     latex_require_tools: bool = True
-    latex_section_compile: bool = True
-    latex_final_compile: bool = True
-    latex_use_chktex: bool = True
-    latex_use_lacheck: bool = True
     latex_compile_timeout_sec: int = 120
-    latex_max_fix_retries: int = 8
     latex_output_dir: str = "./outputs/overleaf"
-    # 中文注释：引用 key 强制规范化为 TODO_ 前缀
-    latex_force_todo_cite: bool = True
     # 中文注释：最终 LaTeX 格式修复重试次数（仅 final_only 流程）
     latex_format_max_retries: int = 3
     # 中文注释：Markdown 质量硬校验开关（质量优先模式下启用）。
@@ -119,18 +99,11 @@ class PaperWorkflowConfig:
     section_min_word_ratio: float = 0.6
     # 中文注释：Markdown 质量不足时的额外重试次数。
     section_min_quality_max_retries: int = 1
-    # 中文注释：章节覆盖验收器配置（llm/rule/off）。
-    coverage_enable: bool = True
-    coverage_validator_backend: str = "llm"
-    coverage_validator_max_retries: int = 2
-    coverage_validator_require_evidence: bool = True
     # 中文注释：质量优先失败即中止。
     quality_fail_fast: bool = False
     # 中文注释：真实引用链路开关与策略
     citations_enable: bool = True
     citations_require_verifiable: bool = True
-    citations_require_api_key: bool = False
-    citations_provider: str = "semantic_scholar"
     citations_year_range: str = "2018-2026"
     citations_max_rounds: int = 3
     # 中文注释：Pandoc 渲染一致性阈值与失败策略
@@ -217,12 +190,6 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         skip_novelty_check=bool(
             paper_data.get("skip_novelty_check", PaperWorkflowConfig.skip_novelty_check)
         ),
-        format_only_mode=bool(
-            paper_data.get("format_only_mode", PaperWorkflowConfig.format_only_mode)
-        ),
-        pass_threshold=float(
-            paper_data.get("pass_threshold", PaperWorkflowConfig.pass_threshold)
-        ),
         output_format=str(
             paper_data.get("output_format", PaperWorkflowConfig.output_format)
         ),
@@ -296,38 +263,12 @@ def load_config(path: Optional[str] = None) -> AppConfig:
                 "latex_template_assets_dir", PaperWorkflowConfig.latex_template_assets_dir
             )
         ),
-        latex_generation_mode=str(
-            paper_data.get("latex_generation_mode", PaperWorkflowConfig.latex_generation_mode)
-        ),
-        latex_renderer_backend=str(
-            paper_data.get(
-                "latex_renderer_backend", PaperWorkflowConfig.latex_renderer_backend
-            )
-        ),
         pandoc_bin=pandoc_bin,
-        pandoc_require=bool(
-            paper_data.get("pandoc_require", PaperWorkflowConfig.pandoc_require)
-        ),
-        max_iterations=int(
-            paper_data.get("max_iterations", PaperWorkflowConfig.max_iterations)
-        ),
-        max_rewrite_retry=int(
-            paper_data.get("max_rewrite_retry", PaperWorkflowConfig.max_rewrite_retry)
-        ),
-        max_global_retry=int(
-            paper_data.get("max_global_retry", PaperWorkflowConfig.max_global_retry)
-        ),
         max_plan_retry=int(paper_data.get("max_plan_retry", PaperWorkflowConfig.max_plan_retry)),
         max_patterns=int(paper_data.get("max_patterns", PaperWorkflowConfig.max_patterns)),
         temperature=float(paper_data.get("temperature", PaperWorkflowConfig.temperature)),
         retriever_top_k=int(paper_data.get("retriever_top_k", PaperWorkflowConfig.retriever_top_k)),
         penalty=float(paper_data.get("penalty", PaperWorkflowConfig.penalty)),
-        require_individual_threshold=bool(
-            paper_data.get(
-                "require_individual_threshold",
-                PaperWorkflowConfig.require_individual_threshold,
-            )
-        ),
         writing_guide_limit_chars=int(
             paper_data.get(
                 "writing_guide_limit_chars",
@@ -367,44 +308,14 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         latex_require_tools=bool(
             paper_data.get("latex_require_tools", PaperWorkflowConfig.latex_require_tools)
         ),
-        latex_section_compile=bool(
-            paper_data.get(
-                "latex_section_compile",
-                PaperWorkflowConfig.latex_section_compile,
-            )
-        ),
-        latex_final_compile=bool(
-            paper_data.get(
-                "latex_final_compile",
-                PaperWorkflowConfig.latex_final_compile,
-            )
-        ),
-        latex_use_chktex=bool(
-            paper_data.get("latex_use_chktex", PaperWorkflowConfig.latex_use_chktex)
-        ),
-        latex_use_lacheck=bool(
-            paper_data.get("latex_use_lacheck", PaperWorkflowConfig.latex_use_lacheck)
-        ),
         latex_compile_timeout_sec=int(
             paper_data.get(
                 "latex_compile_timeout_sec",
                 PaperWorkflowConfig.latex_compile_timeout_sec,
             )
         ),
-        latex_max_fix_retries=int(
-            paper_data.get(
-                "latex_max_fix_retries",
-                PaperWorkflowConfig.latex_max_fix_retries,
-            )
-        ),
         latex_output_dir=str(
             paper_data.get("latex_output_dir", PaperWorkflowConfig.latex_output_dir)
-        ),
-        latex_force_todo_cite=bool(
-            paper_data.get(
-                "latex_force_todo_cite",
-                PaperWorkflowConfig.latex_force_todo_cite,
-            )
         ),
         latex_format_max_retries=int(
             paper_data.get(
@@ -429,30 +340,6 @@ def load_config(path: Optional[str] = None) -> AppConfig:
                 PaperWorkflowConfig.section_min_quality_max_retries,
             )
         ),
-        coverage_enable=bool(
-            paper_data.get(
-                "coverage_enable",
-                PaperWorkflowConfig.coverage_enable,
-            )
-        ),
-        coverage_validator_backend=str(
-            paper_data.get(
-                "coverage_validator_backend",
-                PaperWorkflowConfig.coverage_validator_backend,
-            )
-        ),
-        coverage_validator_max_retries=int(
-            paper_data.get(
-                "coverage_validator_max_retries",
-                PaperWorkflowConfig.coverage_validator_max_retries,
-            )
-        ),
-        coverage_validator_require_evidence=bool(
-            paper_data.get(
-                "coverage_validator_require_evidence",
-                PaperWorkflowConfig.coverage_validator_require_evidence,
-            )
-        ),
         quality_fail_fast=bool(
             paper_data.get(
                 "quality_fail_fast",
@@ -466,15 +353,6 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             paper_data.get(
                 "citations_require_verifiable", PaperWorkflowConfig.citations_require_verifiable,
             )
-        ),
-        citations_require_api_key=bool(
-            paper_data.get(
-                "citations_require_api_key",
-                PaperWorkflowConfig.citations_require_api_key,
-            )
-        ),
-        citations_provider=str(
-            paper_data.get("citations_provider", PaperWorkflowConfig.citations_provider)
         ),
         citations_year_range=str(
             paper_data.get("citations_year_range", PaperWorkflowConfig.citations_year_range)
@@ -523,17 +401,11 @@ def config_to_dict(config: AppConfig) -> Dict[str, Any]:
             "novelty_threshold": config.paper_workflow.novelty_threshold,
             "force_novelty_pass": config.paper_workflow.force_novelty_pass,
             "skip_novelty_check": config.paper_workflow.skip_novelty_check,
-            "format_only_mode": config.paper_workflow.format_only_mode,
-            "pass_threshold": config.paper_workflow.pass_threshold,
-            "max_iterations": config.paper_workflow.max_iterations,
-            "max_rewrite_retry": config.paper_workflow.max_rewrite_retry,
-            "max_global_retry": config.paper_workflow.max_global_retry,
             "max_plan_retry": config.paper_workflow.max_plan_retry,
             "max_patterns": config.paper_workflow.max_patterns,
             "temperature": config.paper_workflow.temperature,
             "retriever_top_k": config.paper_workflow.retriever_top_k,
             "penalty": config.paper_workflow.penalty,
-            "require_individual_threshold": config.paper_workflow.require_individual_threshold,
             "writing_guide_limit_chars": config.paper_workflow.writing_guide_limit_chars,
             "writing_guide_max_guides": config.paper_workflow.writing_guide_max_guides,
             "section_max_retries": config.paper_workflow.section_max_retries,
@@ -560,33 +432,18 @@ def config_to_dict(config: AppConfig) -> Dict[str, Any]:
             "latex_mslink": config.paper_workflow.latex_mslink,
             "latex_ghlink": config.paper_workflow.latex_ghlink,
             "latex_template_assets_dir": config.paper_workflow.latex_template_assets_dir,
-            "latex_generation_mode": config.paper_workflow.latex_generation_mode,
-            "latex_renderer_backend": config.paper_workflow.latex_renderer_backend,
             "pandoc_bin": config.paper_workflow.pandoc_bin,
-            "pandoc_require": config.paper_workflow.pandoc_require,
             "latex_engine": config.paper_workflow.latex_engine,
             "latex_require_tools": config.paper_workflow.latex_require_tools,
-            "latex_section_compile": config.paper_workflow.latex_section_compile,
-            "latex_final_compile": config.paper_workflow.latex_final_compile,
-            "latex_use_chktex": config.paper_workflow.latex_use_chktex,
-            "latex_use_lacheck": config.paper_workflow.latex_use_lacheck,
             "latex_compile_timeout_sec": config.paper_workflow.latex_compile_timeout_sec,
-            "latex_max_fix_retries": config.paper_workflow.latex_max_fix_retries,
             "latex_output_dir": config.paper_workflow.latex_output_dir,
-            "latex_force_todo_cite": config.paper_workflow.latex_force_todo_cite,
             "latex_format_max_retries": config.paper_workflow.latex_format_max_retries,
             "strict_markdown_validation": config.paper_workflow.strict_markdown_validation,
             "section_min_word_ratio": config.paper_workflow.section_min_word_ratio,
             "section_min_quality_max_retries": config.paper_workflow.section_min_quality_max_retries,
-            "coverage_enable": config.paper_workflow.coverage_enable,
-            "coverage_validator_backend": config.paper_workflow.coverage_validator_backend,
-            "coverage_validator_max_retries": config.paper_workflow.coverage_validator_max_retries,
-            "coverage_validator_require_evidence": config.paper_workflow.coverage_validator_require_evidence,
             "quality_fail_fast": config.paper_workflow.quality_fail_fast,
             "citations_enable": config.paper_workflow.citations_enable,
             "citations_require_verifiable": config.paper_workflow.citations_require_verifiable,
-            "citations_require_api_key": config.paper_workflow.citations_require_api_key,
-            "citations_provider": config.paper_workflow.citations_provider,
             "citations_year_range": config.paper_workflow.citations_year_range,
             "citations_max_rounds": config.paper_workflow.citations_max_rounds,
             "pandoc_consistency_threshold": config.paper_workflow.pandoc_consistency_threshold,
