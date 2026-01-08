@@ -1,0 +1,636 @@
+{
+  "name" : "ARR_2022_273_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Generated Knowledge Prompting for Commonsense Reasoning",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "It remains an open research question whether external knowledge is needed for commonsense reasoning. On one hand, a substantial body of prior work has reported that integrating external knowledge can help improve task performance (Mitra et al., 2019; Bian et al., 2021, inter alia), especially if the knowledge is high quality (e.g. hand-crafted by experts). On the other hand, recent leaderboards are often dominated by large-scale pretrained models that are fine-tuned on a target benchmark (Khashabi et al., 2020; Lourie et al., 2021), suggesting that the benefits of external knowledge may wash away as the underlying models increase in size and are pretrained on ever larger amounts of raw text.\nEven if external knowledge is found to be effective on a particular task, flexibility remains a fundamental hurdle to integrating external knowl-\nedge, as many benchmarks currently lack appropriate knowledge bases with sufficient coverage. Furthermore, prior methods often require task-specific, custom supervision for knowledge integration (Mitra et al., 2019; Chang et al., 2020), introducing a burden for rapidly adapting new pretrained models to a wide variety of tasks.\nIn this paper, we investigate whether external knowledge can be helpful for commonsense reasoning, even on top of the largest state-of-the-art pretrained models (e.g. T5-11b (Raffel et al., 2019) and its variants), with a focus on four recent commonsense benchmarks. To facilitate easier adaptation with any zero-shot or finetuned models, we propose an approach that does not require access to a structured knowledge base or joint finetuning for knowledge integration.\nThe key insight behind our method, Generated Knowledge Prompting (sketched in Figure 1), is that we can generate useful knowledge from a language model, then provide the knowledge as an input prompt that is concatenated with a question. To\nsupport a variety of settings without finetuning, the quality and flexibility of knowledge is crucial. We propose a simple, yet effective, method that elicits knowledge statements (i.e. knowledge expressed as natural language statements) from generic language models in a few-shot setting. Compared to prior work that elicits knowledge via clarification questions (Shwartz et al., 2020) or contrastive explanations (Paranjape et al., 2021), our approach can generate knowledge flexibly, beyond the scope of pre-defined templates (Table 1).\nExperiments show that our method improves both zero-shot and finetuned models on numerical commonsense (NumerSense (Lin et al., 2020)), general commonsense (CommonsenseQA (Talmor et al., 2019), CommonsenseQA 2.0 (Talmor et al., 2021)), and scientific commonsense (QASC (Khot et al., 2020)) benchmarks, setting a new state-ofthe-art on three of these datasets. It outperforms the template-based knowledge generation method self-talk (Shwartz et al., 2020), while performing comparably to retrieval-based systems.\nWe find three factors contribute to the performance of generated knowledge prompting: (i) the quality of knowledge, (ii) the quantity of knowledge where the performance improves with more knowledge statements, and (iii) the strategy for integrating knowledge during inference. Our qualitative analysis suggests that the generated knowledge statements cover a variety of types, and can transform commonsense question answering to explicit reasoning procedures, e.g. deduction, that are supported by off-the-shelf and finetuned language models."
+    }, {
+      "heading" : "2 Generated Knowledge Prompting",
+      "text" : "A multiple-choice commonsense reasoning task involves predicting an answer a ∈ Aq given a ques-\ntion q ∈ Q, where the set of choices Aq is finite and can vary by question, and both questions and answers are variable-length text sequences. Our method answers commonsense questions in two steps.\nThe first step is knowledge generation, where we use a language model pG(k|q) to generate knowledge statements conditioned on the question:\nKq = {km : km ∼ pG(k|q),m = 1 . . .M},\nwhere each knowledge statement km is a variablelength text sequence. Intuitively, each statement contains information that is helpful for answering the question (e.g. Table 1).\nThe second step is knowledge integration, where generated knowledge is integrated into the decision process of a language model used for inference,\nâ = argmax a∈Aq\npI(a|q,Kq)\nIn contrast, the vanilla setting of using the inference model without knowledge is represented by â = argmaxa∈Aq pI(a|q).\nNext, we describe the knowledge generation and integration steps in detail."
+    }, {
+      "heading" : "2.1 Knowledge Generation",
+      "text" : "We generate question-related knowledge statements by prompting a language model. The prompt consists of an instruction, a few demonstrations that are fixed for each task, and a new-question placeholder. The demonstrations are human-written, and each consists of a question in the style of the task and a knowledge statement that is helpful for answering this question. For a given task, we write five demonstrations using the format in Table 2.\nWe write questions (or select them from the training set, when available) that are representative of\nchallenges posed by the task (e.g. numerical commonsense, scientific commonsense). We pair each question with a knowledge statement that turns the commonsense problem posed by the question into an explicit reasoning procedure, without directly answering the question. For example, the knowledge statement Birds have two wings. Penguin is a kind of bird. is helpful for the question Penguins have <mask> wings, because it turns the problem into deductive reasoning. Meanwhile, Penguins have two wings. would be a poor knowledge statement to demonstrate according to our guideline.\nWhen generating knowledge for a new question q, we plug the question into the placeholder, and repeatedly sample generated continuations of this prompt to obtain a set of knowledge statements Kq = {k1, k2, . . . , kM}. For full prompts on all the tasks we evaluate on, see Appendix A.2."
+    }, {
+      "heading" : "2.2 Knowledge Integration via Prompting",
+      "text" : "In the knowledge integration step, we use a language model – called the inference model – to make predictions with each generated knowledge statement, then select the highest-confidence prediction. Specifically, we use each knowledge statement to prompt the model, forming M knowledgeaugmented questions:\nq0 = q, q1 = [k1||q], . . . , qM = [kM ||q]\nwhere [·||·] denotes text concatenation. We compute an aggregated score for each answer choice a using the augmented question that best supports it under the inference model:\npI(a|q,Kq) ∝ max 0≤m≤M pI(a|qm). (1)\nIntuitively, this favors knowledge statements that strongly support one of the choices.\nThe predicted answer is then,\nâ = argmax a∈Aq max 0≤m≤M\npI(a|qm),\nwhich is the choice that gets most support from one of the knowledge statements. This prediction uses a single knowledge statement, which we refer to as the selected knowledge:\nk̂ = km̂ where m̂ = argmax 0≤m≤M max a∈Aq pI(a|qm).\nThe inference model may be any existing language model taken off-the-shelf (i.e. zero-shot) or finetuned on the task. We do not do any further finetuning with knowledge prompting."
+    }, {
+      "heading" : "3 Experimental Setup",
+      "text" : "Here, we describe the implementation details of our method and how they are adapted to each task.\nFor knowledge generation, we use GPT-3 (Brown et al., 2020) as the underlying language model, where our few-shot prompting method is most effective. We generate M = 20 knowledge statements for each question with nucleus sampling p = 0.5 (Holtzman et al., 2019), and discard repetitions and empty strings. Generation is terminated when it exceeds 64 tokens or hits the \\n token.1\nFor inference, we use off-the-shelf T5 (Raffel et al., 2019) and GPT-3, as well as finetuned models that are state-of-the-art on each dataset, including UnifiedQA (UQA) (Khashabi et al., 2020) and Unicorn (Lourie et al., 2021). See details in the task setup below."
+    }, {
+      "heading" : "3.1 Datasets and Task Setup",
+      "text" : "We evaluate our method on four commonsense reasoning datasets which cover a variety of challenges and problem formats.\n1An exception is with the CSQA2 dataset, where for the best results we choose M = 5 and allow for up to 128 tokens in each generation.\nNumerSense (Lin et al., 2020) consists of numerical statements about common objects and concepts where for each sentence we need to recover a masked number word. The choices are integers ranging from zero to ten, plus the word no, so the task can be framed as a multiple-choice problem. Since NumerSense is a diagnostic dataset, we only use zero-shot inference models, which is the current SOTA. We follow Zhang (2021) who uses the state-of-the-art zero-shot T5 with text-infilling setup and select the choice with highest likelihood on its token(s). We also implement zero-shot GPT3 inference, where we plug in each choice to the question and compute the choice probability as the generative probability of the entire sentence, normalized over all the choices. CommonsenseQA (CSQA) (Talmor et al., 2019) is a 5-way multiple-choice QA dataset about common world scenarios. We do inference with the zero-shot and finetuned T5 models. For zero-shot T5, we format the question as text-infilling, and predict the choice with highest sequence-to-sequence language modeling probability. For finetuned T5 (including UnifiedQA which is SOTA), we use the same setup as Khashabi et al. (2020). CommonsenseQA 2.0 (CSQA2) (Talmor et al., 2021) is a binary classification dataset where we need to judge whether commonsense statements are true or false. We only do inference with the finetuned model, due to poor calibration of zero-shot models on this dataset. We use finetuned Unicorn (Lourie et al., 2021), which is the current SOTA, following the setup in Talmor et al. (2021). QASC (Khot et al., 2020) is an 8-way multiplechoice QA dataset about grade school science. This dataset also includes two pieces of background knowledge per question, whose composition fully answers the question. We do inference with zeroshot T5 and finetuned T5 (including UnifiedQA which is SOTA), using the same setups as CSQA."
+    }, {
+      "heading" : "3.2 Knowledge Generation Baselines",
+      "text" : "We study the impact of our knowledge generation method (shorthanded as K) by comparing with the following baselines: No knowledge (∅) We refer to inference without any knowledge statements as the vanilla baseline. Random sentences (R) Sampling random sentences from the language model without conditioning on the question. We use the same implementation setup as our knowledge generation method (i.e.\nalso using GPT-3, with the same hyperparameters). Context sentences (C) Sampling sentences from the context of the question. This is implemented by sampling text continuations of the question from the language model. We use the same implementation setup as our knowledge generation method. Template-generated knowledge (T ) Self-talk (Shwartz et al., 2020) uses manually-designed templates to elicit knowledge statements from language models. For fair comparison, we use GPT-3 as the knowledge generator in self-talk, and bound the number of generations to M = 20 per question. Templates and other hyperparameters are kept the same as their original paper. Retrieval-based knowledge (IR) Instead of being generated, knowledge can be retrieved from appropriate sources. We consider the following retrieval-based methods. For NumerSense, knowledge is retrieved from sentences in Wikipedia and GenericsKB. For CSQA2, we use snippets returned by Google when querying the question. For QASC, we use the associated fact sentences that are used to create each question."
+    }, {
+      "heading" : "4 Experimental Results",
+      "text" : "As we will show, our generated knowledge prompting method sets new state-of-the-art results on most datasets we evaluate on, and works well under both zero-shot and finetuned settings. In particular, our knowledge generation outperforms naive baselines as well as template-based knowledge generation, and is on-par with retrieval-based systems."
+    }, {
+      "heading" : "4.1 Overall Performance",
+      "text" : "Table 3 shows the results on zero-shot and finetuned models following our task setups.\nNew state-of-the-art. We apply our method on top of the same inference model used in the previous state-of-the-art. On NumerSense, we achieve a 6% (66.18→ 72.47) improvement over the previous best method based on the zero-shot T5 model. The previous state-of-the-art among non-retrieval methods on CSQA2 is based on the finetuned Unicorn model, upon which we improve by 2% (70.2 → 73.03). For QASC, the previous best is based on the finetuned UnifiedQA model, upon which we improve by 3% (76.74→ 80.33). Zero-shot settings. Columns A, B1, and D1 in Table 3 show that our method substantially improves zero-shot inference models, by 7% to\n10% across NumerSense (64.05→ 72.47), CSQA (39.89→ 47.26), and QASC (44.89→ 55.00). Finetuned settings. Columns B2, C, and D2 in Table 3 indicate that our method consistently improves upon the vanilla baseline set by finetuned inference models (though by smaller margins than in the zero-shot settings)."
+    }, {
+      "heading" : "4.2 Knowledge Generation Methods",
+      "text" : "Table 3 reports the performance with different knowledge generation baselines. Generally, random sentences barely help and even hurt the inference model, whereas context sentences of the question provide some gain. In contrast, knowledge generated by our method consistently leads to substantial performance improvements, which implies that our knowledge is of high quality. Our knowledge outperform template generated knowledge. We compare our knowledge generation method with the template-based self-talk on the CSQA dev set. (CSQA is the only task we experiment with that has self-talk templates available.) Our method leads to a larger improvement over the T5-11b baseline than self-talk (by 1.89%), showing that it is better at eliciting helpful knowledge from models. Our knowledge is comparable with retrievalbased knowledge. On NumerSense, the retrieved knowledge only improves inference performance by 0.18% on test-core and 1.02% on test-all, while our method further outperforms it by 8.83% and 7.37%, respectively. This shows\nthat knowledge retrieved from a loosely-related knowledge base can be far less useful than our generated knowledge. On CSQA2, although we are not able to beat the web-retrieved knowledge, our method still bridges the performance gap without referring to Google search. For QASC, the “retrieved” knowledge is actually gold knowledge from a knowledge base that was used to construct the dataset. As a result, our generated knowledge falls significantly short of the retrieved knowledge. In summary, our generated knowledge is roughly comparable with retrieved knowledge in terms of downstream performance, and is most valuable when there is no appropriate in-domain knowledge base to retrieve from."
+    }, {
+      "heading" : "4.3 Analysis Better performance with more knowledge.",
+      "text" : "We analyze the impact of the number of generated knowledge statements, M , and show the results in Figure 2. Generally, the performance increases\nwith the quantity of knowledge statements. It saturates at M = 20 and begins to decline when more knowledge statements are introduced, which may be because more noisy knowledge is generated. The knowledge integration method. In addition to the knowledge integration method described in §2.2, we experiment with two alternatives: Mixture-of-Experts (MoE) and Product-of-Experts (PoE) (Hinton, 2002). These make the following modifications to Equation 1, respectively:\nMoE: pI(a|q,Kq) ∝ ∑\n0≤m≤M pI(a|qm), (2)\nPoE: pI(a|q,Kq) ∝ ∏\n0≤m≤M pI(a|qm). (3)\nThe results in Table 4 indicate that our knowledge integration method – i.e. adaptively choosing the best knowledge to rely on – is best among the three. Lightweight models and amplification. We found that the size of inference model affects the magnitude of improvement. Figure 3 shows the NumerSense performance gain on top of different sizes of inference model. As we use smaller inference models, the performance gain increases drastically. In particular, with our method the smallest T5 model is as powerful as the T5-3b baseline, and T5-large outperforms the GPT-3 baseline. This indicates that model-generated knowledge can enable high performing, yet lightweight, inference models. Furthermore, the improvement does not\ndiminish as the inference model becomes as big as the knowledge generation model, as the inference by GPT-3 can benefit by 9.0% from the knowledge elicited from itself. This indicates that our method can somewhat amplify the useful knowledge already possessed by the model, leading to better predictions."
+    }, {
+      "heading" : "4.4 Human Evaluation",
+      "text" : "We conduct a human evaluation on NumerSense and QASC to study the quality of generated knowledge and the interpretability of its impact on task performance.\nEvaluation. We report the quality of knowledge statements along four axes: (1) Grammaticality: whether it is grammatical; (2) Relevance: whether it is relevant to the topic or concepts mentioned on the question; (3) Factuality: whether it is (mostly) factually correct; and (4) Helpfulness: whether it helps answering the question in an either direct or indirect way, and may fall into one of the three categories: helpful (i.e. supports the correct answer), harmful (i.e. negates the correct answer or supports an incorrect answer), or neutral (neither helpful nor harmful). These metrics are adapted from Shwartz et al. (2020) and are defined in Appendix A.3.\nFrom each dataset, we sample up to 50 selected knowledge (§2.2) that change the correctness of T5-11b’s prediction (i.e. rectifies model prediction from wrong to right, or misleads model prediction from right to wrong). The knowledge are labeled by two NLP experts and a moderate level of agreement was reached (Fleiss Kappa κ = 0.57 (Landis and Koch, 1977)). To ensure objectivity, it is not revealed to the annotators whether the knowledge rectifies or misleads the model prediction.\nResults. Figure 4 summarizes the results. The vast majority of selected knowledge are grammatical and relevant to the question, and 83% of them are factually correct. 72% are seen as being helpful for answering the question according the human evaluators, whereas 13% are harmful. Out of the knowledge statements that rectify the model predictions, 93% are labeled as helpful by the human evaluators; in contrast, when the knowledge statement misleads the model, only 21% are labeled as helpful, and 39% harmful. Of the knowledge deemed helpful by human and rectifies model prediction, 95% are factual, while of those deemed harmful by human and misleads model prediction, 86% are non-factual, suggesting that improving\nknowledge factuality is a promising path towards more helpful knowledge. We also analyzed the nonselected knowledge and found that these statements have slightly lower factuality and helpfulness than the selected knowledge."
+    }, {
+      "heading" : "4.5 Qualitative Examples",
+      "text" : "Table 5 shows a few examples where the generated knowledge rectifies model prediction. Due to space constraints we only show the selected knowledge (§2.2) for each question. In all examples, the model without prompted knowledge assigns a higher score to an incorrect answer than the correct answer, while with knowledge prompting, the correct answer is assigned a much higher score. Prompting with generated knowledge can transform commonsense reasoning into explicit reasoning procedures such as paraphrasing, induction, deduction, analogy, abductive reasoning, logical elimination, negation, and numerical reasoning."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Knowledge can be elicited from pretrained language models. Numerous works have shown that pretrained language models implicitly contain large a amount of knowledge that can be queried via conditional generation (Davison et al., 2019; Petroni et al., 2019; Jiang et al., 2020). Consequently, these models can directly perform inference on tasks like commonsense reasoning (Trinh and Le, 2018; Yang et al., 2020), text classification (Shin et al., 2020; Puri and Catanzaro, 2019), and natural language inference (Shin et al., 2020; Schick and Schütze, 2021). Inspired by these observations, we elicit question-related knowledge in an explicit form from language models and use them to guide the inference.\nLeveraging external knowledge for commonsense reasoning. Some work uses external commonsense knowledge bases to make improvements on various NLP tasks, including commonsense reasoning. One approach is to inject commonsense knowledge into language models, either by pretraining on knowledge bases (Ma et al., 2021; Chang et al., 2020; Mitra et al., 2019; Zhong et al., 2019) or finetuning the model so that it can reason with additional retrieved knowledge (Chang et al., 2020; Mitra et al., 2019; Bian et al., 2021). Another direction is to ground the question into a knowledge graph and do inference with graph-based reasoning (Lin et al., 2019; Lv et al., 2020; Yasunaga et al., 2021).\nA common prerequisite of these methods is a high-quality, high-coverage, in-domain commonsense knowledge base (Ma et al., 2019). Some commonsense reasoning datasets are derived from existing knowledge bases; for example, CommonsenseQA (Talmor et al., 2019) is derived from ConceptNet (Speer et al., 2017), and Social IQA (Sap et al., 2019b) is derived from ATOMIC (Sap et al., 2019a). For such datasets, it is natural to elicit related knowledge from the underlying knowledge base that derived them, and typically this would demonstrate considerable gains (Mitra et al., 2019; Chang et al., 2020). However, if there is a domain mismatch between the dataset and the knowledge base, such gains tend to diminish (Mitra et al., 2019; Ma et al., 2019). This becomes a bottleneck when encountering datasets that have no suitable knowledge base (e.g. NumerSense (Lin et al., 2020) and CommonsenseQA 2.0 (Talmor et al., 2021)), or when the system needs to handle commonsense queries that do not fit in any of the commonsense domains represented by an existing knowledge base. Our work overcomes this diffi-\nculty by leveraging pretrained language models as the source of commonsense knowledge.\nAdding generated text during inference. Recently, several works show that model performance on commonsense reasoning can be boosted by augmenting the question with model-generated text, such as clarifications, explanations, and implications. Self-talk (Shwartz et al., 2020) elicits clarifications to concepts in the question and appends them to the inference model input. Contrastive explanations (Paranjape et al., 2021) prompts inference models with generated explanations that contrast between two answer choices. The aforementioned methods depend on task-specific templates to inquire the generator, which means they are only capable of eliciting a limited variety of knowledge and require careful hand-crafting to transfer to new tasks. Other explanation-based methods (Latcinnik and Berant, 2020; Rajani et al., 2019) finetune the generator model so that it produces explanations that are used for question augmentation. DynaGen (Bosselut et al., 2021) uses pretrained commonsense models to generate implications of a question and expands the inference input with these generations. However, its usage of COMeT (Bosselut et al., 2019) as the generator confines its applicability to the social commonsense domain. Our\nwork contributes to this general line of research, yet different from these previous methods that elicit knowledge with task-specific templates or from finetuned knowledge generators, our method requires only a few human-written demonstrations in the style of the task, making it much more flexible, easy-to-transfer, and engineering-efficient."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We introduce generated knowledge prompting, a simple method to elicit and integrate knowledge from language models so as to improve performance on commonsense reasoning tasks. In particular, we generate knowledge statements by prompting a language model with task-specific, humanwritten, few-shot demonstrations of questionknowledge pairs. We show that knowledge can be integrated by simply plugging it in at inference time, with no need to finetune the model for knowledge integration. Our method shows effectiveness across multiple datasets, sets the new state-of-theart on three commonsense reasoning tasks, and works under a variety of settings. The method’s success highlights language models as sources of flexible, high-quality knowledge for commonsense reasoning."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Comparison with Prior Methods Table 6 summarizes the comparison between our generated knowledge prompting method and prior methods that add generated text to an inference model for commonsense reasoning tasks. Our method is unique because it uses few-shot demonstrations to prompt for knowledge generation, and can apply to finetuned inference models without joint finetuning with knowledge.\nA.2 Prompts for Knowledge Generation Table 7 through 10 shows the full prompts for knowledge generation that we use for each evaluated task: NumerSense, CSQA, CSQA2, and QASC.\nA.3 Human Evaluation Guidelines Table 11 and 12 shows the detailed guidelines we use for human evaluation of generated knowledge."
+    } ],
+    "references" : [ {
+      "title" : "Benchmarking knowledge-enhanced commonsense question answering via knowledge-to-text transformation",
+      "author" : [ "Ning Bian", "Xianpei Han", "Bo Chen", "Le Sun." ],
+      "venue" : "arXiv preprint arXiv:2101.00760.",
+      "citeRegEx" : "Bian et al\\.,? 2021",
+      "shortCiteRegEx" : "Bian et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Dynamic neuro-symbolic knowledge graph construction for zero-shot commonsense question answering",
+      "author" : [ "Antoine Bosselut", "Ronan Le Bras", "Yejin Choi." ],
+      "venue" : "Proceedings of the 35th AAAI Conference on Artificial Intelligence (AAAI).",
+      "citeRegEx" : "Bosselut et al\\.,? 2021",
+      "shortCiteRegEx" : "Bosselut et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "COMET: Commonsense transformers for automatic knowledge graph construction",
+      "author" : [ "Antoine Bosselut", "Hannah Rashkin", "Maarten Sap", "Chaitanya Malaviya", "Asli Celikyilmaz", "Yejin Choi." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the",
+      "citeRegEx" : "Bosselut et al\\.,? 2019",
+      "shortCiteRegEx" : "Bosselut et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Language models are few-shot learners. arXiv preprint arXiv:2005.14165",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Incorporating commonsense knowledge graph in pretrained models for social commonsense tasks",
+      "author" : [ "Ting-Yun Chang", "Yang Liu", "Karthik Gopalakrishnan", "Behnam Hedayatnia", "Pei Zhou", "Dilek Hakkani-Tur." ],
+      "venue" : "Proceedings of Deep",
+      "citeRegEx" : "Chang et al\\.,? 2020",
+      "shortCiteRegEx" : "Chang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Commonsense knowledge mining from pretrained models",
+      "author" : [ "Joe Davison", "Joshua Feldman", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International",
+      "citeRegEx" : "Davison et al\\.,? 2019",
+      "shortCiteRegEx" : "Davison et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Training products of experts by minimizing contrastive divergence",
+      "author" : [ "Geoffrey E Hinton." ],
+      "venue" : "Neural computation, 14(8):1771–1800.",
+      "citeRegEx" : "Hinton.,? 2002",
+      "shortCiteRegEx" : "Hinton.",
+      "year" : 2002
+    }, {
+      "title" : "The curious case of neural text degeneration",
+      "author" : [ "Ari Holtzman", "Jan Buys", "Li Du", "Maxwell Forbes", "Yejin Choi." ],
+      "venue" : "arXiv preprint arXiv:1904.09751.",
+      "citeRegEx" : "Holtzman et al\\.,? 2019",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "How can we know what language models know? Transactions of the Association for Computational Linguistics, 8:423–438",
+      "author" : [ "Zhengbao Jiang", "Frank F. Xu", "Jun Araki", "Graham Neubig" ],
+      "venue" : null,
+      "citeRegEx" : "Jiang et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "UNIFIEDQA: Crossing format boundaries with a single QA system",
+      "author" : [ "Daniel Khashabi", "Sewon Min", "Tushar Khot", "Ashish Sabharwal", "Oyvind Tafjord", "Peter Clark", "Hannaneh Hajishirzi." ],
+      "venue" : "Findings of the Association for Computational",
+      "citeRegEx" : "Khashabi et al\\.,? 2020",
+      "shortCiteRegEx" : "Khashabi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Qasc: A dataset for question answering via sentence composition",
+      "author" : [ "Tushar Khot", "Peter Clark", "Michal Guerquin", "Peter Jansen", "Ashish Sabharwal." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 34, pages 8082–8090.",
+      "citeRegEx" : "Khot et al\\.,? 2020",
+      "shortCiteRegEx" : "Khot et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The measurement of observer agreement for categorical data",
+      "author" : [ "J Richard Landis", "Gary G Koch." ],
+      "venue" : "biometrics, pages 159–174.",
+      "citeRegEx" : "Landis and Koch.,? 1977",
+      "shortCiteRegEx" : "Landis and Koch.",
+      "year" : 1977
+    }, {
+      "title" : "Explaining question answering models through text generation",
+      "author" : [ "Veronica Latcinnik", "Jonathan Berant." ],
+      "venue" : "arXiv preprint arXiv:2004.05569.",
+      "citeRegEx" : "Latcinnik and Berant.,? 2020",
+      "shortCiteRegEx" : "Latcinnik and Berant.",
+      "year" : 2020
+    }, {
+      "title" : "KagNet: Knowledge-aware graph networks for commonsense reasoning",
+      "author" : [ "Bill Yuchen Lin", "Xinyue Chen", "Jamin Chen", "Xiang Ren." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th",
+      "citeRegEx" : "Lin et al\\.,? 2019",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Birds have four legs?! NumerSense: Probing Numerical Commonsense Knowledge of Pre-Trained Language Models",
+      "author" : [ "Bill Yuchen Lin", "Seyeon Lee", "Rahul Khanna", "Xiang Ren." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods",
+      "citeRegEx" : "Lin et al\\.,? 2020",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unicorn on rainbow: A universal commonsense reasoning model on a new multitask benchmark",
+      "author" : [ "Nicholas Lourie", "Ronan Le Bras", "Chandra Bhagavatula", "Yejin Choi." ],
+      "venue" : "arXiv preprint arXiv:2103.13009.",
+      "citeRegEx" : "Lourie et al\\.,? 2021",
+      "shortCiteRegEx" : "Lourie et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Graphbased reasoning over heterogeneous external knowledge for commonsense question answering",
+      "author" : [ "Shangwen Lv", "Daya Guo", "Jingjing Xu", "Duyu Tang", "Nan Duan", "Ming Gong", "Linjun Shou", "Daxin Jiang", "Guihong Cao", "Songlin Hu." ],
+      "venue" : "In",
+      "citeRegEx" : "Lv et al\\.,? 2020",
+      "shortCiteRegEx" : "Lv et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards generalizable neuro-symbolic systems for commonsense question answering",
+      "author" : [ "Kaixin Ma", "Jonathan Francis", "Quanyang Lu", "Eric Nyberg", "Alessandro Oltramari." ],
+      "venue" : "Proceedings of the First Workshop on Commonsense Inference in",
+      "citeRegEx" : "Ma et al\\.,? 2019",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Knowledge-driven data construction for zero-shot evaluation in commonsense question answering",
+      "author" : [ "Kaixin Ma", "Filip Ilievski", "Jonathan Francis", "Yonatan Bisk", "Eric Nyberg", "Alessandro Oltramari." ],
+      "venue" : "35th AAAI Conference on Artificial Intelligence.",
+      "citeRegEx" : "Ma et al\\.,? 2021",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "How additional knowledge can improve natural language commonsense question answering? arXiv preprint arXiv:1909.08855",
+      "author" : [ "Arindam Mitra", "Pratyay Banerjee", "Kuntal Kumar Pal", "Swaroop Mishra", "Chitta Baral" ],
+      "venue" : null,
+      "citeRegEx" : "Mitra et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Mitra et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Prompting contrastive explanations for commonsense reasoning tasks",
+      "author" : [ "Bhargavi Paranjape", "Julian Michael", "Marjan Ghazvininejad", "Hannaneh Hajishirzi", "Luke Zettlemoyer." ],
+      "venue" : "Findings of the Association for Computational Linguistics:",
+      "citeRegEx" : "Paranjape et al\\.,? 2021",
+      "shortCiteRegEx" : "Paranjape et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "In Proceedings of the 2019 Conference on Empirical Methods in Natural",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Zero-shot text classification with generative language models",
+      "author" : [ "Raul Puri", "Bryan Catanzaro." ],
+      "venue" : "arXiv preprint arXiv:1912.10165.",
+      "citeRegEx" : "Puri and Catanzaro.,? 2019",
+      "shortCiteRegEx" : "Puri and Catanzaro.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "arXiv preprint arXiv:1910.10683.",
+      "citeRegEx" : "Raffel et al\\.,? 2019",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Explain yourself! leveraging language models for commonsense reasoning",
+      "author" : [ "Nazneen Fatema Rajani", "Bryan McCann", "Caiming Xiong", "Richard Socher." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Rajani et al\\.,? 2019",
+      "shortCiteRegEx" : "Rajani et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Atomic: An atlas of machine commonsense for if-then reasoning",
+      "author" : [ "Maarten Sap", "Ronan Le Bras", "Emily Allaway", "Chandra Bhagavatula", "Nicholas Lourie", "Hannah Rashkin", "Brendan Roof", "Noah A Smith", "Yejin Choi." ],
+      "venue" : "Proceedings of the AAAI",
+      "citeRegEx" : "Sap et al\\.,? 2019a",
+      "shortCiteRegEx" : "Sap et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Social IQa: Commonsense reasoning about social interactions",
+      "author" : [ "Maarten Sap", "Hannah Rashkin", "Derek Chen", "Ronan Le Bras", "Yejin Choi." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Sap et al\\.,? 2019b",
+      "shortCiteRegEx" : "Sap et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploiting cloze-questions for few-shot text classification and natural language inference",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main",
+      "citeRegEx" : "Schick and Schütze.,? 2021",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "AutoPrompt: Eliciting Knowledge from Language Models with Automatically Generated Prompts",
+      "author" : [ "Taylor Shin", "Yasaman Razeghi", "Robert L. Logan IV", "Eric Wallace", "Sameer Singh." ],
+      "venue" : "In",
+      "citeRegEx" : "Shin et al\\.,? 2020",
+      "shortCiteRegEx" : "Shin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unsupervised commonsense question answering with self-talk",
+      "author" : [ "Vered Shwartz", "Peter West", "Ronan Le Bras", "Chandra Bhagavatula", "Yejin Choi." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Shwartz et al\\.,? 2020",
+      "shortCiteRegEx" : "Shwartz et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Conceptnet 5.5: An open multilingual graph of general knowledge",
+      "author" : [ "Robyn Speer", "Joshua Chin", "Catherine Havasi" ],
+      "venue" : "In Thirty-first AAAI conference on artificial intelligence",
+      "citeRegEx" : "Speer et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Speer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "CommonsenseQA: A question answering challenge targeting commonsense knowledge",
+      "author" : [ "Alon Talmor", "Jonathan Herzig", "Nicholas Lourie", "Jonathan Berant." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Talmor et al\\.,? 2019",
+      "shortCiteRegEx" : "Talmor et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Commonsenseqa 2.0: Exposing the limits of ai through gamification",
+      "author" : [ "Alon Talmor", "Ori Yoran", "Ronan Le Bras", "Chandra Bhagavatula", "Yoav Goldberg", "Yejin Choi", "Jonathan Berant" ],
+      "venue" : null,
+      "citeRegEx" : "Talmor et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Talmor et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A simple method for commonsense reasoning",
+      "author" : [ "Trieu H Trinh", "Quoc V Le." ],
+      "venue" : "arXiv preprint arXiv:1806.02847.",
+      "citeRegEx" : "Trinh and Le.,? 2018",
+      "shortCiteRegEx" : "Trinh and Le.",
+      "year" : 2018
+    }, {
+      "title" : "Usc ink submission on numersense",
+      "author" : [ "Jun Yan" ],
+      "venue" : null,
+      "citeRegEx" : "Yan.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Yan.",
+      "year" : 2021
+    }, {
+      "title" : "Designing templates for eliciting commonsense knowledge from pretrained sequence-to-sequence models",
+      "author" : [ "Jheng-Hong Yang", "Sheng-Chieh Lin", "Rodrigo Nogueira", "Ming-Feng Tsai", "Chuan-Ju Wang", "Jimmy Lin." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Yang et al\\.,? 2020",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "QA-GNN: Reasoning with language models and knowledge graphs for question answering",
+      "author" : [ "Michihiro Yasunaga", "Hongyu Ren", "Antoine Bosselut", "Percy Liang", "Jure Leskovec." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter",
+      "citeRegEx" : "Yasunaga et al\\.,? 2021",
+      "shortCiteRegEx" : "Yasunaga et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Stanford submission on numersense",
+      "author" : [ "Yuhui Zhang" ],
+      "venue" : null,
+      "citeRegEx" : "Zhang.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Zhang.",
+      "year" : 2021
+    }, {
+      "title" : "Improving question answering by commonsense-based pre-training",
+      "author" : [ "Wanjun Zhong", "Duyu Tang", "Nan Duan", "Ming Zhou", "Jiahai Wang", "Jian Yin." ],
+      "venue" : "CCF International Conference on Natural Language Processing and Chinese Computing, pages 16–28.",
+      "citeRegEx" : "Zhong et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhong et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 9,
+      "context" : "On the other hand, recent leaderboards are often dominated by large-scale pretrained models that are fine-tuned on a target benchmark (Khashabi et al., 2020; Lourie et al., 2021), suggesting that the benefits of external knowledge may wash away as the underlying models increase in size and are pretrained on ever larger amounts of raw text.",
+      "startOffset" : 134,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 15,
+      "context" : "On the other hand, recent leaderboards are often dominated by large-scale pretrained models that are fine-tuned on a target benchmark (Khashabi et al., 2020; Lourie et al., 2021), suggesting that the benefits of external knowledge may wash away as the underlying models increase in size and are pretrained on ever larger amounts of raw text.",
+      "startOffset" : 134,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 19,
+      "context" : "Furthermore, prior methods often require task-specific, custom supervision for knowledge integration (Mitra et al., 2019; Chang et al., 2020), introducing a burden for rapidly adapting new pretrained models to a wide variety of tasks.",
+      "startOffset" : 101,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 4,
+      "context" : "Furthermore, prior methods often require task-specific, custom supervision for knowledge integration (Mitra et al., 2019; Chang et al., 2020), introducing a burden for rapidly adapting new pretrained models to a wide variety of tasks.",
+      "startOffset" : 101,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 23,
+      "context" : "T5-11b (Raffel et al., 2019) and its variants), with a focus on four recent commonsense benchmarks.",
+      "startOffset" : 7,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 29,
+      "context" : "questions (Shwartz et al., 2020) or contrastive explanations (Paranjape et al.",
+      "startOffset" : 10,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2020) or contrastive explanations (Paranjape et al., 2021), our approach can generate knowledge flexibly, beyond the scope of pre-defined templates (Table 1).",
+      "startOffset" : 36,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 14,
+      "context" : "both zero-shot and finetuned models on numerical commonsense (NumerSense (Lin et al., 2020)), general commonsense (CommonsenseQA (Talmor et al.",
+      "startOffset" : 73,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2020)), general commonsense (CommonsenseQA (Talmor et al., 2019), CommonsenseQA 2.",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 32,
+      "context" : "0 (Talmor et al., 2021)), and scientific commonsense (QASC (Khot",
+      "startOffset" : 2,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 29,
+      "context" : "It outperforms the template-based knowledge generation method self-talk (Shwartz et al., 2020), while performing comparably to retrieval-based systems.",
+      "startOffset" : 72,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 3,
+      "context" : "For knowledge generation, we use GPT-3 (Brown et al., 2020) as the underlying language model, where our few-shot prompting method is most effective.",
+      "startOffset" : 39,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 7,
+      "context" : "5 (Holtzman et al., 2019), and discard repetitions and empty strings.",
+      "startOffset" : 2,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 23,
+      "context" : "1 For inference, we use off-the-shelf T5 (Raffel et al., 2019) and GPT-3, as well as finetuned models that are state-of-the-art on each dataset, including UnifiedQA (UQA) (Khashabi et al.",
+      "startOffset" : 41,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2019) and GPT-3, as well as finetuned models that are state-of-the-art on each dataset, including UnifiedQA (UQA) (Khashabi et al., 2020) and Unicorn (Lourie et al.",
+      "startOffset" : 116,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 14,
+      "context" : "NumerSense (Lin et al., 2020) consists of numerical statements about common objects and concepts where for each sentence we need to recover a masked number word.",
+      "startOffset" : 11,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 31,
+      "context" : "CommonsenseQA (CSQA) (Talmor et al., 2019) is a 5-way multiple-choice QA dataset about com-",
+      "startOffset" : 21,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 32,
+      "context" : "0 (CSQA2) (Talmor et al., 2021) is a binary classification dataset where we need to judge whether commonsense statements are true or false.",
+      "startOffset" : 10,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 15,
+      "context" : "We use finetuned Unicorn (Lourie et al., 2021), which is the current SOTA, following the setup in Talmor et al.",
+      "startOffset" : 25,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 10,
+      "context" : "QASC (Khot et al., 2020) is an 8-way multiplechoice QA dataset about grade school science.",
+      "startOffset" : 5,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 29,
+      "context" : "Template-generated knowledge (T ) Self-talk (Shwartz et al., 2020) uses manually-designed tem-",
+      "startOffset" : 44,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 34,
+      "context" : "1 +digits (Submission by ISI Waltham); ** T5-11b + IR (Yan, 2021); # UQA-11b-ft (Khashabi et al.",
+      "startOffset" : 54,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 9,
+      "context" : "1 +digits (Submission by ISI Waltham); ** T5-11b + IR (Yan, 2021); # UQA-11b-ft (Khashabi et al., 2020) (SOTA of single-model methods without referencing ConceptNet); † Unicorn-ft (Talmor et al.",
+      "startOffset" : 80,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020) (SOTA of single-model methods without referencing ConceptNet); † Unicorn-ft (Talmor et al., 2021); †† Unicorn-ft + Google snippets (Talmor et al.",
+      "startOffset" : 84,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2021); †† Unicorn-ft + Google snippets (Talmor et al., 2021); ‡ UQA-11b-ft (Khashabi et al.",
+      "startOffset" : 41,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 6,
+      "context" : "Mixture-of-Experts (MoE) and Product-of-Experts (PoE) (Hinton, 2002).",
+      "startOffset" : 54,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 5,
+      "context" : "Numerous works have shown that pretrained language models implicitly contain large a amount of knowledge that can be queried via conditional generation (Davison et al., 2019; Petroni et al., 2019; Jiang et al., 2020).",
+      "startOffset" : 152,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 21,
+      "context" : "Numerous works have shown that pretrained language models implicitly contain large a amount of knowledge that can be queried via conditional generation (Davison et al., 2019; Petroni et al., 2019; Jiang et al., 2020).",
+      "startOffset" : 152,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 8,
+      "context" : "Numerous works have shown that pretrained language models implicitly contain large a amount of knowledge that can be queried via conditional generation (Davison et al., 2019; Petroni et al., 2019; Jiang et al., 2020).",
+      "startOffset" : 152,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 33,
+      "context" : "Consequently, these models can directly perform inference on tasks like commonsense reasoning (Trinh and Le, 2018; Yang et al., 2020), text classification (Shin et al.",
+      "startOffset" : 94,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 35,
+      "context" : "Consequently, these models can directly perform inference on tasks like commonsense reasoning (Trinh and Le, 2018; Yang et al., 2020), text classification (Shin et al.",
+      "startOffset" : 94,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2020), text classification (Shin et al., 2020; Puri and Catanzaro, 2019), and natural language inference (Shin et al.",
+      "startOffset" : 29,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2020), text classification (Shin et al., 2020; Puri and Catanzaro, 2019), and natural language inference (Shin et al.",
+      "startOffset" : 29,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2020; Puri and Catanzaro, 2019), and natural language inference (Shin et al., 2020; Schick and Schütze, 2021).",
+      "startOffset" : 66,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2020; Puri and Catanzaro, 2019), and natural language inference (Shin et al., 2020; Schick and Schütze, 2021).",
+      "startOffset" : 66,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 18,
+      "context" : "One approach is to inject commonsense knowledge into language models, either by pretraining on knowledge bases (Ma et al., 2021; Chang et al., 2020; Mitra et al., 2019; Zhong et al., 2019)",
+      "startOffset" : 111,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 4,
+      "context" : "One approach is to inject commonsense knowledge into language models, either by pretraining on knowledge bases (Ma et al., 2021; Chang et al., 2020; Mitra et al., 2019; Zhong et al., 2019)",
+      "startOffset" : 111,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 19,
+      "context" : "One approach is to inject commonsense knowledge into language models, either by pretraining on knowledge bases (Ma et al., 2021; Chang et al., 2020; Mitra et al., 2019; Zhong et al., 2019)",
+      "startOffset" : 111,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 38,
+      "context" : "One approach is to inject commonsense knowledge into language models, either by pretraining on knowledge bases (Ma et al., 2021; Chang et al., 2020; Mitra et al., 2019; Zhong et al., 2019)",
+      "startOffset" : 111,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 4,
+      "context" : "or finetuning the model so that it can reason with additional retrieved knowledge (Chang et al., 2020; Mitra et al., 2019; Bian et al., 2021).",
+      "startOffset" : 82,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 19,
+      "context" : "or finetuning the model so that it can reason with additional retrieved knowledge (Chang et al., 2020; Mitra et al., 2019; Bian et al., 2021).",
+      "startOffset" : 82,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 0,
+      "context" : "or finetuning the model so that it can reason with additional retrieved knowledge (Chang et al., 2020; Mitra et al., 2019; Bian et al., 2021).",
+      "startOffset" : 82,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 13,
+      "context" : "Another direction is to ground the question into a knowledge graph and do inference with graph-based reasoning (Lin et al., 2019; Lv et al., 2020; Yasunaga et al., 2021).",
+      "startOffset" : 111,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 16,
+      "context" : "Another direction is to ground the question into a knowledge graph and do inference with graph-based reasoning (Lin et al., 2019; Lv et al., 2020; Yasunaga et al., 2021).",
+      "startOffset" : 111,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 36,
+      "context" : "Another direction is to ground the question into a knowledge graph and do inference with graph-based reasoning (Lin et al., 2019; Lv et al., 2020; Yasunaga et al., 2021).",
+      "startOffset" : 111,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 17,
+      "context" : "A common prerequisite of these methods is a high-quality, high-coverage, in-domain commonsense knowledge base (Ma et al., 2019).",
+      "startOffset" : 110,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 31,
+      "context" : "Some commonsense reasoning datasets are derived from existing knowledge bases; for example, CommonsenseQA (Talmor et al., 2019) is derived from ConceptNet (Speer et al.",
+      "startOffset" : 106,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2019) is derived from ConceptNet (Speer et al., 2017), and Social IQA (Sap et al.",
+      "startOffset" : 35,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2017), and Social IQA (Sap et al., 2019b) is derived from ATOMIC (Sap et al.",
+      "startOffset" : 24,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 19,
+      "context" : "For such datasets, it is natural to elicit related knowledge from the underlying knowledge base that derived them, and typically this would demonstrate considerable gains (Mitra et al., 2019; Chang et al., 2020).",
+      "startOffset" : 171,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 4,
+      "context" : "For such datasets, it is natural to elicit related knowledge from the underlying knowledge base that derived them, and typically this would demonstrate considerable gains (Mitra et al., 2019; Chang et al., 2020).",
+      "startOffset" : 171,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 19,
+      "context" : "However, if there is a domain mismatch between the dataset and the knowledge base, such gains tend to diminish (Mitra et al., 2019; Ma et al., 2019).",
+      "startOffset" : 111,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 17,
+      "context" : "However, if there is a domain mismatch between the dataset and the knowledge base, such gains tend to diminish (Mitra et al., 2019; Ma et al., 2019).",
+      "startOffset" : 111,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 32,
+      "context" : "0 (Talmor et al., 2021)), or when the system needs to handle commonsense queries that do not fit in any of the commonsense domains represented by an existing knowledge base.",
+      "startOffset" : 2,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 29,
+      "context" : "Self-talk (Shwartz et al., 2020) elicits clarifications to concepts in the question and appends them to the inference model input.",
+      "startOffset" : 10,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 20,
+      "context" : "Contrastive explanations (Paranjape et al., 2021) prompts inference models with generated explanations that contrast between two answer choices.",
+      "startOffset" : 25,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 12,
+      "context" : "Other explanation-based methods (Latcinnik and Berant, 2020; Rajani et al., 2019) finetune the generator model so that it produces explanations that are used for question augmentation.",
+      "startOffset" : 32,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 24,
+      "context" : "Other explanation-based methods (Latcinnik and Berant, 2020; Rajani et al., 2019) finetune the generator model so that it produces explanations that are used for question augmentation.",
+      "startOffset" : 32,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 1,
+      "context" : "DynaGen (Bosselut et al., 2021) uses pretrained commonsense models to generate implications of a question and expands the inference input with these generations.",
+      "startOffset" : 8,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 2,
+      "context" : "However, its usage of COMeT (Bosselut et al., 2019) as the generator confines its applicability to the social commonsense domain.",
+      "startOffset" : 28,
+      "endOffset" : 51
+    } ],
+    "year" : 0,
+    "abstractText" : "It remains an open question whether incorporating external knowledge benefits commonsense reasoning while maintaining the flexibility of pretrained sequence models. To investigate this question, we develop generated knowledge prompting, which consists of generating knowledge from a language model, then providing the knowledge as additional input when answering a question. Our method does not require task-specific supervision for knowledge integration, or access to a structured knowledge base, yet it improves performance of large-scale, state-of-the-art models on four commonsense reasoning tasks, achieving state-of-the-art results on numerical commonsense (NumerSense), general commonsense (CommonsenseQA 2.0), and scientific commonsense (QASC) benchmarks. Generated knowledge prompting highlights largescale language models as flexible sources of external knowledge for improving commonsense reasoning. Our code is available at github.com/anonymous_repo.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,589 @@
+{
+  "name" : "ARR_2022_263_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "A Variational Hierarchical Model for Neural Cross-Lingual Summarization",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "The cross-lingual summarization (CLS) aims to summarize a document in source language (e.g., English) into a different language (e.g., Chinese), which can be seen as a combination of machine translation (MT) and monolingual summarization (MS) to some extent (Orăsan and Chiorean, 2008; Zhu et al., 2019). The CLS can help people effectively master the core points of an article in a\n1The code is attached to the supplementary material and will be publicly available once accepted.\nforeign language. Under the background of globalization, it becomes more important and is now coming into widespread use in real life.\nMany researches have been devoted to dealing with this task. To our knowledge, they mainly fall into two categories, i.e., pipeline and end-to-end learning methods. (i) The first category is pipeline-based, adopting either translationsummarization (Leuski et al., 2003; Ouyang et al., 2019) or summarization-translation (Wan et al., 2010; Orăsan and Chiorean, 2008) paradigm. Although being intuitive and straightforward, they generally suffer from error propagation problem. (ii) The second category aims to train an endto-end model for CLS (Zhu et al., 2019, 2020). For instance, Zhu et al. (2020) focus on using a pre-constructed probabilistic bilingual lexicon to improve the CLS model. Furthermore, some researches resort to multi-task learning (Takase and Okazaki, 2020; Bai et al., 2021; Zhu et al., 2019; Cao et al., 2020a,b). Zhu et al. (2019) separately introduce MT and MS to improve CLS. Cao et al. (2020a,b) design several additional training objectives (e.g., MS, back-translation, and reconstruction) to enhance the CLS model. And Xu et al. (2020) utilize a mixed-lingual pre-training method with several auxiliary tasks for CLS.\nAs pointed out by Cao et al. (2020a), it is challenging for the model to directly conduct CLS as it requires both the abilities to translate and summarize. Although some methods have used the related tasks (e.g., MT and MS) to help the CLS, the hierarchical relationship between MT&MS and CLS are not well modeled, which can explicitly enhance the CLS task. Apparently, how to effectively model the hierarchical relationship to exploit MT and MS is one of the core issues, especially when the CLS data are limited.2 In many other related NLP tasks (Shen et al., 2019; Park et al.,\n2Generally, it is difficult to acquire the CLS dataset (Zhu et al., 2020; Ayana et al., 2018; Duan et al., 2019).\n2018; Serban et al., 2017), the Conditional Variational Auto-Encoder (CVAE) (Sohn et al., 2015) has shown its superiority in learning hierarchical structure with hierarchical latent variables, which is often leveraged to capture the semantic connection between the utterance and the corresponding context of conversations. Inspire by these work, we attempt to adapt CVAE to model the hierarchical relationship between MT&MS and CLS.\nTherefore, we propose a Variational Hierarchical Model to exploit translation and summarization simultaneously, named VHM, for CLS task in an end-to-end framework. VHM employs hierarchical latent variables based on CVAE to learn the hierarchical relationship between MT&MS and CLS. Specifically, the VHM contains two kinds of latent variables at the local and global levels, respectively. Firstly, we introduce two local variables for translation and summarization, respectively. The two local variables are constrained to reconstruct the translation and source-language summary. Then, we use the global variable to explicitly exploit the two local variables for better CLS, which is constrained to reconstruct the target-language summary. This makes sure the global variable captures its relationship with the two local variables without any loss, preventing error propagation. For inference, we use the local and global variables to assist the cross-lingual summarization process.\nWe validate our proposed training framework on the datasets of different language pairs (Zhu et al., 2019): Zh2EnSum (Chinese⇒English) and En2ZhSum (English⇒Chinese). Experiments show that our model achieves consistent improvements on two language directions in terms of both automatic metrics and human evaluation, demonstrating its effectiveness and generalizability. Fewshot evaluation further suggests that the local and global variables enable our model to generate a satisfactory cross-lingual summaries compared to existing related methods.\nOur main contributions are as follows:\n• We are the first that builds a variational hierarchical model via conditional variational auto-encoders that introduce a global variable to combine the local ones for translation and summarization at the same time for CLS.\n• Our model gains consistent and significant performance and remarkably outperforms the most previous state-of-the-art methods after using mBART (Liu et al., 2020).\n• Under the few-shot setting, our model still achieves better performance than existing approaches. Particularly, the fewer the data are, the greater the improvement we gain."
+    }, {
+      "heading" : "2 Background",
+      "text" : "Machine Translation (MT). Given an input sequence in the source languageXmt={xi}|Xmt|i=1 , the goal of the neural MT model is to produce its translation in the target language Ymt={yi}|Ymt|i=1 . The conditional distribution of the model is:\npθ(Ymt|Xmt) = |Ymt|∏ t=1 pθ(yt|Xmt, y1:t−1),\nwhere θ are model parameters and y1:t−1 is the partial translation. Monolingual Summarization (MS). Given an input article in the source language Xsrcms={xsrci } |Xsrcms | i=1 and the corresponding summarization in the same language Xtgtms={xtgti } |Xtgtms| i=1 , the monolingual summarization is formalized as:\npθ(X tgt ms|Xsrcms ) = |Xtgtms|∏ t=1 pθ(x tgt t |Xsrcms , x tgt 1:t−1).\nCross-Lingual Summarization (CLS). In CLS, we aim to learn a model that can generate a summary in the target language Ycls={yi} |Ycls| i=1 for a given article in the source language Xcls={xi} |Xcls| i=1 . Formally, it is as follows:\npθ(Ycls|Xcls) = |Ycls|∏ t=1 pθ(yt|Xcls, y1:t−1).\nConditional Variational Auto-Encoder (CVAE). The CVAE (Sohn et al., 2015) consists of one prior network and one recognition (posterior) network, where the latter takes charge of guiding the learning of prior network via Kullback–Leibler (KL) divergence (Kingma and Welling, 2013). For example, the variational neural MT model (Zhang et al., 2016a), which introduces a random latent variable z into the neural MT conditional distribution:\npθ(Ymt|Xmt) = ∫ z pθ(Ymt|Xmt, z)·pθ(z|Xmt)dz. (1) Given a source sentence X , a latent variable z is firstly sampled by the prior network from the encoder, and then the target sentence is generated by the decoder: Ymt ∼ pθ(Ymt|Xmt, z), where z ∼ pθ(z|Xmt).\nAs it is hard to marginalize Eq. 1, the CVAE\ntraining objective is a variational lower bound of the conditional log-likelihood:\nL(θ, φ;Xmt, Ymt) = −KL(qφ(z′|Xmt, Ymt)‖pθ(z|Xmt)) + Eqφ(z′|Xmt,Ymt)[log pθ(Ymt|z, Xmt)] ≤ log p(Ymt|Xmt),\nwhere φ are parameters of the CVAE."
+    }, {
+      "heading" : "3 Methodology",
+      "text" : "Fig. 1 demonstrates an overview of our model, consisting of four components: encoder, variational hierarchical modules, decoder, training and inference. Specifically, we aim to explicitly exploit the MT and MS for CLS simultaneously. Therefore, we firstly use the encoder (§ 3.1) to prepare the representation for the variational hierarchical module (§ 3.2), which aims to learn the two local variables for the global variable in CLS. Then, we introduce the global variable into the decoder (§ 3.3). Finally, we elaborate the process of our training and inference (§ 3.4)."
+    }, {
+      "heading" : "3.1 Encoder",
+      "text" : "Our model is based on transformer (Vaswani et al., 2017) encoder-decoder framework. As shown in Fig. 1, the encoder takes six types of inputs, {Xmt, Xsrcms , Xcls, Ymt, X tgt ms, Ycls}, among which\nYmt, X tgt ms, and Ycls are only for training recognition networks. Taking Xmt for example, the encoder maps the input Xmt into a sequence of continuous representations whose size varies with respect to the source sequence length. Specifically, the encoder consists of Ne stacked layers and each layer includes two sub-layers:3 a multi-head selfattention (SelfAtt) sub-layer and a position-wise feed-forward network (FFN) sub-layer:\ns`e = SelfAtt(h `−1 e ) + h `−1 e ,\nh`e = FFN(s ` e) + s ` e,\nwhere h`e denotes the state of the `-th encoder layer and h0e denotes the initialized embedding.\nThrough the encoder, we prepare the representations of {Xmt, Xsrcms , Xcls} for training prior networks, encoder and decoder. Taking Xmt for example, we follow (Zhang et al., 2016a) and apply mean-pooling over the output hNe,Xmte of theNe-th encoder layer:\nhXmt = 1\n|Xmt| |Xmt|∑ i=1 (hNe,Xmte,i ).\n3The layer normalization is omitted for simplicity and you may refer to (Vaswani et al., 2017) for more details.\nSimilarly, we obtain hXsrcms and hXcls . For training recognition networks, we obtain the representations of {Ymt, X tgt ms, Ycls}, taking Ymt for example, and calculate it as follows:\nhYmt = 1\n|Ymt| |Ymt|∑ i=1 (hNe,Ymte,i ).\nSimilarly, we obtain hXtgtms and hYcls ."
+    }, {
+      "heading" : "3.2 Variational Hierarchical Modules",
+      "text" : "Firstly, we design two local latent variational modules to learn the translation distribution in MT pairs and summarization distribution in MS pairs, respectively. Then, conditioned on them, we introduce a global latent variational module to explicitly exploit them."
+    }, {
+      "heading" : "3.2.1 Local: Translation and Summarization",
+      "text" : "Translation. To capture the translation of the paired sentences, we introduce a local variable zmt that is responsible for generating the target information. Inspired by (Wang and Wan, 2019), we\nuse isotropic Gaussian distribution as the prior distribution of zmt: pθ(zmt|Xmt) ∼ N (µmt,σ2mtI), where I denotes the identity matrix and we have\nµmt = MLP mt θ (hXmt), σmt = Softplus(MLP mt θ (hXmt)),\n(2)\nwhere MLP(·) and Softplus(·) are multi-layer perceptron and approximation of ReLU function, respectively.\nAt training, the posterior distribution conditions on both source input and the target reference, which provides translation information. Therefore, the prior network can learn a tailored translation distribution by approaching the recognition network via KL divergence (Kingma and Welling, 2013): qφ(z ′ mt|Xmt, Ymt) ∼ N (µ′mt,σ′2mtI), where µ′mt and σ′mt are calculated as:\nµ′mt = MLP mt φ (hXmt ;hYmt), σ′mt = Softplus(MLP mt φ (hXmt ;hYmt)), (3) where (·;·) indicates concatenation operation. Summarization. To capture the summarization in MS pairs, we introduce another local variable zms, which takes charge of generating the source-language summary. Similar to zmt, we define its prior distribution as: pθ(zms|Xsrcms ) ∼ N (µms,σ2msI), where µms and σms are calculated as:\nµms = MLP ms θ (hXsrcms ), σms = Softplus(MLP ms θ (hXsrcms )).\n(4)\nAt training, the posterior distribution conditions on both the source input and the source-language summary that contains the summarization clue, and thus is responsible for guiding the learning of the prior distribution. Specifically, we define the posterior distribution as: qφ(z′ms|Xsrcms , X tgt ms) ∼ N (µ′ms,σ′2msI), where µ′ms and σ′ms are calculated as: µ′ms = MLP ms φ (hXsrcms ;hXtgtms),\nσ′ms = Softplus(MLP ms φ (hXsrcms ;hXtgtms)).\n(5)"
+    }, {
+      "heading" : "3.2.2 Global: CLS",
+      "text" : "After obtaining zmt and zms, we introduce the global variable zcls that aims to generate a targetlanguage summary, where the zcls can simultaneously exploit the local variables for CLS. Specifically, we firstly encode the source input Xcls and condition on both two local variables zmt and zms, and then sample zcls. We define its prior distribution as: pθ(zcls|Xcls, zmt, zms) ∼ N (µcls,σ2clsI),\nwhere µcls and σcls are calculated as:\nµcls = MLP cls θ (hXcls ; zmt; zms), σcls = Softplus(MLP cls θ (hXcls ; zmt; zms)). (6)\nAt training, the posterior distribution conditions on the local variables, the CLS input, and the crosslingual summary that contains combination information of translation and summarization. Therefore, the posterior distribution can teach the prior distribution. Specifically, we define the posterior distribution as: qφ(z′cls|Xcls, zmt, zms, Ycls) ∼ N (µ′cls,σ′2clsI), where µ′cls and σ′cls are calculated as: µ′cls = MLP cls φ (hXcls ; zmt; zms;hYcls), σ′cls = Softplus(MLP cls φ (hXcls ; zmt; zms;hYcls)).\n(7)"
+    }, {
+      "heading" : "3.3 Decoder",
+      "text" : "The decoder adopts a similar structure to the encoder, and each of Nd decoder layers includes an additional cross-attention sub-layer (CrossAtt):\ns`d = SelfAtt(h `−1 d ) + h `−1 d , c`d = CrossAtt(s ` d,h Ne e ) + s ` d, h`d = FFN(c ` d) + c ` d,\nwhere h`d denotes the state of the `-th decoder layer. As shown in Fig. 1, we firstly obtain the local two variables either from the posterior distribution predicted by recognition networks (training process as the solid grey lines) or from prior distribution predicted by prior networks (inference process as the dashed red lines). Then, conditioned on the local two variables, we generate the global variable (z′cls/zcls) via posterior (training) or prior (inference) network. Finally, we incorporate z(′)cls\n4 into the state of the top layer of the decoder with a projection layer:\not = Tanh(Wp[h Nd d,t ; z (′) cls] + bp), (8)\nwhere Wp and bp are training parameters, h Nd d,t is the hidden state at time-step t of the Nd-th decoder layer. Then, ot is fed into a linear transformation and softmax layer to predict the probability distribution of the next target token:\npt = Softmax(Woot + bo),\nwhere Wo and bo are training parameters.\n4Here, we use z′cls when training and zcls during inference, as similar to Eq. 8."
+    }, {
+      "heading" : "3.4 Training and Inference",
+      "text" : "The model is trained to maximize the conditional log-likelihood, due to the intractable marginal likelihood, which is converted to the following varitional lower bound that needs to be maximized in the training process: J (θ, φ;Xcls, Xmt, Xsrcms , Ycls, Ymt, Xtgtms) = −KL(qφ(z′mt|Xmt, Ymt)‖pθ(zmt|Xmt)) −KL(qφ(z′ms|Xsrcms , Xtgtms)‖pθ(zms|Xsrcms )) −KL(qφ(z′cls|Xcls, zmt, zms, Ycls)‖pθ(zcls|Xcls, zmt, zms)) + Eqφ [logpθ(Ymt|Xmt, zmt)] + Eqφ [logpθ(X tgt ms|Xsrcms , zms)]\n+ Eqφ [logpθ(Ycls|Xcls, zcls, zmt, zms)],\nwhere the variational lower bound includes the reconstruction terms and KL divergence terms based on three hierarchical variables. We use the reparameterization trick (Kingma and Welling, 2013) to estimate the gradients of the prior and recognition networks (Zhao et al., 2017).\nDuring inference, firstly, the prior networks of MT and MS generate the local variables. Then, conditioned on them, the global variable is produced by prior network of CLS. Finally, only the global variable is fed into the decoder, which corresponds to red dashed arrows in Fig. 1."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets and Metrics",
+      "text" : "Datasets. We evaluate our approach on Zh2EnSum and En2ZhSum datasets released by (Zhu et al., 2019). Both the Chinese-to-English and Englishto-Chinese test sets are manually corrected. The dataset details (e.g., splits of training, validation or test sets) are described in Appendix A. Metrics. Following (Zhu et al., 2020), 1) we evaluate all models with the standard ROUGE metric (Lin, 2004), reporting the F1 scores for ROUGE1, ROUGE-2, and ROUGE-L. All ROUGE scores are reported by the 95% confidence interval measured by the official script;5 2) we also evaluate the quality of English summaries in Zh2EnSum with MoverScore (Zhao et al., 2019)."
+    }, {
+      "heading" : "4.2 Implementation Details",
+      "text" : "In this paper, we train all models using standard transformer (Vaswani et al., 2017) in Base setting. For other hyper-parameters, we mainly follow the setting described in (Zhu et al., 2019, 2020) for\n5The parameter for ROUGE script here is “-c 95 -r 1000 -n 2 -a”\nfair comparison. For more details, please refer to Appendix B."
+    }, {
+      "heading" : "4.3 Comparison Models",
+      "text" : "Pipeline Models. TETran (Zhu et al., 2019). It first translates the original article into the target language by Google Translator6 and then summarizes the translated text via LexRank (Erkan and Radev, 2004). TLTran (Zhu et al., 2019). It first summarizes the original article via a transformerbased monolingual summarization model and then translates the summary into the target language by Google Translator.\nEnd-to-End Models. TNCLS (Zhu et al., 2019). It directly uses the de-facto transformer (Vaswani et al., 2017) to train an end-to-end CLS system. ATS-A (Zhu et al., 2020).7 It is an efficient model to attend the pre-constructed probabilistic bilingual lexicon to enhance the CLS. MS-CLS (Zhu et al., 2019). It simultaneously performs summarization generation for both CLS and MS tasks and calculates the total losses. MT-CLS (Zhu et al., 2019).8 It alternatively trains CLS and MT tasks. MS-CLS-Rec (Cao et al., 2020a). It jointly trains MS and CLS systems with a reconstruction loss to mutually map the source and target representations. mBART (Liu et al., 2020). We use mBART (mbart.cc25) as model initialization to fine-tune the CLS task. MT-MS-CLS. It is our strong baseline, which is implemented by alternatively training CLS, MT, and MS. Here, we keep the dataset used for MT and MS consistent with (Zhu et al., 2019) for fair comparison."
+    }, {
+      "heading" : "4.4 Main Results",
+      "text" : "Overall, we separate the models into three parts in Tab. 1: the pipeline, end-to-end, and multi-task settings. In each part, we show the results of existing studies and our re-implemented baselines and our approach, i.e., the VHM, on Zh2EnSum and En2ZhSum test sets.\nResults on Zh2EnSum. Compared against the pipeline and end-to-end methods, VHM substantially outperforms all of them (e.g., the previous best model “ATS-A”) by a large margin with 0.68/0.52/0.18/0.4↑ scores on RG1/RG2/RGL/MVS, respectively. Under\n6https://translate.google.com/ 7https://github.com/ZNLP/ATSum 8https://github.com/ZNLP/NCLS-Corpora\nthe multi-task setting, compared to the existing best model “MS-CLS-Rec”, our VHM also consistently boosts the performance in three metrics (i.e., 0.39↑, 1.44↑, and 0.19↑ ROUGE scores on RG1/RG2/RGL, respectively), showing its effectiveness. Our VHM also significantly surpasses our strong baseline “MT-MS-CLS” by 0.71/0.62/0.46/0.38↑ scores on RG1/RG2/RGL/MVS, respectively, demonstrating the superiority of our model again.\nAfter using mBART as model initialization, our VHM achieves the state-of-the-art results on all metrics.\nResults on En2ZhSum. Compared against the pipeline, end-to-end and multi-task methods, our VHM presents remarkable ROUGE improvements over the existing best model “ATS-A” by a large\nmargin, about 0.51/0.86/0.23↑ ROUGE gains on RG1/RG2/RGL, respectively. These results suggest that VHM consistently performs well in different language directions.\nOur approach still notably surpasses our strong baseline “MT-MS-CLS” in terms of all metrics, which shows the generalizability and superiority of our model again."
+    }, {
+      "heading" : "4.5 Few-Shot Results",
+      "text" : "Due to the difficulty of acquiring the cross-lingual summarization dataset (Zhu et al., 2019), we conduct such experiments to investigate the model performance when the CLS training dataset is limited, i.e., few-shot experiments. Specifically, we randomly choose 0.1%, 1%, 10%, and 50% CLS training datasets to conduct experiments. The results\n100% 50% 10% 1% 0.1% Proportion of Used CLS Training Data\n0\n5\n10\n15\n20\n25\n30\n35\n40\nR G\n1\nEn2ZhSum\nVHM MT-MS-CLS MT-CLS MS-CLS ATS-A Gap-H Gap-D\n100% 50% 10% 1% 0.1% Proportion of Used CLS Training Data\n0\n5\n10\n15\n20\nR G\n2\nEn2ZhSum VHM MT-MS-CLS MT-CLS MS-CLS ATS-A Gap-H Gap-D\n100% 50% 10% 1% 0.1% Proportion of Used CLS Training Data\n0\n5\n10\n15\n20\n25\n30\n35\nR G\nL\nEn2ZhSum VHM MT-MS-CLS MT-CLS MS-CLS ATS-A Gap-H Gap-D\nFigure 3: Rouge F1 scores (%) on the test set when using different CLS training data. The performance “Gap-H” (orange line) between “VHM” and “MT-MS-CLS” grows steadily with the decreasing of used CLS training data on ROUGE-2, which is similar to the performance “Gap-D” (red line) between “VHM” and “ATS-A”.\nare shown in Fig. 2 and Fig. 3.\nResults on Zh2EnSum. Fig. 2 shows that VHM significantly surpasses all comparison models under each setting. Particularly, under the 0.1% setting, our model still achieves best performances than all baselines, suggesting that our variational hierarchical model works well in the few-shot setting as well. Besides, we find that the performance gap between comparison models and VHM is growing when the used CLS training data become fewer. It is because relatively larger proportion of translation and summarization data are used, the influence from MT and MS becomes greater, effectively strengthening the CLS model. Particularly, the performance “Gap-H” between MT-MS-CLS and VHM is also growing, where both models utilize the same data. This shows that the hierarchical relationship between MT&MS and CLS makes substantial contributions to the VHM model in terms of four metrics. Consequently, our VHM achieves a comparably stable performance.\nResults on En2ZhSum. From Fig. 3, we observe the similar findings on Zh2EnSum. This shows that VHM significantly outperforms all comparison models under each setting, showing the generalizability and superiority of our model again in the few-shot setting."
+    }, {
+      "heading" : "5 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Ablation Study",
+      "text" : "We conduct ablation studies to investigate how well the local and global variables of our VHM works. When removing variables listed in Tab. 2, we have the following findings.\n(1) Rows 1∼3 vs. row 0 shows that the model performs worse, especially when removing the two local ones (row 3), due to missing the explicit trans-\nlation or summarization or both information provided by the local variables, which is important to CLS. Besides, row 3 indicates that directly attending to zcls leads to poor performances, showing the necessity of the hierarchical structure, i.e., using the global variable to exploit the local ones.\n(2) Rows 4∼5 vs. row 0 shows that directly attending the local translation and summarization cannot achieve good results due to lacking of the global combination of them, showing that it is very necessary for designing the variational hierarchical model, i.e., using a global variable to well exploit and combine the local ones."
+    }, {
+      "heading" : "5.2 Human Evaluation",
+      "text" : "Following (Zhu et al., 2019, 2020), we conduct human evaluation on 25 random samples from each of the Zh2EnSum and En2ZhSum test set. We compare the summaries generated by our methods (MTMS-CLS and VHM) with the summaries generated by ATS-A, MS-CLS, and MT-CLS in the full set-\nting and few-shot setting (0.1%), respectively. We invite three graduate students to compare the generated summaries with human-corrected references, and assess each summary from three independent perspectives:\n1. How informative (i.e., IF) the summary is? 2. How concise (i.e., CC) the summary is? 3. How fluent, grammatical (i.e., FL) the summary is?\nEach property is assessed with a score from 1 (worst) to 5 (best). The average results are presented in Tab. 3 and Tab. 4.\nTab. 3 shows the results in the full setting. We find that our VHM outperforms all comparison models from three aspects in both language directions, which further demonstrates the effectiveness and superiority of our model.\nTab. 4 shows the results in the few-shot setting, where only 0.1% CLS training data are used in all models. We find that our VHM still performs best than all other models from three perspectives in both datasets, suggesting its generalizability and effectiveness again under different settings."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Cross-Lingual Summarization. Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.e., translation and then summarization or summarization and then translation. Due to the difficulty of acquiring cross-lingual summarization dataset, some previous researches focus on constructing datasets (Ladhak et al., 2020; Scialom et al., 2020; Yela-Bello et al., 2021; Zhu et al., 2019), mixed-lingual pre-training (Xu et al., 2020), or zero-shot approaches (Ayana et al., 2018; Duan et al., 2019; Dou et al., 2020), i.e., using machine translation (MT) or monolingual summa-\nrization (MS) or both to train the CLS system. Among them, Zhu et al. (2019) propose to use roundtrip translation strategy to obtain large-scale CLS datasets and then present two multi-task learning methods for CLS. Based on this dataset, Zhu et al. (2020) leverage an end-to-end model to attend the pre-constructed probabilistic bilingual lexicon to improve CLS. To further enhance CLS, some studies resort to shared decoder (Bai et al., 2021), more pseudo training data (Takase and Okazaki, 2020), or more related task training (Cao et al., 2020b,a). Different from them, we propose a variational hierarchical model that introduces a global variable to simultaneously exploit and combine the local translation variable in MT pairs and local summarization variable in MS pais for CLS, achieving better results. Conditional Variational Auto-Encoder. CVAE has verified its superiority in many fields (Sohn et al., 2015). For instance, in dialogue, Shen et al. (2019), Park et al. (2018) and Serban et al. (2017) extend CVAE to capture the semantic connection between the utterance and the corresponding context with hierarchical latent variables. Although the CVAE has been widely used in NLP tasks, its adaption and utilization to cross-lingual summarization for modeling hierarchical relationship are non-trivial, and to the best of our knowledge, has never been investigated before in CLS."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "In this paper, we propose to enhance the CLS model by simultaneously exploiting MT and MS. Given the hierarchical relationship between MT&MS and CLS, we propose a variational hierarchical model to explicitly exploit and combine them in CLS process. Experiments on Zh2EnSum and En2ZhSum show that our model significantly improves the quality of cross-lingual summaries in terms of automatic metrics and human evaluations. Particularly, our model in the few-shot setting still works better, suggesting its superiority and generalizability."
+    }, {
+      "heading" : "A Datasets",
+      "text" : "We evaluate the proposed approach on Zh2EnSum and En2ZhSum datasets released by (Zhu et al., 2019).9 The Zh2EnSum and En2ZhSum are originally from (Hu et al., 2015) and (Hermann et al., 2015; Zhu et al., 2018), respectively. Both the Chinese-to-English and English-to-Chinese test sets are manually corrected.\nZh2EnSum. It is a Chinese-to-English summarization dataset, which has 1,699,713 Chinese short texts (104 Chinese characters on average) paired with Chinese (18 Chinese characters on average) and English short summaries (14 tokens on average). The dataset is split into 1,693,713 training pairs, 3,000 validation pairs, and 3,000 test pairs.\nEn2ZhSum. It is an English-to-Chinese summarization dataset, which has 370,687 English documents (755 tokens on average) paired with multisentence English (55 tokens on average) and Chinese summaries (96 Chinese characters on average). The dataset is split into 364,687 training pairs, 3,000 validation pairs, and 3,000 test pairs.\nB Implementation Details\nWe mainly follow the setting described in (Zhu et al., 2019, 2020) for fair comparison. Specifically, the segmentation granularity is “subword to subword” for Zh2EnSum, and “word to word” for En2ZhSum. All the parameters are initialized via Xavier initialization method (Glorot and Bengio, 2010). We train our models using standard transformer (Vaswani et al., 2017) in Base setting, which contains a 6-layer encoder (i.e., Ne) and a 6-layer decoder (i.e., Nd) with 512-dimensional hidden representations. And all latent variables have a dimension of 128. Each mini-batch contains a set of document-summary pairs with roughly 4,096 source and 4,096 target tokens. We apply Adam optimizer (Kingma and Ba, 2015) with β1 = 0.9, β2 = 0.998. Following (Zhu et al., 2019), we train each task for about 800,000 iterations in all multitask models (reaching convergence). To alleviate the degeneration problem of the variational framework, we apply KL annealing. The KL multiplier λ gradually increases from 0 to 1 over 400, 000 steps. All our methods without mBART as model initialization are trained and tested on a single NVIDIA\n9https://github.com/ZNLP/NCLS-Corpora\nTesla V100 GPU. We use 8 NVIDIA Tesla V100 GPU to train our models when using mBART as model initialization. The number of token on each GPU is set to 2,048 and the other parameters are set default in Fairseq10.\nDuring inference, we use beam search with a beam size 4 and length penalty 0.6.\n10https://github.com/pytorch/fairseq/tree/main/examples/mbart"
+    } ],
+    "references" : [ {
+      "title" : "Zero-shot crosslingual neural headline generation",
+      "author" : [ "Ayana", "shi-qi Shen", "Yun Chen", "Cheng Yang", "Zhi-yuan Liu", "Maosong Sun" ],
+      "venue" : "IEEE/ACM Transactions on Audio, Speech, and Language Processing (TASLP),",
+      "citeRegEx" : "Ayana et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Ayana et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Crosslingual abstractive summarization with limited parallel resources",
+      "author" : [ "Yu Bai", "Yang Gao", "Heyan Huang." ],
+      "venue" : "Proceedings of ACL-IJCNLP, pages 6910–6924, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Bai et al\\.,? 2021",
+      "shortCiteRegEx" : "Bai et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Jointly learning to align and summarize for neural crosslingual summarization",
+      "author" : [ "Yue Cao", "Hui Liu", "Xiaojun Wan." ],
+      "venue" : "Proceedings of ACL, pages 6220–6231, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Cao et al\\.,? 2020a",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multisumm: Towards a unified model for multilingual abstractive summarization",
+      "author" : [ "Yue Cao", "Xiaojun Wan", "Jinge Yao", "Dian Yu." ],
+      "venue" : "Proceedings of AAAI, volume 34, pages 11–18.",
+      "citeRegEx" : "Cao et al\\.,? 2020b",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A deep reinforced model for zero-shot cross-lingual summarization with bilingual semantic similarity rewards",
+      "author" : [ "Zi-Yi Dou", "Sachin Kumar", "Yulia Tsvetkov." ],
+      "venue" : "Proceedings of the Fourth Workshop on Neural Generation and Translation, pages 60–68,",
+      "citeRegEx" : "Dou et al\\.,? 2020",
+      "shortCiteRegEx" : "Dou et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Zero-shot crosslingual abstractive sentence summarization through teaching generation and attention",
+      "author" : [ "Xiangyu Duan", "Mingming Yin", "Min Zhang", "Boxing Chen", "Weihua Luo." ],
+      "venue" : "Proceedings of ACL, pages 3162–3172, Florence, Italy. Association",
+      "citeRegEx" : "Duan et al\\.,? 2019",
+      "shortCiteRegEx" : "Duan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Lexrank: Graph-based lexical centrality as salience in text summarization",
+      "author" : [ "Günes Erkan", "Dragomir R Radev." ],
+      "venue" : "Journal of Artificial Intelligence Research (JAIR), 22:457–479.",
+      "citeRegEx" : "Erkan and Radev.,? 2004",
+      "shortCiteRegEx" : "Erkan and Radev.",
+      "year" : 2004
+    }, {
+      "title" : "Understanding the difficulty of training deep feedforward neural networks",
+      "author" : [ "Xavier Glorot", "Yoshua Bengio." ],
+      "venue" : "Proceedings of AISTATS.",
+      "citeRegEx" : "Glorot and Bengio.,? 2010",
+      "shortCiteRegEx" : "Glorot and Bengio.",
+      "year" : 2010
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomas Kocisky", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Proceedings of NIPS, pages 1693–1701.",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "LCSTS: A large scale Chinese short text summarization dataset",
+      "author" : [ "Baotian Hu", "Qingcai Chen", "Fangze Zhu." ],
+      "venue" : "Proceedings of EMNLP, pages 1967– 1972, Lisbon, Portugal. Association for Computational Linguistics.",
+      "citeRegEx" : "Hu et al\\.,? 2015",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "Proceedings of ICLR.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Autoencoding variational bayes",
+      "author" : [ "Diederik P Kingma", "Max Welling." ],
+      "venue" : "arXiv preprint arXiv:1312.6114.",
+      "citeRegEx" : "Kingma and Welling.,? 2013",
+      "shortCiteRegEx" : "Kingma and Welling.",
+      "year" : 2013
+    }, {
+      "title" : "WikiLingua: A new benchmark dataset for cross-lingual abstractive summarization",
+      "author" : [ "Faisal Ladhak", "Esin Durmus", "Claire Cardie", "Kathleen McKeown." ],
+      "venue" : "Findings of EMNLP, pages 4034–4048, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Ladhak et al\\.,? 2020",
+      "shortCiteRegEx" : "Ladhak et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Cross-lingual c*st*rd: English access to hindi information",
+      "author" : [ "Anton Leuski", "Chin-Yew Lin", "Liang Zhou", "Ulrich Germann", "Franz Josef Och", "Eduard Hovy." ],
+      "venue" : "ACM Transactions on Asian Language Information Processing, 2(3):245–269.",
+      "citeRegEx" : "Leuski et al\\.,? 2003",
+      "shortCiteRegEx" : "Leuski et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81, Barcelona, Spain. Association for Computational Linguistics.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Transactions of the Association for Computational Linguis-",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Evaluation of a cross-lingual Romanian-English multi-document summariser",
+      "author" : [ "Constantin Orăsan", "Oana Andreea Chiorean." ],
+      "venue" : "Proceedings of LREC, Marrakech, Morocco. European Language Resources Association (ELRA).",
+      "citeRegEx" : "Orăsan and Chiorean.,? 2008",
+      "shortCiteRegEx" : "Orăsan and Chiorean.",
+      "year" : 2008
+    }, {
+      "title" : "A robust abstractive system for cross-lingual summarization",
+      "author" : [ "Jessica Ouyang", "Boya Song", "Kathy McKeown." ],
+      "venue" : "Proceedings of NAACL, pages 2025–2031, Minneapolis, Minnesota. Association for Computational Linguistics.",
+      "citeRegEx" : "Ouyang et al\\.,? 2019",
+      "shortCiteRegEx" : "Ouyang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A hierarchical latent structure for variational conversation modeling",
+      "author" : [ "Yookoon Park", "Jaemin Cho", "Gunhee Kim." ],
+      "venue" : "Proceedings of NAACL, pages 1792–1801, New Orleans, Louisiana. Association for Computational Linguistics.",
+      "citeRegEx" : "Park et al\\.,? 2018",
+      "shortCiteRegEx" : "Park et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "MLSUM: The multilingual summarization corpus",
+      "author" : [ "Thomas Scialom", "Paul-Alexis Dray", "Sylvain Lamprier", "Benjamin Piwowarski", "Jacopo Staiano." ],
+      "venue" : "Proceedings of EMNLP, pages 8051–8067, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Scialom et al\\.,? 2020",
+      "shortCiteRegEx" : "Scialom et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A hierarchical latent variable encoder-decoder model for generating dialogues",
+      "author" : [ "Iulian Serban", "Alessandro Sordoni", "Ryan Lowe", "Laurent Charlin", "Joelle Pineau", "Aaron Courville", "Yoshua Bengio." ],
+      "venue" : "Proceedings of AAAI.",
+      "citeRegEx" : "Serban et al\\.,? 2017",
+      "shortCiteRegEx" : "Serban et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Modeling semantic relationship in multi-turn conversations with hierarchical latent variables",
+      "author" : [ "Lei Shen", "Yang Feng", "Haolan Zhan." ],
+      "venue" : "Proceedings of ACL, pages 5497–5502, Florence, Italy. Association for Computational Linguistics.",
+      "citeRegEx" : "Shen et al\\.,? 2019",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning structured output representation using deep conditional generative models",
+      "author" : [ "Kihyuk Sohn", "Honglak Lee", "Xinchen Yan." ],
+      "venue" : "Proceedings of NIPS, pages 3483–3491.",
+      "citeRegEx" : "Sohn et al\\.,? 2015",
+      "shortCiteRegEx" : "Sohn et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Multi-task learning for cross-lingual abstractive summarization",
+      "author" : [ "Sho Takase", "Naoaki Okazaki" ],
+      "venue" : null,
+      "citeRegEx" : "Takase and Okazaki.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Takase and Okazaki.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Ł ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Proceedings of NIPS, pages 5998– 6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Using bilingual information for cross-language document summarization",
+      "author" : [ "Xiaojun Wan." ],
+      "venue" : "Proceedings of ACL, pages 1546–1555, Portland, Oregon, USA. Association for Computational Linguistics.",
+      "citeRegEx" : "Wan.,? 2011",
+      "shortCiteRegEx" : "Wan.",
+      "year" : 2011
+    }, {
+      "title" : "Cross-language document summarization based on machine translation quality prediction",
+      "author" : [ "Xiaojun Wan", "Huiying Li", "Jianguo Xiao." ],
+      "venue" : "Proceedings of ACL, pages 917–926, Uppsala, Sweden. Association for Computational Linguistics.",
+      "citeRegEx" : "Wan et al\\.,? 2010",
+      "shortCiteRegEx" : "Wan et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "T-cvae: Transformer-based conditioned variational autoencoder for story completion",
+      "author" : [ "Tianming Wang", "Xiaojun Wan." ],
+      "venue" : "Proceedings of IJCAI, pages 5233–5239.",
+      "citeRegEx" : "Wang and Wan.,? 2019",
+      "shortCiteRegEx" : "Wang and Wan.",
+      "year" : 2019
+    }, {
+      "title" : "Mixed-lingual pretraining for cross-lingual summarization",
+      "author" : [ "Ruochen Xu", "Chenguang Zhu", "Yu Shi", "Michael Zeng", "Xuedong Huang." ],
+      "venue" : "Proceedings of AACL, pages 536–541, Suzhou, China. Association for Computational Linguistics.",
+      "citeRegEx" : "Xu et al\\.,? 2020",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Phrase-based compressive cross-language summarization",
+      "author" : [ "Jin-ge Yao", "Xiaojun Wan", "Jianguo Xiao." ],
+      "venue" : "Proceedings of EMNLP, pages 118– 127, Lisbon, Portugal. Association for Computational Linguistics.",
+      "citeRegEx" : "Yao et al\\.,? 2015",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "MultiHumES: Multilingual humanitarian dataset for extractive summarization",
+      "author" : [ "Jenny Paola Yela-Bello", "Ewan Oglethorpe", "Navid Rekabsaz." ],
+      "venue" : "Proceedings of EACL, pages 1713–1717, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Yela.Bello et al\\.,? 2021",
+      "shortCiteRegEx" : "Yela.Bello et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Variational neural machine translation",
+      "author" : [ "Biao Zhang", "Deyi Xiong", "Jinsong Su", "Hong Duan", "Min Zhang." ],
+      "venue" : "Proceedings of EMNLP, pages 521– 530.",
+      "citeRegEx" : "Zhang et al\\.,? 2016a",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Abstractive cross-language summarization via translation model enhanced predicate argument structure fusing",
+      "author" : [ "Jiajun Zhang", "Yu Zhou", "Chengqing Zong." ],
+      "venue" : "IEEE/ACM Transactions on Audio, Speech, and Language Processing, 24(10):1842–1853.",
+      "citeRegEx" : "Zhang et al\\.,? 2016b",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Learning discourse-level diversity for neural dialog models using conditional variational autoencoders",
+      "author" : [ "Tiancheng Zhao", "Ran Zhao", "Maxine Eskenazi." ],
+      "venue" : "Proceedings of ACL, pages 654–664.",
+      "citeRegEx" : "Zhao et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "MoverScore: Text generation evaluating with contextualized embeddings and earth mover distance",
+      "author" : [ "Wei Zhao", "Maxime Peyrard", "Fei Liu", "Yang Gao", "Christian M. Meyer", "Steffen Eger." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP, pages 563–578, Hong Kong,",
+      "citeRegEx" : "Zhao et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "MSMO: Multimodal summarization with multimodal output",
+      "author" : [ "Junnan Zhu", "Haoran Li", "Tianshang Liu", "Yu Zhou", "Jiajun Zhang", "Chengqing Zong." ],
+      "venue" : "Proceedings of EMNLP, pages 4154–4164, Brussels, Belgium. Association for Computational Lin-",
+      "citeRegEx" : "Zhu et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "NCLS: Neural cross-lingual summarization",
+      "author" : [ "Junnan Zhu", "Qian Wang", "Yining Wang", "Yu Zhou", "Jiajun Zhang", "Shaonan Wang", "Chengqing Zong." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP, pages 3054– 3064, Hong Kong, China. Association for Compu-",
+      "citeRegEx" : "Zhu et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Attend, translate and summarize: An efficient method for neural cross-lingual summarization",
+      "author" : [ "Junnan Zhu", "Yu Zhou", "Jiajun Zhang", "Chengqing Zong." ],
+      "venue" : "Proceedings of ACL, pages 1309–1321, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Zhu et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 16,
+      "context" : ", Chinese), which can be seen as a combination of machine translation (MT) and monolingual summarization (MS) to some extent (Orăsan and Chiorean, 2008; Zhu et al., 2019).",
+      "startOffset" : 125,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 36,
+      "context" : ", Chinese), which can be seen as a combination of machine translation (MT) and monolingual summarization (MS) to some extent (Orăsan and Chiorean, 2008; Zhu et al., 2019).",
+      "startOffset" : 125,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 13,
+      "context" : "(i) The first category is pipeline-based, adopting either translationsummarization (Leuski et al., 2003; Ouyang et al., 2019) or summarization-translation (Wan et al.",
+      "startOffset" : 83,
+      "endOffset" : 125
+    }, {
+      "referenceID" : 17,
+      "context" : "(i) The first category is pipeline-based, adopting either translationsummarization (Leuski et al., 2003; Ouyang et al., 2019) or summarization-translation (Wan et al.",
+      "startOffset" : 83,
+      "endOffset" : 125
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2019) or summarization-translation (Wan et al., 2010; Orăsan and Chiorean, 2008) paradigm.",
+      "startOffset" : 37,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2019) or summarization-translation (Wan et al., 2010; Orăsan and Chiorean, 2008) paradigm.",
+      "startOffset" : 37,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 37,
+      "context" : "Generally, it is difficult to acquire the CLS dataset (Zhu et al., 2020; Ayana et al., 2018; Duan et al., 2019).",
+      "startOffset" : 54,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 0,
+      "context" : "Generally, it is difficult to acquire the CLS dataset (Zhu et al., 2020; Ayana et al., 2018; Duan et al., 2019).",
+      "startOffset" : 54,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 5,
+      "context" : "Generally, it is difficult to acquire the CLS dataset (Zhu et al., 2020; Ayana et al., 2018; Duan et al., 2019).",
+      "startOffset" : 54,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2017), the Conditional Variational Auto-Encoder (CVAE) (Sohn et al., 2015) has shown its superiority in learning hierarchical structure with hierarchical latent variables, which is often leveraged to capture the semantic connection between the utterance and the corresponding context of conversations.",
+      "startOffset" : 57,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 36,
+      "context" : "We validate our proposed training framework on the datasets of different language pairs (Zhu et al., 2019): Zh2EnSum (Chinese⇒English) and En2ZhSum (English⇒Chinese).",
+      "startOffset" : 88,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 15,
+      "context" : "• Our model gains consistent and significant performance and remarkably outperforms the most previous state-of-the-art methods after using mBART (Liu et al., 2020).",
+      "startOffset" : 145,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 22,
+      "context" : "The CVAE (Sohn et al., 2015) consists of one prior network and one recognition (posterior) network, where the latter takes charge of guiding the learning of prior network via Kullback–Leibler (KL) divergence (Kingma and Welling, 2013).",
+      "startOffset" : 9,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2015) consists of one prior network and one recognition (posterior) network, where the latter takes charge of guiding the learning of prior network via Kullback–Leibler (KL) divergence (Kingma and Welling, 2013).",
+      "startOffset" : 187,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 31,
+      "context" : "For example, the variational neural MT model (Zhang et al., 2016a), which introduces a random latent variable z into the neural MT conditional distribution:",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 24,
+      "context" : "Our model is based on transformer (Vaswani et al., 2017) encoder-decoder framework.",
+      "startOffset" : 34,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 31,
+      "context" : "Taking Xmt for example, we follow (Zhang et al., 2016a) and apply mean-pooling over the output hemt e of theNe-th encoder layer:",
+      "startOffset" : 34,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 24,
+      "context" : "The layer normalization is omitted for simplicity and you may refer to (Vaswani et al., 2017) for more details.",
+      "startOffset" : 71,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 11,
+      "context" : "Therefore, the prior network can learn a tailored translation distribution by approaching the recognition network via KL divergence (Kingma and Welling, 2013):",
+      "startOffset" : 132,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 11,
+      "context" : "We use the reparameterization trick (Kingma and Welling, 2013) to estimate the gradients of the prior and recognition networks (Zhao et al.",
+      "startOffset" : 36,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 33,
+      "context" : "We use the reparameterization trick (Kingma and Welling, 2013) to estimate the gradients of the prior and recognition networks (Zhao et al., 2017).",
+      "startOffset" : 127,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 36,
+      "context" : "We evaluate our approach on Zh2EnSum and En2ZhSum datasets released by (Zhu et al., 2019).",
+      "startOffset" : 71,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 37,
+      "context" : "Following (Zhu et al., 2020), 1) we evaluate all models with the standard ROUGE metric (Lin, 2004), reporting the F1 scores for ROUGE1, ROUGE-2, and ROUGE-L.",
+      "startOffset" : 10,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2020), 1) we evaluate all models with the standard ROUGE metric (Lin, 2004), reporting the F1 scores for ROUGE1, ROUGE-2, and ROUGE-L.",
+      "startOffset" : 66,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 34,
+      "context" : "All ROUGE scores are reported by the 95% confidence interval measured by the official script;5 2) we also evaluate the quality of English summaries in Zh2EnSum with MoverScore (Zhao et al., 2019).",
+      "startOffset" : 176,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 24,
+      "context" : "In this paper, we train all models using standard transformer (Vaswani et al., 2017) in Base setting.",
+      "startOffset" : 62,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 6,
+      "context" : "It first translates the original article into the target language by Google Translator6 and then summarizes the translated text via LexRank (Erkan and Radev, 2004).",
+      "startOffset" : 140,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 24,
+      "context" : "It directly uses the de-facto transformer (Vaswani et al., 2017) to train an end-to-end CLS system.",
+      "startOffset" : 42,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 36,
+      "context" : "Here, we keep the dataset used for MT and MS consistent with (Zhu et al., 2019) for fair comparison.",
+      "startOffset" : 61,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 36,
+      "context" : "M# Models Zh2EnSum En2ZhSum RG1 RG2 RGL MVS RG1 RG2 RGL Pipeline M1 GETran(Zhu et al., 2019) 24.",
+      "startOffset" : 74,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 36,
+      "context" : "Due to the difficulty of acquiring the cross-lingual summarization dataset (Zhu et al., 2019), we conduct such experiments to investigate the model performance when the CLS training dataset is limited, i.",
+      "startOffset" : 75,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 13,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 17,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 16,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 26,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 25,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 29,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 32,
+      "context" : "Conventional cross-lingual summarization methods mainly focus on incorporating bilingual information into the pipeline methods (Leuski et al., 2003; Ouyang et al., 2019; Orăsan and Chiorean, 2008; Wan et al., 2010; Wan, 2011; Yao et al., 2015; Zhang et al., 2016b), i.",
+      "startOffset" : 127,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 12,
+      "context" : "Due to the difficulty of acquiring cross-lingual summarization dataset, some previous researches focus on constructing datasets (Ladhak et al., 2020; Scialom et al., 2020; Yela-Bello et al., 2021; Zhu et al., 2019), mixed-lingual pre-training (Xu et al.",
+      "startOffset" : 128,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 19,
+      "context" : "Due to the difficulty of acquiring cross-lingual summarization dataset, some previous researches focus on constructing datasets (Ladhak et al., 2020; Scialom et al., 2020; Yela-Bello et al., 2021; Zhu et al., 2019), mixed-lingual pre-training (Xu et al.",
+      "startOffset" : 128,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 30,
+      "context" : "Due to the difficulty of acquiring cross-lingual summarization dataset, some previous researches focus on constructing datasets (Ladhak et al., 2020; Scialom et al., 2020; Yela-Bello et al., 2021; Zhu et al., 2019), mixed-lingual pre-training (Xu et al.",
+      "startOffset" : 128,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 36,
+      "context" : "Due to the difficulty of acquiring cross-lingual summarization dataset, some previous researches focus on constructing datasets (Ladhak et al., 2020; Scialom et al., 2020; Yela-Bello et al., 2021; Zhu et al., 2019), mixed-lingual pre-training (Xu et al.",
+      "startOffset" : 128,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2019), mixed-lingual pre-training (Xu et al., 2020), or zero-shot approaches (Ayana et al.",
+      "startOffset" : 36,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2020), or zero-shot approaches (Ayana et al., 2018; Duan et al., 2019; Dou et al., 2020), i.",
+      "startOffset" : 33,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2020), or zero-shot approaches (Ayana et al., 2018; Duan et al., 2019; Dou et al., 2020), i.",
+      "startOffset" : 33,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020), or zero-shot approaches (Ayana et al., 2018; Duan et al., 2019; Dou et al., 2020), i.",
+      "startOffset" : 33,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 1,
+      "context" : "To further enhance CLS, some studies resort to shared decoder (Bai et al., 2021), more pseudo training data (Takase and Okazaki, 2020), or more related task training (Cao et al.",
+      "startOffset" : 62,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2021), more pseudo training data (Takase and Okazaki, 2020), or more related task training (Cao et al.",
+      "startOffset" : 35,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 22,
+      "context" : "CVAE has verified its superiority in many fields (Sohn et al., 2015).",
+      "startOffset" : 49,
+      "endOffset" : 68
+    } ],
+    "year" : 0,
+    "abstractText" : "The goal of the cross-lingual summarization (CLS) is to convert a document in one language (e.g., English) to a summary in another one (e.g., Chinese). Essentially, the CLS task is the combination of machine translation (MT) and monolingual summarization (MS), and thus there exists the hierarchical relationship between MT&MS and CLS. Existing studies on CLS mainly focus on utilizing pipeline methods or jointly training an end-toend model through an auxiliary MT or MS objective. However, it is very challenging for the model to directly conduct CLS as it requires both the abilities to translate and summarize. To address this issue, we propose a hierarchical model for the CLS task, based on the conditional variational auto-encoder. The hierarchical model contains two kinds of latent variables at the local and global levels, respectively. At the local level, there are two latent variables, one for translation and the other for summarization. As for the global level, there is another latent variable for cross-lingual summarization conditioned on the two local-level variables. Experiments on two language directions (English⇔Chinese) verify the effectiveness and superiority of the proposed approach. In addition, we show that our model is able to generate better cross-lingual summaries than comparison models in the few-shot setting.1",
+    "creator" : null
+  }
+}

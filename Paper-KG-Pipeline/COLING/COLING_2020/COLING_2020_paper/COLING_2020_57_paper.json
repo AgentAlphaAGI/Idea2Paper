@@ -1,0 +1,506 @@
+{
+  "name" : "COLING_2020_57_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "An empirical analysis of existing systems and datasets toward general simple question answering",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Simple factoid question answering over a knowledge base is an important task in natural language understanding. Although it only deals with factoid questions about a single entity and a predicate, they cover much of the real user queries (Dai et al., 2016), and also, accurate mapping of these is a critical subproblem in more general semantic parsing-based complex query generation (Berant et al., 2013; Bao et al., 2016; Reddy et al., 2016; Trivedi et al., 2017). SimpleQuestions (Bordes et al., 2015) is the largest and most popular dataset on this task. It was recently argued that this task, given abundant training data, is nearly solved with standard techniques in machine learning (Petrochuk and Zettlemoyer, 2018; Mohammed et al., 2018).\nIn this paper, we present a thorough empirical analysis to assess whether the success on one particular dataset indicates the success of the task itself in general. To this end, we evaluate the behaviors of four existing QA systems targeting SimpleQuestions (Mohammed et al., 2018; Yu et al., 2017; Wu et al., 2019; Huang et al., 2019), across four different datasets (Cai and Yates, 2013; Yih et al., 2016; Bordes et al., 2015; Jiang et al., 2019), under different conditions. One of our research goals was to evaluate the robustness of a model trained on a single dataset against questions that are outside of the distribution of the training data. Such robustness evaluation is recently actively studied in other language understanding tasks (Jia and Liang, 2017; Naik et al., 2018; McCoy et al., 2019) but little effort has been made on question answering over a knowledge base, though, in practice, it would be critical because a practical system has to be robust on real user queries, which may be outliers in the training data.\nOur experiments suggest that, while SimpleQuestions is the largest, the examples are too simple and the success on it does not indicate a progress in factoid question answering in general. For example, we show that, under the same training data size, the system’s accuracy on SimpleQuestions gets about 10 points higher than that on WebQuestions. Although the simplicity of SimpleQuestions is pointed out in past work (Jiang et al., 2019), our work provides an empirical evidence that this is indeed the case with a careful comparison and manual analysis using the standardized datasets. Given our analysis, we suggest two possible future directions. One is to invent a clever novel data creation method that would\nbe scalable, while avoiding bias as much as possible. In this respect, we point out that a recent attempt by FreebaseQA (Jiang et al., 2019) is not successful, and that significant bias still exists. Another is to exploit useful information from the large dataset of SimpleQuestions in a better way. In the last analysis, we perform an experiment on this idea by training on a union of the datasets (Talmor and Berant, 2019)."
+    }, {
+      "heading" : "2 Datasets",
+      "text" : "We use four QA datasets over a knowledge base (KB) as our target datasets. These datasets were selected because they share a common KB (Freebase), and a large portion of each dataset comprises factoid questions, which are the main focus of this paper. A factoid question asks a single fact, or a triple (subject, predicate, object) on a KB, where the object corresponds to the answer. For example, “Which country is Albert Bolender from?” corresponds to a fact (Albert Bolender, people.person.nationality, ?), where the placeholder found in the KB is the target object, which is United States.\nFree917 (Cai and Yates, 2013) This is the first dataset for machine learning-based semantic parsing over Freebase. It contains 917 questions on a subset of Freebase, called Freebase Commons, covering 81 domains. Berant et al. (2013) find that each question tends to contain words that are directly related to the target Freebase predicate. An example is “What genre of music is B12?”, for which the gold predicate is music.artist.genre. We used an annotated Free917 dataset by Bast and Haussmann (2015).1\nWebQSP (Yih et al., 2016) This is an extension of WebQuestions (Berant et al., 2013) with gold SPARQL query on each question, which is missing in the original dataset. Aiming at creating more natural questions than Free917, each question is derived from the Google Suggest API, followed by filtering by crowd workers. Consequently, the authors observe a larger divergence between the question words and predicates, such as “What music did Beethoven compose?”, for the aforementioned predicate music.artist.genre. This dataset contains 4,737 questions.\nSimpleQuestions (Bordes et al., 2015) This is the largest dataset in our experiments, containing over 100,000 questions answerable by a single fact. Contrary to WebQuestions, each question in this dataset is created from a sampled fact in Freebase, which is then verbalized and paraphrased by a crowd worker. Possibly due to this procedure starting from a KB fact, we find that, as in Free917, this dataset also tends to verbalize a predicate with directly related terms, such as “What type of music . . .?” for music.artist.genre.2 This approach eases the collection of a lot of data and is popular in data creation for semantic parsing (Wang et al., 2015; Trivedi et al., 2017; Talmor and Berant, 2018). However, we will see in Section 4.3 that it also tends to introduce certain biases, which affect models’ generalization. The authors also define a subset of Freebase called FB2M that covers 2M entities and 5K predicates, including all entities appearing in WebQuestions, and create all questions from this subset.\nFreebaseQA (Jiang et al., 2019) This is the latest dataset aiming at more difficult factoid questions than SimpleQuestions while maintaining the scale of data size. Specifically, the questions in this dataset are first sampled from TriviaQA (Joshi et al., 2017) and then filtered by heuristics to collect factoid questions answerable on Freebase. Although the authors argue that their procedure reliably eliminates non-factoid questions, we find several problems in this dataset, which we describe in Section 4.2."
+    }, {
+      "heading" : "2.1 Preprocessing",
+      "text" : "Apart from the difference in construction methods, the four datasets additionally differ based on (1) whether they contain non-factoid questions and (2) the assumed subset of Freebase. Because we aim to evaluate the behavior of a single model across these four datasets, we perform some preprocessing on each dataset to eliminate those factors. Specifically, from all datasets, we filter questions that do not match the domain of SimpleQuestions; that is, we remove the questions that involve a multi-hop path or\n1https://github.com/ad-freiburg/aqqu 2Cai and Yates (2013) only mention that questions are written by two native English speakers and do not state whether they\naccess to a predicate when writing questions, but we find two datasets are similar in this respect.\nmulti constraints, such as “What character did Natalie Portman play in Star Wars?” in WebQSP, and questions with entities or predicates that are outside of FB2M. Table 1 shows the resulting statistics of each dataset.3 Unfortunately, because this procedure makes Free917 too small, we use the entire dataset as the test set. Following Berant et al. (2013), we take 20% of the train split as the validation split for WebQSP. We abbreviate these four datasets as F917, FBQ, WQ, and SQ, respectively.\nTable 2 summarizes how much of the predicates in one dataset (valid split) are unseen (i.e., zero-shot) in another dataset (train split). Since zero-shot prediction is hard (Wu et al., 2019), we use these as a rough estimate on the difficulty of an experiment in Section 4."
+    }, {
+      "heading" : "3 Systems",
+      "text" : "Now we describe four systems that we compare across the datasets. Since we only deal with single fact questions in this paper, all questions can be answered by correctly predicting a subject entity e and a relation r on the KB. To search for the best pair, all systems in this paper employ a pipeline, which is comprised of three different submodules below:\n1. entity linking, which outputs a set of candidate subject entities {e}; 2. relation prediction, which outputs a set of candidate predicates {r}; and 3. query generation, which finds the best (ê, r̂) pair by reranking the candidate pairs.\nWhile some earlier systems, such as Bordes et al. (2015), employ a different approach, their accuracies are not state-of-the-art. We do not include these in our experiments.\nThe systems differ in each submodule. There is also some minor variations in pipeline constructions. We select the four target systems considering their high accuracies on SimpleQuestions, as well as the availability of the code.4 We will make the code used in our experiments public if the paper is accepted.\nBuboQA (Mohammed et al., 2018)5 In this system, both entity linking and relation prediction are modeled with simple classifiers. Despite its simplicity, this approach outperforms several more complex architectures (Bordes et al., 2015; Yin et al., 2016). Specifically, for entity linking, a trained LSTM first detects the entity spans, which are then heuristically mapped to the candidate KB entities and scored with\n3The reason for the decrease by the first step for FreebaseQA is that it contains two-hop questions involving a mediator node in Freebase, which we exclude from the target.\n4When searching for open software, we often found that many systems along with a paper are not self contained; in particular, they often are missing an entity linking module. This is especially the case for systems targeting WebQustions, for which many systems rely on the outputs of the entity linker used in Yih et al. (2015) and found in https: //github.com/scottyih/STAGG, while the entity linker itself is not available.\n5https://github.com/castorini/BuboQA\nthe Levenshtein distance to the canonical entity label. Relation prediction is performed independently by another classifier on top of a different LSTM. Finally, the best combination of (ê, r̂) is found according to a weighted sum of these two module scores.6 This is an extension of an even simpler baseline of Ture and Jojic (2017), and a similar approach is employed in Petrochuk and Zettlemoyer (2018).\nNote that this system treats relation prediction as classification among the predicates appearing in the training data. This means that it cannot solve zero-shot relation prediction, which occurs to some extent especially in the dataset transfer experiment (Section 4.3). On the other hand, the other three systems theoretically can handle them, as described in the following.\nHierarchical Residual BiLSTM (HR-BiLSTM) (Yu et al., 2017) On this system (and the next, KBQA-Adapter), relation prediction is performed differently, not by classification on a fixed set of relations, but by mapping on a shared embedding space for KB relations and texts. This model simply encodes both question tokens and relation tokens (e.g., “music artist genre” for music.artist.genre) by different encoders. Relation candidates are then ranked by cosine similarity between the outputs of two encoders. This method allows to calculate a score of an unseen relation. For this system, since Yu et al. (2017) do not release their code, we use the implementation by Wu et al. (2019). Unfortunately, this implementation only includes the relation prediction module rather then the full pipeline. We thus try to reproduce the pipeline described in Yu et al. (2017), using the entity linking module of BuboQA. See Appendix for details. We use the same pipeline for KBQA-Adapter.\nKBQA-Adapter (Wu et al., 2019)7 This is an improvement to HR-BiLSTM with an additional adversarial adapter that is injected to the relation encoder. The motivation of this adapter is to improve the zero-shot relation prediction performance. To this end, the adapter receives a relation embedding for r provided by KG embeddings, which is JointNRE (Han et al., 2018), transforming it to an embedding space where unseen relations can be handled properly. We employ the same pipeline with the BuboQA entity linker for this system.\nKnowledge Embedding-based QA (KEQA) (Huang et al., 2019)8 This system also builds on an external knowledge graph embeddings (TransE (Bordes et al., 2013)) but its use is more direct and central in the entire system. Given a knowledge graph embedding, which is fixed, this model tries to map each question into an entity embedding ê and relation embedding r̂, using separate LSTMs. We expect ê to be close to the gold node embedding in the graph and r̂ to the gold relation embedding. Also, we would expect that the transition defined by the embedding model (e.g., addition for TransE), f(ê, r̂), will get close to the answer node embedding. The query generation step of the system selects the (ê, r̂, ô) triple based on this intuition, by minimizing the summed distances from embeddings corresponding to ê, r̂, and ô to the obtained encoded embeddings.\nSettings and Notes For all models, we employ the best architectures and hyperparameters reported in the paper, or a related document. For the first three systems, we set the number of entity linking outputs as 50, and that of relation prediction as 5, which are the default settings for BuboQA. Note also that these three systems share the same entity linking module of BuboQA. For evaluation, following the standard practice of SimpleQuestions, we evaluate the accuracy of predicted (subject, predicate) pairs."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Results when trained on single datasets",
+      "text" : "Here, we evaluate different models (Section 3) primarily suggested to solve SimpleQuestions across the normalized datasets (Section 2). In addition to the standard experiment on a single dataset, we also provide an experiment across two datasets, where we train a model on one dataset and test on another. We are interested in this setting, because in a practical scenario, there might be a gap between the distribution of training data, which depends on a way to create the data, and that of test data, which would be real user\n6Although the paper mentions that the two scores are multiplied, in the implementation they are summed with fixed weights. 7https://github.com/wudapeng268/KBQA-Adapter 8https://github.com/xhuang31/KEQA_WSDM19\nqueries. For example, as we saw in Section 2, the data creation of SimpleQuestions allows collecting a lot of data easily while the data distribution of WebQuestions may match the distribution in the wild. We evaluate these models’ robustness to the shift of data distributions.\nTable 3 summarizes the main results on the test data, where grey rows correspond to the single dataset settings. Comparing these three rows, the accuracies on FBQ and WQ are consistently lower than SQ, suggesting that FBQ and WQ have some data characteristics that cause difficulties for the current models, which we inspect in detail in Section 4.2. When evaluated on a different dataset, which we call dataset transfer in the following, the accuracies degrade even more. Note that F917 is the test only dataset (Section 2), and the accuracy on it is relatively high when trained on SQ. As we discussed in Section 2, SQ and F917 are somewhat similar. This suggests that, as can be expected, the accuracies on this transfer setting are affected by some notion of distance between datasets and the current models are quite sensitive to it. We will analyze in Section 4.3 what exactly is the main cause of these degradations."
+    }, {
+      "heading" : "4.2 What makes WebQSP and FreebaseQA more difficult?",
+      "text" : "WQ and FBQ are more challenging than SQ according to Table 3 (gray rows). Understanding the cause of this difficulty is important because it directly relates to the remaining challenges in solving factoid questions in general. We test several possibilities including the dataset quality to reach an accurate answer.\nUpperbounds due to the ambiguity are not the reason Petrochuk and Zettlemoyer (2018) find that the upperbound accuracy of SQ is around 83% due to the inherent ambiguity in the data; e.g., given a question “who wrote gulliver’s travels?”, there are more than one equally plausible interpretation, since there are multiple entities for guliver’s travels such as the book, TV miniseries, and films, all of which could be compatible with “who wrote . . .?”. To test the possibility that lower accuracies on WQ and FBQ are due to even more severe ambiguity in the data, we perform the same analysis on FBQ and WQ, finding that the upperbounds are 86.85% for WQ and 84.16% for FBQ, respectively, which are comparable to SQ. This rejects the possibility that the upperbounds on these two datasets are low.\nQuality of FreebaseQA is not high Inspecting datasets, we find that some questions in FBQ are not a factoid question, such as “What is the highest volcano in Africa?”, which requires an aggregate operation but the gold subject and predicate are just (africa, location.contains). We suspect that these questions remain in FBQ due to noisy filtering from unrestricted questions, which only assesses the path from a subject to an object with little care for additional constraints. The overall quality might be exacerbated by a reliance on non-experts (crowds) for the final assessment.\nTo quantify how much of the examples are problematic, we sample 100 questions from the validation split on each dataset, and categorize them with the labels defined in Table 5. Table 4 is the result. For this labeling, impossible, notsimple, and badgold labels indicate non-faithful (question, gold label) pairs as in the above example, while multisubj and multirel are rather the problems due to the evaluation method, because they mean that there are multiple correct labels while the current evaluation only allows a gold one. From Table 4, we can see that 40% of questions in FBQ are non-faithful, much higher than the other datasets. From this result, we argue that lower accuracies on FBQ are not due to the true difficulty as factoid questions, but rather due to the undesirable complexity incurred by an inaccurate data creation process. Considering this problem, we will pay little attention on this dataset in the following analysis.\nData size does not account for the gap between WQ and SQ One major difference between SQ and WQ is the training data size (Table 1), with SQ being roughly 60 times larger. Is this data size the main source of performance gap seen in Table 3? Or, is it due to the inherent complexity of WQ compared to SQ? To answer this question, we compare SQ and WQ eliminating the data size effects, by preparing a smaller SQ dataset, which has the equal size as WQ. When sampling data from SQ, we only sample examples with predicates that appear in the corresponding split of WQ. We also keep the ratio of unseen relations in the validation split as roughly 8%, the same as WQ (Table 2). We create 10 different subsets of SQ and report the average accuracies on them. We evaluate the systems on the validation splits.\nIn Table 6, we summarizes the scores of BuboQA and KEQA, which perform better on original SQ and WQ in Table 3. Interestingly, the accuracies on small-sized SQ are the same level as those of the original dataset. This indicates that the main factor causing the performance gap between WQ and SQ is not the data size, but the complexity or the inherent difficulty of the dataset, which we inspect next.\nEntity linking is challenging Among the three steps in the systems (Section 3), we hypothesize that relation prediction is the main bottleneck on WQ, since predicates tend to be nontrivially verbalized compared to SQ (Section 2). Table 7 shows that, in particular for BuboQA, this is not the case. Here, we evaluate component-wise performance of entity linking (EL) and relation prediction (RP). We evaluate\nR@50 for EL and R@5 for RP, which are the sizes of candidates in two components of BuboQA.9 We can see that for both systems EL scores degrade about 10 points from SQ to WQ, which is roughly the same level as decreases in final accuracies. Accuracy of entity linking is critical for both systems, because at the final query generation step, predicate candidates are restricted to ones connected to the selected entities. This means that if the entity linking performs poorly, that can be a bottleneck of the entire system. KEQA suffers from a larger decrease of RP (94.38→84.97) than BuboQA (95.64→90.92), but we conjecture this can be mainly attributed to the dependence of RP on EL for KEQA (footnote 9).\nInspecting the errors of entity linking by BuboQA, we find a particularly challenge case, specific to WQ, is the superficially ambiguous entities, such as “Mexico”, which matches to more than 1,000 different entities in Freebase, according to the BuboQA’s inverted index. In the top candidates, we notice that many entities are song and album names. Handling of these ambiguous entities is challenging for BuboQA, since it does not rely on statistical techniques for disambiguation (only the Levinstein distance). This suggests that we need a more sophisticated entity linker exploiting a context for disambiguation. KEQA’s approach is promising, but the current system has an opposite problem, as we discuss in the next section."
+    }, {
+      "heading" : "4.3 What makes dataset transfer challenging?",
+      "text" : "So far we have seen that the system’s performance gaps between two datasets, SQ and WQ, largely come from the gaps in entity linking performance. Can the same explanation hold for the large gaps with the dataset transfer setting in Table 3? To answer this question, Table 8 summarizes the submodule accuracies for the transfer setting, on which the numbers in parentheses are degradations from the non-transfer setting. For example, R@50 of BuboQA’s entity linking drops 2.33 points on WQ, when changing training data from WQ to SQ. From the table, we can see that score drops are more severe on relation prediction. We conjecture that entity linking is less affected by transfer because expressions of entities (e.g., the name of a person) are relatively fixed compared to predicates across datasets.\nTo confirm what kinds of questions become hard by shifting training data, we manually analyze errors on examples from SQ→WQ case in Table 8. This analysis is on the validation split. For each system we select up to 100 examples, which are originally solved, but failed when trained on WQ, and categorize the errors according to Table 10. If multiple labels are applied, we choose the highest one from the table.\n9 For KEQA, we get the same numbers of candidates for EL and RP that are closest to the predicted embeddings in the vector space. In this process, we restrict the candidates for RP as ones that are connected to one of entity candidates, mimicking the final process of the system.\nSince an entity linking error often accompany a relation prediction error (Section 4.2), we prioritize errors related to entity linking (under the same category). The top priority for relnotfound (zero-shot relation prediction) is under the assumption that they are particularly hard for models.\nTable 9 shows the result. Note that the total numbers are not 100 for some systems, because we only consider examples that original models (trained on WQ) answer correctly. We can see that errors related to relation prediction are dominant across systems, which is consistent with Table 8. We distinguish two types of relation errors: wrongrel means a totally wrong prediction while ambirel is a spurious error, for which, the predicted relation leads to the correct answer on Freebase, but the current label-based metric penalizes it. We find that most of this latter case occurs by ambiguities of profession and notable types, which are often aliases. For a question “who is . . .?“, the gold relation of SQ is often notable types, but that is often profession in WQ. This can be seen a kind of dataset bias, and one way to resolve it is to change the evaluation metric to evaluate the answers, not labels. Under the current metric, this can be seen as an inherent limitation of solving all questions under the dataset transfer setting. While these are spurious, the other half of relation prediction errors are wrongrel. We find that these are essentially due to different paraphrasing patterns of a predicate across datasets, as we discussed in Section 2, and this result suggests such variation for a predicate is the main challenge for the transfer.\nFinally, we notice that KEQA contains more entity linking errors (wrongent), and in many cases, these errors are distinguished in that they are completely irrevelant to the target entity. This suggests that the KEQA entity linker would be more affected by a dataset bias, possibly due to not relying on string match when linking. An interesting future direction is an extension with additional features to take into account the surface similarities as in BuboQA, which would lead to more robust generalization."
+    }, {
+      "heading" : "4.4 Effects of combining datasets",
+      "text" : "Our final experiment is to see the performance of a model trained on the union of the target datasets. This is inspired by the recent success of MultiQA (Talmor and Berant, 2019), which, on reading comprehension, shows that a single model trained on the union of multiple datasets outperforms the models\ntrained specifically on each single dataset. We combine training data of FBQ, SQ, and WQ, and train a model on it. We are particularly interested in whether the accuracy on WQ improves with the help of statistical cues from other datasets, although we have seen that the transfer from SQ only is hard. Table 11 is the result along with the amount of increase/decrease from a model trained on the single dataset (corresponding to the test data). We can see that the model is able to handle each dataset well on average, but in most cases, the scores do not improve from the single dataset baselines.\nThis result might be reasonable from our detailed analysis so far. In Section 4.2, we find that the main challenge on remaining errors of WQ is in ambiguous and difficult cases of entity linking. However, entity linking of BuboQA is lexical pattern based, not statistical, indicating that additional statistical cues from SQ are not very helpful for saving the difficult cases. For KEQA, we find that its entity linking performance is worse on WQ when trained only on SQ (Table 9). This suggests that, although it is statistical, KEQA does not exploit useful features from SQ examples to handle WQ, at least regarding entity linking. A better model or a learning method could utilize the data with different distribution in a clever way, but our analysis suggests that current methods do not have such an ability."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "Through several experiments, we have shown that although the system performance on SimpleQuestions dataset is getting better and close to the upper bound, that does not indicate a more general success of simple factoid question answering overall. The main cause of this mismatch is that, as we have seen, there is often an inverse relationship between the ease of data collection and naturalness of collected questions. We found that although the data creation of SimpleQuestions, starting from a KB fact and verbalizing by a crowd worker, is advantageous in terms of scalability, the resulting dataset is too simple, as we demonstrated that the systems can achieve high accuracies even with a limited amount of training data. WebQuestions, on the other hand, is a collection of real user queries with several challenges including ambiguous entity mentions, but such questions are more difficult to collect, in particular in terms of the coverage of entities and relations. It is ideal that systems trained on a simpler and scalable dataset become robust on the questions outside of the distribution of the training data, but our experiment on dataset transfer suggests that the current approaches do not achieve this.\nWe suppose there are two possible directions toward general simple question answering, or question answering over a knowledge base in general. The first is to improve the dataset quality. We need to create a dataset, that is real and challenging, while still being scalable. FreebaseQA can be seen as an attempt toward this goal, but we find that this dataset has several issues. Another direction is to invent a model or a learning mechanism that can generalize robustly from biased datasets. Our data union can be seen as a simple approach toward this end, but we found that current models do not exploit useful information beyond the own target dataset. More sophisticated approaches, such as distributionally robust optimization (Delage and Ye, 2010; Oren et al., 2019), may help. Another promising way is relying on a strong pretrained language models, including BERT (Devlin et al., 2019). We have not included BERT-based models in this paper, because its application on SimpleQuestion has not outperformed a simpler baseline so far (Lukovnikov et al., 2019), and it is also nontrivial to integrate BERT with knowledge graph embeddings, which is necessary for KEQA-based approach and is currently actively studied (Peters et al., 2019; Weijie Liu, 2020). Integration of such approaches, along with robustness evaluation as done in this paper, will be of practical importance toward robust question answering not specific to a single dataset."
+    } ],
+    "references" : [ {
+      "title" : "Constraint-based question answering with knowledge graph",
+      "author" : [ "Junwei Bao", "Nan Duan", "Zhao Yan", "Ming Zhou", "Tiejun Zhao." ],
+      "venue" : "Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics: Technical Papers, pages 2503–2514, Osaka, Japan, December. The COLING 2016 Organizing Committee.",
+      "citeRegEx" : "Bao et al\\.,? 2016",
+      "shortCiteRegEx" : "Bao et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "More accurate question answering on freebase",
+      "author" : [ "Hannah Bast", "Elmar Haussmann." ],
+      "venue" : "Proceedings of the 24th ACM International on Conference on Information and Knowledge Management, CIKM ’15, page 1431–1440, New York, NY, USA. Association for Computing Machinery.",
+      "citeRegEx" : "Bast and Haussmann.,? 2015",
+      "shortCiteRegEx" : "Bast and Haussmann.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic parsing on Freebase from questionanswer pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 1533–1544, Seattle, Washington, USA, October. Association for Computational Linguistics.",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Translating embeddings for modeling multi-relational data",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Alberto Garcia-Duran", "Jason Weston", "Oksana Yakhnenko." ],
+      "venue" : "C. J. C. Burges, L. Bottou, M. Welling, Z. Ghahramani, and K. Q. Weinberger, editors, Advances in Neural Information Processing Systems 26, pages 2787–2795. Curran Associates, Inc.",
+      "citeRegEx" : "Bordes et al\\.,? 2013",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Large-scale simple question answering with memory networks",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "ArXiv, abs/1506.02075.",
+      "citeRegEx" : "Bordes et al\\.,? 2015",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Large-scale semantic parsing via schema matching and lexicon extension",
+      "author" : [ "Qingqing Cai", "Alexander Yates." ],
+      "venue" : "Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 423–433, Sofia, Bulgaria, August. Association for Computational Linguistics.",
+      "citeRegEx" : "Cai and Yates.,? 2013",
+      "shortCiteRegEx" : "Cai and Yates.",
+      "year" : 2013
+    }, {
+      "title" : "CFO: Conditional focused neural question answering with large-scale knowledge bases",
+      "author" : [ "Zihang Dai", "Lei Li", "Wei Xu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 800–810, Berlin, Germany, August. Association for Computational Linguistics.",
+      "citeRegEx" : "Dai et al\\.,? 2016",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Distributionally robust optimization under moment uncertainty with application to data-driven problems",
+      "author" : [ "Erick Delage", "Yinyu Ye." ],
+      "venue" : "Operations research, 58(3):595–612.",
+      "citeRegEx" : "Delage and Ye.,? 2010",
+      "shortCiteRegEx" : "Delage and Ye.",
+      "year" : 2010
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), pages 4171–4186, Minneapolis, Minnesota, June. Association for Computational Linguistics.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural knowledge acquisition via mutual attention between knowledge graph and text",
+      "author" : [ "Xu Han", "Zhiyuan Liu", "Maosong Sun." ],
+      "venue" : "Sheila A. McIlraith and Kilian Q. Weinberger, editors, Proceedings of the ThirtySecond AAAI Conference on Artificial Intelligence, (AAAI-18), the 30th innovative Applications of Artificial Intelligence (IAAI-18), and the 8th AAAI Symposium on Educational Advances in Artificial Intelligence (EAAI18), New Orleans, Louisiana, USA, February 2-7, 2018, pages 4832–4839. AAAI Press.",
+      "citeRegEx" : "Han et al\\.,? 2018",
+      "shortCiteRegEx" : "Han et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Knowledge graph embedding based question answering",
+      "author" : [ "Xiao Huang", "Jingyuan Zhang", "Dingcheng Li", "Ping Li." ],
+      "venue" : "Proceedings of the Twelfth ACM International Conference on Web Search and Data Mining, WSDM ’19, pages 105–113, New York, NY, USA. ACM.",
+      "citeRegEx" : "Huang et al\\.,? 2019",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Adversarial examples for evaluating reading comprehension systems",
+      "author" : [ "Robin Jia", "Percy Liang." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages 2021–2031, Copenhagen, Denmark, September. Association for Computational Linguistics.",
+      "citeRegEx" : "Jia and Liang.,? 2017",
+      "shortCiteRegEx" : "Jia and Liang.",
+      "year" : 2017
+    }, {
+      "title" : "FreebaseQA: A new factoid QA data set matching trivia-style question-answer pairs with Freebase",
+      "author" : [ "Kelvin Jiang", "Dekun Wu", "Hui Jiang." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), pages 318–323, Minneapolis, Minnesota, June. Association for Computational Linguistics.",
+      "citeRegEx" : "Jiang et al\\.,? 2019",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension",
+      "author" : [ "Mandar Joshi", "Eunsol Choi", "Daniel S. Weld", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, Vancouver, Canada, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Joshi et al\\.,? 2017",
+      "shortCiteRegEx" : "Joshi et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Pretrained transformers for simple question answering over knowledge graphs",
+      "author" : [ "Denis Lukovnikov", "Asja Fischer", "Jens Lehmann." ],
+      "venue" : "The Semantic Web - ISWC 2019 - 18th International Semantic Web Conference, Auckland, New Zealand, October 26-30, 2019, Proceedings, Part I, pages 470–486.",
+      "citeRegEx" : "Lukovnikov et al\\.,? 2019",
+      "shortCiteRegEx" : "Lukovnikov et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Right for the wrong reasons: Diagnosing syntactic heuristics in natural language inference",
+      "author" : [ "Tom McCoy", "Ellie Pavlick", "Tal Linzen." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 3428–3448, Florence, Italy, July. Association for Computational Linguistics.",
+      "citeRegEx" : "McCoy et al\\.,? 2019",
+      "shortCiteRegEx" : "McCoy et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Strong baselines for simple question answering over knowledge graphs with and without neural networks",
+      "author" : [ "Salman Mohammed", "Peng Shi", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 2 (Short Papers), pages 291–296, New Orleans, Louisiana, June. Association for Computational Linguistics.",
+      "citeRegEx" : "Mohammed et al\\.,? 2018",
+      "shortCiteRegEx" : "Mohammed et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Stress test evaluation for natural language inference",
+      "author" : [ "Aakanksha Naik", "Abhilasha Ravichander", "Norman Sadeh", "Carolyn Rose", "Graham Neubig." ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics, pages 2340–2353, Santa Fe, New Mexico, USA, August. Association for Computational Linguistics.",
+      "citeRegEx" : "Naik et al\\.,? 2018",
+      "shortCiteRegEx" : "Naik et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Distributionally robust language modeling",
+      "author" : [ "Yonatan Oren", "Shiori Sagawa", "Tatsunori Hashimoto", "Percy Liang." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 4227–4237, Hong Kong, China, November. Association for Computational Linguistics.",
+      "citeRegEx" : "Oren et al\\.,? 2019",
+      "shortCiteRegEx" : "Oren et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Knowledge enhanced contextual word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Robert Logan", "Roy Schwartz", "Vidur Joshi", "Sameer Singh", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 43–54, Hong Kong, China, November. Association for Computational Linguistics.",
+      "citeRegEx" : "Peters et al\\.,? 2019",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SimpleQuestions nearly solved: A new upperbound and baseline approach",
+      "author" : [ "Michael Petrochuk", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 554–558, Brussels, Belgium, October-November. Association for Computational Linguistics.",
+      "citeRegEx" : "Petrochuk and Zettlemoyer.,? 2018",
+      "shortCiteRegEx" : "Petrochuk and Zettlemoyer.",
+      "year" : 2018
+    }, {
+      "title" : "Transforming dependency structures to logical forms for semantic parsing",
+      "author" : [ "Siva Reddy", "Oscar Täckström", "Michael Collins", "Tom Kwiatkowski", "Dipanjan Das", "Mark Steedman", "Mirella Lapata." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 4:127–140.",
+      "citeRegEx" : "Reddy et al\\.,? 2016",
+      "shortCiteRegEx" : "Reddy et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "The web as a knowledge-base for answering complex questions",
+      "author" : [ "Alon Talmor", "Jonathan Berant." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers), pages 641–651, New Orleans, Louisiana, June. Association for Computational Linguistics.",
+      "citeRegEx" : "Talmor and Berant.,? 2018",
+      "shortCiteRegEx" : "Talmor and Berant.",
+      "year" : 2018
+    }, {
+      "title" : "MultiQA: An empirical investigation of generalization and transfer in reading comprehension",
+      "author" : [ "Alon Talmor", "Jonathan Berant." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 4911–4921, Florence, Italy, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Talmor and Berant.,? 2019",
+      "shortCiteRegEx" : "Talmor and Berant.",
+      "year" : 2019
+    }, {
+      "title" : "Lc-quad: A corpus for complex question answering over knowledge graphs",
+      "author" : [ "Priyansh Trivedi", "Gaurav Maheshwari", "Mohnish Dubey", "Jens Lehmann." ],
+      "venue" : "Claudia d’Amato, Miriam Fernandez, Valentina Tamma, Freddy Lecue, Philippe Cudré-Mauroux, Juan Sequeda, Christoph Lange, and Jeff Heflin, editors, The Semantic Web – ISWC 2017, pages 210–218, Cham. Springer International Publishing.",
+      "citeRegEx" : "Trivedi et al\\.,? 2017",
+      "shortCiteRegEx" : "Trivedi et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "No need to pay attention: Simple recurrent neural networks work! In Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages 2866–2872, Copenhagen, Denmark, September",
+      "author" : [ "Ferhan Ture", "Oliver Jojic." ],
+      "venue" : "Association for Computational Linguistics.",
+      "citeRegEx" : "Ture and Jojic.,? 2017",
+      "shortCiteRegEx" : "Ture and Jojic.",
+      "year" : 2017
+    }, {
+      "title" : "Building a semantic parser overnight",
+      "author" : [ "Yushi Wang", "Jonathan Berant", "Percy Liang." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on Natural Language Processing (Volume 1: Long Papers), pages 1332–1342, Beijing, China, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Wang et al\\.,? 2015",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "K-BERT: Enabling language representation with knowledge graph",
+      "author" : [ "Zhe Zhao Zhiruo Wang Qi Ju Haotang Deng Ping Wang Weijie Liu", "Peng Zhou." ],
+      "venue" : "Proceedings of AAAI 2020.",
+      "citeRegEx" : "Liu and Zhou.,? 2020",
+      "shortCiteRegEx" : "Liu and Zhou.",
+      "year" : 2020
+    }, {
+      "title" : "Learning representation mapping for relation detection in knowledge base question answering",
+      "author" : [ "Peng Wu", "Shujian Huang", "Rongxiang Weng", "Zaixiang Zheng", "Jianbing Zhang", "Xiaohui Yan", "Jiajun Chen." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 6130–6139, Florence, Italy, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Wu et al\\.,? 2019",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Semantic parsing via staged query graph generation: Question answering with knowledge base",
+      "author" : [ "Wen-tau Yih", "Ming-Wei Chang", "Xiaodong He", "Jianfeng Gao." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on Natural Language Processing (Volume 1: Long Papers), pages 1321–1331, Beijing, China, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Yih et al\\.,? 2015",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "The value of semantic parse labeling for knowledge base question answering",
+      "author" : [ "Wen-tau Yih", "Matthew Richardson", "Chris Meek", "Ming-Wei Chang", "Jina Suh." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 201–206, Berlin, Germany, August. Association for Computational Linguistics.",
+      "citeRegEx" : "Yih et al\\.,? 2016",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Simple question answering by attentive convolutional neural network",
+      "author" : [ "Wenpeng Yin", "Mo Yu", "Bing Xiang", "Bowen Zhou", "Hinrich Schütze." ],
+      "venue" : "Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics: Technical Papers, pages 1746–1756, Osaka, Japan, December. The COLING 2016 Organizing Committee.",
+      "citeRegEx" : "Yin et al\\.,? 2016",
+      "shortCiteRegEx" : "Yin et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Improved neural relation detection for knowledge base question answering",
+      "author" : [ "Mo Yu", "Wenpeng Yin", "Kazi Saidul Hasan", "Cicero dos Santos", "Bing Xiang", "Bowen Zhou." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 571–581, Vancouver, Canada, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Yu et al\\.,? 2017",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "Although it only deals with factoid questions about a single entity and a predicate, they cover much of the real user queries (Dai et al., 2016), and also, accurate mapping of these is a critical subproblem in more general semantic parsing-based complex query generation (Berant et al.",
+      "startOffset" : 126,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2016), and also, accurate mapping of these is a critical subproblem in more general semantic parsing-based complex query generation (Berant et al., 2013; Bao et al., 2016; Reddy et al., 2016; Trivedi et al., 2017).",
+      "startOffset" : 134,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2016), and also, accurate mapping of these is a critical subproblem in more general semantic parsing-based complex query generation (Berant et al., 2013; Bao et al., 2016; Reddy et al., 2016; Trivedi et al., 2017).",
+      "startOffset" : 134,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2016), and also, accurate mapping of these is a critical subproblem in more general semantic parsing-based complex query generation (Berant et al., 2013; Bao et al., 2016; Reddy et al., 2016; Trivedi et al., 2017).",
+      "startOffset" : 134,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2016), and also, accurate mapping of these is a critical subproblem in more general semantic parsing-based complex query generation (Berant et al., 2013; Bao et al., 2016; Reddy et al., 2016; Trivedi et al., 2017).",
+      "startOffset" : 134,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 4,
+      "context" : "SimpleQuestions (Bordes et al., 2015) is the largest and most popular dataset on this task.",
+      "startOffset" : 16,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 20,
+      "context" : "It was recently argued that this task, given abundant training data, is nearly solved with standard techniques in machine learning (Petrochuk and Zettlemoyer, 2018; Mohammed et al., 2018).",
+      "startOffset" : 131,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 16,
+      "context" : "It was recently argued that this task, given abundant training data, is nearly solved with standard techniques in machine learning (Petrochuk and Zettlemoyer, 2018; Mohammed et al., 2018).",
+      "startOffset" : 131,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 16,
+      "context" : "To this end, we evaluate the behaviors of four existing QA systems targeting SimpleQuestions (Mohammed et al., 2018; Yu et al., 2017; Wu et al., 2019; Huang et al., 2019), across four different datasets (Cai and Yates, 2013; Yih et al.",
+      "startOffset" : 93,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 32,
+      "context" : "To this end, we evaluate the behaviors of four existing QA systems targeting SimpleQuestions (Mohammed et al., 2018; Yu et al., 2017; Wu et al., 2019; Huang et al., 2019), across four different datasets (Cai and Yates, 2013; Yih et al.",
+      "startOffset" : 93,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 28,
+      "context" : "To this end, we evaluate the behaviors of four existing QA systems targeting SimpleQuestions (Mohammed et al., 2018; Yu et al., 2017; Wu et al., 2019; Huang et al., 2019), across four different datasets (Cai and Yates, 2013; Yih et al.",
+      "startOffset" : 93,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 10,
+      "context" : "To this end, we evaluate the behaviors of four existing QA systems targeting SimpleQuestions (Mohammed et al., 2018; Yu et al., 2017; Wu et al., 2019; Huang et al., 2019), across four different datasets (Cai and Yates, 2013; Yih et al.",
+      "startOffset" : 93,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2019), across four different datasets (Cai and Yates, 2013; Yih et al., 2016; Bordes et al., 2015; Jiang et al., 2019), under different conditions.",
+      "startOffset" : 40,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2019), across four different datasets (Cai and Yates, 2013; Yih et al., 2016; Bordes et al., 2015; Jiang et al., 2019), under different conditions.",
+      "startOffset" : 40,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2019), across four different datasets (Cai and Yates, 2013; Yih et al., 2016; Bordes et al., 2015; Jiang et al., 2019), under different conditions.",
+      "startOffset" : 40,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2019), across four different datasets (Cai and Yates, 2013; Yih et al., 2016; Bordes et al., 2015; Jiang et al., 2019), under different conditions.",
+      "startOffset" : 40,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 11,
+      "context" : "Such robustness evaluation is recently actively studied in other language understanding tasks (Jia and Liang, 2017; Naik et al., 2018; McCoy et al., 2019) but little effort has been made on question answering over a knowledge base, though, in practice, it would be critical because a practical system has to be robust on real user queries, which may be outliers in the training data.",
+      "startOffset" : 94,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 17,
+      "context" : "Such robustness evaluation is recently actively studied in other language understanding tasks (Jia and Liang, 2017; Naik et al., 2018; McCoy et al., 2019) but little effort has been made on question answering over a knowledge base, though, in practice, it would be critical because a practical system has to be robust on real user queries, which may be outliers in the training data.",
+      "startOffset" : 94,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 15,
+      "context" : "Such robustness evaluation is recently actively studied in other language understanding tasks (Jia and Liang, 2017; Naik et al., 2018; McCoy et al., 2019) but little effort has been made on question answering over a knowledge base, though, in practice, it would be critical because a practical system has to be robust on real user queries, which may be outliers in the training data.",
+      "startOffset" : 94,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 12,
+      "context" : "Although the simplicity of SimpleQuestions is pointed out in past work (Jiang et al., 2019), our work provides an empirical evidence that this is indeed the case with a careful comparison and manual analysis using the standardized datasets.",
+      "startOffset" : 71,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 12,
+      "context" : "In this respect, we point out that a recent attempt by FreebaseQA (Jiang et al., 2019) is not successful, and that significant bias still exists.",
+      "startOffset" : 66,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 23,
+      "context" : "In the last analysis, we perform an experiment on this idea by training on a union of the datasets (Talmor and Berant, 2019).",
+      "startOffset" : 99,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 5,
+      "context" : "Free917 (Cai and Yates, 2013) This is the first dataset for machine learning-based semantic parsing over Freebase.",
+      "startOffset" : 8,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 30,
+      "context" : "WebQSP (Yih et al., 2016) This is an extension of WebQuestions (Berant et al.",
+      "startOffset" : 7,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2016) This is an extension of WebQuestions (Berant et al., 2013) with gold SPARQL query on each question, which is missing in the original dataset.",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 4,
+      "context" : "SimpleQuestions (Bordes et al., 2015) This is the largest dataset in our experiments, containing over 100,000 questions answerable by a single fact.",
+      "startOffset" : 16,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 26,
+      "context" : "2 This approach eases the collection of a lot of data and is popular in data creation for semantic parsing (Wang et al., 2015; Trivedi et al., 2017; Talmor and Berant, 2018).",
+      "startOffset" : 107,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 24,
+      "context" : "2 This approach eases the collection of a lot of data and is popular in data creation for semantic parsing (Wang et al., 2015; Trivedi et al., 2017; Talmor and Berant, 2018).",
+      "startOffset" : 107,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 22,
+      "context" : "2 This approach eases the collection of a lot of data and is popular in data creation for semantic parsing (Wang et al., 2015; Trivedi et al., 2017; Talmor and Berant, 2018).",
+      "startOffset" : 107,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 12,
+      "context" : "FreebaseQA (Jiang et al., 2019) This is the latest dataset aiming at more difficult factoid questions than SimpleQuestions while maintaining the scale of data size.",
+      "startOffset" : 11,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 13,
+      "context" : "Specifically, the questions in this dataset are first sampled from TriviaQA (Joshi et al., 2017) and then filtered by heuristics to collect factoid questions answerable on Freebase.",
+      "startOffset" : 76,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 28,
+      "context" : "Since zero-shot prediction is hard (Wu et al., 2019), we use these as a rough estimate on the difficulty of an experiment in Section 4.",
+      "startOffset" : 35,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 16,
+      "context" : "BuboQA (Mohammed et al., 2018)5 In this system, both entity linking and relation prediction are modeled with simple classifiers.",
+      "startOffset" : 7,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 4,
+      "context" : "Despite its simplicity, this approach outperforms several more complex architectures (Bordes et al., 2015; Yin et al., 2016).",
+      "startOffset" : 85,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 31,
+      "context" : "Despite its simplicity, this approach outperforms several more complex architectures (Bordes et al., 2015; Yin et al., 2016).",
+      "startOffset" : 85,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 32,
+      "context" : "Hierarchical Residual BiLSTM (HR-BiLSTM) (Yu et al., 2017) On this system (and the next, KBQA-Adapter), relation prediction is performed differently, not by classification on a fixed set of relations, but by mapping on a shared embedding space for KB relations and texts.",
+      "startOffset" : 41,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 28,
+      "context" : "KBQA-Adapter (Wu et al., 2019)7 This is an improvement to HR-BiLSTM with an additional adversarial adapter that is injected to the relation encoder.",
+      "startOffset" : 13,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 9,
+      "context" : "To this end, the adapter receives a relation embedding for r provided by KG embeddings, which is JointNRE (Han et al., 2018), transforming it to an embedding space where unseen relations can be handled properly.",
+      "startOffset" : 106,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 10,
+      "context" : "Knowledge Embedding-based QA (KEQA) (Huang et al., 2019)8 This system also builds on an external knowledge graph embeddings (TransE (Bordes et al.",
+      "startOffset" : 36,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2019)8 This system also builds on an external knowledge graph embeddings (TransE (Bordes et al., 2013)) but its use is more direct and central in the entire system.",
+      "startOffset" : 83,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 23,
+      "context" : "This is inspired by the recent success of MultiQA (Talmor and Berant, 2019), which, on reading comprehension, shows that a single model trained on the union of multiple datasets outperforms the models",
+      "startOffset" : 50,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 7,
+      "context" : "More sophisticated approaches, such as distributionally robust optimization (Delage and Ye, 2010; Oren et al., 2019), may help.",
+      "startOffset" : 76,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 18,
+      "context" : "More sophisticated approaches, such as distributionally robust optimization (Delage and Ye, 2010; Oren et al., 2019), may help.",
+      "startOffset" : 76,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 8,
+      "context" : "Another promising way is relying on a strong pretrained language models, including BERT (Devlin et al., 2019).",
+      "startOffset" : 88,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 14,
+      "context" : "We have not included BERT-based models in this paper, because its application on SimpleQuestion has not outperformed a simpler baseline so far (Lukovnikov et al., 2019), and it is also nontrivial to integrate BERT with knowledge graph embeddings, which is necessary for KEQA-based approach and is currently actively studied (Peters et al.",
+      "startOffset" : 143,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2019), and it is also nontrivial to integrate BERT with knowledge graph embeddings, which is necessary for KEQA-based approach and is currently actively studied (Peters et al., 2019; Weijie Liu, 2020).",
+      "startOffset" : 163,
+      "endOffset" : 202
+    } ],
+    "year" : 2020,
+    "abstractText" : "In this paper, we evaluate the progress of our field toward solving simple factoid questions over a knowledge base, a practically important problem in natural language interface to database. As in other natural language understanding tasks, a common practice for this task is to train and evaluate a model on a single dataset, and recent studies suggest that SimpleQuestions, the most popular and largest dataset, is nearly solved under this setting. However, this common setting does not evaluate the robustness of the systems outside of the distribution of the used training data. We rigorously evaluate such robustness of existing systems using different datasets. Our analysis, including shifting of train and test datasets and training on a union of the datasets, suggests that our progress in solving SimpleQuestions dataset does not indicate the success of more general simple question answering. We discuss a possible future direction toward this goal.",
+    "creator" : "TeX"
+  }
+}

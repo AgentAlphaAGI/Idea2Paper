@@ -1,0 +1,434 @@
+{
+  "name" : "ACL_2017_676_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Neural Machine Translation via Binary Code Prediction",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "When handling broad or open domains, machine translation systems usually have to handle a large vocabulary as their inputs and outputs. This is particularly a problem in neural machine translation (NMT) models (Sutskever et al., 2014), such as the attention-based model (Bahdanau et al., 2014; Luong et al., 2015) shown in Figure 1. In these models, the output layer is required to generate a specific word from an internal vector, and a large vocabulary size tends to require a large amount of computation to predict each of the candidate word probabilities.\nBecause this is a significant problem for neural language and translation models, there are a number of methods proposed to resolve this problem, which we detail in Section 2.2. However, none of these previous methods simultaneously satisfies the following desiderata, all of which, we argue, are desirable for practical use in NMT systems:\nMemory efficiency: The method should not require large memory to store the parameters and calculated vectors to maintain scalability in resource-constrained environments.\nTime efficiency: The method should be able to train the parameters efficiently, and possible to perform decoding efficiently with choosing the candidate words from the full probability distribution. In particular, the method should be performed fast on general CPUs to suppress physical costs of computational resources for actual production systems.\nCompatibility with parallel computation: It should be easy for the method to be minibatched and optimized to run efficiently on GPUs, which are essential for training large NMT models.\nIn this paper, we propose a method that satisfies all of these conditions: requires significantly less memory, fast, and is easy to implement minibatched on GPUs. The method works by not pre-\ndicting a softmax over the entire output vocabulary, but instead by encoding each vocabulary word as a vector of binary variables, then independently predicting the bits of this binary representation. In order to represent a vocabulary size of 2n, the binary representation need only be at least n bits long, and thus the amount of computation and size of parameters required to select an output word is only O(log V ) in the size of the vocabulary V , a great reduction from the standard linear increase of O(V ) seen in the original softmax.\nWhile this idea is simple and intuitive, we found that it alone was not enough to achieve competitive accuracy with real NMT models. Thus we make two improvements: First, we propose a hybrid model, where the high frequency words are predicted by a standard softmax, and low frequency words are predicted by the proposed binary codes separately. Second, we propose the use of convolutional error correcting codes with Viterbi decoding (Viterbi, 1967), which add redundancy to the binary representation, and even in the face of localized mistakes in the calculation of the representation, are able to recover the correct word.\nIn experiments on two translation tasks, we find that the proposed hybrid method with error correction is able to achieve results that are competitive with standard softmax-based models while reducing the output layer to a fraction of its original size."
+    }, {
+      "heading" : "2 Problem Description and Prior Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Formulation and Standard Softmax",
+      "text" : "Most of current NMT models use one-hot representations to represent the words in the output vocabulary – each word w is represented by a unique sparse vector eid(w) ∈ RV , in which only one element at the position corresponding to the word ID id(w) ∈ {x ∈ N | 1 ≤ x ≤ V } is 1, while others are 0. V represents the vocabulary size of the target language. NMT models optimize network parameters by treating the one-hot representation eid(w) as the true probability distribution, and minimizing the cross entropy between it and the softmax probability v:\nLH(v, id(w)) := H(eid(w),v), (1) = log sum expu− uid(w), (2)\nv := expu/ sum expu, (3)\nu := Whuh+ βu, (4)\nwhere sumx represents the sum of all elements in x, xi represents the i-th element of x, Whu ∈\nRV×H and βu ∈ RV are trainable parameters and H is the total size of hidden layers directly connected to the output layer.\nAccording to Equation (4), this model clearly requires time/space computation in proportion to O(HV ), and the actual load of the computation of the output layer is directly affected by the size of vocabulary V , which is typically set around tens of thousands (Sutskever et al., 2014)."
+    }, {
+      "heading" : "2.2 Prior Work on Suppressing Complexity of NMT Models",
+      "text" : "Several previous works have proposed methods to reduce computation in the output layer. The hierarchical softmax (Morin and Bengio, 2005) predicts each word based on binary decision and reduces computation time to O(H log V ). However, this method still requires O(HV ) space for the parameters, and requires calculation much more complicated than the standard softmax, particularly at test time. The differentiated softmax (Chen et al., 2016) divides words into clusters, and predicts words using separate part of the hidden layer for each word clusters. This method make the conversion matrix of the output layer sparser than a fully-connected softmax, and can reduce time/space computation amount by ignoring zero part of the matrix. However, this method restricts the usage of hidden layer, and the size of the matrix is still in proportion to V .\nSampling-based approximations (Mnih and Teh, 2012; Mikolov et al., 2013) to the denominator of the softmax have also been proposed to reduce calculation at training. However, these methods are basically not able to be applied at test time, still require heavy computation like the standard softmax.\nOther methods using characters (Ling et al., 2015) or subwords (Sennrich et al., 2016; Chitnis and DeNero, 2015) can be applied to suppress the vocabulary size, but these methods also make for longer sequences, and thus are not a direct solution to problems of computational efficiency."
+    }, {
+      "heading" : "3 Binary Code Prediction Models",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Representing Words using Bit Arrays",
+      "text" : "Figure 2(a) shows the conventional softmax prediction, and Figure 2(b) shows the binary code prediction model proposed in this study. Unlike the conventional softmax, the proposed method predicts each output word indirectly using dense\nbit arrays that correspond to each word. Let b(w) := [b1(w), b2(w), · · · , bB(w)] ∈ {0, 1}B be the target bit array obtained for word w, where each bi(w) ∈ {0, 1} is an independent binary function given w, and B is the number of bits in whole array. For convenience, we introduce some constraints on b. First, a wordw is mapped to only one bit array b(w). Second, all unique words can be discriminated by b, i.e., all bit arrays satisfy that:\nid(w) 6= id(w′)⇒ b(w) 6= b(w′). (5)\nThird, multiple bit arrays can be mapped to the same word as described in Section 3.5. By considering second constraint, we can also constrain B ≥ dlog2 V e, because b should have at least V unique representations to distinguish each word. The output layer of the network independently predicts B probability values q := [q1(h), q2(h), · · · , qB(h)] ∈ [0, 1]B using the current hidden values h by logistic regressions:\nq(h) = σ(Whqh+ βq), (6) σ(x) := 1/(1 + exp(−x)), (7)\nwhere Whq ∈ RB×H and βq ∈ RB are trainable parameters. When we assume that each qi is the probability that “the i-th bit becomes 1,” the joint probability of generating word w can be represented as:\nPr(w|h) := B∏ i=1 ( biqi + b̄iq̄i ) , (8)\nAlgorithm 1 Mapping words to bit arrays. Require: w ∈ V Ensure: b ∈ {0, 1}B = Bit array representing w\nx :=  0, if w = UNK 1, if w = BOS 2, if w = EOS 2 + rank(w), otherwise bi := bx/2i−1c mod 2 b← [b1, b2, · · · , bB ]\nwhere x̄ := 1 − x. We can easily obtain the maximum-probability bit array from q by simply assuming bi = 1 if qi ≥ 1/2, and bi = 0 otherwise. However, this calculation may generate invalid bit arrays which do not correspond to actual words according to the mapping between words and bit arrays. For now, we simply assume that w = UNK (unknown) when such bit arrays are obtained, and discuss alternatives later in Section 3.5.\nThe constraints described here are very general requirements for bit arrays, which still allows us to choose between a wide variety of mapping functions. However, designing the most appropriate mapping method for NMT models is not a trivial problem. In this study, we use a simple mapping method described in Algorithm 1, which was empirically effective in preliminary experiments.1 Here, V is the set of V target words including 3 extra markers: UNK, BOS (begin-of-sentence), and EOS (end-of-sentence), and rank(w) ∈ N>0 is the rank of the word according to their frequencies in the training corpus. Algorithm 1 is one of the minimal mapping methods (i.e., satisfying B = dlog2 V e), and generated bit arrays have the characteristics that their higher bits roughly represents the frequency of corresponding words (e.g., if w is frequently appeared in the training corpus, higher bits in b(w) tend to become 0)."
+    }, {
+      "heading" : "3.2 Loss Functions",
+      "text" : "For learning correct binary representations, we can use any loss function that satisfies a constraint that:\nLB(q, b) { = 0, if q = b, ≥ 0, otherwise. (9)\nFor example, the squared-distance:\nLB(q, b) := B∑ i=1 (qi − bi)2, (10)\n1Other methods examined included random codes, Huffman codes (Huffman, 1952) and Brown clustering (Brown et al., 1992) with zero-padding to adjust code lengths, and some original allocation methods based on the word2vec embeddings (Mikolov et al., 2013).\nor the cross-entropy:\nLB(q, b) := − B∑ i=1 ( bi log qi + b̄i log q̄i ) , (11)\nare candidates for the loss function. We also examined both loss functions in the preliminary experiments, and in this paper, we only used the squared-distance function (Equation (10)), because this function achieved higher translation accuracies than Equation (11)."
+    }, {
+      "heading" : "3.3 Efficiency of the Binary Code Prediction",
+      "text" : "The computational complexity for the parameters Whq and βq is O(HB). This is equal to O(H log V ) when using a minimal mapping method like that shown in Algorithm 1, and is significantly smaller than O(HV ) when using standard softmax prediction. For example, if we chose V = 65536 = 216 and use Algorithm 1’s mapping method, then B = 16 and total amount of computation in the output layer could be suppressed to 1/4096 of its original size.\nOn a different note, the binary code prediction model proposed in this study shares some ideas with the hierarchical softmax (Morin and Bengio, 2005) approach. Actually, when we used a binarytree based mapping function for b, our model can be interpreted as the hierarchical softmax with two strong constraints for guaranteeing independence between all bits: all nodes in the same level of the hierarchy share their parameters, and all levels of the hierarchy are predicted independently of each other. By these constraints, all bits in b can be calculated in parallel. This is particularly important because it makes the model conducive to being calculated on GPGPUs.\nHowever, the binary code prediction model also introduces problems of robustness due to these strong constraints. As the experimental results show, the simplest prediction model which directly maps words into bit arrays seriously decreases translation quality. In Sections 3.4 and 3.5, we introduce two additional techniques to prevent reductions of translation quality and improve robustness of the binary code prediction model."
+    }, {
+      "heading" : "3.4 Hybrid Softmax/Binary Model",
+      "text" : "According to the Zipf’s law (Zipf, 1949), the distribution of word appearances in an actual corpus is biased to a small subset of the vocabulary. As a result, the proposed model mostly learns\ncharacteristics for frequent words and cannot obtain enough opportunities to learn for rare words. To alleviate this problem, we introduce a hybrid model using both softmax prediction and binary code prediction as shown in Figure 2(c). In this model, the output layer calculates a standard softmax for the N − 1 most frequent words and an OTHER marker which indicates all rare words. When the softmax layer predicts OTHER, then the binary code layer is used to predict the representation of rare words. In this case, the actual probability of generating a particular word is separated into two equations according to the frequency of words:\nPr(w|h) := { v′id(w), if id(w) < N,\nv′N · π(w,h), otherwise, (12)\nv′ := expu′/ sum expu′, (13) u′ := Whu′h+ βu′ , (14)\nπ(w,h) := B∏ i=1 ( biqi + b̄iq̄i ) , (15)\nwhere Whu′ ∈ RN×H and βu′ ∈ RN are trainable parameters, and id(w) assumes that the value corresponds to the rank of frequency of each word. We also define the loss function for the hybrid model using both softmax and binary code losses:\nL := { lH(id(w)), if id(w) < N, lH(N) + lB, otherwise, (16) lH(i) := λHLH(v ′, i), (17)\nlB := λBLB(q, b), (18)\nwhere λH and λB are hyper-parameters to determine strength of both softmax/binary code losses. These also can be adjusted according to the training data, but in this study, we only used λH = λB = 1 for simplicity.\nThe computational complexity of the hybrid model is O(H(N + log V )), which is larger than the original binary code modelO(H log V ). However,N can be chosen asN V because the softmax prediction is only required for a few frequent words. As a result, we can control the actual computation for the hybrid model to be much smaller than the standard softmax complexity O(HV ),\nThe idea of separated prediction of frequent words and rare words comes from the differentiated softmax (Chen et al., 2016) approach. However, our output layer can be configured as a fullyconnected network, unlike the differentiated soft-\nmax, because the actual size of the output layer is still small after applying the hybrid model."
+    }, {
+      "heading" : "3.5 Applying Error-correcting Codes",
+      "text" : "The 2 methods proposed in previous sections impose constraints for all bits in q, and the value of each bit must be estimated correctly for the correct word to be chosen. As a result, these models may generate incorrect words due to even a single bit error. This problem is the result of dense mapping between words and bit arrays, and can be avoided by creating redundancy in the bit array. Figure 3 shows a simple example of how this idea works when discriminating 2 words using 3 bits. In this case, the actual words are obtained by estimating the nearest centroid bit array according to the Hamming distance between each centroid and the predicted bit array. This approach can predict correct words as long as the predicted bit arrays are in the set of neighbors for the correct centroid (gray regions in the Figure 3), i.e., up to a 1-bit error in the predicted bits can be corrected. This ability to be robust to errors is a central idea behind error-correcting codes (Shannon, 1948). In general, an error-correcting code has the ability to correct up to b(d−1)/2c bit errors when all centroids differ d bits from each other (Golay, 1949). d is known as the free distance determined\nby the design of error-correcting codes. Errorcorrecting codes have been examined in some previous work on multi-class classification tasks, and have reported advantages from the raw classification (Dietterich and Bakiri, 1995; Klautau et al., 2003; Liu, 2006; Kouzani and Nasireding, 2009; Kouzani, 2010; Ferng and Lin, 2011, 2013). In this study, we applied an error-correcting algorithm to the bit array obtained from Algorithm 1 to improve robustness of the output layer in an NMT system. A challenge in this study is trying a large classification (#classes > 10,000) with error-correction, unlike previous studies focused on solving comparatively small tasks (#classes < 100). And this study also tries to solve a generation task unlike previous studies. As shown in the experiments, we found that this approach is highly effective in these tasks.\nFigure 4 (a) and (b) illustrate the training and generation processes for the model with errorcorrecting codes. In the training, we first convert the original bit arrays b(w) to a center bit array b′ in the space of error-correcting code: b′(b) := [b′1(b), b ′ 2(b), · · · , b′B′(b)] ∈ {0, 1}B ′ , where B′(B) ≥ B is the number of bits in the error-correcting code. The NMT model learns its parameters based on the loss between predicted probabilities q and b′. Note that typical errorcorrecting codes satisfy O(B′/B) = O(1), and this characteristic efficiently suppresses the increase of actual computation cost in the output layer due to the application of the error-correcting code. In the generation of actual words, the decoding method of the error-correcting code converts the redundant predicted bits q into a dense representation q̃ := [q̃1(q), q̃2(q), · · · , q̃B(q)], and uses q̃ as the bits to restore the word, as is done in the method described in the previous sections.\nIt should be noted that the method for performing error correction directly affects the quality of the whole NMT model. For example, the mapping shown in Figure 3 has only 3 bits and it is clear that these bits represent exactly the same information as each other. In this case, all bits can be estimated using exactly the same parameters, and we can not expect that we will benefit significantly from applying this redundant representation. Therefore, we need to choose an error correction method in which the characteristics of original bits should be distributed in various positions of the resulting bit arrays so that errors in bits are\nAlgorithm 2 Encoding into a convolutional code. Require: b ∈ {0, 1}B Ensure: b′ ∈ {0, 1}2(B+6) = Redundant bit array\nx[t] := { bt, if 1 ≤ t ≤ B 0, otherwise y1t := x[t− 6 .. t] · [1001111] mod 2 y2t := x[t− 6 .. t] · [1101101] mod 2 b′ ← [y11 , y21 , y12 , y22 , · · · , y1B+6, y2B+6]\nAlgorithm 3 Decoding from a convolutional code. Require: q ∈ (0, 1)2(B+6) Ensure: q̃ ∈ {0, 1}B = Restored original bit array g(q, b) := b log q + (1− b) log(1− q)\nφ0[s | s ∈ {0, 1}6]← {\n0, if s = [000000] −∞, otherwise\nfor t = 1→ B + 6 do for scur ∈ {0, 1}6 do\nsprev(x) := [x] ◦ scur[1 .. 5] o1(x) := ([x] ◦ scur) · [1001111] mod 2 o2(x) := ([x] ◦ scur) · [1101101] mod 2 g′(x) := g(q2t−1, o1(x)) + g(q2t, o2(x)) φ′(x) := φt−1[s\nprev(x)] + g′(x) x̂← arg maxx∈{0,1} φ′(x) rt[s\ncur]← sprev(x̂) φt[s\ncur]← φ′(x̂) end for\nend for s′ ← [000000] for t = B → 1 do\ns′ ← rt+6[s′] q̃t ← s′1\nend for q̃ ← [q̃1, q̃2, · · · , q̃B ]\nnot highly correlated with each-other. In addition, it is desirable that the decoding method of the applied error-correcting code can directly utilize the probabilities of each bit, because q generated by the network will be a continuous probabilities between zero and one.\nIn this study, we applied convolutional codes (Viterbi, 1967) to convert between original and redundant bits. Convolutional codes perform a set of bit-wise convolutions between original bits and weight bits (which are hyper-parameters). They are well-suited to our setting here because they distribute the information of original bits in different places in the resulting bits, work robustly for random bit errors, and can be decoded using bit probabilities directly.\nAlgorithm 2 describes the particular convolutional code that we applied in this study, with two convolution weights [1001111] and [1101101] as fixed hyper-parameters.2 Where x[i .. j] :=\n2We also examined many configurations of convolutional codes which have different robustness and computation costs, and finally chose this one.\n[xi, · · · , xj ] and x · y := ∑\ni xiyi. On the other hand, there are various algorithms to decode convolutional codes with the same format which are based on different criteria. In this study, we use the decoding method described in Algorithm 3, where x ◦ y represents the concatenation of vectors x and y. This method is based on the Viterbi algorithm (Viterbi, 1967) and estimates original bits by directly using probability of redundant bits. Although Algorithm 3 looks complicated, this algorithm can be performed efficiently on CPUs at test time, and is not necessary at training time when we are simply performing calculation of Equation (6). Algorithm 2 increases the number of bits from B intoB′ = 2(B+6), but does not restrict the actual value of B."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Experimental Settings",
+      "text" : "We examined the performance of the proposed methods on two English-Japanese bidirectional translation tasks which have different translation difficulties: ASPEC (Nakazawa et al., 2016) and BTEC (Takezawa, 1999). Table 1 describes details of two corpora. To prepare inputs for training, we used tokenizer.perl in Moses (Koehn et al., 2007) and KyTea (Neubig et al., 2011) for English/Japanese tokenizations respectively, applied lowercase.perl from Moses, and replaced out-of-vocabulary words such that rank(w) > V − 3 into the UNK marker.\nWe implemented each NMT model using C++ in the DyNet framework (Neubig et al., 2017) and trained/tested on 1 GPU (GeForce GTX TITAN X). Each test is also performed on CPUs to compare its processing time. We used the concat local attention model proposed in Luong et al. (2015) constructed using a 1-layer LSTM (input/forget/output gates and non-peepholes) (Gers et al., 2000) encoder/decoder with 30% dropout (Srivastava et al., 2014) for the input/output vectors of the LSTMs. Only output layers and loss functions are replaced, and other network architectures are identical for the conventional/proposed models. We used the Adam optimizer (Kingma and Ba, 2014) with fixed hyper-parameters α = 0.001, β1 = 0.9β2 = 0.999, ε = 10\n−8, and minibatches with 64 sentences sorted according to their sequence lengths. For evaluating the quality of each model, we calculated BLEU (Papineni et al., 2002) every 1000 mini-batches. Table 2 lists all\nmodels we examined in experiments."
+    }, {
+      "heading" : "4.2 Results and Discussion",
+      "text" : "Table 3 shows the BLEU on the test set, number of bits B (or B′) for the binary code, actual size of the output layer #out, number of parameters in the output layer #W,β, as well as the ratio of #W,β or amount of whole parameters compared with Softmax, and averaged processing time at training (per mini-batch on GPUs) and test (per sentence on GPUs/CPUs), respectively. Figure 5(a) and 5(b) shows training curves up to 180,000 epochs about some English→Japanese settings. To relax instabilities of translation qualities while training (as shown in Figure 5(a) and 5(b)), each BLEU in Table 3 is calculated by averaging actual test BLEU of 5 consecutive results around the epoch that has the highest dev BLEU.\nFirst, we can see that each proposed method largely suppresses the actual size of the output layer from ten to one thousand times compared with the standard softmax. By looking at the total number of parameters, we can see that the proposed models require only 70% of the actual memory, and the proposed model reduces the total number of parameters for the output layers to a practically negligible level. Note that most of remaining parameters are used for the embedding lookup at the input layer in both encoder/decoder. These still occupy O(EV ) memory, where E represents the size of each embedding layer and usually O(E/H) = O(1). These are not targets to be reduced in this study because these values rarely are accessed at test time because we only need to access them for input words, and do not need them to always be in the physical memory. It might be\npossible to apply a similar binary representation as that of output layers to the input layers as well, then express the word embedding by multiplying this binary vector by a word embedding matrix. This is one potential avenue of future work.\nTaking a look at the BLEU for the simple Binary method, we can see that it is far lower than other models for all tasks. This is expected, as described in Section 3, because using raw bit arrays causes many one-off estimation errors at the output layer due to the lack of robustness of the output representation. In contrast, Hybrid-N and Binary-EC models clearly improve BLEU from Binary, and they approach that of Softmax. This demonstrates that these two methods effectively improve the robustness of binary code prediction models. Especially, Binary-EC generally achieves higher quality than Hybrid-512 despite the fact that it suppress the number of parameters by about 1/10. These results show that introducing redundancy to target bit arrays is more effective than incremental prediction. In addition, the Hybrid-NEC model achieves the highest BLEU in all proposed methods, and in particular, comparative or higher BLEU than Softmax in BTEC. This behav-\nTable 3: Comparison of BLEU, size of output layers, number of parameters and processing time.\nCorpus Method BLEU % B #out #W,β\nRatio of #params Time (En→Ja) [ms] EnJa JaEn #W,β All Train Test: GPU / CPU\nASPEC Softmax 31.13 21.14 — 65536 33.6 M 1/1 1 1026. 121.6 / 2539. Binary 13.78 6.953 16 16 8.21 k 1/4.10 k 0.698 711.2 73.08 / 122.3 Hybrid-512 22.81 13.95 16 528 271. k 1/124. 0.700 843.6 81.28 / 127.5 Hybrid-2048 27.73 16.92 16 2064 1.06 M 1/31.8 0.707 837.1 82.28 / 159.3 Binary-EC 25.95 18.02 44 44 22.6 k 1/1.49 k 0.698 712.0 78.75 / 164.0 Hybrid-512-EC 29.07 18.66 44 556 285. k 1/118. 0.700 850.3 80.30 / 180.2 Hybrid-2048-EC 30.05 19.66 44 2092 1.07 M 1/31.4 0.707 851.6 77.83 / 201.3\nBTEC Softmax 47.72 45.22 — 25000 12.8 M 1/1 1 325.0 34.35 / 323.3 Binary 31.83 31.90 15 15 7.70 k 1/1.67 k 0.738 250.7 27.98 / 54.62 Hybrid-512 44.23 43.50 15 527 270. k 1/47.4 0.743 300.7 28.83 / 66.13 Hybrid-2048 46.13 45.76 15 2063 1.06 M 1/12.1 0.759 307.7 28.25 / 67.40 Binary-EC 44.48 41.21 42 42 21.5 k 1/595. 0.738 255.6 28.02 / 69.76 Hybrid-512-EC 47.20 46.52 42 554 284. k 1/45.1 0.744 307.8 28.44 / 56.98 Hybrid-2048-EC 48.17 46.58 42 2090 1.07 M 1/12.0 0.760 311.0 28.47 / 69.44\nFigure 6: BLEU changes in the Hybrid-N methods according to the softmax size (En→Ja).\nior clearly demonstrates that these two methods are orthogonal, and combining them together can be effective. We hypothesize that the lower quality of Softmax in BTEC is caused by an over-fitting due to the large number of parameters required in the softmax prediction.\nProposed methods also improve actual computation time in both training and test. In particular, proposed methods can be performed significantly faster than Softmax at testing on CPUs by x5 to x20, which are directly affected by the complexity of output layers. In addition, we can also see that applying error-correcting code is also efficient at the point of the decoding speed.\nFigure 6 shows the trade-off between the translation quality and the size of softmax layers in the hybrid prediction model (Figure 2(c)) without error-correction. According to the model definition in Section 3.4, the softmax prediction and\nraw binary code prediction can be assumed to be the upper/lower-bound of the hybrid prediction model. The curves in Figure 6 move between Softmax and Binary models, and this behavior intuitively explains the characteristics of the hybrid prediction. In addition, we can see that the BLEU score in BTEC quickly improves, and saturates at N = 1024 in contrast to the ASPEC model, which is still improving at N = 2048. We presume that the shape of curves in Figure 6 is also affected by the difficulty of the corpus, i.e., when we train the hybrid model for easy datasets (e.g., BTEC is easier than ASPEC), it is enough to use a small softmax layer (e.g. N ≤ 1024)."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this study, we proposed neural machine translation models which indirectly predict output words via binary codes, and two model improvements: a hybrid prediction model using both softmax and binary codes, and introducing error-correcting codes to introduce robustness of binary code prediction. Experiments show that the proposed model can achieve comparative translation qualities to standard softmax prediction, while significantly suppressing the amount of parameters in the output layer, and improving calculation speeds while training and especially testing.\nOne interesting avenue of future work is to automatically learn encodings and error correcting codes that are well-suited for the type of binary code prediction we are performing here. In Algorithms 2 and 3 we use convolutions that were determined heuristically, and it is likely that learning these along with the model could result in improved accuracy or better compression capability."
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1409.0473 .",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Class-based n-gram models of natural language",
+      "author" : [ "Peter F Brown", "Peter V Desouza", "Robert L Mercer", "Vincent J Della Pietra", "Jenifer C Lai." ],
+      "venue" : "Computational linguistics 18(4):467–479.",
+      "citeRegEx" : "Brown et al\\.,? 1992",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1992
+    }, {
+      "title" : "Strategies for training large vocabulary neural language models",
+      "author" : [ "Wenlin Chen", "David Grangier", "Michael Auli." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association for",
+      "citeRegEx" : "Chen et al\\.,? 2016",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Variablelength word encodings for neural translation models",
+      "author" : [ "Rohan Chitnis", "John DeNero." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing. Association for Computational",
+      "citeRegEx" : "Chitnis and DeNero.,? 2015",
+      "shortCiteRegEx" : "Chitnis and DeNero.",
+      "year" : 2015
+    }, {
+      "title" : "Solving multiclass learning problems via errorcorrecting output codes",
+      "author" : [ "Thomas G. Dietterich", "Ghulum Bakiri." ],
+      "venue" : "Journal of Artificial Intelligence Research 2:263–286.",
+      "citeRegEx" : "Dietterich and Bakiri.,? 1995",
+      "shortCiteRegEx" : "Dietterich and Bakiri.",
+      "year" : 1995
+    }, {
+      "title" : "Multilabel classification with error-correcting codes",
+      "author" : [ "Chun-Sung Ferng", "Hsuan-Tien Lin." ],
+      "venue" : "Journal of Machine Learning Research 20:281–295.",
+      "citeRegEx" : "Ferng and Lin.,? 2011",
+      "shortCiteRegEx" : "Ferng and Lin.",
+      "year" : 2011
+    }, {
+      "title" : "Multilabel classification using error-correcting codes of hard or soft bits",
+      "author" : [ "Chun-Sung Ferng", "Hsuan-Tien Lin." ],
+      "venue" : "IEEE transactions on neural networks and learning systems 24(11):1888–1900.",
+      "citeRegEx" : "Ferng and Lin.,? 2013",
+      "shortCiteRegEx" : "Ferng and Lin.",
+      "year" : 2013
+    }, {
+      "title" : "Learning to forget: Continual prediction with LSTM",
+      "author" : [ "Felix A Gers", "Jürgen Schmidhuber", "Fred Cummins." ],
+      "venue" : "Neural computation 12(10):2451–2471.",
+      "citeRegEx" : "Gers et al\\.,? 2000",
+      "shortCiteRegEx" : "Gers et al\\.",
+      "year" : 2000
+    }, {
+      "title" : "Notes on digital coding",
+      "author" : [ "Marcel J.E. Golay." ],
+      "venue" : "Proceedings of the Institute of Radio Engineers 37:657.",
+      "citeRegEx" : "Golay.,? 1949",
+      "shortCiteRegEx" : "Golay.",
+      "year" : 1949
+    }, {
+      "title" : "A method for the construction of minimum-redundancy codes",
+      "author" : [ "David A. Huffman." ],
+      "venue" : "Proceedings of the Institute of Radio Engineers 40(9):1098–1101.",
+      "citeRegEx" : "Huffman.,? 1952",
+      "shortCiteRegEx" : "Huffman.",
+      "year" : 1952
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980 .",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "On nearest-neighbor error-correcting output codes with application to all-pairs multiclass support vector machines",
+      "author" : [ "Aldebaro Klautau", "Nikola Jevtić", "Alon Orlitsky." ],
+      "venue" : "Journal of Machine Learning Research 4(April):1–15.",
+      "citeRegEx" : "Klautau et al\\.,? 2003",
+      "shortCiteRegEx" : "Klautau et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Multilabel classification using error correction codes",
+      "author" : [ "Abbas Z Kouzani." ],
+      "venue" : "International Symposium on Intelligence Computation and Applications. Springer, pages 444–454.",
+      "citeRegEx" : "Kouzani.,? 2010",
+      "shortCiteRegEx" : "Kouzani.",
+      "year" : 2010
+    }, {
+      "title" : "Multilabel classification by bch code and random forests",
+      "author" : [ "Abbas Z Kouzani", "Gulisong Nasireding." ],
+      "venue" : "International journal of recent trends in engineering 2(1):113–116.",
+      "citeRegEx" : "Kouzani and Nasireding.,? 2009",
+      "shortCiteRegEx" : "Kouzani and Nasireding.",
+      "year" : 2009
+    }, {
+      "title" : "Character-based neural machine translation",
+      "author" : [ "Wang Ling", "Isabel Trancoso", "Chris Dyer", "Alan W Black." ],
+      "venue" : "arXiv preprint arXiv:1511.04586 .",
+      "citeRegEx" : "Ling et al\\.,? 2015",
+      "shortCiteRegEx" : "Ling et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Using svm and error-correcting codes for multiclass dialog act classification in meeting corpus",
+      "author" : [ "Yang Liu." ],
+      "venue" : "INTERSPEECH.",
+      "citeRegEx" : "Liu.,? 2006",
+      "shortCiteRegEx" : "Liu.",
+      "year" : 2006
+    }, {
+      "title" : "Effective approaches to attention-based neural machine translation",
+      "author" : [ "Thang Luong", "Hieu Pham", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing. Association for Compu-",
+      "citeRegEx" : "Luong et al\\.,? 2015",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Distributed representations of words and phrases and their compositionality",
+      "author" : [ "Tomas Mikolov", "Ilya Sutskever", "Kai Chen", "Greg S Corrado", "Jeff Dean." ],
+      "venue" : "Advances in neural information processing systems. pages 3111–3119.",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "A fast and simple algorithm for training neural probabilistic language models",
+      "author" : [ "Andriy Mnih", "Yee Whye Teh." ],
+      "venue" : "Proceedings of the 29th International Conference on Machine Learning.",
+      "citeRegEx" : "Mnih and Teh.,? 2012",
+      "shortCiteRegEx" : "Mnih and Teh.",
+      "year" : 2012
+    }, {
+      "title" : "Hierarchical probabilistic neural network language model",
+      "author" : [ "Frederic Morin", "Yoshua Bengio." ],
+      "venue" : "Proceedings of Tenth International Workshop on Artificial Intelligence and Statistics. volume 5, pages 246–252.",
+      "citeRegEx" : "Morin and Bengio.,? 2005",
+      "shortCiteRegEx" : "Morin and Bengio.",
+      "year" : 2005
+    }, {
+      "title" : "Aspec: Asian scientific paper excerpt corpus",
+      "author" : [ "Toshiaki Nakazawa", "Manabu Yaguchi", "Kiyotaka Uchimoto", "Masao Utiyama", "Eiichiro Sumita", "Sadao Kurohashi", "Hitoshi Isahara." ],
+      "venue" : "Nicoletta Calzolari (Conference Chair), Khalid Choukri,",
+      "citeRegEx" : "Nakazawa et al\\.,? 2016",
+      "shortCiteRegEx" : "Nakazawa et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dynet: The dynamic neural network toolkit",
+      "author" : [ "Lingpeng Kong", "Adhiguna Kuncoro", "Gaurav Kumar", "Chaitanya Malaviya", "Paul Michel", "Yusuke Oda", "Matthew Richardson", "Naomi Saphra", "Swabha Swayamdipta", "Pengcheng Yin." ],
+      "venue" : "arXiv preprint",
+      "citeRegEx" : "Kong et al\\.,? 2017",
+      "shortCiteRegEx" : "Kong et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Pointwise prediction for robust, adaptable japanese morphological analysis",
+      "author" : [ "Graham Neubig", "Yosuke Nakata", "Shinsuke Mori." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language",
+      "citeRegEx" : "Neubig et al\\.,? 2011",
+      "shortCiteRegEx" : "Neubig et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "Proceedings of 40th Annual Meeting of the Association for Computational Linguis-",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association for",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A mathematical theory of communication",
+      "author" : [ "Claude E. Shannon." ],
+      "venue" : "Bell System Technical Journal 27(3):379–423.",
+      "citeRegEx" : "Shannon.,? 1948",
+      "shortCiteRegEx" : "Shannon.",
+      "year" : 1948
+    }, {
+      "title" : "Dropout: a simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey E Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "Journal of Machine Learning Research 15(1):1929–1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V Le." ],
+      "venue" : "Advances in neural information processing systems. pages 3104–3112.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Building a bilingual travel conversation database for speech translation research",
+      "author" : [ "Toshiyuki Takezawa." ],
+      "venue" : "Proc. of the 2nd international workshop on East-Asian resources and evaluation conference on language resources and evaluation. pages 17–20.",
+      "citeRegEx" : "Takezawa.,? 1999",
+      "shortCiteRegEx" : "Takezawa.",
+      "year" : 1999
+    }, {
+      "title" : "Error bounds for convolutional codes and an asymptotically optimum decoding algorithm",
+      "author" : [ "Andrew Viterbi." ],
+      "venue" : "IEEE transactions on Information Theory 13(2):260–269.",
+      "citeRegEx" : "Viterbi.,? 1967",
+      "shortCiteRegEx" : "Viterbi.",
+      "year" : 1967
+    }, {
+      "title" : "Human behavior and the principle of least effort",
+      "author" : [ "George. K. Zipf" ],
+      "venue" : null,
+      "citeRegEx" : "Zipf.,? \\Q1949\\E",
+      "shortCiteRegEx" : "Zipf.",
+      "year" : 1949
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 27,
+      "context" : "This is particularly a problem in neural machine translation (NMT) models (Sutskever et al., 2014), such as the attention-based model (Bahdanau et al.",
+      "startOffset" : 74,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2014), such as the attention-based model (Bahdanau et al., 2014; Luong et al., 2015) shown in Figure 1.",
+      "startOffset" : 43,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2014), such as the attention-based model (Bahdanau et al., 2014; Luong et al., 2015) shown in Figure 1.",
+      "startOffset" : 43,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 29,
+      "context" : "coding (Viterbi, 1967), which add redundancy to the binary representation, and even in the face of localized mistakes in the calculation of the representation, are able to recover the correct word.",
+      "startOffset" : 7,
+      "endOffset" : 22
+    }, {
+      "referenceID" : 27,
+      "context" : "According to Equation (4), this model clearly requires time/space computation in proportion to O(HV ), and the actual load of the computation of the output layer is directly affected by the size of vocabulary V , which is typically set around tens of thousands (Sutskever et al., 2014).",
+      "startOffset" : 261,
+      "endOffset" : 285
+    }, {
+      "referenceID" : 19,
+      "context" : "The hierarchical softmax (Morin and Bengio, 2005) predicts each word based on binary decision and reduces computation time to O(H log V ).",
+      "startOffset" : 25,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 2,
+      "context" : "The differentiated softmax (Chen et al., 2016) divides words into clusters, and predicts words using separate part of the hidden",
+      "startOffset" : 27,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 18,
+      "context" : "Sampling-based approximations (Mnih and Teh, 2012; Mikolov et al., 2013) to the denominator of the softmax have also been proposed to reduce calculation at training.",
+      "startOffset" : 30,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 17,
+      "context" : "Sampling-based approximations (Mnih and Teh, 2012; Mikolov et al., 2013) to the denominator of the softmax have also been proposed to reduce calculation at training.",
+      "startOffset" : 30,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 14,
+      "context" : "Other methods using characters (Ling et al., 2015) or subwords (Sennrich et al.",
+      "startOffset" : 31,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2015) or subwords (Sennrich et al., 2016; Chitnis and DeNero, 2015) can be applied to suppress the vocabulary size, but these methods also make for",
+      "startOffset" : 20,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2015) or subwords (Sennrich et al., 2016; Chitnis and DeNero, 2015) can be applied to suppress the vocabulary size, but these methods also make for",
+      "startOffset" : 20,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 9,
+      "context" : "Other methods examined included random codes, Huffman codes (Huffman, 1952) and Brown clustering (Brown et al.",
+      "startOffset" : 60,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 1,
+      "context" : "Other methods examined included random codes, Huffman codes (Huffman, 1952) and Brown clustering (Brown et al., 1992) with zero-padding to adjust code lengths, and some original allocation methods based on the word2vec embeddings (Mikolov et al.",
+      "startOffset" : 97,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 17,
+      "context" : ", 1992) with zero-padding to adjust code lengths, and some original allocation methods based on the word2vec embeddings (Mikolov et al., 2013).",
+      "startOffset" : 120,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 19,
+      "context" : "On a different note, the binary code prediction model proposed in this study shares some ideas with the hierarchical softmax (Morin and Bengio, 2005) approach.",
+      "startOffset" : 125,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 30,
+      "context" : "According to the Zipf’s law (Zipf, 1949), the distribution of word appearances in an actual corpus is biased to a small subset of the vocabulary.",
+      "startOffset" : 28,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 2,
+      "context" : "The idea of separated prediction of frequent words and rare words comes from the differentiated softmax (Chen et al., 2016) approach.",
+      "startOffset" : 104,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 25,
+      "context" : "This ability to be robust to errors is a central idea behind error-correcting codes (Shannon, 1948).",
+      "startOffset" : 84,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 8,
+      "context" : "In general, an error-correcting code has the ability to correct up to b(d−1)/2c bit errors when all centroids differ d bits from each other (Golay, 1949).",
+      "startOffset" : 140,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 4,
+      "context" : "vious work on multi-class classification tasks, and have reported advantages from the raw classification (Dietterich and Bakiri, 1995; Klautau et al., 2003; Liu, 2006; Kouzani and Nasireding, 2009; Kouzani, 2010; Ferng and Lin, 2011, 2013).",
+      "startOffset" : 105,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 11,
+      "context" : "vious work on multi-class classification tasks, and have reported advantages from the raw classification (Dietterich and Bakiri, 1995; Klautau et al., 2003; Liu, 2006; Kouzani and Nasireding, 2009; Kouzani, 2010; Ferng and Lin, 2011, 2013).",
+      "startOffset" : 105,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 15,
+      "context" : "vious work on multi-class classification tasks, and have reported advantages from the raw classification (Dietterich and Bakiri, 1995; Klautau et al., 2003; Liu, 2006; Kouzani and Nasireding, 2009; Kouzani, 2010; Ferng and Lin, 2011, 2013).",
+      "startOffset" : 105,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 13,
+      "context" : "vious work on multi-class classification tasks, and have reported advantages from the raw classification (Dietterich and Bakiri, 1995; Klautau et al., 2003; Liu, 2006; Kouzani and Nasireding, 2009; Kouzani, 2010; Ferng and Lin, 2011, 2013).",
+      "startOffset" : 105,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 12,
+      "context" : "vious work on multi-class classification tasks, and have reported advantages from the raw classification (Dietterich and Bakiri, 1995; Klautau et al., 2003; Liu, 2006; Kouzani and Nasireding, 2009; Kouzani, 2010; Ferng and Lin, 2011, 2013).",
+      "startOffset" : 105,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 29,
+      "context" : "In this study, we applied convolutional codes (Viterbi, 1967) to convert between original and redundant bits.",
+      "startOffset" : 46,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 29,
+      "context" : "This method is based on the Viterbi algorithm (Viterbi, 1967) and estimates original bits by directly using probability of redundant bits.",
+      "startOffset" : 46,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 20,
+      "context" : "translation tasks which have different translation difficulties: ASPEC (Nakazawa et al., 2016) and BTEC (Takezawa, 1999).",
+      "startOffset" : 71,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 22,
+      "context" : "2007) and KyTea (Neubig et al., 2011) for English/Japanese tokenizations respectively, applied lowercase.",
+      "startOffset" : 16,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2000) encoder/decoder with 30% dropout (Srivastava et al., 2014) for the input/output vectors of the LSTMs.",
+      "startOffset" : 41,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 10,
+      "context" : "We used the Adam optimizer (Kingma and Ba, 2014) with fixed hyper-parameters α = 0.",
+      "startOffset" : 27,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 23,
+      "context" : "For evaluating the quality of each model, we calculated BLEU (Papineni et al., 2002) every 1000 mini-batches.",
+      "startOffset" : 61,
+      "endOffset" : 84
+    } ],
+    "year" : 0,
+    "abstractText" : "In this paper, we propose a new method for calculating the output layer in neural machine translation systems. The method is based on predicting a binary code for each word, and can reduce computation time/memory requirements of the output layer to be logarithmic in vocabulary size in the best case. In addition, we also introduce two advanced approaches to improve robustness of the proposed model: using error-correcting codes and combining softmax and binary codes. Experiments show the proposed model achieves translation accuracies that approach the softmax, while reducing memory usage on the order of 1/10 to 1/1000, and also improving decoding speed on CPUs by x5 to x20.",
+    "creator" : null
+  }
+}

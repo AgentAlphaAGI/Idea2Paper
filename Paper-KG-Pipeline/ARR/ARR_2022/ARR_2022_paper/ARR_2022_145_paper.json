@@ -1,0 +1,625 @@
+{
+  "name" : "ARR_2022_145_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Flooding-X: Improving BERT’s Resistance to Adversarial Attacks via Loss-Restricted Fine-Tuning",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Despite their impressive performances on various NLP tasks, deep neural networks such as BERT (Devlin et al., 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al., 2021; Nie et al., 2020; Zang et al., 2020; Ren et al., 2019; Zhang et al., 2019). A line of works attempt to alleviate this problem by creating adversarially robust models via defense methods, including adversarial data augmentation (Chen et al., 2021; Si et al., 2021), regularizing (Wang et al., 2020a), and adversarial training (Wang et al., 2020b; Zhu et al., 2019; Madry et al., 2018). Data augmentation and adversarial training rely on extra adversarial examples generated either by handcrafting or conducting gradient ascent on the clean data for virtual adversarial samples.\nHowever, generating adversarial examples scales up the cost of training computationally, which makes vanilla adversarial training almost impractical on large-scale NLP tasks like QNLI (Questionanswering NLI). Increasing researches express their concern of the time-consuming property of standard adversarial training and offer cheaper but competitive alternatives by (i) replacing the perturbation generation with an extra generator network (Baluja and Fischer, 2017; Xiao et al., 2018), or by (ii) combining the gradient computation of clean data and perturbations into one backward pass (Shafahi et al., 2019). These approaches still rely on extra adversarial examples generated either by the model itself or by an extra module.\nIn this work, we propose a novel method, Flooding-X, to largely improve adversarial robustness without any adversarial examples, maintaining the same computational cost as conventional BERT fine-tuning. The vanilla Flooding (Ishida et al., 2020) method is a practical regularization technique to boost model generalization by preventing further reduction of the training loss when it reaches a reasonably small value. It results in a model performing normal gradient descent when training loss is above the decided value but gradient ascent when below. By continuing to “random walk” with the same non-zero value as a “virtual loss”, the model drifts into an area with a flat loss landscape that is claimed to lead to better generalization (Ishida et al., 2020). Interestingly, we find that Flooding method is also promising in increasing models’ resistance to adversarial attacks. Despite the significant rise in robust accuracy, the so-called reasonably small value, which is a hyperparameter, takes effort to be found and varies for each dataset, which requires an overly extensive search among the numerous candidates.\nIn an attempt to narrow down the candidates of hyper-parameter, we propose gradient accordance as an informative criterion for optimal values that\nbring Flooding into effect, which is used as a building-block in Flooding-X. We measure how accordant the gradients of the batches are by analyzing how the gradient descent steps based on part of an epoch affect the loss of each batch. Gradient accordance is computationally friendly and is tractable during training process. Experiments on various tasks show a close relation between gradient accordance and overfitting. As a result, we propose gradient accordance as a reliable flooding criterion to make the training loss flood around the level when the model has nearly overfitted. That is to say, we leverage the training loss of the model right before overfitting as the value of flood level.\nFlooding-X is especially useful and shows great advantage over adversarial training in terms of computational cost when the training dataset is relatively large. Experimental results demonstrate that our method achieves stated-of-the-art robust accuracy with BERT on various tasks and improves its robust accuracy by 100 to 400% without using any adversarial example, consuming any extra training time, or conducting overly extensive search for hyper-parameter. Our main contributions are as follows.\n1) We propose a novel method, Flooding-X, that achieves state-of-the-art robust accuracy for BERT on various tasks, which is adversarial-example-free and takes no more training time than fine-tuning.\n2) We propose a promising indicator, i.e. gradient accordance, to alleviate Flooding method from tedious search of the hyper-parameter.\n3) We conduct comprehensive experiments on NLP tasks to illustrate the potential of Flooding for improving BERT’s adversarial robustness."
+    }, {
+      "heading" : "2 Why Does Flooding Boost Adversarial Robustness?",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Vanilla Flooding",
+      "text" : "We first describe the vanilla Flooding regularization method (Ishida et al., 2020) for alleviating overfitting via keeping training loss from reducing to zero. Under the main assumption that learning until zero loss is harmful, Ishida et al. (2020) propose Flooding to intentionally prevent further reduction of the training loss when it reaches a reasonably small value, which is called the flood level. Intuitively, this approach makes the training loss float around the pre-defined flood level and alter from normal mini-batch gradient descent to gradient ascent if the loss is below the flood level.\nWith the constraint of flood level, the model will continue to “random walk” around the non-zero training loss, which is expected to reach a flat loss landscape.\nThe algorithm of Flooding is defined as follow:\nJ̃(θ) = |J(θ)− b|+ b, (1)\nwhere J denotes the original learning objective, and J̃ represents the modified learning objective with flooding. The positive value b is the flood level specified by user, and θ is the model parameter. Accordingly, the flooded empirical risk is then defined as\nR̃(f) = |R̂(f)− b|+ b, (2)\nwithin which R̂(f) / R̃(f) denotes the original / flooded empirical risk respectively, and f refers to the score function to be learned by the model. During the back propagation process, the gradient of R̂(f) w.r.t. model parameters and R̃(f) point to the same direction when R̃(f) is above b but to the opposite direction when it is below b. As a result, model performs normal gradient descent when the learning objective is above the flood level, and gradient ascent when below."
+    }, {
+      "heading" : "2.2 Smooth Parameter Landscape Leads to Better Robustness",
+      "text" : "According to the definition described in the previous section, Flooding does not make any difference to the training process when the loss is beyond the flood level. When the training loss approaches the flood level, on closer inspection, gradient descent and gradient ascent begin to alternate. Assume that the model with learning rate ε performs gradient descent for the n-th batch and then gradient ascent\nfor batch n+ 1, which results in:\nθn = θn−1 − εg(θn−1), θn+1 = θn + εg(θn).\n(3)\nIn the equations above, g(θ) = ∇θJ(θ) is the gradient of J(θ) w.r.t. model parameters. We can then get\nθn+1 =θn−1 − εg(θn−1) + εg ( θn−1\n− εg(θn−1) ) ,\n(4)\nwhich is, by Taylor expansion, approximately equivalent to\n≈θn−1 − εg(θn−1) + ε ( g(θn−1)\n− ε∇θg(θn−1)g(θn−1) )\n=θn−1 − ε2\n2 ∇θ∥g(θn−1)∥2.\n(5)\nThus, theoretically, when the training loss is relatively low, the model alters into a new learning mode where the learning rate is ε2/2 and the objective is to minimize ∥g(θ)∥2. Generally, the flooded model is guided into an area with a smooth parameter landscape that leads to better adversarial robustness (Prabhu et al., 2019; Yu et al., 2018; Li et al., 2018a). As is demonstrated in Figure 1, adversarial training brings about a smoother loss change to the model when the input embedding is perturbed by Gaussian random noise."
+    }, {
+      "heading" : "2.3 Achilles’ Heel of Flooding",
+      "text" : "Despite its potential in boosting model’s resistance to adversarial attacks, the optimal flood level has to be searched by performing exhaustive search within a wide range at tiny steps, which is not easily at hand. A relatively large value of flood level lengthens the gradient steps and keeps the model from convergence, while a tiny value causes hardly any difference to the training process. The effect of Flooding deeply relies on the flood level, which, at the same time, is also sensitive to the subtle change of this hyper-parameter. Figure 2 reveals that even a slight change on the value of flood level can make a huge difference on the adversarial robustness of the so-trained model. In an attempt to ease the effort of searching and make the best of Flooding, we propose a promising and reliable criterion to narrow down the search space, which is described in detail in the next section."
+    }, {
+      "heading" : "3 Gradient Accordance as a Criterion for Flooding",
+      "text" : "Since Flooding is proposed as an attempt to avoid overfitting, we intuitively suppose that the optimal flood level would be found at the stage when the model is about to overfit. That is, we leverage the training loss before overfitting as the flood level. Inspired by influence function (Koh and Liang, 2017), we propose gradient accordance as a criterion for flooding, which is empirically proved to be reliable and indicative. We consider the effect of the model updated w.r.t. one epoch on each of its batches as a signal of overfitting. As is indicated by its name, this criterion measures the relation among the gradients of each batch on epoch level, evaluating whether the model updated on an epoch has the same positive effect on the batches on average. Now we provide the formal definition of gradient accordance."
+    }, {
+      "heading" : "3.1 Preliminaries",
+      "text" : "We denote a model as a functional approximation f which is parameterized by θ. Consider a training data point x with the ground truth label y, which results in a loss L(f(θ, x), y). The gradient of the loss w.r.t. the parameters is thus\ng = ∇θL(f(θ, x), y), (6)\nwhose negation denotes the direction in which the parameters θ are updated to better correspond to the desired outputs on the training data (Fort et al., 2019). Now let’s consider two data points x1 and x2 with their corresponding labels y1 and y2. According to the definition above, the gradient of sample 1 is g1 = ∇θL(f(θ, x1), y1). We try to\ninspect how the small change of θ in the direction −g1 influences the loss on sample x1 or x2:\n∆L1 =L(f(θ − εg1, x1), y1) − L(f(θ, x1), y1),\n(7)\nwhere f(θ, x1) can be expanded by Taylor expansion to be:\nf(θ, x1) = f(θ − εg1, x1) + εg1 ∂f\n∂θ +O(ε2).\n(8) Here, we refer to (εg1 ∂f∂θ +O(ε\n2)) as T (x1); and by repeating the similar expansion we can get\nL(f(θ, x1), y1) = L(f(θ − εg1, x1) + T (x1), y1) = L(f(θ − εg1, x1), y1)\n+ ∂L ∂f T (x1) +O(T 2(x1)).\n(9)\nEquation (7) is thus equal to\n∆L1 = − ∂L ∂f T (x1)−O(T 2(x1))\n= −∂L ∂f (εg1 ∂f ∂θ +O(ε2)) = −εg1 · g1 −O(ε2).\n(10)\nSimilarly, the change of the loss on x2 caused by the gradient update by x1 is ∆L2 = −εg1 · g2 − O(ε2). Notably, ∆L1 is negative by definition since the model is updated with respect to x1 and naturally leads to a decrease on its loss. The model updated on x1 is considered to have a positive effect on x2 if ∆L2 is also negative while an opposite effect if positive. The equations above demonstrate that this co-relation is equivalent to the overlap between the gradients of the two data points g1 ·g2, which we hereafter refer to as gradient accordance."
+    }, {
+      "heading" : "3.2 Coarse-Grained Gradient Accordance",
+      "text" : "Data-point-level gradient accordance is too finegrained to be tractable in practice. Thus, we attempt to scale it up and result in coarse-grain gradient accordance at batch level, which is computationally tractable and still reliable as a criterion for overfitting.\nConsider a training batch B0 with n samples X = {x1, x2, . . . , xn} and labels y = {y1, y2, . . . , yn} of k classes {c1, c2, . . . , ck}. These samples can be divided into k groups according to their labels X = X1∪X2∪· · ·∪Xk,\nand so are the labels y = ⋃k\ni=1 yi, where all the samples in Xm belong to class cm. Thus, we have the sub-batch B10 = {X1,y1}. We then define class accordance score of two sub-batches B10 and B20 of classes c1 and c2 as:\nC(B10 , B 2 0) = E[cos(g1, g2)], (11)\nwhere g1 is the gradient of the training loss of sub-batch B10 w.r.t. the model parameters, and cos(g1, g2) = (g1/|g1|) · (g2/|g2|). Class accordance measures whether the gradient taken with respect to a sub-batch B10 of class c1 will also decrease the loss for samples in another sub-batch B20 of class c2 (Fort et al., 2019; Fu et al., 2020).\nFurther consider that there are N batches in one training epoch and the training samples are of k classes. The batch accordance score between batches Bs and Bt is defined as\nSbatch accd(Bs, Bt)\n= 1\nk(k − 1) k∑ j=1 k∑ i=1 i ̸=j C(Bis, B j t ).\n(12)\nBatch accordance quantifies the learning consistency of two batches by evaluating how the model updated on one batch affects the other. To be more specific, a positive batch accordance denotes that the measured two batches are under the same learning pace since the model updated according to each batch benefits them both. The gradient accordance of certain epoch (or a part of an epoch, namely the sub-epoch) is finally defined as\nSepoch accd =\n1\nN(N − 1) N∑ j=i+1 N−1∑ i=1 Sbatch accd(Bs, Bt). (13)\nGradient accordance scales the batch accordance score up from a measure of two batches to that of a sub-epoch.\nCriterion for Flooding A positive gradient accordance means that the model performed gradient descent w.r.t. the certain epoch decreases the loss of its batches on average, indicating that the learning pace of most batches are in line with each other. A negative one means that the model has overfitted to some of the training batches since the update of one epoch increases the loss of its batches on average, which is right the stage we would like to\nidentify for the model by gradient accordance. We assume that the optimal flood level lies in the range of the training loss of a model when it is about to overfit. In the following section, we empirically prove that gradient accordance is a reliable and promising criterion for flooding."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section, we provide comprehensive analysis on Flooding-X through extensive experiments on five text classification datasets of various tasks and scales: SST (Socher et al., 2013), MRPC (Dolan and Brockett, 2005), QNLI (Rajpurkar et al., 2016), IMDB (Maas et al., 2011) and AG News (Zhang et al., 2015). We conduct experiments on BERTbase (Devlin et al., 2019) and compare robust accuracy of Flooding-X with other adversarial training algorithms to demonstrate its strength."
+    }, {
+      "heading" : "4.1 Baseline Methods",
+      "text" : "We compare our proposed Flooding-X with three adversarial training algorithms and one regularization method.\nPGD Projected gradient descent (PGD, Madry et al., 2018) formulates adversarial training algorithms into solving a minimax problem that minimizes the empirical loss on adversarial examples that can lead to maximized adversarial risk.\nFreeLB Zhu et al. (2019) propose FreeLB to improve the generalization of language models. By adding adversarial perturbations to word embeddings, FreeLB generates virtual adversarial samples inside the region around input samples.\nTAVAT Token-Aware Virtual Adversarial Training (TAVAT, Li and Qiu, 2021) aims at fine-grained perturbations, leveraging a token-level accumulated perturbation vocabulary to initialize the perturbations better and constraining them within a token-level normalization ball.\nInfoBERT InfoBERT (Wang et al., 2020a) leverages two mutual-information-based regularizers for robust model training, suppressing noisy mutual information while increasing mutual information between local stable features and global features."
+    }, {
+      "heading" : "4.2 Attack Methods and Evaluation Metrics",
+      "text" : "Three well-received attack methods are leveraged via TextAttack (Morris et al., 2020) for an extensive\ncomparison between our proposed method and baseline algorithms.\nTextFooler (Jin et al., 2020) identifies the important words for target model and repeats replacing them with synonyms until the prediction of the model is altered. Similarly, TextBugger (Li et al., 2018b) also searches for important words and modifies them by choosing an optimal perturbation from the generated several kinds of perturbations. BERTAttack (Li et al., 2020) applies BERT in a semantic-preserving way to generate substitutes for the vulnerable words detected in the given input.\nWe consider four evaluation metrics to measure BERT’s resistance to the mentioned adversarial attacks under different defence algorithms.\nClean% The clean accuracy refers to the model’s test accuracy on the original clean dataset.\nAua% Accuracy under attack measures the model’s prediction accuracy on the adversarial data deliberately generated by certain attack method. A higher Aua% means a more robust model and a better defender.\nSuc% Attack success rate is evaluated by the ratio of the number of texts successfully perturbed by a specific attack method to the number of all the involved texts. Robust models are expected to score low at Suc%.\n#Query Number of queries denotes the average attempts the attacker queries the target model. The larger the number is, the harder the model is to be attacked."
+    }, {
+      "heading" : "4.3 Implementation Details",
+      "text" : "All the baseline methods are re-implemented based on their open-released codes and the results are competing to those reported. We train our models on NVIDIA RTX 3090 and RTX 2080Ti GPUs, depending on the volume of the dataset involved. Most of the parameters such as learning rate and warm-up step are in line with vanilla BERT (Devlin et al., 2019) and the baseline methods. For all of the adversarial methods we set the training step to be 5 for a fair comparison, which is a trade-off between training cost and model performance . The clean accuracy (Clean%) is tested on the whole test dataset. The other three metrics (e.g., Aua%, Suc% and #Query) are evaluated on the whole test dataset for SST-2 and MRPC, and 800 randomly chosen samples for IMDB, AG NEWS, and QNLI. We\ntrain 10 epochs for each model on each dataset, among which the last epochs are selected for the comparison of adversarial robustness."
+    }, {
+      "heading" : "4.4 Experimental Results",
+      "text" : "The extensive results of all the above mentioned methods are summarized in Table 1. Generally, our Flooding-X method improves BERT by a large margin in terms of its resistance to adversarial attacks, surpassing the baseline adversarial training algorithms on most datasets under different attack methods.\nUnder TextFooler attack (Jin et al., 2020), our algorithm reaches the best robust performance on four datasets: IMDB, AG News, SST-2, and MRPC. We observe that Flooding is more effective on smaller datasets than larger ones, since the smaller datasets with shorter training sentences are easier to be memorized by the neural network and are more likely to cause overfitting. On QNLI dataset where Flooding-X fails to win, the accuracy under attack is only 0.2 points lower than the 5-step PGD. This might be explained by the mild change in gradient accordance during training on QNLI dataset, in\nwhich case the precise stage of overfitting is hard to be identified. Though we believe that a better value of flood level exists and can further boost the performance, we refuse to take on the pattern of extensive hyper-parameter searching which is against the original purpose of Flooding-X.\nNotably, our method performs better than the baseline adversarial training methods by 5 to 20 points on average even without using any adversarial examples as training source, not to mention the vanilla BERT. Under most cases, our method remains the best performing algorithm facing BERTAttack (Li et al., 2020) and TextBugger (Li et al., 2018b). This proves that our method maintains effectiveness under different kinds of adversarial attacks. As a byproduct, the clean accuracy of our method is also the best among all the baseline methods, which is inherent to the vanilla Flooding that aims at better generalization. In the cases of AG News and QNLI, our re-implement the results of BERT fine-tuning to 97.0 and 91.6 respectively so Flooding-X does not surpass the reported performance, but still outperforming the baselines of our implementation."
+    }, {
+      "heading" : "5 Analysis and Discussion",
+      "text" : "In this section, we construct supplementary experiments to further analyze the effectiveness of Flooding-X and its building block, i.e., gradient accordance."
+    }, {
+      "heading" : "5.1 Does Gradient Accordance Capture",
+      "text" : "Overfitting?\nInfluence function (Koh and Liang, 2017) inspects the influence of one single training data on the model prediction and stiffness (Fort et al., 2019) measures how the model updated according to one sample affects the model prediction on another. Based on these two works, gradient accordance is proposed as a means for identifying model overfitting at sub-epoch level.\nAs seen in Figure 3, during training process, the turning point of gradient accordance from negative to positive closely matches the point when the test loss is about to increase, which is well received as a signal of overfitting. Since it is computationally intractable to calculate gradient accordance after trained on every single batch, we can only figure out the range where the model is about to overfit by computing gradient accordance at sub-epoch level."
+    }, {
+      "heading" : "5.2 How does Flooding-X Help with Robustness?",
+      "text" : "Despite its outstanding performance of the last training epoch, we find that Flooding-X boosts the robustness of model at an earlier stage than standard fine-tuning and adversarial training methods like FreeLB. As is shown in Figure 4, Flooding-X\nimproves BERT’s adversarial robustness to a relatively high level at epoch 5, which is competitive with that of standard fine-tuning at the last epoch. Besides, Flooding-X accelerates the increase of robustness at late training stage. Starting from epoch 7 our method enables a steep increment on the accuracy under attack, which is due to the effect of Flooding that forces the model to perform a more fierce “random walk” since the training loss of most batches are going below the flooding level. It is also demonstrated that the training loss stops approaching zero under the constraint of Flooding-X, while the standard fine-tuning and adversarial training continues to decrease the training loss towards zero which brings about the risk of overfitting."
+    }, {
+      "heading" : "5.3 Time Consumption",
+      "text" : "To further reveal the strength of Flooding-X besides its robustness performance, we compare its GPU training time consumption with baseline methods\non several datasets of different sizes. For a fair comparison, every model of each dataset is trained on single NVIDIA RTX 2080Ti GPU with the same batch size, among which models on SST-2 are trained with a batch size of 32 while QNLI and IMDB are trained with 8 and 4 respectively since the training sentences are way longer than SST-2. As is demonstrated in Table 2, the time consumption (seconds) of Flooding-X is competitive with standard fine-tuning, which is far less than that of adversarial training algorithms."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Adversarial Training Adversarial training (AT) is a well-received method for defending adversarial attacks. As an attempt against adversarial attacks, AT generates gradient-based adversarial samples and leverage them for further training (Goodfellow et al., 2014). A line of works try different means for the generation of adversarial examples. The PGD algorithm (Madry et al., 2018), compared as a baseline method in our experiments, involves multiple projected gradient ascent steps to find the adversarial perturbations which are then used for updating the model parameters. However, it is computationally expensive and has aroused many attempts to cut down on the cost. Shafahi et al. (2019) and Zhu et al. (2019) focus on finding better adversarial sample while maintaining a low cost.\nDespite gradient-based methods which generates adversarial perturbations on the continuous input embedding, some works tailor AT for NLP fields. The adversarial examples are generated by replacing the original texts based on certain rules such as semantic similarity (Alzantot et al., 2018; Jin et al., 2020; Li et al., 2020). Ebrahimi et al. (2018) propose a perturbation strategy that conducts character insertion, deletion, and replacement. Jia and Liang (2017) mislead MRC models via a human-involved phrase generation method.\nThe mentioned algorithms of AT generates additional adversarial examples either by calculating gradients or by human force, which is computationally expensive and effort taking.\nOverfitting and Criterion Deep neural networks are shown to suffer from overfitting to training configurations and memorise training scenarios (Takeoka et al., 2021; Rodriguez et al., 2021; Roelofs et al., 2019; Werpachowski et al., 2019), which leads to poor generalization and vulnerability towards adversarial perturbations.\nOne way of identifying overfitting is to see whether the generalization gap, i.e., the test minus the training loss, is increasing or not (Goodfellow et al., 2016). Ishida et al. (2020) further decompose the situation of the generalization gap increasing into two stages: The first stage is when training and test losses are both decreasing, but the former is decreasing faster then the latter. The next stage is when the training loss is decreasing but the test loss is increasing, after which the training loss continues to approach zero and memorize the training data completely (Zhang et al., 2021; Belkin et al., 2018; Arpit et al., 2017). Derived from influence function (Koh and Liang, 2017), Fort et al. (2019) propose the concept of Stiffness as a new perspective of generalization. They measure how stiff a network is by looking at how a small gradient step in the network parameters on one example affects the loss on another example. This criterion carries is theoretically proved to have a close relation with generalization and overfitting. However, from the practical perspective, it is computationally intractable to compute the stiffness between every single sample during the process of standard training where thousands of samples are involved in one batch."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "In this work, we propose Flooding-X as an efficient and computational-friendly algorithm for improving BERT’s resistance to adversarial attacks. We first theoretically prove that the vanilla Flooding method is able to boost model’s adversarial robustness by leading it into a smooth parameter landscape. We further propose a promising and computationally tractable criterion, Gradient Accordance, to detect when the model is about to overfit and accordingly narrow down the hyperparameter space for Flooding with an optimal flood level guaranteed. Experimental results prove that gradient accordance is closely related with the phenomenon of overfitting, equipped with which Flooding-X beats the well-received adversarial training methods and achieves state-of-the-art performances on various NLP tasks facing different textual attack methods. This implies that adversarial examples, either generated by gradient-based algorithms or human efforts, are not a must for the improvement of adversarial robustness. We call for further exploring and deeper understanding in the nature of adversarial robustness and attacks."
+    } ],
+    "references" : [ {
+      "title" : "Generating natural language adversarial examples",
+      "author" : [ "Moustafa Alzantot", "Yash Sharma", "Ahmed Elgohary", "Bo-Jhang Ho", "Mani Srivastava", "Kai-Wei Chang." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Alzantot et al\\.,? 2018",
+      "shortCiteRegEx" : "Alzantot et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A closer look at memorization in deep networks",
+      "author" : [ "Devansh Arpit", "Stanisław Jastrzębski", "Nicolas Ballas", "David Krueger", "Emmanuel Bengio", "Maxinder S Kanwal", "Tegan Maharaj", "Asja Fischer", "Aaron Courville", "Yoshua Bengio" ],
+      "venue" : null,
+      "citeRegEx" : "Arpit et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Arpit et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Adversarial transformation networks: Learning to generate adversarial examples",
+      "author" : [ "Shumeet Baluja", "Ian Fischer." ],
+      "venue" : "arXiv preprint arXiv:1703.09387.",
+      "citeRegEx" : "Baluja and Fischer.,? 2017",
+      "shortCiteRegEx" : "Baluja and Fischer.",
+      "year" : 2017
+    }, {
+      "title" : "Overfitting or perfect fitting? risk bounds for classification and regression rules that interpolate",
+      "author" : [ "Mikhail Belkin", "Daniel Hsu", "Partha P Mitra." ],
+      "venue" : "Proceedings of the 32nd International Conference on Neural Information Processing Systems, pages",
+      "citeRegEx" : "Belkin et al\\.,? 2018",
+      "shortCiteRegEx" : "Belkin et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Manifold adversarial augmentation for neural machine translation",
+      "author" : [ "Guandan Chen", "Kai Fan", "Kaibo Zhang", "Boxing Chen", "Zhongqiang Huang." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021, pages 3184–3189,",
+      "citeRegEx" : "Chen et al\\.,? 2021",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatically constructing a corpus of sentential paraphrases",
+      "author" : [ "William B Dolan", "Chris Brockett." ],
+      "venue" : "Proceedings of the Third International Workshop on Paraphrasing, pages 9–16.",
+      "citeRegEx" : "Dolan and Brockett.,? 2005",
+      "shortCiteRegEx" : "Dolan and Brockett.",
+      "year" : 2005
+    }, {
+      "title" : "HotFlip: White-box adversarial examples for text classification",
+      "author" : [ "Javid Ebrahimi", "Anyi Rao", "Daniel Lowd", "Dejing Dou." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 31–36,",
+      "citeRegEx" : "Ebrahimi et al\\.,? 2018",
+      "shortCiteRegEx" : "Ebrahimi et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Stiffness: A new perspective on generalization in neural networks",
+      "author" : [ "Stanislav Fort", "Paweł Krzysztof Nowak", "Stanislaw Jastrzebski", "Srini Narayanan." ],
+      "venue" : "arXiv preprint arXiv:1901.09491.",
+      "citeRegEx" : "Fort et al\\.,? 2019",
+      "shortCiteRegEx" : "Fort et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Rethinking generalization of neural models: A named entity",
+      "author" : [ "Jinlan Fu", "Pengfei Liu", "Qi Zhang" ],
+      "venue" : null,
+      "citeRegEx" : "Fu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Fu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep learning",
+      "author" : [ "Ian Goodfellow", "Yoshua Bengio", "Aaron Courville." ],
+      "venue" : "MIT press.",
+      "citeRegEx" : "Goodfellow et al\\.,? 2016",
+      "shortCiteRegEx" : "Goodfellow et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Explaining and harnessing adversarial examples",
+      "author" : [ "Ian J Goodfellow", "Jonathon Shlens", "Christian Szegedy." ],
+      "venue" : "arXiv preprint arXiv:1412.6572.",
+      "citeRegEx" : "Goodfellow et al\\.,? 2014",
+      "shortCiteRegEx" : "Goodfellow et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Do we need zero training loss after achieving zero training error? In International Conference on Machine Learning, pages 4604–4614",
+      "author" : [ "Takashi Ishida", "Ikko Yamane", "Tomoya Sakai", "Gang Niu", "Masashi Sugiyama." ],
+      "venue" : "PMLR.",
+      "citeRegEx" : "Ishida et al\\.,? 2020",
+      "shortCiteRegEx" : "Ishida et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adversarial examples for evaluating reading comprehension systems",
+      "author" : [ "Robin Jia", "Percy Liang." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages 2021–2031, Copenhagen, Denmark. Association for",
+      "citeRegEx" : "Jia and Liang.,? 2017",
+      "shortCiteRegEx" : "Jia and Liang.",
+      "year" : 2017
+    }, {
+      "title" : "Is bert really robust? a strong baseline for natural language attack on text classification and entailment",
+      "author" : [ "Di Jin", "Zhijing Jin", "Joey Tianyi Zhou", "Peter Szolovits." ],
+      "venue" : "Proceedings of the AAAI conference on artificial intelligence, volume 34,",
+      "citeRegEx" : "Jin et al\\.,? 2020",
+      "shortCiteRegEx" : "Jin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding black-box predictions via influence functions",
+      "author" : [ "Pang Wei Koh", "Percy Liang." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, pages 1885–1894, Sydney, Australia. PMLR.",
+      "citeRegEx" : "Koh and Liang.,? 2017",
+      "shortCiteRegEx" : "Koh and Liang.",
+      "year" : 2017
+    }, {
+      "title" : "Visualizing the loss landscape of neural nets",
+      "author" : [ "Hao Li", "Zheng Xu", "Gavin Taylor", "Christoph Studer", "Tom Goldstein." ],
+      "venue" : "Advances in Neural Information Processing Systems, 31.",
+      "citeRegEx" : "Li et al\\.,? 2018a",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Textbugger: Generating adversarial text against real-world applications",
+      "author" : [ "Jinfeng Li", "Shouling Ji", "Tianyu Du", "Bo Li", "Ting Wang." ],
+      "venue" : "arXiv preprint arXiv:1812.05271.",
+      "citeRegEx" : "Li et al\\.,? 2018b",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "BERT-ATTACK: Adversarial attack against BERT using BERT",
+      "author" : [ "Linyang Li", "Ruotian Ma", "Qipeng Guo", "Xiangyang Xue", "Xipeng Qiu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 6193–",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Token-aware virtual adversarial training in natural language understanding",
+      "author" : [ "Linyang Li", "Xipeng Qiu." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 35, pages 8410–8418.",
+      "citeRegEx" : "Li and Qiu.,? 2021",
+      "shortCiteRegEx" : "Li and Qiu.",
+      "year" : 2021
+    }, {
+      "title" : "Learning word vectors for sentiment analysis",
+      "author" : [ "Andrew L. Maas", "Raymond E. Daly", "Peter T. Pham", "Dan Huang", "Andrew Y. Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human",
+      "citeRegEx" : "Maas et al\\.,? 2011",
+      "shortCiteRegEx" : "Maas et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Towards deep learning models resistant to adversarial attacks",
+      "author" : [ "Aleksander Madry", "Aleksandar Makelov", "Ludwig Schmidt", "Dimitris Tsipras", "Adrian Vladu." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Madry et al\\.,? 2018",
+      "shortCiteRegEx" : "Madry et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "TextAttack: A framework for adversarial attacks, data augmentation, and adversarial training in NLP",
+      "author" : [ "John Morris", "Eli Lifland", "Jin Yong Yoo", "Jake Grigsby", "Di Jin", "Yanjun Qi." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Morris et al\\.,? 2020",
+      "shortCiteRegEx" : "Morris et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adversarial NLI: A new benchmark for natural language understanding",
+      "author" : [ "Yixin Nie", "Adina Williams", "Emily Dinan", "Mohit Bansal", "Jason Weston", "Douwe Kiela." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Nie et al\\.,? 2020",
+      "shortCiteRegEx" : "Nie et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding adversarial robustness through loss landscape geometries",
+      "author" : [ "Vinay Uday Prabhu", "Dian Ang Yap", "Joyce Xu", "John Whaley." ],
+      "venue" : "arXiv preprint arXiv:1907.09061.",
+      "citeRegEx" : "Prabhu et al\\.,? 2019",
+      "shortCiteRegEx" : "Prabhu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SQuAD: 100,000+ questions for machine comprehension of text",
+      "author" : [ "Pranav Rajpurkar", "Jian Zhang", "Konstantin Lopyrev", "Percy Liang." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 2383–2392, Austin,",
+      "citeRegEx" : "Rajpurkar et al\\.,? 2016",
+      "shortCiteRegEx" : "Rajpurkar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Generating natural language adversarial examples through probability weighted word saliency",
+      "author" : [ "Shuhuai Ren", "Yihe Deng", "Kun He", "Wanxiang Che." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 1085–",
+      "citeRegEx" : "Ren et al\\.,? 2019",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Evaluation examples are not equally informative: How should that change NLP leaderboards",
+      "author" : [ "Pedro Rodriguez", "Joe Barrow", "Alexander Miserlis Hoyle", "John P. Lalor", "Robin Jia", "Jordan BoydGraber" ],
+      "venue" : "In Proceedings of the 59th Annual Meeting",
+      "citeRegEx" : "Rodriguez et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Rodriguez et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A meta-analysis of overfitting in machine learning",
+      "author" : [ "Rebecca Roelofs", "Sara Fridovich-Keil", "John Miller", "Vaishaal Shankar", "Moritz Hardt", "Benjamin Recht", "Ludwig Schmidt." ],
+      "venue" : "Proceedings of the 33rd International Conference on Neural Information",
+      "citeRegEx" : "Roelofs et al\\.,? 2019",
+      "shortCiteRegEx" : "Roelofs et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Adversarial training for free",
+      "author" : [ "Ali Shafahi", "Mahyar Najibi", "Mohammad Amin Ghiasi", "Zheng Xu", "John Dickerson", "Christoph Studer", "Larry S Davis", "Gavin Taylor", "Tom Goldstein" ],
+      "venue" : "Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Shafahi et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Shafahi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Better robustness by more coverage: Adversarial and mixup data augmentation for robust finetuning",
+      "author" : [ "Chenglei Si", "Zhengyan Zhang", "Fanchao Qi", "Zhiyuan Liu", "Yasheng Wang", "Qun Liu", "Maosong Sun." ],
+      "venue" : "Findings of the Association for Com-",
+      "citeRegEx" : "Si et al\\.,? 2021",
+      "shortCiteRegEx" : "Si et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D. Manning", "Andrew Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Low-resource taxonomy enrichment with pretrained language models",
+      "author" : [ "Kunihiro Takeoka", "Kosuke Akimoto", "Masafumi Oyamada." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 2747–2758,",
+      "citeRegEx" : "Takeoka et al\\.,? 2021",
+      "shortCiteRegEx" : "Takeoka et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Infobert: Improving robustness of language models from an information theoretic perspective",
+      "author" : [ "Boxin Wang", "Shuohang Wang", "Yu Cheng", "Zhe Gan", "Ruoxi Jia", "Bo Li", "Jingjing Liu." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Wang et al\\.,? 2020a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adversarial training with fast gradient projection method against synonym substitution based text attacks",
+      "author" : [ "Xiaosen Wang", "Yichen Yang", "Yihe Deng", "Kun He." ],
+      "venue" : "arXiv e-prints, pages arXiv–2008.",
+      "citeRegEx" : "Wang et al\\.,? 2020b",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Detecting overfitting via adversarial examples",
+      "author" : [ "Roman Werpachowski", "András György", "Csaba Szepesvári." ],
+      "venue" : "Proceedings of the 33rd International Conference on Neural Information Processing Systems, pages 7858–7868.",
+      "citeRegEx" : "Werpachowski et al\\.,? 2019",
+      "shortCiteRegEx" : "Werpachowski et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Generating adversarial examples with adversarial networks",
+      "author" : [ "Chaowei Xiao", "Bo Li", "Jun-Yan Zhu", "Warren He", "Mingyan Liu", "Dawn Song." ],
+      "venue" : "Proceedings of the 27th International Joint Conference on Artificial Intelligence, pages 3905–3911.",
+      "citeRegEx" : "Xiao et al\\.,? 2018",
+      "shortCiteRegEx" : "Xiao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Interpreting adversarial robustness: A view from decision surface in input space",
+      "author" : [ "Fuxun Yu", "Chenchen Liu", "Yanzhi Wang", "Liang Zhao", "Xiang Chen." ],
+      "venue" : "arXiv e-prints, pages arXiv–1810.",
+      "citeRegEx" : "Yu et al\\.,? 2018",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Word-level textual adversarial attacking as combinatorial optimization",
+      "author" : [ "Yuan Zang", "Fanchao Qi", "Chenghao Yang", "Zhiyuan Liu", "Meng Zhang", "Qun Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of the 58th 10",
+      "citeRegEx" : "Zang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "OpenAttack: An open-source textual adversarial attack toolkit",
+      "author" : [ "Guoyang Zeng", "Fanchao Qi", "Qianrui Zhou", "Tingji Zhang", "Zixian Ma", "Bairu Hou", "Yuan Zang", "Zhiyuan Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Asso-",
+      "citeRegEx" : "Zeng et al\\.,? 2021",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Understanding deep learning (still) requires rethinking generalization",
+      "author" : [ "Chiyuan Zhang", "Samy Bengio", "Moritz Hardt", "Benjamin Recht", "Oriol Vinyals." ],
+      "venue" : "Communications of the ACM, 64(3):107–115.",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Zhao", "Yann LeCun." ],
+      "venue" : "Advances in neural information processing systems, 28:649–657.",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "PAWS: Paraphrase adversaries from word scrambling",
+      "author" : [ "Yuan Zhang", "Jason Baldridge", "Luheng He." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Freelb: Enhanced adversarial training for natural language understanding",
+      "author" : [ "Chen Zhu", "Yu Cheng", "Zhe Gan", "Siqi Sun", "Tom Goldstein", "Jingjing Liu." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Zhu et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 5,
+      "context" : "Despite their impressive performances on various NLP tasks, deep neural networks such as BERT (Devlin et al., 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al.",
+      "startOffset" : 94,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al., 2021; Nie et al., 2020; Zang et al., 2020; Ren et al., 2019; Zhang et al., 2019).",
+      "startOffset" : 83,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al., 2021; Nie et al., 2020; Zang et al., 2020; Ren et al., 2019; Zhang et al., 2019).",
+      "startOffset" : 83,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al., 2021; Nie et al., 2020; Zang et al., 2020; Ren et al., 2019; Zhang et al., 2019).",
+      "startOffset" : 83,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al., 2021; Nie et al., 2020; Zang et al., 2020; Ren et al., 2019; Zhang et al., 2019).",
+      "startOffset" : 83,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2019) suffer a sharp decline facing deliberately constructed adversarial attacks (Zeng et al., 2021; Nie et al., 2020; Zang et al., 2020; Ren et al., 2019; Zhang et al., 2019).",
+      "startOffset" : 83,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 4,
+      "context" : "A line of works attempt to alleviate this problem by creating adversarially robust models via defense methods, including adversarial data augmentation (Chen et al., 2021; Si et al., 2021), regularizing (Wang et al.",
+      "startOffset" : 151,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 30,
+      "context" : "A line of works attempt to alleviate this problem by creating adversarially robust models via defense methods, including adversarial data augmentation (Chen et al., 2021; Si et al., 2021), regularizing (Wang et al.",
+      "startOffset" : 151,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2021), regularizing (Wang et al., 2020a), and adversarial training (Wang et al.",
+      "startOffset" : 22,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2020a), and adversarial training (Wang et al., 2020b; Zhu et al., 2019; Madry et al., 2018).",
+      "startOffset" : 35,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 43,
+      "context" : ", 2020a), and adversarial training (Wang et al., 2020b; Zhu et al., 2019; Madry et al., 2018).",
+      "startOffset" : 35,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2020a), and adversarial training (Wang et al., 2020b; Zhu et al., 2019; Madry et al., 2018).",
+      "startOffset" : 35,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 2,
+      "context" : "Increasing researches express their concern of the time-consuming property of standard adversarial training and offer cheaper but competitive alternatives by (i) replacing the perturbation generation with an extra generator network (Baluja and Fischer, 2017; Xiao et al., 2018), or by",
+      "startOffset" : 232,
+      "endOffset" : 277
+    }, {
+      "referenceID" : 36,
+      "context" : "Increasing researches express their concern of the time-consuming property of standard adversarial training and offer cheaper but competitive alternatives by (i) replacing the perturbation generation with an extra generator network (Baluja and Fischer, 2017; Xiao et al., 2018), or by",
+      "startOffset" : 232,
+      "endOffset" : 277
+    }, {
+      "referenceID" : 29,
+      "context" : "(ii) combining the gradient computation of clean data and perturbations into one backward pass (Shafahi et al., 2019).",
+      "startOffset" : 95,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 12,
+      "context" : "The vanilla Flooding (Ishida et al., 2020) method is a practical regularization technique to boost model generalization by preventing further reduction of the training loss when it reaches a reasonably small value.",
+      "startOffset" : 21,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 12,
+      "context" : "By continuing to “random walk” with the same non-zero value as a “virtual loss”, the model drifts into an area with a flat loss landscape that is claimed to lead to better generalization (Ishida et al., 2020).",
+      "startOffset" : 187,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 12,
+      "context" : "We first describe the vanilla Flooding regularization method (Ishida et al., 2020) for alleviating overfitting via keeping training loss from reducing to zero.",
+      "startOffset" : 61,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 15,
+      "context" : "Inspired by influence function (Koh and Liang, 2017), we propose gradient accordance as a criterion for flooding, which is empirically proved to be reliable and indicative.",
+      "startOffset" : 31,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 8,
+      "context" : "whose negation denotes the direction in which the parameters θ are updated to better correspond to the desired outputs on the training data (Fort et al., 2019).",
+      "startOffset" : 140,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 8,
+      "context" : "Class accordance measures whether the gradient taken with respect to a sub-batch B1 0 of class c1 will also decrease the loss for samples in another sub-batch B2 0 of class c2 (Fort et al., 2019; Fu et al., 2020).",
+      "startOffset" : 176,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 9,
+      "context" : "Class accordance measures whether the gradient taken with respect to a sub-batch B1 0 of class c1 will also decrease the loss for samples in another sub-batch B2 0 of class c2 (Fort et al., 2019; Fu et al., 2020).",
+      "startOffset" : 176,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 31,
+      "context" : "In this section, we provide comprehensive analysis on Flooding-X through extensive experiments on five text classification datasets of various tasks and scales: SST (Socher et al., 2013), MRPC (Dolan",
+      "startOffset" : 165,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 25,
+      "context" : "and Brockett, 2005), QNLI (Rajpurkar et al., 2016), IMDB (Maas et al.",
+      "startOffset" : 26,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2016), IMDB (Maas et al., 2011) and AG News (Zhang et al.",
+      "startOffset" : 14,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 5,
+      "context" : "We conduct experiments on BERTbase (Devlin et al., 2019) and compare robust accuracy of Flooding-X with other adversarial training algorithms to demonstrate its strength.",
+      "startOffset" : 35,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 33,
+      "context" : "InfoBERT InfoBERT (Wang et al., 2020a) leverages two mutual-information-based regularizers for robust model training, suppressing noisy mutual information while increasing mutual information between local stable features and global features.",
+      "startOffset" : 18,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 22,
+      "context" : "Three well-received attack methods are leveraged via TextAttack (Morris et al., 2020) for an extensive comparison between our proposed method and baseline algorithms.",
+      "startOffset" : 64,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 14,
+      "context" : "TextFooler (Jin et al., 2020) identifies the important words for target model and repeats replacing them with synonyms until the prediction of the model is altered.",
+      "startOffset" : 11,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 17,
+      "context" : "Similarly, TextBugger (Li et al., 2018b) also searches for important words and modifies them by choosing an optimal perturbation from the generated several kinds of perturbations.",
+      "startOffset" : 22,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 5,
+      "context" : "Most of the parameters such as learning rate and warm-up step are in line with vanilla BERT (Devlin et al., 2019) and the baseline methods.",
+      "startOffset" : 92,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 14,
+      "context" : "Under TextFooler attack (Jin et al., 2020), our algorithm reaches the best robust performance on four datasets: IMDB, AG News, SST-2, and MRPC.",
+      "startOffset" : 24,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 18,
+      "context" : "Under most cases, our method remains the best performing algorithm facing BERTAttack (Li et al., 2020) and TextBugger (Li et al.",
+      "startOffset" : 85,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 15,
+      "context" : "Influence function (Koh and Liang, 2017) inspects the influence of one single training data on the model prediction and stiffness (Fort et al.",
+      "startOffset" : 19,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 8,
+      "context" : "Influence function (Koh and Liang, 2017) inspects the influence of one single training data on the model prediction and stiffness (Fort et al., 2019) measures how the model updated according to one sample affects the model prediction on another.",
+      "startOffset" : 130,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 11,
+      "context" : "As an attempt against adversarial attacks, AT generates gradient-based adversarial samples and leverage them for further training (Goodfellow et al., 2014).",
+      "startOffset" : 130,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 21,
+      "context" : "PGD algorithm (Madry et al., 2018), compared as a baseline method in our experiments, involves multiple projected gradient ascent steps to find the adversarial perturbations which are then used for updating the model parameters.",
+      "startOffset" : 14,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 0,
+      "context" : "The adversarial examples are generated by replacing the original texts based on certain rules such as semantic similarity (Alzantot et al., 2018; Jin et al., 2020; Li et al., 2020).",
+      "startOffset" : 122,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 14,
+      "context" : "The adversarial examples are generated by replacing the original texts based on certain rules such as semantic similarity (Alzantot et al., 2018; Jin et al., 2020; Li et al., 2020).",
+      "startOffset" : 122,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 18,
+      "context" : "The adversarial examples are generated by replacing the original texts based on certain rules such as semantic similarity (Alzantot et al., 2018; Jin et al., 2020; Li et al., 2020).",
+      "startOffset" : 122,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 32,
+      "context" : "Overfitting and Criterion Deep neural networks are shown to suffer from overfitting to training configurations and memorise training scenarios (Takeoka et al., 2021; Rodriguez et al., 2021; Roelofs et al., 2019; Werpachowski et al., 2019), which leads to poor generalization and vulnerability towards adversarial perturbations.",
+      "startOffset" : 143,
+      "endOffset" : 238
+    }, {
+      "referenceID" : 27,
+      "context" : "Overfitting and Criterion Deep neural networks are shown to suffer from overfitting to training configurations and memorise training scenarios (Takeoka et al., 2021; Rodriguez et al., 2021; Roelofs et al., 2019; Werpachowski et al., 2019), which leads to poor generalization and vulnerability towards adversarial perturbations.",
+      "startOffset" : 143,
+      "endOffset" : 238
+    }, {
+      "referenceID" : 28,
+      "context" : "Overfitting and Criterion Deep neural networks are shown to suffer from overfitting to training configurations and memorise training scenarios (Takeoka et al., 2021; Rodriguez et al., 2021; Roelofs et al., 2019; Werpachowski et al., 2019), which leads to poor generalization and vulnerability towards adversarial perturbations.",
+      "startOffset" : 143,
+      "endOffset" : 238
+    }, {
+      "referenceID" : 35,
+      "context" : "Overfitting and Criterion Deep neural networks are shown to suffer from overfitting to training configurations and memorise training scenarios (Takeoka et al., 2021; Rodriguez et al., 2021; Roelofs et al., 2019; Werpachowski et al., 2019), which leads to poor generalization and vulnerability towards adversarial perturbations.",
+      "startOffset" : 143,
+      "endOffset" : 238
+    }, {
+      "referenceID" : 10,
+      "context" : ", the test minus the training loss, is increasing or not (Goodfellow et al., 2016).",
+      "startOffset" : 57,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 40,
+      "context" : "The next stage is when the training loss is decreasing but the test loss is increasing, after which the training loss continues to approach zero and memorize the training data completely (Zhang et al., 2021; Belkin et al., 2018; Arpit et al., 2017).",
+      "startOffset" : 187,
+      "endOffset" : 248
+    }, {
+      "referenceID" : 3,
+      "context" : "The next stage is when the training loss is decreasing but the test loss is increasing, after which the training loss continues to approach zero and memorize the training data completely (Zhang et al., 2021; Belkin et al., 2018; Arpit et al., 2017).",
+      "startOffset" : 187,
+      "endOffset" : 248
+    }, {
+      "referenceID" : 1,
+      "context" : "The next stage is when the training loss is decreasing but the test loss is increasing, after which the training loss continues to approach zero and memorize the training data completely (Zhang et al., 2021; Belkin et al., 2018; Arpit et al., 2017).",
+      "startOffset" : 187,
+      "endOffset" : 248
+    }, {
+      "referenceID" : 15,
+      "context" : "Derived from influence function (Koh and Liang, 2017), Fort et al.",
+      "startOffset" : 32,
+      "endOffset" : 53
+    } ],
+    "year" : 0,
+    "abstractText" : "Adversarial robustness has attracted much attention recently, and the mainstream solution is adversarial training. However, the tradition of generating adversarial perturbations for each input embedding (in the settings of NLP) scales up the training computational complexity by the number of gradient steps it takes to obtain the adversarial samples. To address this problem, we leverage Flooding method which primarily aims at better generalization and we find promising in defending adversarial attacks. We further propose an effective criterion to bring hyper-parameter-dependent flooding into effect with a narrowed-down search space by measuring how the gradient steps taken within one epoch affect the loss of each batch. Our approach requires zero adversarial sample for training, and its time consumption is equivalent to fine-tuning, which can be 2-15 times faster than standard adversarial training. We experimentally show that our method improves Bert’s resistance to textual adversarial attacks by a large margin, and achieves state-of-the-art robust accuracy on various text classification and GLUE tasks.",
+    "creator" : null
+  }
+}

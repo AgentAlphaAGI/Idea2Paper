@@ -1,0 +1,687 @@
+{
+  "name" : "ARR_2022_114_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Dynamic Programming in Rank Space: Scaling Structured Inference with Low-Rank HMMs and PCFGs",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "Hidden Markov Models (HMMs) and Probabilistic Context-Free Grammars (PCFGs) are widely used structured models, both of which can be represented as factor graph grammars (FGGs), a powerful formalism capable of describing a wide range of models. Recent research found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. To tackle this challenge, we leverage tensor rank decomposition (aka. CPD) to decrease inference computational complexities for a subset of FGGs subsuming HMMs and PCFGs. We apply CPD on the factors of an FGG and then construct a new FGG defined in the rank space. Inference with the new FGG produces the same result but has a lower time complexity when the rank size is smaller than the state size. We conduct experiments on HMM language modeling and unsupervised PCFG parsing, showing better performance than previous work. We will release our code at github. com/xxx."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Hidden Markov Models (HMMs) and Probabilistic Context-Free Grammars (PCFGs) are widely used structured models in natural language processing. They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest.\nRecently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden\nstate can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance. They use tensor rank decomposition (aka. canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high. Chiu et al. (2021) use tensor matricization and low-rank matrix decomposition to accelerate structured inference on chain and tree structure models. However, their method has an even higher complexity than Yang et al. (2021b) on PCFGs.\nIn this work, we propose a new approach to scaling structured inference, which can be described by FGG notations intuitively. We first provide an intuitive and unifying perspective toward the work of Yang et al. (2021b) and Chiu et al. (2021), showing that their low-rank decomposition-based models can be viewed as decomposing large factors in an FGG—e.g., the binary rule probability tensor in PCFGs— into several smaller factors connected by new “rank” nodes. Then we target at a subset of FGGs—which we refer to as B-FGGs— subsuming all models considered by Chiu et al. (2021), whereby the inference algorithms can be formulated via B-graphs (Gallo et al., 1993; Klein and Manning, 2001). We propose a novel framework to support a family of inference algorithms in the rank space for B-FGGs. Within the framework, we apply CPD on the factors of a B-FGG and then construct a new B-FGG defined in the rank space by marginalizing all the state nodes. Inference with the new B-FGG has the same result and a lower time complexity if the rank size is smaller than the state size.\nWe conduct experiments in unsupervised PCFG\nparsing and HMM language modeling. For PCFG induction, we manage to use 20 times more hidden states than Yang et al. (2021b), obtaining much better unsupervised parsing performance. For HMM language modeling, we achieve lower perplexity and lower inference complexity than Chiu et al. (2021)."
+    }, {
+      "heading" : "2 Background",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Factor graph grammar",
+      "text" : "Factor graphs are fixed-sized and thus incapable of modeling substructures that repeat a variable number of times. Chiang and Riley (2020) propose factor graph grammars (FGGs) to overcome this limitation, which are expressive enough to subsume HMMs and PCFGs."
+    }, {
+      "heading" : "2.1.1 Basics",
+      "text" : "We display necessary notations and concepts of FGGs (Chiang and Riley, 2020, Def. 1,2,5,6,8). Definition 1. A hypergraph is a tuple( V,E, att, labV , labE ) where\n• V and E are finite set of nodes and hyperedges. • att : E → V ? maps each hyperedge to zero or more (not necessarily distinct) endpoint nodes. • labV : V → LV assigns labels to nodes. • labE : E → LE assigns labels to edges.\nDefinition 2. A factor graph is a hypergraph with mappings Ω and F where\n• Ω maps node labels to sets of possible values. Ω(v) , Ω(labV (v)).\n• F maps edge labels to functions. F (e) , F (labE(e)) is of type Ω(v1) × · · · × Ω(vk) where att(e) = v1 · · · vk.\nIn the terminology of factor graphs, a node v with its domain Ω(v) is a variable, and an hyperedge e with F (e) is a factor. We typically use T,N,O to denote hidden state, nonterminal state and observation variables for HMMs and PCFGs.\nDefinition 3. A hypergraph fragment is a tuple (V,E, att, labV , labE , ext) where\n• (V,E, att, labV , labE) is a hypergraph. • ext ∈ V ? is a set of zero or more external\nnodes and each of which can be seen as a connecting point of this hypergraph fragment with another fragment.\nDefinition 4. A hyperedge replacement graph grammar (HRG) (Drewes et al., 1997) is a tuple (N,T, P, S) where\n• N,T ⊂ LE is finite set of nonterminal and terminal symbols. N ∩ T = ∅. • P is a finite set of rules (X → R) where X ∈ N and R is a hypergraph fragment with edge labels in N ∪ T 1. • S ∈ N is the start symbol.\nDefinition 5. A HRG with mapping Ω, F (Def. 2) is referred to as an FGG. In particular, F is defined on terminal edge labels T only.\nNotations.\n• N : variable node. N : external node.\n1Note that, for the lhs of P , Chiang and Riley (2020) also draw their endpoint nodes using external node notations. We follow this practice.\n• Xe : hyperedge e with label X ∈ N . indicates zero or more endpoint nodes.\n• F (e) : factor F (e).\nFig. 1 illustrates HGG representations of HMM and PCFG.\nGenerative story. An FGG starts with S , repeatedly selects Xe and uses rule X → R from P to replace e with R, until no Xe exists."
+    }, {
+      "heading" : "2.1.2 Conjunction",
+      "text" : "The conjunction operation (Chiang and Riley, 2020, Sec. 4) allows modularizing an FGG into two parts, one defining the model and the other defining a query. In this paper, we only consider querying the observed sentence w0, · · · , wn−1, which is exemplified by the red part of Fig. 1. We sometimes omit the red part without further elaboration."
+    }, {
+      "heading" : "2.1.3 Inference",
+      "text" : "Denote ξ as an assignment of all variables, ΞD as the set of all assignments of factor graph D, and D(G) as the set of all derivations of an FGG G, i.e., all factor graphs generated by G. an FGG G assigns a score wG(D, ξ) to eachD ∈ D(G) along with each ξ ∈ ΞD. A factor graph D ∈ D(G) assigns a score wD(ξ) to each ξ ∈ ΞD:\nwD(ξ) = ∏ e∈D F (e)(ξ(v1), . . . , ξ(vk)) (1)\nwith att(e) = v1 · · · vk. Notably, wD(ξ) , wG(D, ξ). The inference problem is to compute the sum-product of G:\nZG = ∑\nD∈D(G) ∑ ξ∈ΞD wG(D, ξ) (2)\nTo obtain ZG, the key difficulty is in the marginalization over all derivations, since ∑ ξ∈ΞD wD(ξ) can be obtained by running standard variable elimination (VE) on factor graph D. To tackle this, Chiang and Riley (2020, Thm. 15) propose an extended VE. For each X ∈ N, ξ ∈ ΞX 2, define PX as all rules in P with left-hand side X , and then define:\nψX(ξ) = ∑\n(X→R)∈PX τR(ξ). (3)\n2ΞX is defined as the set of assignments to the endpoints of an edge e labeled X, so ΞX = Ω (`1)×· · ·×Ω (`k) where att(e) = v1 · · · vk, labV (vi) = `i.\nfor each rhs R = (V,EN ∪ ET , att, lab\nV , labE , ext), where EN , ET consist of nonterminal/terminal-labeled edges only, and τR(ξ) is given by:\nτR(ξ) = ∑ ξ′∈ΞR ξ′(ext)=ξ ∏ e∈ET F (e) ( ξ′(att(e)) ) ∏ e∈EN ψlabE(e) ( ξ′(att(e))\n) (4) This defines a recursive formula for computing ψS , i.e., ZG. Next, we will show how Eq. 3-4 recover the well-known inside algorithm.\nExample: the inside algorithm. Consider π6 in Fig. 2(b). All possible fragments R (rhs of π6) differs in the value of k, i.e., the splitting point, so we use Rk to distinguish them. Then Eq. 3 becomes:\nψXi,k(ξ) = ∑ i<k<j τRk(ξ) (5)\nPutting values into Eq. 4: τRk(ξ) = ∑ n2,n3 p(ξ, n2, n3)ψXi,k(n2)ψXk,j (n3) (6) where p denotes FGG rule probability p(N1 → N2N3). It is easy to see that ψXi,k is exactly the inside score of span [i, k), and Eq. 5-6 recovers the recursive formula of the inside algorithm.\nRemark. Eq. 4 can be viewed as unidirectional (from e ∈ EN to external nodes) belief propagation (BP) in the factor graph fragmentR, where the incoming message is ψlabE (e) for e ∈ EN , and the outcome of Eq. 4 can be viewed as the message passed to the external nodes. The time complexity of message updates grows exponentially with the number of variables in the factors. Therefore, to decrease inference complexity, one may decompose large factors into smaller factors connected by new nodes, as shown in the next subsection."
+    }, {
+      "heading" : "2.2 Tensor rank decomposition on factors",
+      "text" : "Consider a factor F (e) (Def. 2), it can be represented as an order-k tensor in RN1×···×Nk where Ni , |Ω(vi)|. We can use tensor rank decomposition (aka. CPD) to decompose F (e) into a weighted sum of outer products of vectors:\nF (e) = r∑ q=1 λqw q e1 ⊗w q e2 ⊗ · · · ⊗w q ek\nwhere r is the rank size; wqek ∈ RNk ; ⊗ is outer product; λq is weight, which can be absorbed into {wqek} and we omit it throughout the paper.\nDupty and Lee (2020, Sec. 4.1) show that BP can be written in the following matrix form when applying CPD on factors:\nmei = W T ei ( j∈N(e)\\iWejnje ) (7)\nnie = c∈N(i)\\emci (8)\nwhere mei ∈ RNi is factor-to-node message; nie ∈ RNi is node-to-factor message; N(·) indicates neighborhood ; Wej = [w 1 ej , · · · ,w r ej ]\nT ∈ Rr×m; is element-wise product. We remark that this amounts to replacing the large factor F (e) with smaller factors {F (ei)} connected by a new node R that represents rank, where each F (ei) can be represented as Wei . Fig. 2 illustrates this intuition. We refer to R as rank nodes and others as state nodes thereafter."
+    }, {
+      "heading" : "3 Low-rank structured inference",
+      "text" : "In this section, we recover the accelerated inside algorithms of TD-PCFG (Cohen et al., 2013; Yang et al., 2021b) and LPCFG (Chiu et al., 2021) in an intuitive and unifying manner using the FGG notations. The accelerated forward algorithm of LHMM (Chiu et al., 2021) can be derived similarly.\nDenote T ∈ Rm×m×m as the tensor representation of p(N1 → N2N3) , and αi,j ∈ Rm\nas the inside score of span [i, j). Cohen et al. (2013) and Yang et al. (2021b) use CPD to decompose T, i.e., let T = ∑r q=1 uq ⊗ vq ⊗ wq where uq,vq,wq ∈ Rm. Denote U,V,W ∈ Rr×m as the resulting matrices of stacking all uq,vq,wq, Cohen et al. (2013) derived the recursive form:\nαi,j = j−1∑ k=i+1 UT ((Vαi,k) (Wαk,j)) (9)\n= UT j−1∑ k=i+1 ((Vαi,k) (Wαk,j)) (10)\nEq. 9 can be derived automatically by combining Eq. 7 (or Fig. 3 (a)) and Eq. 5-6. Cohen et al. (2013) note that UT can be extracted to the front of the summation (Eq. 10), and Vαi,k,Wαk,j can be cached and reused, leading to further complexity reduction. The resulting inside algorithm time complexity is O(n3r + n2mr).\nRecently, Chiu et al. (2021) use low-rank matrix decomposition to accelerate PCFG inference. They first perform tensor matricization to flatten T to T′ ∈ Rm×m2 , and then let T′ = UTV where U ∈ Rr×m,V ∈ Rr×m2 . By un-flattening V to V′ ∈ Rr×m×m, their accelerated inside algorithm has the following recursive form:\nαi,j = j−1∑ k=i+1 UT ( V′ ·αk,j ·αi,k ) (11)\n= UT j−1∑ k=i+1 ( V′ ·αk,j ·αi,k ) (12)\nEq. 11 can be derived by combining Fig. 3 (b) and Eq. 5-6. The resulting inside time complexity is O(n3m2r + n2mr), which is higher than that of TD-PCFG.\nValidity of probability. A remaining problem is how to ensure that T is a valid (non-negative and properly normalized) probability tensor. We discuss this in Appd. A."
+    }, {
+      "heading" : "4 Rank-space modeling and inference",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Rank-space inference with B-FGGs",
+      "text" : "Interestingly, when applying CPD on factors and if the rank size is smaller than the state size, we can even obtain better inference time complexities for a subset of FGGs which we refer to as B-FGGs.\nWe call a hyperedge a B-edge if its head contains exactly one node. B-graphs (Gallo et al., 1993) are a subset of directed hypergraphs whose hyperedges are all B-edges. Many dynamic programming algorithms can be formulated through B-graphs (Klein and Manning, 2001; Huang, 2008; Azuma et al., 2017; Chiu et al., 2021; Fu and Lapata, 2021), including the inference algorithms of many structured models, e.g., HMMs, Hidden Semi-Markov Models (HSMMs), and PCFGs. We follow the concept of B-graphs to define B-FGGs.\nDefinition 6. A hypergraph fragment is a Bhypergraph fragment iff. there is exactly one external node and there is no nonterminal-labeled hyperedge connecting to it. An FGG is a B-FGG iff. all rhs of its rules are B-hypergraph fragments.\nIt is easy to see that the aforementioned models are subsumed by B-FGGs. We can design a family of accelerated inference algorithms for B-FGGs based on the following strategy. (1) If there are multiple factors within a hypergraph fragment, merge them into a single factor. Then apply CPD on the single factor, thereby introducing rank nodes. (2) Find repeated substructures that take rank nodes as external nodes. Marginalize all state nodes to derive new rules. (3) Design new inference algorithms that can be carried out in the rank space based on the general-purpose FGG inference algorithm and the derived new rules.\nWe give two examples, the rank-space inside algorithm and the rank-space forward algorithm, in the following two subsections to help readers\nunderstand this strategy."
+    }, {
+      "heading" : "4.2 The rank-space inside algorithm",
+      "text" : "Consider an B-FGG G shown in Fig. 1(b) and replace the rhs of π6 with Fig. 3(a), i.e., we use CPD to decompose binary rule probability tensor. Besides U,V,W ∈ Rr×m defined in Sec. 3, we define the start rule probability vector as s ∈ Rm×1, and the unary rule probability matrix as E ∈ Ro×m where o is the vocabulary size.\nFig. 4(a) is an example (partial) factor graph D generated by G. We highlight substructures of interest with dashed rectangles. Each substructure consists of a node N and two factors connecting to it. N is an external node connecting two hypergraph fragments which contain the two factors respectively. For each substructure, we can marginalize the state node N out, merging the two factors into a single one. After marginalizing all state nodes, we obtain a (partial) factor graph D′ shown in the right of Fig. 4(a) where H = VUT , I = WUT ,J = VET ,K = WET , L = (Us)T . We denote this transformation as M(D) = D′. We define a new B-FGG G′ with rules shown in Fig 4(b). It is easy to verify that for each D ∈ D(G), we haveM(D) ∈ D(G′), and vice versa. Moreover, we have:∑\nξ∈ΞD\nwG(D, ξ) = ∑\nξ∈ΞM(D)\nwG′(M(D), ξ)\nbecause marginalizing hidden variables does not affect the result of sum-product inference. Therefore, ZG = ZG′ (Eq. 2).\nWe can easily derive the inference (inside) algorithm of G′ by following Eq. 3-4 and Fig. 4(b) 3. Let αi,j ∈ Rr denote the rank-space inside score for span [i, j). When j > i+ 2:\nαi,j = from π1 of Fig. 4(b)︷ ︸︸ ︷∑ i+1<k<j−1 (Hαi,k Iαk,j)\n+ J:,wi Iαi+1,j︸ ︷︷ ︸ from π2 +Hαi,j−1 K:,wj−1︸ ︷︷ ︸ from π3\nand when j = i+ 2, αi,j = J:,wi K:,wi+1 (from π4). wj is the index of the j-th word of the input sentence in the vocabulary; A:,j indicates the j-th column of A.\nWe note that, similar to Cohen et al. (2013), we can cache Hαi,k, Iαk,j and reuse them to further accelerate inference 4. Denote αLi,j ,α R i,j ∈ Rr as the inside scores of span [i, j) serving as a left/right child of a larger span. Then we have:\nαLi,i+1 = K:,i α R i,i+1 = J:,i\nαLi,j = Hαi,j α R i,j = Iαi,j αi,j = ∑ i<k<j (αLi,k αRk,j)\nand finally, ZG′ = Lα0,n. The resulting inference complexity is O(n3r + n2r2), which is lower than O(n3r + n2mr) of TD-PCFG when r < m, enabling the use of a large state space for PCFGs in the low-rank setting.\nThe key difference between the rank-space inference and the original state-space inference is that they follow different variable elimination orders. The former marginalizes all state nodes before performing inference and marginalizes rank nodes from bottom up during inference; whereas the later marginalizes both state and rank nodes alternately from bottom up during inference.\nLow-rank inference does not support the Viterbi semiring 5, inhibiting the use of CYK decoding. Therefore, we resort to Minimum Bayes-Risk decoding, similar to Yang et al. (2021b). Specifically, we estimate the span marginals using autodifferentiation (Eisner, 2016; Rush, 2020), which\n3π6 is used for generating sentences of length 1, we do not consider this in the following derivation of the inside algorithm to reduce clutter.\n4In fact, this is a typical application of the unfold-refold transformation (Eisner and Blatz, 2007; Vieira et al., 2021).\n5The Viterbi semiring is also known as the max-product semiring. Chiu et al. (2021, Appd. C) and Yang et al. (2021b, Sec. 6) have discussed this issue.\nhas the same complexity as the inside algorithm. Then we use the CYK algorithm to find the final parse with the maximum number of expected spans in cubic time. For unsupervised learning, we minimize − logZG′ using gradient descent."
+    }, {
+      "heading" : "4.3 The rank-space forward algorithm",
+      "text" : "Consider an B-FGG G shown in Fig. 1 (a). We replace the rhs of π2 by the hypergraph fragment in the right of Fig. 5(a), i.e., we merge the factor p(T2 | T1) and p(O3 | T2) into a single factor, which can be represented as T ∈ Rm×m×o and can be decomposed into three matrices U,V ∈ Rr×m,W ∈ Rr×o via CPD, where m/o/r is the state/vocabulary/rank size. Fig. 5(b) gives an example factor graph of HMMs with sentences of length 3. Similar to previous subsection, we marginalize state nodes T to construct a new B-FGG G′. The rule set of G′ can be obtained by replacing all variable nodes T with R and modifying all factors accordingly, as one can easily infer from Fig. 5(c). Inference with G′ simply coincides with the forward algorithm, which has a O(nr2) time complexity and is lower thanO(nmr) of LHMM (Chiu et al., 2021) when r < m."
+    }, {
+      "heading" : "4.4 Neural parameterization",
+      "text" : "We use neural networks to produce probabilities for all factors, which has been shown to benefit learning in previous work (Kim et al., 2019; Yang et al., 2021b; Chiu and Rush, 2020; Chiu et al., 2021). We use the neural parameterization of Yang et al. (2021b) with slight modifications. We show the details in Appd. B and Appd. C."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Unsupervised parsing with PCFGs",
+      "text" : "Setting. We evaluate our model on Penn Treebank (PTB) (Marcus et al., 1994). Our implementation is based on the open-sourced code of Yang et al. (2021b)6 and we use the same setting as theirs. For all experiments, we set the ratio of nonterminal number to the preterminal number to 1:2 7. We set the rank size to 1000. We show other details in Appd. D and E.\nMain result. Table 1 shows the result on PTB. Among previous unsupervised PCFG models, TN-\n6github.com/sustcsonglin/TN-PCFG 7Although we did not explicitly distinguish between nonterminal and preterminal symbols before, in our implementation, we follow Kim et al. (2019) to make such distinction.\nPCFG (Yang et al., 2021b) uses the largest number of states (500 perterminals and 250 nonterminals). Our model is able to use much more states thanks to our new inside algorithm with lower time complexity, surpassing all previous PCFG-based models by a large margin and achieving a new state-of-the-art in unsupervised constituency parsing in terms of sentence-level F1 score on PTB.\nAblation study. Fig. 6 shows the change of the sentence-level F1 scores and perplexity with the change of the number of preterminals. As we can see, when increasing the state, the perplexity tends to decrease while the F1 score tends to increase, validating the effectiveness of using large state spaces for neural PCFG induction."
+    }, {
+      "heading" : "5.2 HMM language modeling",
+      "text" : "Setting. We conduct the language modeling experiment also on PTB. Our implementation is based on the open-sourced code of Chiu et al. (2021)8. We set the rank size to 4096. See Appd. D and E for more details.\nMain result. Table 2 shows the perplexity on the PTB validation and test sets. As discussed ear-\n8github.com/justinchiu/low-rank-models\nlier, VL-HMM (Chiu and Rush, 2020) imposes strong sparsity constraint to decrease the time complexity of the forward algorithm and requires preclustering of terminal symbols. Specifically, VLHMM uses Brown clustering (Brown et al., 1992), introducing external information to improve performance. Replacing Brown clustering with uniform clustering leads to a 10 point increase in perplexity on the PTB validation set. LHMM (Chiu et al., 2021) and our model only impose low-rank constraint without using any external information and are thus more comparable. Our method outperforms LHMM by 4.8 point when using the same state number (i.e., 214), and it can use more states thanks to our lower inference time complexity.\nAblation study. As we can see in Table 3, the perplexity tends to decrease when increasing the state number, validating the effectiveness of using more states for neural HMM language modeling."
+    }, {
+      "heading" : "6 Related work",
+      "text" : "Tensor and matrix decomposition have been used to decrease time and space complexities of probabilistic inference algorithms. Siddiqi et al. (2010) propose a reduced-rank HMM whereby the forward algorithm can be carried out in the rank space, which is similar to our model, but our method is more general. Cohen and Collins (2012); Cohen et al. (2013) use CPD for fast (latent-variable) PCFG parsing, but they do not leverage CPD for fast learning and they need to actually perform CPD on existing probability tensors. Rabusseau et al. (2016) use low-rank approximation method to learn weighted tree automata, which subsumes PCFGs and latentvariable PCFGs. Our method can subsume more models. Yang et al. (2021b,a) propose CPD-based neural parameterizations for (lexicalized) PCFGs. Yang et al. (2021b) aim at scaling PCFG inference. We achieve better time complexity than theirs and hence can use much more hidden states. Yang et al. (2021a) aims to decrease the complexity of lexicalized PCFG parsing, which can also be de-\nscribed within our framework. Chiu et al. (2021) use low-rank matrix decomposition, which can be viewed as CPD on order-2 tensors, to accelerate inference on chain and tree structure models including HMMs and PCFGs. However, their method is only efficient when the parameter tensors are of order 2, e.g., in HMMs and HSMMs. Our method leverages full CPD, thus enabling efficient inference with higher-order factors, e.g., in PCFGs. Our method can be applied to all models considered by Chiu et al. (2021), performing inference in the rank-space with lower complexities.\nBesides HMMs and PCFGs, Wrigley et al. (2017) propose an efficient sampling-based junction-tree algorithm using CPD to decompose high-order factors. Dupty and Lee (2020) also use CPD to decompose high-order factors for fast belief propagation. Ducamp et al. (2020) use tensor train decomposition for fast and scalable message passing in Bayesian networks. Bonnevie and Schmidt (2021) leverage matrix product states (i.e., tensor trains) for scalable discrete probabilistic inference. Miller et al. (2021) leverage tensor networks for fast sequential probabilistic inference."
+    }, {
+      "heading" : "7 Conclusion and future work",
+      "text" : "In this work, we leveraged tensor rank decomposition (CPD) for low-rank scaling of structured inference. We showed that CPD amounts to decomposing a large factor into several smaller factors connected by a new rank node, and gave a unifying perspective towards previous low-rank structured models (Yang et al., 2021b; Chiu et al., 2021). We also presented a novel framework to design a family of rank-space inference algorithms for B-FGGs, a subset of FGGs which subsume most structured models of interest to the NLP community. We have shown the application of our method in scaling PCFG and HMM inference, and experiments on unsupervised parsing and language modeling validate the effectiveness of using large state spaces facilitated by our method.\nWe believe our framework can be applied to many other models which have high inference time complexity and are subsumed by B-FGGs, including lexicalized PCFGs, quasi-synchronous contextfree grammars (QCFGs), etc. A direct application of our method is to decrease the inference complexity of the neural QCFG model (Kim, 2021), which has a very large grammar constant and can be improved easily under our framework."
+    }, {
+      "heading" : "B Neural parameterization of PCFGs",
+      "text" : "In this section, we give the full parameterization of PCFGs. We follow Yang et al. (2021b) with slight modifications for generations of U,V, W ∈ Rm×r in 4.2. We use the same MLPs with two residual layers as Yang et al. (2021b):\ns = exp(uTSh1(wA)∑\nA′∈N exp(u T Sh1(wA′))\nE = exp(uTEh2(wt)∑\nE′∈Σ exp(u T E′h2(wt))\nU = exp(uTHf1(wn)∑\nn′∈N exp(u T Hf1(wn′))\nV = exp(uTHf2(wl)∑\nH′∈H exp(u T H′f2(wl))\nW = exp(uTHf3(wl)∑\nH′∈H exp(u T H′f3(wl))\nhi(x) = gi,1(gi,2(W̃ix))\ngi,j(y) = ReLU(Ṽi,jReLU(Ũi,jy)) + y\nwhere Σ is the vocabulary set, H is the set of rank, N is a finite set of nonterminals, Wl = [Wn;Wt],wl,wn,wt ∈ Wl,Wn,Wt. The main differences of neural parameterization between ours and previous work are that we make the projection parameter uH shared among U,V, and U."
+    }, {
+      "heading" : "C Neural parameterization of HMMs",
+      "text" : "In this section, we give the full parameterization of HMMs, which is similar to PCFGs’ parameterization. Define s as start probability for HMMs. And the definitions of U,V,W are same as definitions in 4.3:\ns = exp(uTPh1(ws))∑\ns′∈S exp(u T Ph1(ws′))\nU = exp(uTHwu)∑\nH′∈H exp(u T H′wu)\nV = exp(uTHwv)∑\nv′∈S exp(u T Hwv′)\nW = exp(uTWh2(ww)∑\nw′∈Σ exp(u T Wh2(ww′))\nhi(x) = gi,1(gi,2(W̃ix))\ngi,j(y) = ReLU(Ṽi,jReLU(Ũi,jy)) + y\nwhere S is a finite set of states, H is the set of rank, Σ is vocabulary set."
+    }, {
+      "heading" : "D Data details",
+      "text" : "Penn Treebank (PTB) (Marcus et al., 1994)9 consists of 929k training words, 73k validation words, and 82k test words, with a vocabulary of size 10k.\nFor PCFGs, we follow Yang et al. (2021b) and use their code to preprocess dataset. This processing discards punctuation and lowercases all tokens with 10k most frequent words as the vocabulary. The splits of the dataset are: 2-21 for training, 22 for validation and 23 for test.\nFor HMMs, we follow Chiu et al. (2021) and use their code to preprocess dataset. We lowercase all words and substitutes OOV words with UNKs. EOS tokens have been inserted after each sentence."
+    }, {
+      "heading" : "E Experimental details",
+      "text" : "For PCFGs, we use Xavier normal initialization to initialize the weights in hi and fi. We optimize our model using Adam optimizer with β1 = 0.75, β2 = 0.999, and the learning rate 0.002, setting the dimension of all embeddings to 256.\nFor HMMs, we initialize all parameters by Xavier normal initialization except for ws and ww. We use AdamW optimizer with β1 = 0.99, β2 = 0.999, and the learning rate 0.001, and a max grad norm of 5. We use dropout rate of 0.1 to dropout ws and U,V in HMMs. We train for 30 epochs with a max batch size of 256 tokens, and reduce the learning by multiplying 12 if the validation perplexity fails to improve after 2 evaluations. Evaluations are performed one time per epoch. We follow Chiu et al. (2021) to shuffle sentences and leverage bucket iterator, where batch of sentences are drawn from buckets containing sentences of similar lengths to minizing padding.\nWe run all experiments on NVIDIA TITAN RTX and NVIDIA RTX 2080ti and all experimental results are averaged from four runs.\n9The licence of PTB dataset is LDC User Agreement for Non-Members, which can be seen on https://catalog. ldc.upenn.edu/LDC99T42"
+    } ],
+    "references" : [ {
+      "title" : "An algebraic formalization of forward and forward-backward algorithms",
+      "author" : [ "Ai Azuma", "Masashi Shimbo", "Yuji Matsumoto." ],
+      "venue" : "CoRR, abs/1702.06941.",
+      "citeRegEx" : "Azuma et al\\.,? 2017",
+      "shortCiteRegEx" : "Azuma et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Matrix product states for inference in discrete probabilistic models",
+      "author" : [ "Rasmus Bonnevie", "Mikkel N. Schmidt." ],
+      "venue" : "Journal of Machine Learning Research, 22(187):1–48.",
+      "citeRegEx" : "Bonnevie and Schmidt.,? 2021",
+      "shortCiteRegEx" : "Bonnevie and Schmidt.",
+      "year" : 2021
+    }, {
+      "title" : "Class-based n-gram models of natural language",
+      "author" : [ "Peter F. Brown", "Vincent J. Della Pietra", "Peter V. deSouza", "Jenifer C. Lai", "Robert L. Mercer." ],
+      "venue" : "Computational Linguistics, 18(4):467–480.",
+      "citeRegEx" : "Brown et al\\.,? 1992",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1992
+    }, {
+      "title" : "Bridging hmms and rnns through architectural transformations",
+      "author" : [ "Jan Buys", "Yonatan Bisk", "Yejin Choi" ],
+      "venue" : null,
+      "citeRegEx" : "Buys et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Buys et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unsupervised parsing via constituency tests",
+      "author" : [ "Steven Cao", "Nikita Kitaev", "Dan Klein." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 4798–4808, Online. Association for Computational",
+      "citeRegEx" : "Cao et al\\.,? 2020",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Factor graph grammars",
+      "author" : [ "David Chiang", "Darcey Riley." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual.",
+      "citeRegEx" : "Chiang and Riley.,? 2020",
+      "shortCiteRegEx" : "Chiang and Riley.",
+      "year" : 2020
+    }, {
+      "title" : "Low-rank constraints for fast inference in structured models",
+      "author" : [ "Justin Chiu", "Yuntian Deng", "Alexander Rush." ],
+      "venue" : "Advances in Neural Information Processing Systems, 34.",
+      "citeRegEx" : "Chiu et al\\.,? 2021",
+      "shortCiteRegEx" : "Chiu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Scaling hidden Markov language models",
+      "author" : [ "Justin Chiu", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 1341–1349, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Chiu and Rush.,? 2020",
+      "shortCiteRegEx" : "Chiu and Rush.",
+      "year" : 2020
+    }, {
+      "title" : "Tensor decomposition for fast parsing with latent-variable pcfgs",
+      "author" : [ "Shay B. Cohen", "Michael Collins." ],
+      "venue" : "Advances in Neural Information Processing Systems 25: 26th Annual Conference on Neural Information Processing Systems 2012. Proceedings",
+      "citeRegEx" : "Cohen and Collins.,? 2012",
+      "shortCiteRegEx" : "Cohen and Collins.",
+      "year" : 2012
+    }, {
+      "title" : "Approximate PCFG parsing using tensor decomposition",
+      "author" : [ "Shay B. Cohen", "Giorgio Satta", "Michael Collins." ],
+      "venue" : "Proceedings of the 2013 Conference of the North American Chapter of the Association for Computational Linguistics: Human Lan-",
+      "citeRegEx" : "Cohen et al\\.,? 2013",
+      "shortCiteRegEx" : "Cohen et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Hyperedge replacement, graph grammars",
+      "author" : [ "Frank Drewes", "Hans-Jörg Kreowski", "Annegret Habel." ],
+      "venue" : "Grzegorz Rozenberg, editor, Handbook of Graph Grammars and Computing by Graph Transformations, Volume 1: Foundations, pages 95–162. World",
+      "citeRegEx" : "Drewes et al\\.,? 1997",
+      "shortCiteRegEx" : "Drewes et al\\.",
+      "year" : 1997
+    }, {
+      "title" : "Unsupervised parsing with S-DIORA: Single tree encoding for deep inside-outside recursive autoencoders",
+      "author" : [ "Andrew Drozdov", "Subendhu Rongali", "Yi-Pei Chen", "Tim O’Gorman", "Mohit Iyyer", "Andrew McCallum" ],
+      "venue" : "In Proceedings of the 2020 Con-",
+      "citeRegEx" : "Drozdov et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Drozdov et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "An efficient lowrank tensors representation for algorithms in complex probabilistic graphical models",
+      "author" : [ "Gaspard Ducamp", "Philippe Bonnard", "Anthony Nouy", "Pierre-Henri Wuillemin." ],
+      "venue" : "International Conference on Probabilistic Graphical Mod-",
+      "citeRegEx" : "Ducamp et al\\.,? 2020",
+      "shortCiteRegEx" : "Ducamp et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neuralizing efficient higher-order belief propagation",
+      "author" : [ "Mohammed Haroon Dupty", "Wee Sun Lee." ],
+      "venue" : "CoRR, abs/2010.09283.",
+      "citeRegEx" : "Dupty and Lee.,? 2020",
+      "shortCiteRegEx" : "Dupty and Lee.",
+      "year" : 2020
+    }, {
+      "title" : "Inside-outside and forwardbackward algorithms are just backprop (tutorial paper)",
+      "author" : [ "Jason Eisner." ],
+      "venue" : "Proceedings of the Workshop on Structured Prediction for NLP, pages 1–17, Austin, TX. Association for Computational Linguistics.",
+      "citeRegEx" : "Eisner.,? 2016",
+      "shortCiteRegEx" : "Eisner.",
+      "year" : 2016
+    }, {
+      "title" : "Program transformations for optimization of parsing algorithms and other weighted logic programs",
+      "author" : [ "Jason Eisner", "John Blatz." ],
+      "venue" : "Proceedings of FG 2006: The 11th Conference on Formal Grammar, pages 45–85. CSLI Publications.",
+      "citeRegEx" : "Eisner and Blatz.,? 2007",
+      "shortCiteRegEx" : "Eisner and Blatz.",
+      "year" : 2007
+    }, {
+      "title" : "Scaling structured inference with randomization",
+      "author" : [ "Yao Fu", "Mirella Lapata." ],
+      "venue" : "CoRR, abs/2112.03638.",
+      "citeRegEx" : "Fu and Lapata.,? 2021",
+      "shortCiteRegEx" : "Fu and Lapata.",
+      "year" : 2021
+    }, {
+      "title" : "Directed hypergraphs and applications",
+      "author" : [ "Giorgio Gallo", "Giustino Longo", "Stefano Pallottino." ],
+      "venue" : "Discret. Appl. Math., 42(2):177–201.",
+      "citeRegEx" : "Gallo et al\\.,? 1993",
+      "shortCiteRegEx" : "Gallo et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Advanced dynamic programming in semiring and hypergraph frameworks",
+      "author" : [ "Liang Huang." ],
+      "venue" : "Coling 2008: Advanced Dynamic Programming in Computational Linguistics: Theory, Algorithms and Applications - Tutorial notes, pages 1–18, Manchester,",
+      "citeRegEx" : "Huang.,? 2008",
+      "shortCiteRegEx" : "Huang.",
+      "year" : 2008
+    }, {
+      "title" : "Sequence-to-sequence learning with latent neural grammars",
+      "author" : [ "Yoon Kim." ],
+      "venue" : "Advances in Neural Information Processing Systems, 34.",
+      "citeRegEx" : "Kim.,? 2021",
+      "shortCiteRegEx" : "Kim.",
+      "year" : 2021
+    }, {
+      "title" : "Compound probabilistic context-free grammars for grammar induction",
+      "author" : [ "Yoon Kim", "Chris Dyer", "Alexander Rush." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 2369–2385, Florence, Italy. Asso-",
+      "citeRegEx" : "Kim et al\\.,? 2019",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Parsing and hypergraphs",
+      "author" : [ "Dan Klein", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the Seventh International Workshop on Parsing Technologies (IWPT-2001), 17-19 October 2001, Beijing, China. Tsinghua University Press.",
+      "citeRegEx" : "Klein and Manning.,? 2001",
+      "shortCiteRegEx" : "Klein and Manning.",
+      "year" : 2001
+    }, {
+      "title" : "The Penn Treebank: Annotating predicate argument structure",
+      "author" : [ "Mitchell Marcus", "Grace Kim", "Mary Ann Marcinkiewicz", "Robert MacIntyre", "Ann Bies", "Mark Ferguson", "Karen Katz", "Britta Schasberger." ],
+      "venue" : "Human Language Technology:",
+      "citeRegEx" : "Marcus et al\\.,? 1994",
+      "shortCiteRegEx" : "Marcus et al\\.",
+      "year" : 1994
+    }, {
+      "title" : "Regularizing and optimizing LSTM language models",
+      "author" : [ "Stephen Merity", "Nitish Shirish Keskar", "Richard Socher." ],
+      "venue" : "6th International Conference on Learning Representations, ICLR 2018, Vancouver, BC, Canada, April 30 - May 3, 2018, Confer-",
+      "citeRegEx" : "Merity et al\\.,? 2018",
+      "shortCiteRegEx" : "Merity et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Tensor networks for probabilistic sequence modeling",
+      "author" : [ "Jacob Miller", "Guillaume Rabusseau", "John Terilla." ],
+      "venue" : "The 24th International Conference on Artificial Intelligence and Statistics, AISTATS 2021, April 13-15, 2021, Virtual Event, volume 130 of",
+      "citeRegEx" : "Miller et al\\.,? 2021",
+      "shortCiteRegEx" : "Miller et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Introduction to tensor decompositions and their applications in machine learning",
+      "author" : [ "Stephan Rabanser", "Oleksandr Shchur", "Stephan Günnemann." ],
+      "venue" : "CoRR, abs/1711.10781.",
+      "citeRegEx" : "Rabanser et al\\.,? 2017",
+      "shortCiteRegEx" : "Rabanser et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Low-rank approximation of weighted tree automata",
+      "author" : [ "Guillaume Rabusseau", "Borja Balle", "Shay B. Cohen." ],
+      "venue" : "Proceedings of the 19th International Conference on Artificial Intelligence and Statistics, AISTATS 2016, Cadiz, Spain, May 9-11, 2016, vol-",
+      "citeRegEx" : "Rabusseau et al\\.,? 2016",
+      "shortCiteRegEx" : "Rabusseau et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Torch-struct: Deep structured prediction library",
+      "author" : [ "Alexander Rush." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics: System Demonstrations, pages 335– 342, Online. Association for Computational Linguis-",
+      "citeRegEx" : "Rush.,? 2020",
+      "shortCiteRegEx" : "Rush.",
+      "year" : 2020
+    }, {
+      "title" : "StructFormer: Joint unsupervised induction of dependency and constituency structure from masked language modeling",
+      "author" : [ "Yikang Shen", "Yi Tay", "Che Zheng", "Dara Bahri", "Donald Metzler", "Aaron Courville." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the",
+      "citeRegEx" : "Shen et al\\.,? 2021",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Reduced-rank hidden markov models",
+      "author" : [ "Sajid M. Siddiqi", "Byron Boots", "Geoffrey J. Gordon." ],
+      "venue" : "Proceedings of the Thirteenth International Conference on Artificial Intelligence and Statistics, AISTATS 2010, Chia Laguna Resort, Sardinia, Italy,",
+      "citeRegEx" : "Siddiqi et al\\.,? 2010",
+      "shortCiteRegEx" : "Siddiqi et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Searching for more efficient dynamic programs",
+      "author" : [ "Tim Vieira", "Ryan Cotterell", "Jason Eisner." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP 2021, pages 3812–3830, Punta",
+      "citeRegEx" : "Vieira et al\\.,? 2021",
+      "shortCiteRegEx" : "Vieira et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Tensor belief propagation",
+      "author" : [ "Andrew Wrigley", "Wee Sun Lee", "Nan Ye." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017, volume 70 of Proceedings of Machine Learn-",
+      "citeRegEx" : "Wrigley et al\\.,? 2017",
+      "shortCiteRegEx" : "Wrigley et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Improved latent tree induction with distant supervision via span constraints",
+      "author" : [ "Zhiyang Xu", "Andrew Drozdov", "Jay Yoon Lee", "Tim O’Gorman", "Subendhu Rongali", "Dylan Finkbeiner", "Shilpa Suresh", "Mohit Iyyer", "Andrew McCallum" ],
+      "venue" : null,
+      "citeRegEx" : "Xu et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Neural bi-lexicalized PCFG induction",
+      "author" : [ "Songlin Yang", "Yanpeng Zhao", "Kewei Tu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Pro-",
+      "citeRegEx" : "Yang et al\\.,? 2021a",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "PCFGs can do better: Inducing probabilistic contextfree grammars with many symbols",
+      "author" : [ "Songlin Yang", "Yanpeng Zhao", "Kewei Tu." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics:",
+      "citeRegEx" : "Yang et al\\.,? 2021b",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "The return of lexical dependencies: Neural lexicalized PCFGs",
+      "author" : [ "Hao Zhu", "Yonatan Bisk", "Graham Neubig." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 8:647–661.",
+      "citeRegEx" : "Zhu et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "2021b) is to transform Fig",
+      "author" : [ "Yang" ],
+      "venue" : null,
+      "citeRegEx" : "Yang,? \\Q2021\\E",
+      "shortCiteRegEx" : "Yang",
+      "year" : 2021
+    }, {
+      "title" : "2021b) with slight modifications for generations of U,V, W ∈ Rm×r in 4.2. We use the same MLPs with two residual layers",
+      "author" : [ "Yang" ],
+      "venue" : null,
+      "citeRegEx" : "Yang,? \\Q2021\\E",
+      "shortCiteRegEx" : "Yang",
+      "year" : 2021
+    }, {
+      "title" : "82k test words, with a vocabulary of size 10k",
+      "author" : [ "Yang" ],
+      "venue" : "For PCFGs,",
+      "citeRegEx" : "Yang,? \\Q2021\\E",
+      "shortCiteRegEx" : "Yang",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest.",
+      "startOffset" : 61,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 25,
+      "context" : "canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high.",
+      "startOffset" : 39,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 17,
+      "context" : "(2021), whereby the inference algorithms can be formulated via B-graphs (Gallo et al., 1993; Klein and Manning, 2001).",
+      "startOffset" : 72,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 21,
+      "context" : "(2021), whereby the inference algorithms can be formulated via B-graphs (Gallo et al., 1993; Klein and Manning, 2001).",
+      "startOffset" : 72,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs.",
+      "startOffset" : 62,
+      "endOffset" : 424
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden state can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance.",
+      "startOffset" : 62,
+      "endOffset" : 795
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden state can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance. They use tensor rank decomposition (aka. canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high. Chiu et al. (2021) use tensor matricization and low-rank matrix decomposition to accelerate structured inference on chain and tree structure models.",
+      "startOffset" : 62,
+      "endOffset" : 1203
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden state can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance. They use tensor rank decomposition (aka. canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high. Chiu et al. (2021) use tensor matricization and low-rank matrix decomposition to accelerate structured inference on chain and tree structure models. However, their method has an even higher complexity than Yang et al. (2021b) on PCFGs.",
+      "startOffset" : 62,
+      "endOffset" : 1410
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden state can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance. They use tensor rank decomposition (aka. canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high. Chiu et al. (2021) use tensor matricization and low-rank matrix decomposition to accelerate structured inference on chain and tree structure models. However, their method has an even higher complexity than Yang et al. (2021b) on PCFGs. In this work, we propose a new approach to scaling structured inference, which can be described by FGG notations intuitively. We first provide an intuitive and unifying perspective toward the work of Yang et al. (2021b) and Chiu et al.",
+      "startOffset" : 62,
+      "endOffset" : 1640
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden state can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance. They use tensor rank decomposition (aka. canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high. Chiu et al. (2021) use tensor matricization and low-rank matrix decomposition to accelerate structured inference on chain and tree structure models. However, their method has an even higher complexity than Yang et al. (2021b) on PCFGs. In this work, we propose a new approach to scaling structured inference, which can be described by FGG notations intuitively. We first provide an intuitive and unifying perspective toward the work of Yang et al. (2021b) and Chiu et al. (2021), showing that their low-rank decomposition-based models can be viewed as decomposing large factors in an FGG—e.",
+      "startOffset" : 62,
+      "endOffset" : 1663
+    }, {
+      "referenceID" : 5,
+      "context" : "They can both be represented as factor graph grammars (FGGs) (Chiang and Riley, 2020), which are a powerful tool to describe a wide range of models, allowing exact and tractable inference in most situations of interest. Recently, researchers found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. Chiu and Rush (2020) propose a neural VL-HMM with 215 states for language modeling, narrowing down the performance gap between HMMs and LSTMs. They impose a strong sparsity constraint (i.e., each hidden state can only generate a small subset of terminal symbols) to decrease the time complexity of the forward algorithm, thus requiring pre-clustering of terminal symbols. Yang et al. (2021b) use a large state space for neural PCFG induction and achieve superior unsupervised constituency parsing performance. They use tensor rank decomposition (aka. canonical-polyadic decomposition (CPD) (Rabanser et al., 2017)) to decrease the computational complexity of the inside algorithm, but only scale the state size from tens to hundreds because the resulting complexity is still high. Chiu et al. (2021) use tensor matricization and low-rank matrix decomposition to accelerate structured inference on chain and tree structure models. However, their method has an even higher complexity than Yang et al. (2021b) on PCFGs. In this work, we propose a new approach to scaling structured inference, which can be described by FGG notations intuitively. We first provide an intuitive and unifying perspective toward the work of Yang et al. (2021b) and Chiu et al. (2021), showing that their low-rank decomposition-based models can be viewed as decomposing large factors in an FGG—e.g., the binary rule probability tensor in PCFGs— into several smaller factors connected by new “rank” nodes. Then we target at a subset of FGGs—which we refer to as B-FGGs— subsuming all models considered by Chiu et al. (2021), whereby the inference algorithms can be formulated via B-graphs (Gallo et al.",
+      "startOffset" : 62,
+      "endOffset" : 2001
+    }, {
+      "referenceID" : 32,
+      "context" : "For PCFG induction, we manage to use 20 times more hidden states than Yang et al. (2021b), obtaining much better unsupervised parsing performance.",
+      "startOffset" : 70,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 6,
+      "context" : "For HMM language modeling, we achieve lower perplexity and lower inference complexity than Chiu et al. (2021).",
+      "startOffset" : 91,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 5,
+      "context" : "Chiang and Riley (2020) propose factor graph grammars (FGGs) to overcome this limitation, which are expressive enough to subsume HMMs and PCFGs.",
+      "startOffset" : 0,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 10,
+      "context" : "A hyperedge replacement graph grammar (HRG) (Drewes et al., 1997) is a tuple (N,T, P, S) where",
+      "startOffset" : 44,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 5,
+      "context" : "(1)Note that, for the lhs of P , Chiang and Riley (2020) also draw their endpoint nodes using external node notations.",
+      "startOffset" : 33,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 9,
+      "context" : "In this section, we recover the accelerated inside algorithms of TD-PCFG (Cohen et al., 2013; Yang et al., 2021b) and LPCFG (Chiu et al.",
+      "startOffset" : 73,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 34,
+      "context" : "In this section, we recover the accelerated inside algorithms of TD-PCFG (Cohen et al., 2013; Yang et al., 2021b) and LPCFG (Chiu et al.",
+      "startOffset" : 73,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2021b) and LPCFG (Chiu et al., 2021) in an intuitive and unifying manner using the FGG notations.",
+      "startOffset" : 19,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 6,
+      "context" : "The accelerated forward algorithm of LHMM (Chiu et al., 2021) can be derived similarly.",
+      "startOffset" : 42,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2021b) and LPCFG (Chiu et al., 2021) in an intuitive and unifying manner using the FGG notations. The accelerated forward algorithm of LHMM (Chiu et al., 2021) can be derived similarly. Denote T ∈ Rm×m×m as the tensor representation of p(N1 → N2N3) , and αi,j ∈ Rm as the inside score of span [i, j). Cohen et al. (2013) and Yang et al.",
+      "startOffset" : 20,
+      "endOffset" : 323
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2021b) and LPCFG (Chiu et al., 2021) in an intuitive and unifying manner using the FGG notations. The accelerated forward algorithm of LHMM (Chiu et al., 2021) can be derived similarly. Denote T ∈ Rm×m×m as the tensor representation of p(N1 → N2N3) , and αi,j ∈ Rm as the inside score of span [i, j). Cohen et al. (2013) and Yang et al. (2021b) use CPD to decompose T, i.",
+      "startOffset" : 20,
+      "endOffset" : 347
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2021b) and LPCFG (Chiu et al., 2021) in an intuitive and unifying manner using the FGG notations. The accelerated forward algorithm of LHMM (Chiu et al., 2021) can be derived similarly. Denote T ∈ Rm×m×m as the tensor representation of p(N1 → N2N3) , and αi,j ∈ Rm as the inside score of span [i, j). Cohen et al. (2013) and Yang et al. (2021b) use CPD to decompose T, i.e., let T = ∑r q=1 uq ⊗ vq ⊗ wq where uq,vq,wq ∈ Rm. Denote U,V,W ∈ Rr×m as the resulting matrices of stacking all uq,vq,wq, Cohen et al. (2013) derived the recursive form:",
+      "startOffset" : 20,
+      "endOffset" : 518
+    }, {
+      "referenceID" : 8,
+      "context" : "Cohen et al. (2013) note that UT can be extracted to the front of the summation (Eq.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 6,
+      "context" : "Recently, Chiu et al. (2021) use low-rank matrix decomposition to accelerate PCFG inference.",
+      "startOffset" : 10,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 17,
+      "context" : "B-graphs (Gallo et al., 1993) are a subset of directed hypergraphs whose hyperedges are all B-edges.",
+      "startOffset" : 9,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 21,
+      "context" : "Many dynamic programming algorithms can be formulated through B-graphs (Klein and Manning, 2001; Huang, 2008; Azuma et al., 2017; Chiu et al., 2021; Fu and Lapata, 2021), including the inference algorithms of many structured models, e.",
+      "startOffset" : 71,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 18,
+      "context" : "Many dynamic programming algorithms can be formulated through B-graphs (Klein and Manning, 2001; Huang, 2008; Azuma et al., 2017; Chiu et al., 2021; Fu and Lapata, 2021), including the inference algorithms of many structured models, e.",
+      "startOffset" : 71,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 0,
+      "context" : "Many dynamic programming algorithms can be formulated through B-graphs (Klein and Manning, 2001; Huang, 2008; Azuma et al., 2017; Chiu et al., 2021; Fu and Lapata, 2021), including the inference algorithms of many structured models, e.",
+      "startOffset" : 71,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 6,
+      "context" : "Many dynamic programming algorithms can be formulated through B-graphs (Klein and Manning, 2001; Huang, 2008; Azuma et al., 2017; Chiu et al., 2021; Fu and Lapata, 2021), including the inference algorithms of many structured models, e.",
+      "startOffset" : 71,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 16,
+      "context" : "Many dynamic programming algorithms can be formulated through B-graphs (Klein and Manning, 2001; Huang, 2008; Azuma et al., 2017; Chiu et al., 2021; Fu and Lapata, 2021), including the inference algorithms of many structured models, e.",
+      "startOffset" : 71,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 9,
+      "context" : "We note that, similar to Cohen et al. (2013), we can cache Hαi,k, Iαk,j and reuse them to further accelerate inference 4.",
+      "startOffset" : 25,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 14,
+      "context" : "Specifically, we estimate the span marginals using autodifferentiation (Eisner, 2016; Rush, 2020), which (3)π6 is used for generating sentences of length 1, we do not consider this in the following derivation of the inside algorithm to reduce clutter.",
+      "startOffset" : 71,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 27,
+      "context" : "Specifically, we estimate the span marginals using autodifferentiation (Eisner, 2016; Rush, 2020), which (3)π6 is used for generating sentences of length 1, we do not consider this in the following derivation of the inside algorithm to reduce clutter.",
+      "startOffset" : 71,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 15,
+      "context" : "(4)In fact, this is a typical application of the unfold-refold transformation (Eisner and Blatz, 2007; Vieira et al., 2021).",
+      "startOffset" : 78,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 30,
+      "context" : "(4)In fact, this is a typical application of the unfold-refold transformation (Eisner and Blatz, 2007; Vieira et al., 2021).",
+      "startOffset" : 78,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 6,
+      "context" : "Inference with G′ simply coincides with the forward algorithm, which has a O(nr2) time complexity and is lower thanO(nmr) of LHMM (Chiu et al., 2021) when r < m.",
+      "startOffset" : 130,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 28,
+      "context" : "Therefore, we resort to Minimum Bayes-Risk decoding, similar to Yang et al. (2021b). Specifically, we estimate the span marginals using autodifferentiation (Eisner, 2016; Rush, 2020), which (3)π6 is used for generating sentences of length 1, we do not consider this in the following derivation of the inside algorithm to reduce clutter.",
+      "startOffset" : 64,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 20,
+      "context" : "4 Neural parameterization We use neural networks to produce probabilities for all factors, which has been shown to benefit learning in previous work (Kim et al., 2019; Yang et al., 2021b; Chiu and Rush, 2020; Chiu et al., 2021).",
+      "startOffset" : 149,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 34,
+      "context" : "4 Neural parameterization We use neural networks to produce probabilities for all factors, which has been shown to benefit learning in previous work (Kim et al., 2019; Yang et al., 2021b; Chiu and Rush, 2020; Chiu et al., 2021).",
+      "startOffset" : 149,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 7,
+      "context" : "4 Neural parameterization We use neural networks to produce probabilities for all factors, which has been shown to benefit learning in previous work (Kim et al., 2019; Yang et al., 2021b; Chiu and Rush, 2020; Chiu et al., 2021).",
+      "startOffset" : 149,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 6,
+      "context" : "4 Neural parameterization We use neural networks to produce probabilities for all factors, which has been shown to benefit learning in previous work (Kim et al., 2019; Yang et al., 2021b; Chiu and Rush, 2020; Chiu et al., 2021).",
+      "startOffset" : 149,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2021b; Chiu and Rush, 2020; Chiu et al., 2021). We use the neural parameterization of Yang et al. (2021b) with slight modifications.",
+      "startOffset" : 30,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 22,
+      "context" : "We evaluate our model on Penn Treebank (PTB) (Marcus et al., 1994).",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 22,
+      "context" : "We evaluate our model on Penn Treebank (PTB) (Marcus et al., 1994). Our implementation is based on the open-sourced code of Yang et al. (2021b)6 and we use the same setting as theirs.",
+      "startOffset" : 46,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 19,
+      "context" : "com/sustcsonglin/TN-PCFG (7)Although we did not explicitly distinguish between nonterminal and preterminal symbols before, in our implementation, we follow Kim et al. (2019) to make such distinction.",
+      "startOffset" : 156,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 4,
+      "context" : "1 For reference Constituency test (Cao et al., 2020) 62.",
+      "startOffset" : 34,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 34,
+      "context" : "PCFG (Yang et al., 2021b) uses the largest number of states (500 perterminals and 250 nonterminals).",
+      "startOffset" : 5,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 6,
+      "context" : "Our implementation is based on the open-sourced code of Chiu et al. (2021)8.",
+      "startOffset" : 56,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 7,
+      "context" : "lier, VL-HMM (Chiu and Rush, 2020) imposes strong sparsity constraint to decrease the time complexity of the forward algorithm and requires preclustering of terminal symbols.",
+      "startOffset" : 13,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 2,
+      "context" : "Specifically, VLHMM uses Brown clustering (Brown et al., 1992), introducing external information to improve performance.",
+      "startOffset" : 42,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 6,
+      "context" : "LHMM (Chiu et al., 2021) and our model only impose low-rank constraint without using any external information and are thus more comparable.",
+      "startOffset" : 5,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 6,
+      "context" : "Following Chiu et al. (2021), we fix the rank to 2048 for faster ablation studies.",
+      "startOffset" : 10,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 21,
+      "context" : "Siddiqi et al. (2010) propose a reduced-rank HMM whereby the forward algorithm can be carried out in the rank space, which is similar to our model, but our method is more general.",
+      "startOffset" : 0,
+      "endOffset" : 22
+    }, {
+      "referenceID" : 6,
+      "context" : "Cohen and Collins (2012); Cohen et al. (2013) use CPD for fast (latent-variable) PCFG parsing, but they do not leverage CPD for fast learning and they need to actually perform CPD on existing probability tensors.",
+      "startOffset" : 0,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 6,
+      "context" : "Cohen and Collins (2012); Cohen et al. (2013) use CPD for fast (latent-variable) PCFG parsing, but they do not leverage CPD for fast learning and they need to actually perform CPD on existing probability tensors. Rabusseau et al. (2016) use low-rank approximation method to learn weighted tree automata, which subsumes PCFGs and latentvariable PCFGs.",
+      "startOffset" : 0,
+      "endOffset" : 237
+    }, {
+      "referenceID" : 6,
+      "context" : "Cohen and Collins (2012); Cohen et al. (2013) use CPD for fast (latent-variable) PCFG parsing, but they do not leverage CPD for fast learning and they need to actually perform CPD on existing probability tensors. Rabusseau et al. (2016) use low-rank approximation method to learn weighted tree automata, which subsumes PCFGs and latentvariable PCFGs. Our method can subsume more models. Yang et al. (2021b,a) propose CPD-based neural parameterizations for (lexicalized) PCFGs. Yang et al. (2021b) aim at scaling PCFG inference. We achieve better time complexity than theirs and hence can use much more hidden states. Yang et al. (2021a) aims to decrease the complexity of lexicalized PCFG parsing, which can also be described within our framework.",
+      "startOffset" : 0,
+      "endOffset" : 637
+    }, {
+      "referenceID" : 5,
+      "context" : "Chiu et al. (2021) use low-rank matrix decomposition, which can be viewed as CPD on order-2 tensors, to accelerate inference on chain and tree structure models including HMMs and PCFGs.",
+      "startOffset" : 0,
+      "endOffset" : 19
+    }, {
+      "referenceID" : 5,
+      "context" : "Chiu et al. (2021) use low-rank matrix decomposition, which can be viewed as CPD on order-2 tensors, to accelerate inference on chain and tree structure models including HMMs and PCFGs. However, their method is only efficient when the parameter tensors are of order 2, e.g., in HMMs and HSMMs. Our method leverages full CPD, thus enabling efficient inference with higher-order factors, e.g., in PCFGs. Our method can be applied to all models considered by Chiu et al. (2021), performing inference in the rank-space with lower complexities.",
+      "startOffset" : 0,
+      "endOffset" : 475
+    }, {
+      "referenceID" : 5,
+      "context" : "Chiu et al. (2021) use low-rank matrix decomposition, which can be viewed as CPD on order-2 tensors, to accelerate inference on chain and tree structure models including HMMs and PCFGs. However, their method is only efficient when the parameter tensors are of order 2, e.g., in HMMs and HSMMs. Our method leverages full CPD, thus enabling efficient inference with higher-order factors, e.g., in PCFGs. Our method can be applied to all models considered by Chiu et al. (2021), performing inference in the rank-space with lower complexities. Besides HMMs and PCFGs, Wrigley et al. (2017) propose an efficient sampling-based junction-tree algorithm using CPD to decompose high-order factors.",
+      "startOffset" : 0,
+      "endOffset" : 586
+    }, {
+      "referenceID" : 5,
+      "context" : "Chiu et al. (2021) use low-rank matrix decomposition, which can be viewed as CPD on order-2 tensors, to accelerate inference on chain and tree structure models including HMMs and PCFGs. However, their method is only efficient when the parameter tensors are of order 2, e.g., in HMMs and HSMMs. Our method leverages full CPD, thus enabling efficient inference with higher-order factors, e.g., in PCFGs. Our method can be applied to all models considered by Chiu et al. (2021), performing inference in the rank-space with lower complexities. Besides HMMs and PCFGs, Wrigley et al. (2017) propose an efficient sampling-based junction-tree algorithm using CPD to decompose high-order factors. Dupty and Lee (2020) also use CPD to decompose high-order factors for fast belief propagation.",
+      "startOffset" : 0,
+      "endOffset" : 710
+    }, {
+      "referenceID" : 5,
+      "context" : "Chiu et al. (2021) use low-rank matrix decomposition, which can be viewed as CPD on order-2 tensors, to accelerate inference on chain and tree structure models including HMMs and PCFGs. However, their method is only efficient when the parameter tensors are of order 2, e.g., in HMMs and HSMMs. Our method leverages full CPD, thus enabling efficient inference with higher-order factors, e.g., in PCFGs. Our method can be applied to all models considered by Chiu et al. (2021), performing inference in the rank-space with lower complexities. Besides HMMs and PCFGs, Wrigley et al. (2017) propose an efficient sampling-based junction-tree algorithm using CPD to decompose high-order factors. Dupty and Lee (2020) also use CPD to decompose high-order factors for fast belief propagation. Ducamp et al. (2020) use tensor train decomposition for fast and scalable message passing in Bayesian networks.",
+      "startOffset" : 0,
+      "endOffset" : 805
+    }, {
+      "referenceID" : 1,
+      "context" : "Bonnevie and Schmidt (2021) leverage matrix product states (i.e., tensor trains) for scalable discrete probabilistic inference. Miller et al. (2021) leverage tensor networks for fast sequential probabilistic inference.",
+      "startOffset" : 0,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 34,
+      "context" : "We showed that CPD amounts to decomposing a large factor into several smaller factors connected by a new rank node, and gave a unifying perspective towards previous low-rank structured models (Yang et al., 2021b; Chiu et al., 2021).",
+      "startOffset" : 192,
+      "endOffset" : 231
+    }, {
+      "referenceID" : 6,
+      "context" : "We showed that CPD amounts to decomposing a large factor into several smaller factors connected by a new rank node, and gave a unifying perspective towards previous low-rank structured models (Yang et al., 2021b; Chiu et al., 2021).",
+      "startOffset" : 192,
+      "endOffset" : 231
+    }, {
+      "referenceID" : 19,
+      "context" : "A direct application of our method is to decrease the inference complexity of the neural QCFG model (Kim, 2021), which has a very large grammar constant and can be improved easily under our framework.",
+      "startOffset" : 100,
+      "endOffset" : 111
+    } ],
+    "year" : 0,
+    "abstractText" : "Hidden Markov Models (HMMs) and Probabilistic Context-Free Grammars (PCFGs) are widely used structured models, both of which can be represented as factor graph grammars (FGGs), a powerful formalism capable of describing a wide range of models. Recent research found it beneficial to use large state spaces for HMMs and PCFGs. However, inference with large state spaces is computationally demanding, especially for PCFGs. To tackle this challenge, we leverage tensor rank decomposition (aka. CPD) to decrease inference computational complexities for a subset of FGGs subsuming HMMs and PCFGs. We apply CPD on the factors of an FGG and then construct a new FGG defined in the rank space. Inference with the new FGG produces the same result but has a lower time complexity when the rank size is smaller than the state size. We conduct experiments on HMM language modeling and unsupervised PCFG parsing, showing better performance than previous work. We will release our code at github. com/xxx.",
+    "creator" : null
+  }
+}

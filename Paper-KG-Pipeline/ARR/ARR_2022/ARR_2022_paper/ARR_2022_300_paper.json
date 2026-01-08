@@ -1,0 +1,507 @@
+{
+  "name" : "ARR_2022_300_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Towards Computationally Feasible Deep Active Learning",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Active learning (AL) (Cohn et al., 1996) is an approach for reducing the amount of dataset annotation required for achieving the desired level of machine learning model performance. This is especially important in domains where obtaining labeled instances is expensive or wide crowdsourcing is unavailable. For example, annotation of clinical and biomedical texts usually requires the help of physicians or biomedical researchers. The time of such highly qualified experts is extremely valuable and should be spent wisely. Straightforward annotation of datasets can be very redundant, wasting the time of annotators on unimportant instances. AL alleviates this problem by asking human experts to\nlabel only the most informative instances selected according to the information acquired from a machine learning model. The algorithm for selection of such instances is called a query strategy, and a model used to estimate the informativeness of yet unlabeled instances is called an acquisition model.\nAL starts from a small seeding set of labeled instances, which are used to train an initial acquisition model. A query strategy ranks unlabeled instances in a large pool according to a criterion that measures their informativeness based on the acquisition model output. One of the most widely adopted criteria is the uncertainty of the acquisition model on instances in question (Lewis and Gale, 1994). Eventually, top selected instances are presented to annotators, and this active annotation process iteratively continues.\nAfter labels are collected, we would like to train a model for a final application. In the same vein as (Lowell et al., 2019), we call it a successor model. AL can help reduce the amount of annotation required to achieve a reasonable quality of the successor text processing model by multiple times (Settles and Craven, 2008; Settles, 2009).\nRecently, deep learning has given us a tool for solving one of the essential problems of AL. When we start annotating, we have to build an acquisition model almost without insights from the data that could help us to do feature engineering or to introduce inductive bias. Deep learning does not require feature engineering, and transfer learning with deep pre-trained models like ELMo (Peters et al., 2018), BERT (Devlin et al., 2019), and followers such as ELECTRA (Clark et al., 2020) provide near stateof-the-art performance on a variety of tasks without any modifications to their architectures. However, deep learning introduces another problem related to computational performance. Since AL annotation typically is an interactive process, we have to train acquisition models and perform inference on a huge unlabeled pool of instances very quickly.\nThis imposes constraints on the acquisition model size and entails another issue.\nIdeally, the architectures of acquisition and successor models should be the same. Lowell et al. (2019) demonstrate that when the acquisition model is different from the successor model, the performance of the latter one can degrade compared to the performance of the model trained on the same amount of annotation obtained without AL. The performance drop in the case of acquisition-successor mismatch (ASM) raises the question of whether AL is a practical technique at all since the usage of different models on the annotated dataset is a common situation. The problem is complicated by a contradiction between the fact that the acquisition model is required to be as lightweight as possible to mitigate computational overhead and the successor model should be as expressive as possible because we apparently care about the quality of our final application.\nIn this work, we propose a simple algorithm based on pseudo-labeling and demonstrate that it is able to alleviate the ASM problem. Moreover, we show that it is possible to substitute a resourceintensive acquisition model with a smaller one (e.g., take DistilBERT instead of BERT) but train a more powerful successor model of an arbitrary type (e.g., ELECTRA) without loss of quality. This helps to accelerate the execution of AL iterations and reduce computational overhead.\nWe also find that the most time-consuming part of an AL iteration with uncertainty-based query strategies can be the inference on the unlabeled pool of instances, while a set of the most certain instances usually does not change substantially from iteration to iteration. Therefore, the straightforward approach to instance acquisition wastes much time on instances shown to be unimportant in previous iterations. We leverage this finding and propose an algorithm that subsamples instances in the unlabeled pool depending on their uncertainty scores obtained on previous AL iterations. This helps to speed up the AL iterations further, especially when the unlabeled pool is large. A series of experiments on text classification and tagging benchmarks widely used in recent works on AL demonstrate the efficiency of the proposed algorithms.\nThe contributions of the paper are the following:\n• We propose a novel algorithm denoted as Pseudo-Labeling for Acquisition Successor Mismatch (PLASM) that allows the use of\ncomputationally cheap models during the acquisition of instances in AL, while it does not introduce constraints on the type of the successor model and effectively alleviates the ASM problem. It helps to reduce the hardware requirements and the duration of AL iterations.\n• We propose a novel algorithm denoted as Unlabeled Pool Subsampling (UPS) that helps to reduce the time required for calculating informativeness of instances in AL based on the fact that the set of instances that model is certain about does not change substantially. This helps to further speed up the AL iteration."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Deep learning, to a large extent, has freed data scientists from doing feature engineering, which has been one of the essential obstacles to annotation with AL. This advantage has sparked a series of works on deep active learning (DAL) in natural language processing (NLP).\nShen et al. (2017) conduct one of the first investigations on DAL in sequence tagging tasks. They propose an efficient way of quantifying the uncertainty of sentences, namely maximal normalized log probability (MNLP), by averaging log probabilities of their tokens. They also address the problem of excessive duration of a neural network training step during an AL iteration by interleaving online learning with training from scratch. In our work, we take MNLP as a query strategy for experiments on sequence tagging tasks since it has demonstrated a good trade-off between quality and computational performance. We consider that online learning can potentially be used as a complement to our algorithms. Since the most time-consuming part of an AL iteration can be model inference instead of training, in this work, we also pay attention to the acceleration of the inference step.\nSeveral recent publications investigate deep pretrained models based on the Transformer architecture (Vaswani et al., 2017), ELMo (Peters et al., 2018), and ULMFiT (Howard and Ruder, 2018) in AL on NLP tasks (Prabhu et al., 2019; Ein-Dor et al., 2020; Yuan et al., 2020; Shelmanov et al., 2021). We continue this line of works by relying on pre-trained Transformers since this architecture has been shown promising for AL in NLP due to its good qualitative and computational performance.\nA few works have experimented with Bayesian query strategies for AL. Shen et al. (2017), Sid-\ndhant and Lipton (2018), Ein-Dor et al. (2020), and Shelmanov et al. (2021) leverage Monte Carlo dropout (Gal and Ghahramani, 2016) for quantifying uncertainty of models. Siddhant and Lipton (2018) also apply the Bayes by backprop algorithm (Blundell et al., 2015) for performing variational inference of a Bayesian neural network. This approach demonstrates the best improvements upon the baseline but introduces large computational overhead both for training and uncertainty estimation of a model, as well as the memory overhead for storing parameters of a Bayesian neural network. The query strategies based on Monte Carlo dropout do not affect the model training procedure and do not change the memory footprint. However, they also suffer from slow uncertainty estimation due to the necessity of making multiple stochastic predictions, while their empirical evaluations with Transformers in recent works (Ein-Dor et al., 2020; Shelmanov et al., 2021) do not demonstrate big advantages. Therefore, we do not use Bayesian query strategies in our experiments and adhere to the classical uncertainty-based query strategies.\nRecently proposed alternatives to uncertaintybased query strategies leverage reinforcement learning and imitation learning (Fang et al., 2017; Liu et al., 2018; Vu et al., 2019; Brantley et al., 2020). This series of works aims at constructing trainable policy-based query strategies. However, this requires an excessive amount of computation while the transferability of learned policies across domains and tasks is underresearched.\nFinally, Lowell et al. (2019) question the usefulness of AL techniques in general. They demonstrate that due to the ASM problem, AL can be even detrimental to the performance of the successor. This finding is also revealed for classical machine learning models by Baldridge and Osborne (2004), Tomanek and Morik (2011), Hu et al. (2016) and supported by experiments with Transformers in (Shelmanov et al., 2021). Our work directly addresses the question raised by Lowell et al. (2019) and suggests a simple solution to the ASM problem. Moreover, we combine it with the method proposed by Shelmanov et al. (2021), who suggest using distilled models for instance acquisition and their teacher models as successors."
+    }, {
+      "heading" : "3 Background and Methods",
+      "text" : "This section describes models and AL query strategies used in the experiments and outlines the pro-\nposed algorithms."
+    }, {
+      "heading" : "3.1 Query Strategies",
+      "text" : "We conduct experiments with three basic AL query strategies. We note that despite their simplicity, these strategies are usually on par with more elaborated counterparts (Ein-Dor et al., 2020; Shelmanov et al., 2021; Margatina et al., 2021).\nRandom sampling is used for both text classification and sequence tagging experiments. Applying this strategy means that we do not use AL at all and just emulate that an annotator labels a randomly sampled piece of a dataset.\nLeast Confident (LC) is used for text classification experiments. This strategy sorts texts in the ascending order of their maximum class probabilities given by a machine learning model. Let y be a predicted class of an instance x, then LCcls is:\nLCcls = 1−max y P (y|x) .\nMaximum Normalized Log-Probability (MNLP) is proposed by Shen et al. (2017) to mitigate the drawback of the standard LC when it is applied to sequence tagging tasks. Let yi be a tag of a token i, let xj be a token j in an input sequence of length n. Then the MNLP score can be formulated as follows:\nMNLPner = − max y1,...,yn\n1\nn n∑ i=1 logP [yi|{yj} \\ yi, {xj}]\nThis modified version of LC works slightly better for sequence tagging tasks (Shen et al., 2017), and is adopted in many other works on DAL (Siddhant and Lipton, 2018; Erdmann et al., 2019; Shelmanov et al., 2021).\nMahalanobis Distance (MD) between a test instance and the closest class-conditional Gaussian distribution is suggested by Lee et al. (2018) for detection of out-of-distribution instances and adversarial attacks. MD is a strong baseline for uncertainty estimation of NLP model predictions (Podolskiy et al., 2021) and is also a backbone for other subsequent techniques (Zhou et al., 2021). We use it as an informativeness score in AL since previous work shows that MD captures epistemic uncertainty well (Podolskiy et al., 2021).\nMDcls = min c∈C\n(hi − µc)TΣ−1(hi − µc), (1)\nwhere hi is a hidden representation of a i-th instance, µc is a centroid of a class c, and Σ is a covariance matrix for hidden representations of training instances."
+    }, {
+      "heading" : "3.2 Models",
+      "text" : "We use the standard models based on the Transformer architecture (Vaswani et al., 2017): BERT, ELECTRA, and XLNet (Yang et al., 2019). We also employ a CNN-BiLSTM-CRF model of Ma and Hovy (2016) for ablation study.\nBesides full-fledged Transformers, we leverage the distilled version of BERT: DistilBERT (Sanh et al., 2019). The distillation procedure aims at creating a smaller-size model (student) while keeping the behavior of the original model (teacher) by minimizing the distillation loss over the student predictions and soft target probabilities of the teacher (Hinton et al., 2015): Ldistil = − ∑ i,c tic∗ log (sic), where tic and sic are probabilities estimated by the teacher and the student correspondingly for each instance i and class c. DistilBERT also takes advantage of several additional techniques that help align it with BERT.\nDistilBERT is much more compact than its teacher with a 40% reduction of a memory footprint. It achieves the 60% speedup, sacrificing only 3% of its qualitative performance (Sanh et al., 2019). Since the qualitative performance during acquisition is not essential, we would like to use such lightweight models for instance acquisition to reduce AL iteration duration and the requirements to the computational power of the hardware."
+    }, {
+      "heading" : "3.3 Pseudo-labeling for Acquisition-Successor Mismatch",
+      "text" : "We propose a simple algorithm for constructing a successor model of an arbitrary type using AL: Pseudo-Labeling for Acquisition-Successor Mismatch (PLASM). The algorithm is designed for reducing the amount of computation required for instance acquisition during AL with uncertaintybased query strategies.\nPLASM leverages the finding of Shelmanov et al. (2021) that the successor model can be trained on instances labeled during AL without a penalty to the quality if its distilled version was used for instance acquisition. However, this idea alone does not resolve the question, how we can train new models of arbitrary type on datasets collected via AL (Lowell et al., 2019).\nThe algorithm consists of the following steps:\n1. Consider we have a resource-intensive pretrained teacher model (e.g. BERT). We construct a lightweight distilled version of this model (e.g. DistilBERT) using unlabeled data.\n2. We apply a distilled model to perform acquisition during AL for collecting gold labels.\n3. The collected labels are used for training a resource-intensive teacher model, which has a higher quality than the distilled acquisition model.\n4. The teacher model is used for pseudo-labeling of the whole unlabeled pool of instances.\n5. The automatically acquired annotations are filtered to reduce noise introduced by mistakes of the pseudolabeling model. In the main experiments, we use TracIn – a strong and practical method for mislabelled data identification (Pruthi et al., 2020). In the ablation study, we also test a simpler solution: filtering instances with high uncertainty of the pseudolabeling model predictions. The fraction of the filtered out instances in both cases is determined from the evaluation score of the pseudolabeling model on a held-out subset of the training corpus (100%-score).\n6. Finally, we train a successor model of an arbitrary type on the dataset that contains automatically labeled instances and instances with gold labels obtained from human experts.\nIf the teacher model is expressive enough, it will generate reasonable pseudo labels, which can be filtered and reused by another model of a different type and architecture. This additional annotation helps to mitigate the performance drop due to ASM and to keep benefits of AL even when the successor model is more expressive than the model used for pseudolabeling. Meanwhile, PLASM helps to reduce the duration of AL iterations similarly to the approach of Shelmanov et al. (2021), and it does not introduce any additional computational overhead during the annotation process since training the teacher model and pseudo-labeling are performed after the AL annotation is completed."
+    }, {
+      "heading" : "3.4 Unlabeled Pool Subsampling",
+      "text" : "If the unlabeled pool of instances is large, which is a common situation, and a deep neural network is used as an acquisition model, the most timeconsuming step of the AL cycle is the generation of predictions for unlabeled instances, which is necessary for uncertainty-based query strategies (refer to Table 1). We note that uncertainty estimates of the most certain instances in the unlabeled pool do not alter substantially across multiple AL itera-\ntions (Table 2). This means that AL wastes much time and resources on these unimportant instances. We claim that it is possible to recalculate uncertainty scores on the current iteration only for the top instances of the unlabeled pool, which were the most uncertain on previous iterations, while not sacrificing the benefits of AL.\nWe propose an unlabeled pool subsampling (UPS) algorithm, in which uncertainty estimates only for a fraction of instances are updated. On the current iteration, we suggest always selecting a fraction of the most uncertain instances on previous iterations equal to γ ∈ [0, 1] and sample a small portion of instances with a probability that depends on their rank in a list sorted by their uncertainty. Formally, this can be written as follows. Let u be the last recalculated uncertainty score of an instance on one of the previous iterations. We order the instances according to this value: u0 ≤ u1 ≤ · · · ≤ ui ≤ · · · ≤ uM and denote a normalized rank of an instance as ri = iM . Let T > 0 be a “temperature” hyperparameter. Then the probability of keeping an instance i for recalculation of uncertainty on the current iteration is:\nP(i) ∝ exp ( −max(0, ri − γ)\nT\n) .\nSampling certain instances with a non-negative probability instead of just ignoring them gives a chance of overcoming a situation when an informative instance is occasionally assigned a high certainty score and is never selected ever since. This method is inspired by subsampling techniques used in gradient boosting algorithms for selecting a training subset for decision trees (Ke et al., 2017; Ibragimov and Gusev, 2019).\nOn several initial iterations of AL, an acquisition model is trained on an extremely small amount of data, which leads to unreliable uncertainty estimates. To mitigate this problem, we suggest keeping the standard approach to performing instance acquisition on several first iterations and switching to the optimized process later during AL. We also note that interleaving the optimized selection with the standard approach, in which we recalculate the uncertainty for the whole unlabeled pool of instances, can help to keep the high performance of AL."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Experimental Setup",
+      "text" : "We follow the common schema of AL experiments adopted in many previous works (Settles and Craven, 2008; Shen et al., 2017; Siddhant and Lipton, 2018; Shelmanov et al., 2021). We emulate the AL annotation cycle starting with a small random sample of the dataset used as a seed for the construction of the initial acquisition model. On each iteration, we pick a fraction of top instances from the unlabeled pool sorted using the query strategy and, instead of demonstrating them to annotators, automatically label them according to the gold standard. These instances are removed from the unlabeled pool and added to the training dataset for the next iterations. On each iteration, we train the successor model on the data acquired so far and evaluate it on the whole available test set. Acquisition and successor models are always trained from scratch. We run several iterations of emulation to build a chart, which demonstrates the performance of the successor depending on the amount of “labor” invested into the annotation process. To report standard deviations of scores, we repeat the whole experiment five times with different random seeds. In most experiments, we use LC or MNLP query strategies for classification and sequence tagging correspondingly. Results with MD are presented only in Figure 7 in Appendix B.\nFor classification, accuracy is used as the evaluation metric. For sequence tagging, we use the strict span-based F1-score (Sang and Meulder, 2003)."
+    }, {
+      "heading" : "4.1.1 Datasets",
+      "text" : "We experiment with widely-used datasets for the evaluation of AL methods on text classification and sequence tagging tasks.\nFor text classification, we use the English AG News topic classification dataset (Zhang et al., 2015). We randomly select 1% of instances of the training set as a seed to train the initial acquisition model and select 1% of instances for “annotation” on each AL iteration.\nFor sequence tagging, we use English CoNLL2003 (Sang and Meulder, 2003) and English OntoNotes 5.0 (Pradhan et al., 2013). We randomly sample instances with a total number of tokens equal to 2% of all tokens from the training set as a seed. On each AL iteration, we select instances from the unlabeled pool until a total number of tokens equals 2% of all training tokens.\nThe corpora statistics are presented in Table 3 in Appendix A."
+    }, {
+      "heading" : "4.1.2 Model Choice, Training Details, and Hyperparameter Selection",
+      "text" : "We conduct experiments with pre-trained Transformers used in several previous works on AL. The exact checkpoints and parameter numbers are presented in Table 5 in Appendix A.\nWe keep a single pre-selected set of hyperparameters for all AL iterations. Tables 4, 6 in Appendix A describe the hyperparameter setup. Hyperparameter tuning on each AL iteration is very time-consuming. This is an important research problem but out of the scope of the current work."
+    }, {
+      "heading" : "4.2 Results and Discussion",
+      "text" : ""
+    }, {
+      "heading" : "4.2.1 Acquisition-Successor Mismatch",
+      "text" : "First of all, we illustrate the ASM problem on the CoNLL-2003, OntoNotes, and AG News datasets (Figure 1a and Figures 4a, 5a in Appendix B). The presented results correspond to the findings\nof Lowell et al. (2019) and Shelmanov et al. (2021). We see a significant reduction in the performance of successor models when they are different from acquisition models (DistilBERT(acq.)ELECTRA(succ.)) compared to the case when they are the same (ELECTRA(acq.)-ELECTRA(succ.)). The performance drop is especially notable on the CoNLL-2003 dataset in Figure 1a. The similar performance drop appears if we use BERT for acquisition and ELECTRA as a successor and vice versa (Figure 6 in Appendix B). The ASM problem appears to be even more severe with the modern uncertainty estimation technique based on MD. Figure 7 in Appendix B shows the results of experiments with MD on the AG News dataset. Training the ELECTRA successor on data acquired during AL with MD and DistilBERT results in lower performance than when using data acquired with LC.\nWe show on both text classification and tagging tasks that replacing the original full-fledged acquisition model with its distilled version can alleviate this problem (Figure 1b, and Figures 4b, 5b in Appendix C). Previously, this effect was also revealed by Shelmanov et al. (2021) for tagging. As we can see in Figure 1b, when DistilBERT is used as an acquisition model, the successor model based on BERT does not experience a performance drop. A similar effect can be noted for tagging on OntoNotes and for text classification on AG News.\nAlthough we can mitigate the ASM problem for such pairs of models, it is still a serious constraint for applying AL. Obviously, such an approach is not feasible if there is no available distilled version of the model (e.g. there is no distilled version of ELECTRA). In the next section, we show that the\nproposed method based on pseudo-labeling helps to overcome this limitation and resolve the ASM problem in a more general case."
+    }, {
+      "heading" : "4.2.2 Pseudo-labeling for Acquisition-Successor Mismatch",
+      "text" : "Figure 2 and Figure 8 in Appendix C compare the performance of successor models constructed using the standard approach to AL, in which we use ELECTRA as an acquisition and successor model, and PLASM, in which we use DistilBERT for acquisition, BERT for pseudo-labeling, and ELECTRA as a successor. We can see that PLASM confidently mitigates the ASM problem. Figure 10 in Appendix C shows that PLASM also effectively mitigates performance drop due to ASM between a DistilBERT acquisition model and a CNN-BiLSTM-CRF successor model. Figure 11 in Appendix C illustrates the same finding for the case, when XLNet is used as a successor.\nFigure 9a presents the results of the first ablation study, in which, for pseudolabeling, we replace BERT with a smaller model DistilBERT. The study demonstrates that in the case of ASM, using an expressive model (e.g. BERT) for pseudolabeling is necessary for achieving high scores and keeping AL useful in the beginning of annotation. Figure 9b presents the results of the second ablation study, in which we use DistilBERT for acquisition and ELECTRA for pseudolabeling and as a successor. This study demonstrates that pseudolabeling on its own cannot alleviate the ASM completely. It is better to use an expressive pseudolabeling model that also matches the lightweight acquisition model (e.g. distilled model for acquisition, its teacher – for labeling), as it is proposed in PLASM.\nThe ablation study of the methods for filtering erroneous instances in the pseudo-labeling step is conducted on the AG News dataset in Figures 12a,b in Appendix C. Applying each of the methods gives substantial improvements over the PLASM without the filtering step, while TracIn is slightly better than thresholding uncertainty of pseudo-labeling model predictions. We note that for XLNet as a successor, PLASM without filtering alleviates the ASM problem, but does not approach the performance of the case when XLNet is used as an acquisition model.\nTable 1 and Table 7 in Appendix D summarize the time required for conducting AL iterations with different acquisition functions on the AG News and CoNLL-2003 datasets. As we can see, since PLASM uses DistilBERT for acquisition,\n2 4 6 8 10 12 14 16\n0.9\n0.91\n0.92\n0.93\n0.94\n0.95\nELECTRA(full) ELECTRA(acq.)-ELECTRA(succ.) DistilBERT(acq.)+PLASM(ours)+ ELECTRA(succ.)+UPS(ours) DistilBERT(acq.)+PLASM(ours)+ ELECTRA(succ.)\nLabeled Data, %\nP er\nfo rm\nan ce\n, A cc\nur ac\ny\nFigure 3: The performance of UPS on AG News compared with baselines (γ = 0.1, T = 0.01).\nour method reduces the iteration time by more than 30% compared to the standard approach, in which ELECTRA is used for acquisition. Thereby, empirical results show that PLASM offers two benefits: (1) it helps to alleviate the ASM problem in AL; (2) it reduces the time of an AL iteration and required computational resources for training and running acquisition models. These benefits substantially increase the practicality of using AL in interactive annotation tools."
+    }, {
+      "heading" : "4.2.3 Unlabeled Pool Subsampling",
+      "text" : "Table 1 compares the duration of AL iterations on the AG News dataset, including the duration of the acquisition model training step and the duration of inference on instances from the unlabeled pool. We can see that the inference step is very time-consuming, especially on early iterations, and takes more than half of the time required for performing an AL iteration. Therefore, we claim that in such cases, it is more important to accelerate the inference step rather than the training step as it was done in previous work (Shen et al., 2017).\nTo justify our approach to accelerating the inference step, we show that many unlabeled instances have similar uncertainty estimates across different AL iterations. Table 2 presents the fraction of instances, which would be standardly queried on the current iteration if we selected them from the whole unlabeled pool that are contained in k-% of most uncertain instances, according to the acquisition model built on the previous AL iteration. For example, we observe that 50% of the most uncertain instances according to the model trained on the first iteration contains more than 99% of instances from the “standard query” on the second iteration, and 30% contains almost 95% of instances from the “standard query”. Later iterations have even a better trade-off. Thereby, it is reasonable to avoid\nspending computational resources on instances that were most certain in previous iterations.\nIf we exclude a big part of the unlabeled pool from consideration during acquisition, the benefits of AL can potentially deteriorate. Results of experiments presented in Figure 3 and Figures 13, 14 in Appendix D show that the proposed UPS algorithm does not lead to the performance drop compared to the standard approach, in which we consider the whole unlabeled pool for instance selection. Meanwhile, the results of the ablation study in Figure 15 (Appendix D) demonstrate that the baseline, which randomly subsamples the unlabeled dataset, has a performance drop compared to UPS. In another ablation study, we set T = 0, which means that UPS just takes a fraction of the most uncertain instances (Figure 16). On some iterations, this results in a slight reduction of performance.\nFrom Table 1, we can see that UPS accelerates the query process up to 10 times. The corresponding results for CoNLL-2003 are presented in Table 7 in Appendix D. Overall, applying both PLASM and UPS algorithms on AG News reduces the duration of AL iterations by more than 60% comparing with the standard approach. We can also tune the hyperparameters γ and T to reduce dura-\ntion further in exchange for slightly worse scores."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We investigated several obstacles to deploying AL in practice and proposed two algorithms that help to overcome them. In particular, we considered the acquisition-successor mismatch problem revealed by Lowell et al. (2019), as well as the problem related to the excessive duration of AL iterations with uncertainty-based query strategies and deep learning models. We demonstrate that the proposed PLASM algorithm helps to deal with both of these issues: it removes the constraint on the type of the successor model trained on the data labeled with AL and allows the use of lightweight acquisition models that have good training and inference performance, as well as a small memory footprint. The unlabeled pool subsampling algorithm helps to substantially decrease the inference time during AL without a loss in the quality of successor models. Together the PLASM and UPS algorithms help reduce the duration of an AL iteration by more than 60%. We consider that the conducted empirical investigations and the proposed methods will help to increase the practicality of using deep AL in interactive annotation tools.\nThere are still many issues that hinder the application of AL techniques. We consider that one of the most important obstacles is the necessity of hyperparameter optimization of deep learning models that can take a prohibitively long time to keep the annotation process interactive. We are looking forward to addressing this problem in future work."
+    }, {
+      "heading" : "A Dataset Statistics and Model Hyperparameters",
+      "text" : "de/resources/embeddings/token/glove. gensim"
+    }, {
+      "heading" : "B Additional Experimental Results with Acquisition-successor Mismatch",
+      "text" : ""
+    }, {
+      "heading" : "C Additional Experimental Results with PLASM",
+      "text" : ""
+    }, {
+      "heading" : "D Additional Experimental Results with UPS",
+      "text" : ""
+    } ],
+    "references" : [ {
+      "title" : "Active learning and the total cost of annotation",
+      "author" : [ "Jason Baldridge", "Miles Osborne." ],
+      "venue" : "Proceedings of the 2004 Conference on Empirical Methods in Natural Language Processing, pages 9–16, Barcelona, Spain. Association for Computational",
+      "citeRegEx" : "Baldridge and Osborne.,? 2004",
+      "shortCiteRegEx" : "Baldridge and Osborne.",
+      "year" : 2004
+    }, {
+      "title" : "Weight uncertainty in neural network",
+      "author" : [ "Charles Blundell", "Julien Cornebise", "Koray Kavukcuoglu", "Daan Wierstra." ],
+      "venue" : "Proceedings of the 32nd International Conference on Machine Learning, ICML 2015, Lille, France, 6-11 July 2015,",
+      "citeRegEx" : "Blundell et al\\.,? 2015",
+      "shortCiteRegEx" : "Blundell et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Active imitation learning with noisy guidance",
+      "author" : [ "Kianté Brantley", "Hal Daumé III", "Amr Sharaf." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 2093– 2105, Online. Association for Computational Lin-",
+      "citeRegEx" : "Brantley et al\\.,? 2020",
+      "shortCiteRegEx" : "Brantley et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ELECTRA: pretraining text encoders as discriminators rather than generators",
+      "author" : [ "Kevin Clark", "Minh-Thang Luong", "Quoc V. Le", "Christopher D. Manning." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa,",
+      "citeRegEx" : "Clark et al\\.,? 2020",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Active learning with statistical models",
+      "author" : [ "David A Cohn", "Zoubin Ghahramani", "Michael I Jordan." ],
+      "venue" : "Journal of artificial intelligence research, 4:129– 145.",
+      "citeRegEx" : "Cohn et al\\.,? 1996",
+      "shortCiteRegEx" : "Cohn et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Active Learning for BERT: An Empirical Study",
+      "author" : [ "Liat Ein-Dor", "Alon Halfon", "Ariel Gera", "Eyal Shnarch", "Lena Dankin", "Leshem Choshen", "Marina Danilevsky", "Ranit Aharonov", "Yoav Katz", "Noam Slonim." ],
+      "venue" : "Proceedings of the 2020 Conference on",
+      "citeRegEx" : "Ein.Dor et al\\.,? 2020",
+      "shortCiteRegEx" : "Ein.Dor et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Practical, efficient, and customizable active",
+      "author" : [ "Alexander Erdmann", "David Joseph Wrisley", "Benjamin Allen", "Christopher Brown", "Sophie Cohen-Bodénès", "Micha Elsner", "Yukun Feng", "Brian Joseph", "Béatrice Joyeux-Prunel", "Marie-Catherine de Marneffe" ],
+      "venue" : null,
+      "citeRegEx" : "Erdmann et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Erdmann et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Practical obstacles to deploying active learning",
+      "author" : [ "David Lowell", "Zachary C. Lipton", "Byron C. Wallace." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natu-",
+      "citeRegEx" : "Lowell et al\\.,? 2019",
+      "shortCiteRegEx" : "Lowell et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "End-to-end sequence labeling via bi-directional LSTM-CNNsCRF",
+      "author" : [ "Xuezhe Ma", "Eduard Hovy." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1064–1074, Berlin, Ger-",
+      "citeRegEx" : "Ma and Hovy.,? 2016",
+      "shortCiteRegEx" : "Ma and Hovy.",
+      "year" : 2016
+    }, {
+      "title" : "Bayesian active learning with pretrained language models",
+      "author" : [ "Katerina Margatina", "Loic Barrault", "Nikolaos Aletras." ],
+      "venue" : "arXiv preprint arXiv:2104.08320.",
+      "citeRegEx" : "Margatina et al\\.,? 2021",
+      "shortCiteRegEx" : "Margatina et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "GloVe: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher Manning." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 1532–1543, Doha,",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Associ-",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Revisiting mahalanobis distance for transformer-based out-of-domain detection",
+      "author" : [ "Alexander Podolskiy", "Dmitry Lipin", "Andrey Bout", "Ekaterina Artemova", "Irina Piontkovskaya." ],
+      "venue" : "Thirty-Fifth AAAI Conference on Artificial Intelligence, AAAI 2021, Thirty-",
+      "citeRegEx" : "Podolskiy et al\\.,? 2021",
+      "shortCiteRegEx" : "Podolskiy et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Sampling bias in deep active classification: An empirical study",
+      "author" : [ "Ameya Prabhu", "Charles Dognin", "Maneesh Singh." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Confer-",
+      "citeRegEx" : "Prabhu et al\\.,? 2019",
+      "shortCiteRegEx" : "Prabhu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Towards robust linguistic analysis using OntoNotes",
+      "author" : [ "Sameer Pradhan", "Alessandro Moschitti", "Nianwen Xue", "Hwee Tou Ng", "Anders Björkelund", "Olga Uryupina", "Yuchen Zhang", "Zhi Zhong." ],
+      "venue" : "Proceedings of the Seventeenth Conference on Computa-",
+      "citeRegEx" : "Pradhan et al\\.,? 2013",
+      "shortCiteRegEx" : "Pradhan et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Estimating training data influence by tracing gradient descent",
+      "author" : [ "Garima Pruthi", "Frederick Liu", "Satyen Kale", "Mukund Sundararajan." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 33, pages 19920–19930. Curran Associates,",
+      "citeRegEx" : "Pruthi et al\\.,? 2020",
+      "shortCiteRegEx" : "Pruthi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Introduction to the CoNLL-2003 shared task: Language-independent named entity recognition",
+      "author" : [ "Erik F. Tjong Kim Sang", "Fien De Meulder." ],
+      "venue" : "Proceedings of the Seventh Conference on Natural Language Learning, CoNLL 2003, Held",
+      "citeRegEx" : "Sang and Meulder.,? 2003",
+      "shortCiteRegEx" : "Sang and Meulder.",
+      "year" : 2003
+    }, {
+      "title" : "DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "arXiv preprint arXiv:1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Active learning literature survey",
+      "author" : [ "Burr Settles." ],
+      "venue" : "Computer Sciences Technical Report 1648, University of Wisconsin–Madison.",
+      "citeRegEx" : "Settles.,? 2009",
+      "shortCiteRegEx" : "Settles.",
+      "year" : 2009
+    }, {
+      "title" : "An analysis of active learning strategies for sequence labeling tasks",
+      "author" : [ "Burr Settles", "Mark Craven." ],
+      "venue" : "2008 Conference on Empirical Methods in Natural Language Processing, EMNLP 2008, Proceedings of the Conference, 25-27 October 2008, Hon-",
+      "citeRegEx" : "Settles and Craven.,? 2008",
+      "shortCiteRegEx" : "Settles and Craven.",
+      "year" : 2008
+    }, {
+      "title" : "Active learning for sequence tagging",
+      "author" : [ "Artem Shelmanov", "Dmitri Puzyrev", "Lyubov Kupriyanova", "Denis Belyakov", "Daniil Larionov", "Nikita Khromov", "Olga Kozlova", "Ekaterina Artemova", "Dmitry V. Dylov", "Alexander Panchenko" ],
+      "venue" : null,
+      "citeRegEx" : "Shelmanov et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Shelmanov et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Deep active learning for named entity recognition",
+      "author" : [ "Yanyao Shen", "Hyokun Yun", "Zachary Lipton", "Yakov Kronrod", "Animashree Anandkumar." ],
+      "venue" : "Proceedings of the 2nd Workshop on Representation Learning for NLP, pages 252–256, Vancouver,",
+      "citeRegEx" : "Shen et al\\.,? 2017",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep Bayesian active learning for natural language processing: Results of a large-scale empirical study",
+      "author" : [ "Aditya Siddhant", "Zachary C. Lipton." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Siddhant and Lipton.,? 2018",
+      "shortCiteRegEx" : "Siddhant and Lipton.",
+      "year" : 2018
+    }, {
+      "title" : "Inspecting sample reusability for active learning",
+      "author" : [ "Katrin Tomanek", "Katherina Morik." ],
+      "venue" : "Active Learning and Experimental Design workshop In conjunction with AISTATS 2010, pages 169–181. JMLR Workshop and Conference Proceedings.",
+      "citeRegEx" : "Tomanek and Morik.,? 2011",
+      "shortCiteRegEx" : "Tomanek and Morik.",
+      "year" : 2011
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Learning how to active learn by dreaming",
+      "author" : [ "Thuy-Trang Vu", "Ming Liu", "Dinh Phung", "Gholamreza Haffari." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 4091–4101, Florence, Italy. Association for",
+      "citeRegEx" : "Vu et al\\.,? 2019",
+      "shortCiteRegEx" : "Vu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Xlnet: Generalized autoregressive pretraining for language understanding",
+      "author" : [ "Zhilin Yang", "Zihang Dai", "Yiming Yang", "Jaime Carbonell", "Russ R Salakhutdinov", "Quoc V Le." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 32. Curran",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Cold-start active learning through self-supervised language modeling",
+      "author" : [ "Michelle Yuan", "Hsuan-Tien Lin", "Jordan BoydGraber." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages",
+      "citeRegEx" : "Yuan et al\\.,? 2020",
+      "shortCiteRegEx" : "Yuan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Zhao", "Yann LeCun." ],
+      "venue" : "Proceedings of the 28th International Conference on Neural Information Processing Systems - Volume 1, Neural Information Processing",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Contrastive out-of-distribution detection for pretrained transformers",
+      "author" : [ "Wenxuan Zhou", "Fangyu Liu", "Muhao Chen." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 1100–1111, Online and",
+      "citeRegEx" : "Zhou et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 4,
+      "context" : "Active learning (AL) (Cohn et al., 1996) is an approach for reducing the amount of dataset annotation required for achieving the desired level of machine learning model performance.",
+      "startOffset" : 21,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 8,
+      "context" : "In the same vein as (Lowell et al., 2019), we call it a successor model.",
+      "startOffset" : 20,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 20,
+      "context" : "AL can help reduce the amount of annotation required to achieve a reasonable quality of the successor text processing model by multiple times (Settles and Craven, 2008; Settles, 2009).",
+      "startOffset" : 142,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 19,
+      "context" : "AL can help reduce the amount of annotation required to achieve a reasonable quality of the successor text processing model by multiple times (Settles and Craven, 2008; Settles, 2009).",
+      "startOffset" : 142,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 12,
+      "context" : "Deep learning does not require feature engineering, and transfer learning with deep pre-trained models like ELMo (Peters et al., 2018), BERT (Devlin et al.",
+      "startOffset" : 113,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2018), BERT (Devlin et al., 2019), and followers such as ELECTRA (Clark et al.",
+      "startOffset" : 14,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2019), and followers such as ELECTRA (Clark et al., 2020) provide near stateof-the-art performance on a variety of tasks without any modifications to their architectures.",
+      "startOffset" : 39,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 25,
+      "context" : "Several recent publications investigate deep pretrained models based on the Transformer architecture (Vaswani et al., 2017), ELMo (Peters et al.",
+      "startOffset" : 101,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2017), ELMo (Peters et al., 2018), and ULMFiT (Howard and Ruder, 2018) in AL on NLP tasks (Prabhu et al.",
+      "startOffset" : 14,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2018), and ULMFiT (Howard and Ruder, 2018) in AL on NLP tasks (Prabhu et al., 2019; Ein-Dor et al., 2020; Yuan et al., 2020; Shelmanov et al., 2021).",
+      "startOffset" : 64,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2018), and ULMFiT (Howard and Ruder, 2018) in AL on NLP tasks (Prabhu et al., 2019; Ein-Dor et al., 2020; Yuan et al., 2020; Shelmanov et al., 2021).",
+      "startOffset" : 64,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2018), and ULMFiT (Howard and Ruder, 2018) in AL on NLP tasks (Prabhu et al., 2019; Ein-Dor et al., 2020; Yuan et al., 2020; Shelmanov et al., 2021).",
+      "startOffset" : 64,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2018), and ULMFiT (Howard and Ruder, 2018) in AL on NLP tasks (Prabhu et al., 2019; Ein-Dor et al., 2020; Yuan et al., 2020; Shelmanov et al., 2021).",
+      "startOffset" : 64,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 1,
+      "context" : "Siddhant and Lipton (2018) also apply the Bayes by backprop algorithm (Blundell et al., 2015) for performing variational inference of a Bayesian neural network.",
+      "startOffset" : 70,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 6,
+      "context" : "However, they also suffer from slow uncertainty estimation due to the necessity of making multiple stochastic predictions, while their empirical evaluations with Transformers in recent works (Ein-Dor et al., 2020; Shelmanov et al., 2021) do not demonstrate big advantages.",
+      "startOffset" : 191,
+      "endOffset" : 237
+    }, {
+      "referenceID" : 21,
+      "context" : "However, they also suffer from slow uncertainty estimation due to the necessity of making multiple stochastic predictions, while their empirical evaluations with Transformers in recent works (Ein-Dor et al., 2020; Shelmanov et al., 2021) do not demonstrate big advantages.",
+      "startOffset" : 191,
+      "endOffset" : 237
+    }, {
+      "referenceID" : 26,
+      "context" : "Recently proposed alternatives to uncertaintybased query strategies leverage reinforcement learning and imitation learning (Fang et al., 2017; Liu et al., 2018; Vu et al., 2019; Brantley et al., 2020).",
+      "startOffset" : 123,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 2,
+      "context" : "Recently proposed alternatives to uncertaintybased query strategies leverage reinforcement learning and imitation learning (Fang et al., 2017; Liu et al., 2018; Vu et al., 2019; Brantley et al., 2020).",
+      "startOffset" : 123,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 21,
+      "context" : "(2016) and supported by experiments with Transformers in (Shelmanov et al., 2021).",
+      "startOffset" : 57,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 6,
+      "context" : "We note that despite their simplicity, these strategies are usually on par with more elaborated counterparts (Ein-Dor et al., 2020; Shelmanov et al., 2021; Margatina et al., 2021).",
+      "startOffset" : 109,
+      "endOffset" : 179
+    }, {
+      "referenceID" : 21,
+      "context" : "We note that despite their simplicity, these strategies are usually on par with more elaborated counterparts (Ein-Dor et al., 2020; Shelmanov et al., 2021; Margatina et al., 2021).",
+      "startOffset" : 109,
+      "endOffset" : 179
+    }, {
+      "referenceID" : 10,
+      "context" : "We note that despite their simplicity, these strategies are usually on par with more elaborated counterparts (Ein-Dor et al., 2020; Shelmanov et al., 2021; Margatina et al., 2021).",
+      "startOffset" : 109,
+      "endOffset" : 179
+    }, {
+      "referenceID" : 22,
+      "context" : "This modified version of LC works slightly better for sequence tagging tasks (Shen et al., 2017), and is adopted in many other works on DAL (Siddhant and Lipton, 2018; Erdmann et al.",
+      "startOffset" : 77,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2017), and is adopted in many other works on DAL (Siddhant and Lipton, 2018; Erdmann et al., 2019; Shelmanov et al., 2021).",
+      "startOffset" : 51,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2017), and is adopted in many other works on DAL (Siddhant and Lipton, 2018; Erdmann et al., 2019; Shelmanov et al., 2021).",
+      "startOffset" : 51,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2017), and is adopted in many other works on DAL (Siddhant and Lipton, 2018; Erdmann et al., 2019; Shelmanov et al., 2021).",
+      "startOffset" : 51,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 13,
+      "context" : "MD is a strong baseline for uncertainty estimation of NLP model predictions (Podolskiy et al., 2021) and is also a backbone for other subsequent techniques (Zhou et al.",
+      "startOffset" : 76,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2021) and is also a backbone for other subsequent techniques (Zhou et al., 2021).",
+      "startOffset" : 63,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 13,
+      "context" : "We use it as an informativeness score in AL since previous work shows that MD captures epistemic uncertainty well (Podolskiy et al., 2021).",
+      "startOffset" : 114,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 25,
+      "context" : "We use the standard models based on the Transformer architecture (Vaswani et al., 2017): BERT, ELECTRA, and XLNet (Yang et al.",
+      "startOffset" : 65,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2017): BERT, ELECTRA, and XLNet (Yang et al., 2019).",
+      "startOffset" : 34,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 18,
+      "context" : "Besides full-fledged Transformers, we leverage the distilled version of BERT: DistilBERT (Sanh et al., 2019).",
+      "startOffset" : 89,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 18,
+      "context" : "It achieves the 60% speedup, sacrificing only 3% of its qualitative performance (Sanh et al., 2019).",
+      "startOffset" : 80,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 8,
+      "context" : "However, this idea alone does not resolve the question, how we can train new models of arbitrary type on datasets collected via AL (Lowell et al., 2019).",
+      "startOffset" : 131,
+      "endOffset" : 152
+    }, {
+      "referenceID" : 16,
+      "context" : "In the main experiments, we use TracIn – a strong and practical method for mislabelled data identification (Pruthi et al., 2020).",
+      "startOffset" : 107,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 20,
+      "context" : "We follow the common schema of AL experiments adopted in many previous works (Settles and Craven, 2008; Shen et al., 2017; Siddhant and Lipton, 2018; Shelmanov et al., 2021).",
+      "startOffset" : 77,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 22,
+      "context" : "We follow the common schema of AL experiments adopted in many previous works (Settles and Craven, 2008; Shen et al., 2017; Siddhant and Lipton, 2018; Shelmanov et al., 2021).",
+      "startOffset" : 77,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 23,
+      "context" : "We follow the common schema of AL experiments adopted in many previous works (Settles and Craven, 2008; Shen et al., 2017; Siddhant and Lipton, 2018; Shelmanov et al., 2021).",
+      "startOffset" : 77,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 21,
+      "context" : "We follow the common schema of AL experiments adopted in many previous works (Settles and Craven, 2008; Shen et al., 2017; Siddhant and Lipton, 2018; Shelmanov et al., 2021).",
+      "startOffset" : 77,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 17,
+      "context" : "For sequence tagging, we use the strict span-based F1-score (Sang and Meulder, 2003).",
+      "startOffset" : 60,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 29,
+      "context" : "For text classification, we use the English AG News topic classification dataset (Zhang et al., 2015).",
+      "startOffset" : 81,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 17,
+      "context" : "For sequence tagging, we use English CoNLL2003 (Sang and Meulder, 2003) and English OntoNotes 5.",
+      "startOffset" : 47,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 22,
+      "context" : "Therefore, we claim that in such cases, it is more important to accelerate the inference step rather than the training step as it was done in previous work (Shen et al., 2017).",
+      "startOffset" : 156,
+      "endOffset" : 175
+    } ],
+    "year" : 0,
+    "abstractText" : "Active learning (AL) is a prominent technique for reducing the annotation effort required for training machine learning models. Deep learning offers a solution for several essential obstacles to deploying AL in practice but introduces many others. One of such problems is the excessive computational resources required to train an acquisition model and estimate its uncertainty on instances in the unlabeled pool. We propose two techniques that tackle this issue for text classification and tagging tasks, offering a substantial reduction of AL iteration duration and the computational overhead introduced by deep acquisition models in AL. We also demonstrate that our algorithm that leverages pseudolabeling and distilled models overcomes one of the essential obstacles revealed previously in the literature. Namely, it was shown that due to differences between an acquisition model used to select instances during AL and a successor model trained on the labeled data, the benefits of AL can diminish. We show that our algorithm, despite using a smaller and faster acquisition model, is capable of training a more expressive successor model with higher performance.",
+    "creator" : null
+  }
+}

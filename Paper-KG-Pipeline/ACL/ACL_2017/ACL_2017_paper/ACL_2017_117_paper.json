@@ -1,0 +1,596 @@
+{
+  "name" : "ACL_2017_117_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Improved Neural Relation Detection for Knowledge Base Question Answering",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "1 000\n011\n012\n013\n014\n015\n016\n017\n018\n019\n020\n021\n022\n023\n024\n025\n026\n027\n028\n029\n030\n031\n032\n033\n034\n035\n036\n037\n038\n039\n040\n041\n042\n043\n044\n045\n046\n047\n048\n049\n061\n062\n063\n064\n065\n066\n067\n068\n069\n070\n071\n072\n073\n074\n075\n076\n077\n078\n079\n080\n081\n082\n083\n084\n085\n086\n087\n088\n089\n090\n091\n092\n093\n094\n095\n096\n097\n098\n099"
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al.,"
+    }, {
+      "heading" : "2014; Bordes et al., 2015; Bast and Haussmann,",
+      "text" : ""
+    }, {
+      "heading" : "2015; Yih et al., 2015; Xu et al., 2016). For an input question, these systems typically generate a",
+      "text" : "KB query, which can be executed to retrieve the answers from a KB. Figure 1 illustrates the process used to parse two sample questions in a KBQA system: (a) a single-relation question, which can be answered with a single <head-entity, relation, tail-entity> KB tuple (Fader et al., 2013; Yih et al., 2014; Bordes et al., 2015); and (b) a more complex case, where some constraints need to be handled for multiple entities in the question. The KBQA\nsystem in the figure performs two key tasks: (1) entity linking, which links n-grams in questions to KB entities, and (2) relation detection, which identifies the KB relation(s) a question refers to.\nThe main focus of this work is to improve the relation detection subtask and further explore how it can contribute to the KBQA system. Although general relation detection1 methods are well studied in the NLP community, such studies usually do not take the end task of KBQA into consideration. As a result, there is a significant gap between general relation detection studies and KB-specific relation detection. First, in most general relation detection tasks, the number of target relations is limited, normally smaller than 100. In contrast, in KBQA even a small KB, like Freebase2M (Bordes et al., 2015), contains more than 6,000 relation types. Second, relation detection for KBQA often becomes a zero-shot learning task, since some golded test relations may not appear in the training data. For example, the SimpleQuestions (Bordes et al., 2015) data set has 14% of the golden test relations not observed in golden training tuples. Third, as shown in Figure 1(b), for some KBQA tasks like WebQuestions (Berant et al., 2013), we need to predict a chain of relations instead of a single relation. This increases the number of target relation types and the sizes of candidate relation pools, further increasing the difficulty of KB relation detection. Owing to these reasons, KB relation detection is significantly more challenging compared to general relation detection tasks.\nThis paper improves KB relation detection to cope with the above mentioned problems. First, in order to deal with the unseen relations, we propose to break the relation names into word sequences for question-relation matching. Second, noticing that original relation names can sometimes help\n1In the information extraction field such tasks are usually called relation extraction or relation classification.\n2\n101\n102\n103\n104\n105\n106\n107\n108\n109\n110\n111\n112\n113\n114\n115\n116\n117\n118\n119\n120\n121\n122\n123\n124\n125\n126\n127\n128\n129\n130\n131\n132\n133\n134\n135\n136\n137\n138\n139\n140\n141\n142\n143\n144\n145\n146\n147\n148\n149\n150\n151\n152\n153\n154\n155\n156\n157\n158\n159\n160\n161\n162\n163\n164\n165\n166\n167\n168\n169\n170\n171\n172\n173\n174\n175\n176\n177\n178\n179\n180\n181\n182\n183\n184\n185\n186\n187\n188\n189\n190\n191\n192\n193\n194\n195\n196\n197\n198\n199\nQuestion: what episode was mike kelley the writer of\nKnowledge Base"
+    }, {
+      "heading" : "Mike Kelley",
+      "text" : "(American television writer/producer)"
+    }, {
+      "heading" : "Mike Kelley",
+      "text" : "(American baseball\nplayer)\n…\nEntity Linking\nLove Will Find a Way\nUSA\n…\nFirst baseman …\nepisodes_written\nposition_played\nRelation Detection\n(a) (b)\nQuestion: what tv show did grant show play on in 2008\nMike Kelley ? episodes_written\nEntity Linking Relation Detection\nGrant Show\n? starring_roles series\n(date) from 2008\nConstraint Detection\nGrant Show (American actor) SwingTown\nBig Love\nepisodes\nScoundrels series 2011 from\n2010\n2008\nFigure 1: KBQA examples and its three key components. (a) A single relation example. We first identify the topic entity with entity linking and then detect the relation asked by the question with relation detection (from all relations connecting the topic entity). Based on the detected entity and relation, we form a query to search the KB for the correct answer “Love Will Find a Way”. (b) A more complex question containing two entities. By using “Grant Show” as the topic entity, we could detect a chain of relations “starring roles-series” pointing to the answer. An additional constraint detection takes the other entity “2008” as a constraint, to filter the correct answer “SwingTown” from all candidates found by the topic entity and relation.\nto match longer question contexts, we propose to build both relation-level and word-level relation representations. Third, we use deep bidirectional LSTMs (BiLSTMs) to learn different levels of question representations in order to match the different levels of relation information. Finally, we propose a residual learning method for sequence matching, which makes the model training easier and results in more abstract (deeper) question representations, thus improves hierarchical matching.\nIn order to assess how the proposed improved relation detection could benefit the KBQA end task, we also propose a simple KBQA implementation composed of two-step relation detection. Given an input question and a set of candidate entities retrieved by an entity linker based on the question, our proposed relation detection model plays a key role in the KBQA process: (1) Reranking the entity candidates according to whether they connect to high confident relations detected from the raw question text by the relation detection model. This step is important to deal with the ambiguities normally present in entity linking results. (2) Finding the core relation (chains) for each topic entity2 selection from a much smaller candidate entity set after re-ranking. The above steps are followed by an optional constraint detection step, when the question cannot be answered by single relations (e.g. containing multiple entities). Finally the highest scored query from the above steps is used to query the KB for answers.\n2Following (Yih et al., 2015), here topic entity refers to the node of the (directed) query tree; and core-chain is the directed path of relation from root to the answer node.\nOur main contributions include: (i) An improved relation detection model by hierarchical matching between questions and relations with residual learning; (ii) We demonstrate that the improved relation detector enables our simple KBQA system to achieve state-of-the-art results on both single-relation and multi-relation KBQA tasks."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Relation Extraction Relation extraction (RE) is an important sub-field of information extraction. General research in this field usually works on a (small) pre-defined relation set, where given a text paragraph and two target entities, the goal is to determine whether the text indicates any types of relations between the entities or not. As a result RE is usually formulated as a classification task. Traditional RE methods rely on large amount of hand-crafted features (Zhou et al., 2005; Rink and Harabagiu, 2010; Sun et al., 2011). Recent research benefits a lot from the advancement of deep learning: from word embeddings (Nguyen and Grishman, 2014; Gormley et al., 2015) to deep networks like CNNs and LSTMs (Zeng et al., 2014; dos Santos et al., 2015; Vu et al., 2016) and attention models (Zhou et al., 2016; Wang et al., 2016).\nThe above research assumes there is a fixed (closed) set of relation types, thus no zero-shot learning capability is required. The number of relations is usually not large: The widely used ACE2005 has 11/32 coarse/fine-grained relations; SemEval2010 Task8 has 19 relations; TACKBP2015 has 74 relations although it considers\n3\n201\n202\n203\n204\n205\n206\n207\n208\n209\n210\n211\n212\n213\n214\n215\n216\n217\n218\n219\n220\n221\n222\n223\n224\n225\n226\n227\n228\n229\n230\n231\n232\n233\n234\n235\n236\n237\n238\n239\n240\n241\n242\n243\n244\n245\n246\n247\n248\n249\n250\n251\n252\n253\n254\n255\n256\n257\n258\n259\n260\n261\n262\n263\n264\n265\n266\n267\n268\n269\n270\n271\n272\n273\n274\n275\n276\n277\n278\n279\n280\n281\n282\n283\n284\n285\n286\n287\n288\n289\n290\n291\n292\n293\n294\n295\n296\n297\n298\n299\nopen-domain Wikipedia relations. All are much fewer than thousands of relations in KBQA. As a result, few work in this field focuses on dealing with large number of relations or unseen relations.\nRelation Detection in KBQA Systems Relation detection for KBQA also starts with featurerich approaches (Yao and Van Durme, 2014; Bast and Haussmann, 2015) towards usages of deep networks (Yih et al., 2015; Xu et al., 2016; Dai et al., 2016) and attention models (Yin et al., 2016; Golub and He, 2016). Many of the above relation detection research could naturally support large relation vocabulary and open relation sets (especially for QA with OpenIE KB like ParaLex (Fader et al., 2013)), in order to fit the goal of open-domain question answering.\nDifferent KBQA data sets have different levels of requirement about the above open-domain capacity. For example, most of the gold test relations in WebQuestions can be observed during training, thus some prior work on this task adopted the close domain assumption like in the general RE research. While for data sets like SimpleQuestions and ParaLex, the capacity to support large relation sets and unseen relations becomes more necessary. To the end, there are two main solutions: (1) use pre-trained relation embeddings (e.g. from TransE (Bordes et al., 2013)), like (Dai et al., 2016); (2) factorize the relation names to sequences and formulate relation detection as a sequence matching and ranking task. Such factorization works because that the relation names usually comprise meaningful word sequences. For example, Yin et al. (2016) split relations to word sequences for single-relation detection. Liang et al. (2016) also achieve good performance on WebQSP with wordlevel relation representation in an end-to-end neural programmer model. Yih et al. (2015) use character tri-grams as inputs on both question and relation sides. Golub and He (2016) propose a generative framework for single-relation KBQA which predicts relation with a character-level sequenceto-sequence model.\nAnother difference between relation detection in KBQA and general RE is that general RE research assumes that the two argument entities are both available. Thus it usually benefits from features (Nguyen and Grishman, 2014; Gormley et al., 2015) or attention mechanisms (Wang et al., 2016) based on the entity information (e.g. entity types or entity embeddings). For relation detec-\ntion in KBQA, such information is mostly missing because: (1) one question usually contains single argument (the topic entity) and (2) one KB entity could have multiple types (type vocabulary size larger than 1,500). This makes KB entity typing itself a difficult problem so no previous used entity information in the relation detection model.3"
+    }, {
+      "heading" : "3 Improved KB Relation Detection",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Different Granularity in KB Relations",
+      "text" : "Previous research formulates KB relation detection as a sequence matching problem. However, while the questions are natural word sequences, how to represent relations as sequences remains a challenging problem. Here we give an overview of two types of relation sequence representations commonly used in previous work:\n(1) Relation Name as a Single Token (relationlevel). In this case, each relation name is treated as a unique token. The problem with this approach is that it suffers from the low relation coverage due to limited amount of training data, thus cannot generalize well to large number of opendomain relations. For example in Figure 1, when treating relation names as single tokens, it will be difficult to match the questions to relation names “episodes written” and “starring roles” if these names do not appear in training data – their relation embeddings hrs will be random vectors thus are not comparable to question embeddings hqs.\n(2) Relation as Word Sequence (word-level). In this case, the relation is treated as a sequence of words from the tokenized relation name. It has better generalization, but suffers from the lack of global information from the original relation names. For example in Figure 1(b), when doing only word-level matching, it is difficult to rank the target relation “starring roles” higher compared to the incorrect relation “plays produced”. This is because the incorrect relation contains word “plays”, which is more similar to the question (containing word “play”) in the embedding space. On the other hand, if the target relation co-occurs with questions related to “tv appearance” in training, by treating the whole relation as a token (i.e. relation id), we could better learn the correspondence between this token and phrases like “tv show” and “play on”.\n3Such entity information has been used in KBQA systems as features for the final answer re-rankers.\n4\n301\n302\n303\n304\n305\n306\n307\n308\n309\n310\n311\n312\n313\n314\n315\n316\n317\n318\n319\n320\n321\n322\n323\n324\n325\n326\n327\n328\n329\n330\n331\n332\n333\n334\n335\n336\n337\n338\n339\n340\n341\n342\n343\n344\n345\n346\n347\n348\n349\n350\n351\n352\n353\n354\n355\n356\n357\n358\n359\n360\n361\n362\n363\n364\n365\n366\n367\n368\n369\n370\n371\n372\n373\n374\n375\n376\n377\n378\n379\n380\n381\n382\n383\n384\n385\n386\n387\n388\n389\n390\n391\n392\n393\n394\n395\n396\n397\n398\n399\nRelation Token Question 1 Question 2what tv episodes were <e> the writer of what episode was written by <e> relation-level episodes written tv episodes were <e> the writer of episode was written by <e>\nword-level episodes tv episodes episodewritten the writer of written\nTable 1: An example of KB relation (episodes written) with two types of relation tokens (relation names and words), and two questions asking this relation. The topic entity is replaced with token <e> which could give the position information to the deep networks. The italics show the evidence phrase for each relation token in the question.\n…\nwhat tv show did <e> …\nBi-LSTM 1\nQuestion Relation\n…\nRelation Representation\n… Bi-LSTM 2\n!\"#$%&\n…\n…\n…\n(max-pooling) (max-pooling) Question Representation\nShortcut connections\n(cosine similarity)\n!'(\n$%)\nstarring role seriesstarring_role series\nRelation-Level Word-Level\nFigure 2: The proposed Hierarchical Residual BiLSTM (HR-BiLSTM) model for relation detection. Note that without the dotted arrows of shortcut connections between two layers, the model will only compute the similarity between the second-layer of questions representations and the relation, thus is not doing hierarchical matching.\nThe two types of relation representation contain different levels of abstraction. As shown in Table 1, the word-level focus more on local information (words and short phrases), and the relation-level focus more on global information (long phrases and skip-grams) but suffer from data sparsity. Since the two levels of granularity both have their own pros and cons, we propose a hierarchical matching approach for KB relation detection: for a candidate relation, our approach matches the input question to both word-level and relation-level representations to get the final ranking score. Section 3.2 gives the details of our proposed approach."
+    }, {
+      "heading" : "3.2 Hierarchical Sequence Matching with Residual Learning for Relation Detection",
+      "text" : "This section describes our hierarchical matching approach. In order to match the question to different aspects of a relation (with different abstraction levels), we need to deal with the following problems on learning question/relation representations. Relation Representations from Different Granularity. We provide our model with both types of relation representation: word-level and relationlevel. Therefore, the input relation becomes r = {rword1 , · · · , rword M1 } [ {rrel1 , · · · , rrel M2 }, where the first M1 tokens are words (e.g. {episode, written}), and the last M2 tokens are relation names, e.g., {episode written} or {starring roles, series}\n(when the target is a chain like in Figure 1(b)). We transform each token above to its word embedding then use two BiLSTMs (with shared parameters) to get their hidden representations [Bword1:M1 : Brel1:M2 ] (each row vector i is the concatenation between forward/backward representations at i). We initialize the relation sequence LSTMs with the final state representations of the word sequence, as a back-off for unseen relations. We apply one max-pooling on these two sets of vectors and get the final relation representation hr.\nDifferent Abstractions of Questions Representations. From Table 1, we can see that different parts of a relation could match different contexts of question texts. Usually relation names could match longer phrases in the question and relation words could match short phrases. Yet different words might match phrases of different lengths.\nAs a result, we hope the question representations could also comprise vectors that summarize various lengths of phrase information (different levels of abstraction), in order to match relation representations of different granularity. We deal with this problem by applying deep BiLSTMs on questions. The first-layer of BiLSTM works on the word embeddings of question words q = {q1, · · · , qN} and gets hidden representations (1)1:N = [ (1) 1 ; · · · ; (1) N\n]. The second-layer BiLSTM works on (1)1:N to get the second set of hid-\n5\n401\n402\n403\n404\n405\n406\n407\n408\n409\n410\n411\n412\n413\n414\n415\n416\n417\n418\n419\n420\n421\n422\n423\n424\n425\n426\n427\n428\n429\n430\n431\n432\n433\n434\n435\n436\n437\n438\n439\n440\n441\n442\n443\n444\n445\n446\n447\n448\n449\n450\n451\n452\n453\n454\n455\n456\n457\n458\n459\n460\n461\n462\n463\n464\n465\n466\n467\n468\n469\n470\n471\n472\n473\n474\n475\n476\n477\n478\n479\n480\n481\n482\n483\n484\n485\n486\n487\n488\n489\n490\n491\n492\n493\n494\n495\n496\n497\n498\n499\nden representations (2)1:N . Since the second BiLSTM starts with the hidden vectors from the first layer, intuitively it could learn more general and abstract information compared to the first layer.\nHierarchical Matching between Relation and Question Now we have question contexts of different lengths encoded in (1)1:N and (2) 1:N . Unlike the standard usage of deep BiLSTMs that employs the representations in the final layer for prediction, here we expect that two layers of question representations can be complementary to each other and both should be compared to the relation representation space (Hierarchical Matching). This is important for our task since each relation token can correspond to phrases of different lengths, mainly because of syntactic variations. For example in Table 1, the relation word written could be matched to either the same single word in the question or a much longer phrase be the writer of.\nWe could perform the above hierarchical matching by computing the similarity between each layer of and hr separately and doing the (weighted) sum between the two scores. However this does not give significant improvement (see Table 2). Our analysis shows that this naive method suffers from the training difficulty, evidenced by that the converged training loss of this model is much higher than that of a single-layer baseline model. This is mainly because (1) Deep BiLSTMs do not guarantee that the two-levels of question hidden representations are comparable, the training usually falls to a local optima where one layer has good matching scores and the other always has weight close to 0. (2) The training of deeper architectures itself is more difficult.\nTo overcome the above difficulties, we adopt the idea from Residual Networks (He et al., 2016) for hierarchical matching by adding shortcut connections between two BiLSTM layers. We proposed two ways of such Hierarchical Residual Matching: (1) Connecting each (1)\ni and (2) i\n, resulting in a 0\ni = (1) i + (2) i\nfor each position i. Then the final question representation hq becomes a maxpooling over all 0\ni s, 1iN . (2) Applying maxpooling on (1)1:N and (2) 1:N to get h (1) max and h(2) max\n, respectively, then setting hq = h(1)\nmax + h(2) max\n. Finally we compute the matching score of r given q as s\nrel (r;q) = cos(hr,hq). Intuitively, the proposed method should benefit from hierarchical training since the second layer is\nfitting the residues from the first layer of matching, so the two layers of representations are more likely to be complementary to each other. This also ensures the vector spaces of two layers are comparable and makes the second-layer training easier.\nDuring training we adopt a ranking loss to maximizing the margin between the gold relation r+ and other relations r in the candidate pool R.\nlrel = max{0, srel(r+;q) + srel(r ;q)} where is a constant parameter. Fig 2 summarizes the above Hierarchical Residual BiLSTM (HR-BiLSTM) model. Remark: Another way of hierarchical matching consists in relying on attention mechanism, e.g. (Parikh et al., 2016), to find the correspondence between different levels of representations. This performs below the HR-BiLSTM (see Table 2)."
+    }, {
+      "heading" : "4 KBQA Enhanced by Relation Detection",
+      "text" : "This section describes our KBQA pipeline system. We make minimal efforts beyond the training of the relation detection model, making the whole system easy to build.\nFollowing previous work (Yih et al., 2015; Xu et al., 2016), our KBQA system takes an existing entity linker to produce the top-K linked entities, EL\nK (q), for a question q (“initial entity linking”). Then we generate the KB queries for q following the four steps illustrated in Algorithm 1.\nAlgorithm 1: KBQA with two-step relation detection Input : Question q, Knowledge Base KB, the initial\ntop-K entity candidates ELK(q) Output: Top query tuple (ê, r̂, {(c, rc)})\n1 Entity Re-Ranking (first-step relation detection): Use the raw question text as input for a relation detector to score all relations in the KB that are associated to the entities in ELK(q); use the relation scores to re-rank ELK(q) and generate a shorter list EL0K0(q) containing the top-K0 entity candidates (Section 4.1) 2 Relation Detection: Detect relation(s) using the reformatted question text in which the topic entity is replaced by a special token <e> (Section 4.2) 3 Query Generation: Combine the scores from step 1 and 2, and select the top pair (ê, r̂) (Section 4.3) 4 Constraint Detection (optional): Compute similarity between q and any neighbor entity c of the entities along r̂ (connecting by a relation rc) , add the high scoring c and rc to the query (Section 4.4).\nCompared to previous approaches, the main difference is that we have an additional entity reranking step after the initial entity linking. We have this step because we have observed that entity\n6\n501\n502\n503\n504\n505\n506\n507\n508\n509\n510\n511\n512\n513\n514\n515\n516\n517\n518\n519\n520\n521\n522\n523\n524\n525\n526\n527\n528\n529\n530\n531\n532\n533\n534\n535\n536\n537\n538\n539\n540\n541\n542\n543\n544\n545\n546\n547\n548\n549\n550\n551\n552\n553\n554\n555\n556\n557\n558\n559\n560\n561\n562\n563\n564\n565\n566\n567\n568\n569\n570\n571\n572\n573\n574\n575\n576\n577\n578\n579\n580\n581\n582\n583\n584\n585\n586\n587\n588\n589\n590\n591\n592\n593\n594\n595\n596\n597\n598\n599\nlinking sometimes becomes a bottleneck in KBQA systems. For example, on SimpleQuestions the best reported linker could only get 72.7% top-1 accuracy on identifying topic entities. This is usually due to the ambiguities of entity names, e.g. in Fig 1(a), there are TV writer and baseball player “Mike Kelley”, which is impossible to distinguish with only entity name matching.\nHaving observed that different entity candidates usually connect to different relations, here we propose to help entity disambiguation in the initial entity linking with relations detected in questions.\nSections 4.1 and 4.2 elaborate how our relation detection help to re-rank entities in the initial entity linking, and then those re-ranked entities enable more accurate relation detection. The KBQA end task, as a result, benefits from this process."
+    }, {
+      "heading" : "4.1 Entity Re-Ranking",
+      "text" : "In this step, we use the raw question text as input for a relation detector to score all relations in the KB with connections to at least one of the entity candidates in EL\nK (q). We call this step relation detection on entity set since it does not work on a single topic entity as the usual settings. We use the HR-BiLSTM as described in Sec. 3. For each question q, after generating a score s\nrel (r; q) for each relation using HR-BiLSTM, we use the top l best scoring relations (Rl\nq ) to re-rank the original entity candidates. Concretely, for each entity e and its associated relations R\ne , given the original entity linker score s\nlinker , and the score of the most confident relation r 2 Rl\nq\n\\R e , we sum these two scores to re-rank the entities:\nsrerank(e; q) =↵ · slinker(e; q) +(1 ↵) · max\nr2Rlq\\Re srel(r; q).\nFinally, we select top K 0 <K entities according to score s\nrerank to form the re-ranked list EL0 K\n0(q). We use the same example in Fig 1(a) to illustrate the idea. Given the input question in the example, a relation detector is very likely to assign high scores to relations such as “episodes written”, “author of ” and “profession”. Then, according to the connections of entity candidates in KB, we find that the TV writer “Mike Kelley” will be scored higher than the baseball player “Mike Kelley”, because the former has the relations “episodes written” and “profession”. This method can be viewed as exploiting entity-relation collocation for entity linking."
+    }, {
+      "heading" : "4.2 Relation Detection",
+      "text" : ""
+    }, {
+      "heading" : "In this step, for each candidate entity e 2",
+      "text" : "EL\n0 K\n(q), we use the question text as the input to a relation detector to score all the relations r 2 R\ne\nthat are associated to the entity e in the KB.4 Because we have a single topic entity input in this step, we do the following question reformatting: we replace the the candidate e’s entity mention in q with a token “<e>”. This helps the model better distinguish the relative position of each word compared to the entity. We use the HR-BiLSTM model to predict the score of each relation r 2 R\ne : s\nrel\n(r; e, q)."
+    }, {
+      "heading" : "4.3 Query Generation",
+      "text" : "Finally, the system outputs the <entity, relation (or core-chain)> pair (ê, r̂) according to:\ns(ê, r̂; q) = max\ne2EL0 K0 (q),r2Re\n( · srerank(e; q)\n+(1 ) · srel(r; e, q)) , where is a hyperparameter to be tuned."
+    }, {
+      "heading" : "4.4 Constraint Detection",
+      "text" : "Similar to (Yih et al., 2015), we adopt an additional constraint detection step based on text matching. Our method can be viewed as entitylinking on a KB sub-graph. It contains two steps: (1) Sub-graph generation: given the top scored query generated by the previous 3 steps5, for each node v (answer node or the CVT node like in Figure 1(b)), we collect all the nodes c connecting to v (with relation r\nc ) with any relation, and generate a sub-graph associated to the original query. (2) Entity-linking on sub-graph nodes: we compute a matching score between each n-gram in the input question (without overlapping the topic entity) and entity name of c (except for the node in the original query) by taking into account the maximum overlapping sequence of characters between them (see Appendix A for details and B for special rules dealing with date/answer type constraints). If the matching score is larger than a threshold ✓ (tuned on training set), we will add the constraint entity c (and r\nc ) to the query by attaching it to the corresponding node v on the core-chain.\n4Note that the number of entities and the number of relation candidates will be much smaller than those in the previous step.\n5Starting with the top-1 query suffers more from error propagation. However we still achieve state-of-the-art on WebQSP in Sec.5, showing the advantage of our relation detection model. We leave in future work beam-search and feature extraction on beam for final answer re-ranking like in previous research.\n7\n601\n602\n603\n604\n605\n606\n607\n608\n609\n610\n611\n612\n613\n614\n615\n616\n617\n618\n619\n620\n621\n622\n623\n624\n625\n626\n627\n628\n629\n630\n631\n632\n633\n634\n635\n636\n637\n638\n639\n640\n641\n642\n643\n644\n645\n646\n647\n648\n649\n650\n651\n652\n653\n654\n655\n656\n657\n658\n659\n660\n661\n662\n663\n664\n665\n666\n667\n668\n669\n670\n671\n672\n673\n674\n675\n676\n677\n678\n679\n680\n681\n682\n683\n684\n685\n686\n687\n688\n689\n690\n691\n692\n693\n694\n695\n696\n697\n698\n699\nAccuracy Model Relation Input Views SimpleQuestions WebQSP AMPCNN (Yin et al., 2016) words 91.3 - BiCNN (Yih et al., 2015) char-3-gram 90.0 77.74 BiLSTM w/ words words 91.2 79.32 BiLSTM w/ relation names rel names 88.9 78.96 Hier-Res-BiLSTM (HR-BiLSTM) words + rel names 93.3 82.53\nw/o rel name words 91.3 81.69 w/o rel words rel names 88.8 79.68 w/o residual learning (weighted sum on two layers) words + rel names 92.5 80.65 replacing residual with attention (Parikh et al., 2016) words + rel names 92.6 81.38 single-layer BiLSTM question encoder words + rel names 92.8 78.41 replacing BiLSTM with CNN (HR-CNN) words + rel names 92.9 79.08\nTable 2: Accuracy on the SimpleQuestions and WebQSP relation detection tasks (test sets). The top shows performance of baselines. On the bottom we give the results of our proposed model together with the ablation tests."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Task Introduction & Settings",
+      "text" : "We use the SimpleQuestions (Bordes et al., 2015) and WebQSP (Yih et al., 2016) datasets. Each question in these datasets is labeled with the gold semantic parse. Hence we can directly evaluate the relation detection performance independently as well as evaluate on the KBQA end task. SimpleQuestions (SQ): It is a single-relation KBQA task. The KB we use consists of a Freebase subset with 2M entities (FB2M) (Bordes et al., 2015), in order to compare with previous research. Yin et al. (2016) also evaluated their relation extractor on this data set and released their proposed question-relation pairs, so we run our relation detection model on their data set. For the KBQA evaluation, we also start with their entity linking results6. Therefore, our results can be compared with their reported results on both tasks. WebQSP (WQ): A multi-relation KBQA task. For this evaluation we use the full Freebase KB. We downloaded the S-MART (Yang and Chang, 2015) entity-linking results from (Yih et al., 2016)7. In order to evaluate the relation detection models, we create a new relation detection task from the WebQSP data set 8. For each question and its labeled semantic parse: (1) we first select the topic entity from the parse; and then (2) select all the relations and relation chains (length  2) connecting to the topic entity, and set the corechain labeled in the parse as the positive label and all the others as the negative examples.\nWe tune the following hyper-parameters on development sets: (1) the size of hidden state for LSTMs ({50, 100, 200, 400})9; (2) learning rate\n6The two resources have been downloaded from https://github.com/Gorov/SimpleQuestions-EntityLinking\n7 https://github.com/scottyih/STAGG 8We will make the datasets publicly available soon. 9For CNNs we double the size for fair comparison.\n({0.1, 0.5, 1.0, 2.0}); (3) whether the shortcut connections are between hidden states or between max-pooling results (see Section 3.2); (4) The number of training epochs.\nFor both the relation detection experiments and the second-step relation detection in KBQA, we have entity replacement first (see Section 4.2 and Figure 1). All words are initialized by 300-d pretrained word embeddings (Mikolov et al., 2013)."
+    }, {
+      "heading" : "5.2 Relation Detection Results",
+      "text" : "Table 2 shows the results on two relation detection tasks. The AMPCNN result is from (Yin et al., 2016), which got the previous state-ofthe-art by outperforming several attention-based methods. We re-implemented the BiCNN from (Yih et al., 2015), where both questions and relations are represented with the word hash trick on character tri-grams. The baseline BiLSTM with relation word sequence appears to be the best baseline on WebQSP and is close to the previous best result of AMPCNN on SimpleQuestions. Our proposed HR-BiLSTM outperformed the best baselines on both tasks by margins of 2-3% (p < 0.001 and 0.01 compared to the best baseline BiLSTM w/ words on SQ and WQ respectively).\nNote that in the BiLSTM baselines, using only relation-names causes a great performance drop on SimpleQuestions compared to using only relation-words (91.2 to 88.9), while the gap is small on WebQSP. This shows that the SimpleQuestions suffers more from unseen relations while WebQSP questions can usually be answered by a fixed small set of relations and relation chains. Ablation Test: The bottom of Table 2 shows ablation results of the proposed HR-BiLSTM. First, both tasks benefit from hierarchical matching between questions and both relation names and relations words, especially for SimpleQuestions (93.3% vs 91.2/88.8%). Second, residual\n8\n701\n702\n703\n704\n705\n706\n707\n708\n709\n710\n711\n712\n713\n714\n715\n716\n717\n718\n719\n720\n721\n722\n723\n724\n725\n726\n727\n728\n729\n730\n731\n732\n733\n734\n735\n736\n737\n738\n739\n740\n741\n742\n743\n744\n745\n746\n747\n748\n749\n758\n759\n760\n761\n762\n763\n764\n765\n766\n767\n768\n769\n770\n771\n772\n773\n774\n775\n776\n777\n778\n779\n780\n781\n782\n783\n784\n785\n786\n787\n788\n789\n790\n791\n792\n793\n794\n795\n796\n797\n798\n799\nlearning helps hierarchical matching compared to weighted-sum and attention baselines (see Section 3.2). For the attention baseline we tried the model from (Parikh et al., 2016) and its one-way variations, where the one-way model gives better results10. Note that residual learning significantly helps on WebQSP (80.65% to 82.53%), while it does not help as much on SimpleQuestions. On SimpleQuestions, even removing the deep layers does not change much the performance. WebQSP benefits more from residual and deeper architecture, possibly because in this dataset it is more important to handle larger scope of context matching.\nFinally, on WebQSP, replacing BiLSTM with CNN in our hierarchical matching framework results in a large performance drop. Yet on SimpleQuestions the gap is small. We believe this is because the LSTM relation-encoder can better learn the composition of chains of relations in WebQSP, as it is better at dealing with longer dependencies. Remark: To verify that residual learning helps WebQSP because it helps the hierarchical architecture learn different levels of abstraction instead of only benefiting from combination of two BiLSTMs, we replace the deep BiLSTM question encoder with two single-layer BiLSTMs (both on words), with shortcut connections between their hidden states. This decreases accuracy to 76.11%, probably because of over-fitting (similar training accuracy compared to HR-BiLSTM). This proves that the residual and deep structures both contribute to the good performance of HR-BiLSTM."
+    }, {
+      "heading" : "5.3 KBQA End-Task Results",
+      "text" : "Table 3 compares our system with two published baselines (1) STAGG (Yih et al., 2015), the stateof-the-art on WebQSP11 and (2) AMPCNN (Yin et al., 2016), the state-of-the-art on SimpleQuestions. Since these two baselines are specially designed/tuned for one particular dataset, they lead to limited results when applied to the other dataset. In order to highlight the effect of different relation detection models on the KBQA end-task, we also implemented another baseline that uses our KBQA system but replaces HR-BiLSTM with our implementation of AMPCNN (for SimpleQuestions) or the char-3-gram BiCNN (for WebQSP) relation detectors (second block in Table 3).\nCompared to the baseline relation detector (3rd 10We think the idea of hierarchical matching with attention mechanism may\nwork better for long sequences, and leave this for future work. 11The STAGG score on SQ is from (Bao et al., 2016).\nrow of results), our method, which includes an improved relation detector (HR-BiLSTM), improves from 2 to 3% the KBQA end task (4th row). Note that in contrast to previous KBQA systems, our system does not use joint-inference or featurebased re-ranking step, nevertheless it still achieves better or comparable results to the state-of-the-art.\nThe third block of the table details two ablation tests for the proposed components in our KBQA systems: (1) Removing the entity re-ranking step significantly decreases the scores. Since the reranking step relies on the relation detection models, this shows that our HR-BiLSTM model contributes to the good performance in multiple ways. Appendix C gives the detailed performance of the re-ranking step. (2) In contrast to the conclusion in (Yih et al., 2015), constraint detection is crucial for our system. This is probably because our joint performance on topic entity and core-chain detection is more accurate (77.5% top-1 accuracy), leaving a huge potential (77.5% vs. 58.0%) for the constraint detection module to improve.\nFinally, like STAGG that uses multiple relation detectors (see (Yih et al., 2015) for the three models used), we also try to use the top-3 relation detectors from Section 5.2. As shown on the last row of Table 3, this gives a significant performance boost, resulting in a new state-of-the-art result on SimpleQuestions and a result comparable to the state-of-the-art on WebQSP."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "KB relation detection is a key step in KBQA and has significant differences from general relation extraction tasks. We propose a novel KB relation detection model, HR-BiLSTM, that performs hierarchical matching between questions and KB relations. Our model outperforms the previous methods on KB relation detection tasks and allows our KBQA system to achieve state-of-the-arts.\n9\n801\n802\n803\n804\n805\n806\n807\n808\n809\n810\n811\n812\n813\n814\n815\n816\n817\n818\n819\n820\n821\n822\n823\n824\n825\n826\n827\n828\n829\n830\n831\n832\n833\n834\n835\n836\n837\n838\n839\n840\n841\n842\n843\n844\n845\n846\n847\n848\n849\n850\n851\n852\n853\n854\n855\n856\n857\n858\n859\n860\n861\n862\n863\n864\n865\n866\n867\n868\n869\n870\n871\n872\n873\n874\n875\n876\n877\n878\n879\n880\n881\n882\n883\n884\n885\n886\n887\n888\n889\n890\n891\n892\n893\n894\n895\n896\n897\n898\n899"
+    }, {
+      "heading" : "Junwei Bao, Nan Duan, Zhao Yan, Ming Zhou, and",
+      "text" : "Tiejun Zhao. 2016. Constraint-based question answering with knowledge graph. In Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics: Technical Papers. The COLING 2016 Organizing Committee, Osaka, Japan, pages 2503–2514.\nHannah Bast and Elmar Haussmann. 2015. More accurate question answering on freebase. In Proceedings of the 24th ACM International on Conference on Information and Knowledge Management. ACM, pages 1431–1440."
+    }, {
+      "heading" : "Jonathan Berant, Andrew Chou, Roy Frostig, and Percy",
+      "text" : "Liang. 2013. Semantic parsing on Freebase from question-answer pairs. In Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, Seattle, Washington, USA, pages 1533– 1544."
+    }, {
+      "heading" : "Antoine Bordes, Nicolas Usunier, Sumit Chopra, and",
+      "text" : "Jason Weston. 2015. Large-scale simple question answering with memory networks. arXiv preprint arXiv:1506.02075 ."
+    }, {
+      "heading" : "Antoine Bordes, Nicolas Usunier, Alberto GarciaDuran, Jason Weston, and Oksana Yakhnenko.",
+      "text" : "2013. Translating embeddings for modeling multirelational data. In Advances in Neural Information Processing Systems. pages 2787–2795.\nZihang Dai, Lei Li, and Wei Xu. 2016. Cfo: Conditional focused neural question answering with largescale knowledge bases. In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association for Computational Linguistics, Berlin, Germany, pages 800–810."
+    }, {
+      "heading" : "Cicero dos Santos, Bing Xiang, and Bowen Zhou.",
+      "text" : "2015. Classifying relations by ranking with convolutional neural networks. In Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on Natural Language Processing (Volume 1: Long Papers). Association for Computational Linguistics, Beijing, China, pages 626–634."
+    }, {
+      "heading" : "Anthony Fader, Luke S Zettlemoyer, and Oren Etzioni.",
+      "text" : "2013. Paraphrase-driven learning for open question answering. In ACL (1). Citeseer, pages 1608–1618."
+    }, {
+      "heading" : "David Golub and Xiaodong He. 2016. Character-level",
+      "text" : "question answering with attention. arXiv preprint arXiv:1604.00727 ."
+    }, {
+      "heading" : "Matthew R. Gormley, Mo Yu, and Mark Dredze. 2015.",
+      "text" : "Improved relation extraction with feature-rich compositional embedding models. In Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, Lisbon, Portugal, pages 1774– 1784."
+    }, {
+      "heading" : "Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian",
+      "text" : "Sun. 2016. Deep residual learning for image recognition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. pages 770–778."
+    }, {
+      "heading" : "Chen Liang, Jonathan Berant, Quoc Le, Kenneth D",
+      "text" : "Forbus, and Ni Lao. 2016. Neural symbolic machines: Learning semantic parsers on freebase with weak supervision. arXiv preprint arXiv:1611.00020 .\nTomas Mikolov, Ilya Sutskever, Kai Chen, Greg S Corrado, and Jeff Dean. 2013. Distributed representations of words and phrases and their compositionality. In Advances in neural information processing systems. pages 3111–3119.\nThien Huu Nguyen and Ralph Grishman. 2014. Employing word representations and regularization for domain adaptation of relation extraction. In Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers). Association for Computational Linguistics, Baltimore, Maryland, pages 68–74."
+    }, {
+      "heading" : "Ankur Parikh, Oscar Täckström, Dipanjan Das, and",
+      "text" : "Jakob Uszkoreit. 2016. A decomposable attention model for natural language inference. In Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, Austin, Texas, pages 2249–2255.\nBryan Rink and Sanda Harabagiu. 2010. Utd: Classifying semantic relations by combining lexical and semantic resources. In Proceedings of the 5th International Workshop on Semantic Evaluation. Association for Computational Linguistics, Uppsala, Sweden, pages 256–259."
+    }, {
+      "heading" : "Ang Sun, Ralph Grishman, and Satoshi Sekine. 2011.",
+      "text" : "Semi-supervised relation extraction with large-scale word clustering. In Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies. Association for Computational Linguistics, Portland, Oregon, USA, pages 521–529.\nNgoc Thang Vu, Heike Adel, Pankaj Gupta, and Hinrich Schütze. 2016. Combining recurrent and convolutional neural networks for relation classification. In Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies. Association for Computational Linguistics, San Diego, California, pages 534–539."
+    }, {
+      "heading" : "Linlin Wang, Zhu Cao, Gerard de Melo, and Zhiyuan",
+      "text" : "Liu. 2016. Relation classification via multi-level attention cnns. In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association for Computational Linguistics, Berlin, Germany, pages 1298–1307.\n900\n901\n902\n903\n904\n905\n906\n907\n908\n909\n910\n911\n912\n913\n914\n915\n916\n917\n918\n919\n920\n921\n922\n923\n924\n925\n926\n927\n928\n929\n930\n931\n932\n933\n934\n935\n936\n937\n938\n939\n940\n941\n942\n943\n944\n945\n946\n947\n948\n949\n950\n951\n952\n953\n954\n955\n956\n957\n958\n959\n960\n961\n962\n963\n964\n965\n966\n967\n968\n969\n970\n971\n972\n973\n974\n975\n976\n977\n978\n979\n980\n981\n982\n983\n984\n985\n986\n987\n988\n989\n990\n991\n992\n993\n994\n995\n996\n997\n998\n999\nKun Xu, Siva Reddy, Yansong Feng, Songfang Huang, and Dongyan Zhao. 2016. Question answering on freebase via relation extraction and textual evidence. In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association for Computational Linguistics, Berlin, Germany, pages 2326–2336."
+    }, {
+      "heading" : "Yi Yang and Ming-Wei Chang. 2015. S-mart: Novel tree-based structured learning algorithms applied to",
+      "text" : "tweet entity linking. In Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on Natural Language Processing (Volume 1: Long Papers). Association for Computational Linguistics, Beijing, China, pages 504–513."
+    }, {
+      "heading" : "Xuchen Yao, Jonathan Berant, and Benjamin",
+      "text" : "Van Durme. 2014. Freebase qa: Information extraction or semantic parsing? ACL 2014 page 82.\nXuchen Yao and Benjamin Van Durme. 2014. Information extraction over structured data: Question answering with freebase. In ACL (1). Citeseer, pages 956–966."
+    }, {
+      "heading" : "Wen-tau Yih, Ming-Wei Chang, Xiaodong He, and",
+      "text" : "Jianfeng Gao. 2015. Semantic parsing via staged query graph generation: Question answering with knowledge base. In Association for Computational Linguistics (ACL)."
+    }, {
+      "heading" : "Wen-tau Yih, Xiaodong He, and Christopher Meek.",
+      "text" : "2014. Semantic parsing for single-relation question answering. In Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers). Association for Computational Linguistics, Baltimore, Maryland, pages 643–648.\nWen-tau Yih, Matthew Richardson, Chris Meek, MingWei Chang, and Jina Suh. 2016. The value of semantic parse labeling for knowledge base question answering. In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers). Association for Computational Linguistics, Berlin, Germany, pages 201–206."
+    }, {
+      "heading" : "Wenpeng Yin, Mo Yu, Bing Xiang, Bowen Zhou, and",
+      "text" : "Hinrich Schütze. 2016. Simple question answering by attentive convolutional neural network. In Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics: Technical Papers. The COLING 2016 Organizing Committee, Osaka, Japan, pages 1746–1756."
+    }, {
+      "heading" : "Daojian Zeng, Kang Liu, Siwei Lai, Guangyou Zhou,",
+      "text" : "and Jun Zhao. 2014. Relation classification via convolutional deep neural network. In Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: Technical Papers. Dublin City University and Association for Computational Linguistics, Dublin, Ireland, pages 2335– 2344."
+    }, {
+      "heading" : "GuoDong Zhou, Jian Su, Jie Zhang, and Min Zhang.",
+      "text" : "2005. Exploring various knowledge in relation extraction. In Association for Computational Linguistics. pages 427–434."
+    }, {
+      "heading" : "Peng Zhou, Wei Shi, Jun Tian, Zhenyu Qi, Bingchen",
+      "text" : "Li, Hongwei Hao, and Bo Xu. 2016. Attentionbased bidirectional long short-term memory networks for relation classification. In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers). Association for Computational Linguistics, Berlin, Germany, pages 207–212."
+    } ],
+    "references" : [ {
+      "title" : "Constraint-based question answering with knowledge graph",
+      "author" : [ "Junwei Bao", "Nan Duan", "Zhao Yan", "Ming Zhou", "Tiejun Zhao." ],
+      "venue" : "Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics: Technical Papers.",
+      "citeRegEx" : "Bao et al\\.,? 2016",
+      "shortCiteRegEx" : "Bao et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "More accurate question answering on freebase",
+      "author" : [ "Hannah Bast", "Elmar Haussmann." ],
+      "venue" : "Proceedings of the 24th ACM International on Conference on Information and Knowledge Management. ACM, pages 1431–1440.",
+      "citeRegEx" : "Bast and Haussmann.,? 2015",
+      "shortCiteRegEx" : "Bast and Haussmann.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic parsing on Freebase from question-answer pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing. Association for Computational",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Large-scale simple question answering with memory networks",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "arXiv preprint arXiv:1506.02075 .",
+      "citeRegEx" : "Bordes et al\\.,? 2015",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Translating embeddings for modeling multirelational data",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Alberto GarciaDuran", "Jason Weston", "Oksana Yakhnenko." ],
+      "venue" : "Advances in Neural Information Processing Systems. pages 2787–2795.",
+      "citeRegEx" : "Bordes et al\\.,? 2013",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Cfo: Conditional focused neural question answering with largescale knowledge bases",
+      "author" : [ "Zihang Dai", "Lei Li", "Wei Xu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Asso-",
+      "citeRegEx" : "Dai et al\\.,? 2016",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Classifying relations by ranking with convolutional neural networks",
+      "author" : [ "Cicero dos Santos", "Bing Xiang", "Bowen Zhou." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint",
+      "citeRegEx" : "Santos et al\\.,? 2015",
+      "shortCiteRegEx" : "Santos et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Paraphrase-driven learning for open question answering",
+      "author" : [ "Anthony Fader", "Luke S Zettlemoyer", "Oren Etzioni." ],
+      "venue" : "ACL (1). Citeseer, pages 1608–1618.",
+      "citeRegEx" : "Fader et al\\.,? 2013",
+      "shortCiteRegEx" : "Fader et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Character-level question answering with attention",
+      "author" : [ "David Golub", "Xiaodong He." ],
+      "venue" : "arXiv preprint arXiv:1604.00727 .",
+      "citeRegEx" : "Golub and He.,? 2016",
+      "shortCiteRegEx" : "Golub and He.",
+      "year" : 2016
+    }, {
+      "title" : "Improved relation extraction with feature-rich compositional embedding models",
+      "author" : [ "Matthew R. Gormley", "Mo Yu", "Mark Dredze." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing. Association for Compu-",
+      "citeRegEx" : "Gormley et al\\.,? 2015",
+      "shortCiteRegEx" : "Gormley et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Deep residual learning for image recognition",
+      "author" : [ "Kaiming He", "Xiangyu Zhang", "Shaoqing Ren", "Jian Sun." ],
+      "venue" : "Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition. pages 770–778.",
+      "citeRegEx" : "He et al\\.,? 2016",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Neural symbolic machines: Learning semantic parsers on freebase with weak supervision",
+      "author" : [ "Chen Liang", "Jonathan Berant", "Quoc Le", "Kenneth D Forbus", "Ni Lao." ],
+      "venue" : "arXiv preprint arXiv:1611.00020 .",
+      "citeRegEx" : "Liang et al\\.,? 2016",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Distributed representations of words and phrases and their compositionality",
+      "author" : [ "Tomas Mikolov", "Ilya Sutskever", "Kai Chen", "Greg S Corrado", "Jeff Dean." ],
+      "venue" : "Advances in neural information processing systems. pages 3111–3119.",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Employing word representations and regularization for domain adaptation of relation extraction",
+      "author" : [ "Thien Huu Nguyen", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 2: Short",
+      "citeRegEx" : "Nguyen and Grishman.,? 2014",
+      "shortCiteRegEx" : "Nguyen and Grishman.",
+      "year" : 2014
+    }, {
+      "title" : "A decomposable attention model for natural language inference",
+      "author" : [ "Ankur Parikh", "Oscar Täckström", "Dipanjan Das", "Jakob Uszkoreit." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing. Association",
+      "citeRegEx" : "Parikh et al\\.,? 2016",
+      "shortCiteRegEx" : "Parikh et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Utd: Classifying semantic relations by combining lexical and semantic resources",
+      "author" : [ "Bryan Rink", "Sanda Harabagiu." ],
+      "venue" : "Proceedings of the 5th International Workshop on Semantic Evaluation. Association for Computational Linguistics, Uppsala, Swe-",
+      "citeRegEx" : "Rink and Harabagiu.,? 2010",
+      "shortCiteRegEx" : "Rink and Harabagiu.",
+      "year" : 2010
+    }, {
+      "title" : "Semi-supervised relation extraction with large-scale word clustering",
+      "author" : [ "Ang Sun", "Ralph Grishman", "Satoshi Sekine." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies. Associa-",
+      "citeRegEx" : "Sun et al\\.,? 2011",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Combining recurrent and convolutional neural networks for relation classification",
+      "author" : [ "Ngoc Thang Vu", "Heike Adel", "Pankaj Gupta", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Vu et al\\.,? 2016",
+      "shortCiteRegEx" : "Vu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Relation classification via multi-level attention cnns",
+      "author" : [ "Linlin Wang", "Zhu Cao", "Gerard de Melo", "Zhiyuan Liu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association for",
+      "citeRegEx" : "Wang et al\\.,? 2016",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Question answering on freebase via relation extraction and textual evidence",
+      "author" : [ "Kun Xu", "Siva Reddy", "Yansong Feng", "Songfang Huang", "Dongyan Zhao." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1:",
+      "citeRegEx" : "Xu et al\\.,? 2016",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "S-mart: Novel tree-based structured learning algorithms applied to tweet entity linking",
+      "author" : [ "Yi Yang", "Ming-Wei Chang." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Confer-",
+      "citeRegEx" : "Yang and Chang.,? 2015",
+      "shortCiteRegEx" : "Yang and Chang.",
+      "year" : 2015
+    }, {
+      "title" : "Freebase qa: Information extraction or semantic parsing",
+      "author" : [ "Xuchen Yao", "Jonathan Berant", "Benjamin Van Durme" ],
+      "venue" : "ACL",
+      "citeRegEx" : "Yao et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Information extraction over structured data: Question answering with freebase",
+      "author" : [ "Xuchen Yao", "Benjamin Van Durme." ],
+      "venue" : "ACL (1). Citeseer, pages 956–966.",
+      "citeRegEx" : "Yao and Durme.,? 2014",
+      "shortCiteRegEx" : "Yao and Durme.",
+      "year" : 2014
+    }, {
+      "title" : "Semantic parsing via staged query graph generation: Question answering with knowledge base",
+      "author" : [ "Wen-tau Yih", "Ming-Wei Chang", "Xiaodong He", "Jianfeng Gao." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Yih et al\\.,? 2015",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic parsing for single-relation question answering",
+      "author" : [ "Wen-tau Yih", "Xiaodong He", "Christopher Meek." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers). Association",
+      "citeRegEx" : "Yih et al\\.,? 2014",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "The value of semantic parse labeling for knowledge base question answering",
+      "author" : [ "Wen-tau Yih", "Matthew Richardson", "Chris Meek", "MingWei Chang", "Jina Suh." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Yih et al\\.,? 2016",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Simple question answering by attentive convolutional neural network",
+      "author" : [ "Wenpeng Yin", "Mo Yu", "Bing Xiang", "Bowen Zhou", "Hinrich Schütze." ],
+      "venue" : "Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics: Techni-",
+      "citeRegEx" : "Yin et al\\.,? 2016",
+      "shortCiteRegEx" : "Yin et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Relation classification via convolutional deep neural network",
+      "author" : [ "Daojian Zeng", "Kang Liu", "Siwei Lai", "Guangyou Zhou", "Jun Zhao." ],
+      "venue" : "Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: Technical Papers.",
+      "citeRegEx" : "Zeng et al\\.,? 2014",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Exploring various knowledge in relation extraction",
+      "author" : [ "GuoDong Zhou", "Jian Su", "Jie Zhang", "Min Zhang." ],
+      "venue" : "Association for Computational Linguistics. pages 427–434.",
+      "citeRegEx" : "Zhou et al\\.,? 2005",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "Attentionbased bidirectional long short-term memory networks for relation classification",
+      "author" : [ "Peng Zhou", "Wei Shi", "Jun Tian", "Zhenyu Qi", "Bingchen Li", "Hongwei Hao", "Bo Xu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Com-",
+      "citeRegEx" : "Zhou et al\\.,? 2016",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 2,
+      "context" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al., 2014; Bordes et al., 2015; Bast and Haussmann, 2015; Yih et al., 2015; Xu et al., 2016).",
+      "startOffset" : 106,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 21,
+      "context" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al., 2014; Bordes et al., 2015; Bast and Haussmann, 2015; Yih et al., 2015; Xu et al., 2016).",
+      "startOffset" : 106,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 3,
+      "context" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al., 2014; Bordes et al., 2015; Bast and Haussmann, 2015; Yih et al., 2015; Xu et al., 2016).",
+      "startOffset" : 106,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 1,
+      "context" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al., 2014; Bordes et al., 2015; Bast and Haussmann, 2015; Yih et al., 2015; Xu et al., 2016).",
+      "startOffset" : 106,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 23,
+      "context" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al., 2014; Bordes et al., 2015; Bast and Haussmann, 2015; Yih et al., 2015; Xu et al., 2016).",
+      "startOffset" : 106,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 19,
+      "context" : "Knowledge Base Question-Answering (KBQA) systems answer questions by obtaining information from KB tuples (Berant et al., 2013; Yao et al., 2014; Bordes et al., 2015; Bast and Haussmann, 2015; Yih et al., 2015; Xu et al., 2016).",
+      "startOffset" : 106,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 7,
+      "context" : "Figure 1 illustrates the process used to parse two sample questions in a KBQA system: (a) a single-relation question, which can be answered with a single <head-entity, relation, tail-entity> KB tuple (Fader et al., 2013; Yih et al., 2014; Bordes et al., 2015); and (b) a more complex case, where some constraints need to be handled for multiple entities in the question.",
+      "startOffset" : 200,
+      "endOffset" : 259
+    }, {
+      "referenceID" : 24,
+      "context" : "Figure 1 illustrates the process used to parse two sample questions in a KBQA system: (a) a single-relation question, which can be answered with a single <head-entity, relation, tail-entity> KB tuple (Fader et al., 2013; Yih et al., 2014; Bordes et al., 2015); and (b) a more complex case, where some constraints need to be handled for multiple entities in the question.",
+      "startOffset" : 200,
+      "endOffset" : 259
+    }, {
+      "referenceID" : 3,
+      "context" : "Figure 1 illustrates the process used to parse two sample questions in a KBQA system: (a) a single-relation question, which can be answered with a single <head-entity, relation, tail-entity> KB tuple (Fader et al., 2013; Yih et al., 2014; Bordes et al., 2015); and (b) a more complex case, where some constraints need to be handled for multiple entities in the question.",
+      "startOffset" : 200,
+      "endOffset" : 259
+    }, {
+      "referenceID" : 3,
+      "context" : "In contrast, in KBQA even a small KB, like Freebase2M (Bordes et al., 2015), contains more than 6,000 relation types.",
+      "startOffset" : 54,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 3,
+      "context" : "For example, the SimpleQuestions (Bordes et al., 2015) data set has 14% of the golden test relations not observed in golden training tuples.",
+      "startOffset" : 33,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 2,
+      "context" : "Third, as shown in Figure 1(b), for some KBQA tasks like WebQuestions (Berant et al., 2013), we need to predict a chain of relations instead of a single relation.",
+      "startOffset" : 70,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 23,
+      "context" : "(2)Following (Yih et al., 2015), here topic entity refers to the node of the (directed) query tree; and core-chain is the directed path of relation from root to the answer node.",
+      "startOffset" : 13,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 28,
+      "context" : "Traditional RE methods rely on large amount of hand-crafted features (Zhou et al., 2005; Rink and Harabagiu, 2010; Sun et al., 2011).",
+      "startOffset" : 69,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 15,
+      "context" : "Traditional RE methods rely on large amount of hand-crafted features (Zhou et al., 2005; Rink and Harabagiu, 2010; Sun et al., 2011).",
+      "startOffset" : 69,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 16,
+      "context" : "Traditional RE methods rely on large amount of hand-crafted features (Zhou et al., 2005; Rink and Harabagiu, 2010; Sun et al., 2011).",
+      "startOffset" : 69,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 13,
+      "context" : "Recent research benefits a lot from the advancement of deep learning: from word embeddings (Nguyen and Grishman, 2014; Gormley et al., 2015) to deep networks like CNNs and LSTMs (Zeng et al.",
+      "startOffset" : 91,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 9,
+      "context" : "Recent research benefits a lot from the advancement of deep learning: from word embeddings (Nguyen and Grishman, 2014; Gormley et al., 2015) to deep networks like CNNs and LSTMs (Zeng et al.",
+      "startOffset" : 91,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2015) to deep networks like CNNs and LSTMs (Zeng et al., 2014; dos Santos et al., 2015; Vu et al., 2016) and attention models (Zhou et al.",
+      "startOffset" : 45,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2015) to deep networks like CNNs and LSTMs (Zeng et al., 2014; dos Santos et al., 2015; Vu et al., 2016) and attention models (Zhou et al.",
+      "startOffset" : 45,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 1,
+      "context" : "Relation Detection in KBQA Systems Relation detection for KBQA also starts with featurerich approaches (Yao and Van Durme, 2014; Bast and Haussmann, 2015) towards usages of deep networks (Yih et al.",
+      "startOffset" : 103,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 23,
+      "context" : "Relation Detection in KBQA Systems Relation detection for KBQA also starts with featurerich approaches (Yao and Van Durme, 2014; Bast and Haussmann, 2015) towards usages of deep networks (Yih et al., 2015; Xu et al., 2016; Dai et al., 2016) and attention models (Yin et al.",
+      "startOffset" : 187,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 19,
+      "context" : "Relation Detection in KBQA Systems Relation detection for KBQA also starts with featurerich approaches (Yao and Van Durme, 2014; Bast and Haussmann, 2015) towards usages of deep networks (Yih et al., 2015; Xu et al., 2016; Dai et al., 2016) and attention models (Yin et al.",
+      "startOffset" : 187,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 5,
+      "context" : "Relation Detection in KBQA Systems Relation detection for KBQA also starts with featurerich approaches (Yao and Van Durme, 2014; Bast and Haussmann, 2015) towards usages of deep networks (Yih et al., 2015; Xu et al., 2016; Dai et al., 2016) and attention models (Yin et al.",
+      "startOffset" : 187,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 7,
+      "context" : "Many of the above relation detection research could naturally support large relation vocabulary and open relation sets (especially for QA with OpenIE KB like ParaLex (Fader et al., 2013)), in order to fit the goal of open-domain question answering.",
+      "startOffset" : 166,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2013)), like (Dai et al., 2016); (2) factorize the relation names to sequences and formulate relation detection as a sequence matching and ranking task.",
+      "startOffset" : 15,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 13,
+      "context" : "Thus it usually benefits from features (Nguyen and Grishman, 2014; Gormley et al., 2015) or attention mechanisms (Wang et al.",
+      "startOffset" : 39,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 9,
+      "context" : "Thus it usually benefits from features (Nguyen and Grishman, 2014; Gormley et al., 2015) or attention mechanisms (Wang et al.",
+      "startOffset" : 39,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2015) or attention mechanisms (Wang et al., 2016) based on the entity information (e.",
+      "startOffset" : 32,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 10,
+      "context" : "To overcome the above difficulties, we adopt the idea from Residual Networks (He et al., 2016) for hierarchical matching by adding shortcut connections between two BiLSTM layers.",
+      "startOffset" : 77,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 14,
+      "context" : "(Parikh et al., 2016), to find the correspondence between different levels of representations.",
+      "startOffset" : 0,
+      "endOffset" : 21
+    }, {
+      "referenceID" : 23,
+      "context" : "Following previous work (Yih et al., 2015; Xu et al., 2016), our KBQA system takes an existing entity linker to produce the top-K linked entities,",
+      "startOffset" : 24,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 19,
+      "context" : "Following previous work (Yih et al., 2015; Xu et al., 2016), our KBQA system takes an existing entity linker to produce the top-K linked entities,",
+      "startOffset" : 24,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 23,
+      "context" : "Similar to (Yih et al., 2015), we adopt an additional constraint detection step based on text matching.",
+      "startOffset" : 11,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 26,
+      "context" : "Accuracy Model Relation Input Views SimpleQuestions WebQSP AMPCNN (Yin et al., 2016) words 91.",
+      "startOffset" : 66,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 14,
+      "context" : "65 replacing residual with attention (Parikh et al., 2016) words + rel names 92.",
+      "startOffset" : 37,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 3,
+      "context" : "1 Task Introduction & Settings We use the SimpleQuestions (Bordes et al., 2015) and WebQSP (Yih et al.",
+      "startOffset" : 58,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 3,
+      "context" : "The KB we use consists of a Freebase subset with 2M entities (FB2M) (Bordes et al., 2015), in order to compare with previous research.",
+      "startOffset" : 68,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 20,
+      "context" : "We downloaded the S-MART (Yang and Chang, 2015) entity-linking results from (Yih et al.",
+      "startOffset" : 25,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 25,
+      "context" : "We downloaded the S-MART (Yang and Chang, 2015) entity-linking results from (Yih et al., 2016)7.",
+      "startOffset" : 76,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 12,
+      "context" : "All words are initialized by 300-d pretrained word embeddings (Mikolov et al., 2013).",
+      "startOffset" : 62,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 26,
+      "context" : "The AMPCNN result is from (Yin et al., 2016), which got the previous state-ofthe-art by outperforming several attention-based methods.",
+      "startOffset" : 26,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 23,
+      "context" : "We re-implemented the BiCNN from (Yih et al., 2015), where both questions and relations are represented with the word hash trick on character tri-grams.",
+      "startOffset" : 33,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 14,
+      "context" : "For the attention baseline we tried the model from (Parikh et al., 2016) and its one-way variations, where the one-way model gives better results10.",
+      "startOffset" : 51,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 23,
+      "context" : "3 KBQA End-Task Results Table 3 compares our system with two published baselines (1) STAGG (Yih et al., 2015), the stateof-the-art on WebQSP11 and (2) AMPCNN (Yin et al.",
+      "startOffset" : 91,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2015), the stateof-the-art on WebQSP11 and (2) AMPCNN (Yin et al., 2016), the state-of-the-art on SimpleQuestions.",
+      "startOffset" : 56,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 0,
+      "context" : "(11)The STAGG score on SQ is from (Bao et al., 2016).",
+      "startOffset" : 34,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 23,
+      "context" : "(2) In contrast to the conclusion in (Yih et al., 2015), constraint detection is crucial for our system.",
+      "startOffset" : 37,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 23,
+      "context" : "Finally, like STAGG that uses multiple relation detectors (see (Yih et al., 2015) for the three models used), we also try to use the top-3 relation detectors from Section 5.",
+      "startOffset" : 63,
+      "endOffset" : 81
+    } ],
+    "year" : 0,
+    "abstractText" : "Relation detection is a core component for many NLP applications including Knowledge Base Question Answering (KBQA). In this paper, we propose a hierarchical recurrent neural network enhanced by residual learning that detects KB relations given an input question. Our method uses deep residual bidirectional LSTMs to compare questions and relation names via different hierarchies of abstraction. Additionally, we propose a simple KBQA system that integrates entity linking and our proposed relation detector to enable one enhance another. Experimental results evidence that our approach achieves not only outstanding relation detection performance, but more importantly, it helps our KBQA system to achieve state-of-the-art accuracy for both single-relation (SimpleQuestions) and multi-relation (WebQSP) QA benchmarks.",
+    "creator" : null
+  }
+}

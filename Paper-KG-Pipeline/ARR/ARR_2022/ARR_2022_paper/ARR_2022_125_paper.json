@@ -1,0 +1,252 @@
+{
+  "name" : "ARR_2022_125_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Auxiliary tasks to boost Biaffine Semantic Dependency Parsing",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction and related work",
+      "text" : "Semantic dependency parsing is the task of producing a dependency graph for a sentence, each dependency generally representing a predicate-argument relation. If one views each dependency as a decision to make, both plain dependency parsing (DP) and semantic dependency parsing (SDP) are known to exhibit high interdependence of decisions. For instance in DP, when parsing a question answering machine, choosing machine as root is linguistically coherent with the machine → answering → question analysis only, whereas (wrongly) choosing question as root is syntactically coherent with the question → answering → machine analysis.\nYet, in DP the interdependence between arc decision is partially solved by the tree constraint: choosing one head for a given token amounts to ruling out all other heads. This structural interdependence is absent in SDP. Complex structural, lexical and\nsemantic factors control whether a given dependent should be attached to zero, one or several heads.\nSeveral approaches exist in the literature to capture interdependence of arcs in SDP, which often derive from proposals made for DP. One is to use a higher-order graph-based parser. Wang et al. (2019) achieve state-of-the-art results (without pretrained LM) by using second-order factors to score the graphs, yet at the cost of a O(n3) complexity.\nAnother main approach is to use sequential decisions, and hence take advantage of previous decisions by encoding the partial output structure. This is the case in the transition-based parser of Fernández-González and Gómez-Rodríguez (2020), or in the system of Kurita and Søgaard (2019), which iteratively selects heads for all words, using reinforcement learning to order the selection of heads. Both models have a O(n2) complexity (when used without cycle detection), and in both cases, sequential decisions benefit from previous decision encoding, yet at the cost of error propagation. For that reason, Bernard (2021) propose a system close to that of Kurita and Søgaard (2019), yet allowing the system to overwrite previous decisions and hopefully correct itself.\nOn the contrary, the biaffine system of Dozat and Manning (2018) performs a simultaneous scoring of all candidate arcs, and the decision for each candidate arc is made independently of the other ones. This results in a highly parallelizable O(n2) inference, with surprisingly high performance albeit below second-order parsing.\nAs for most NLP tasks, SDP performance increases when integrating transformer-based contextual representations when encoding input tokens. On the English dataset from the SemEval 2015 Task 18 (Oepen et al., 2015), (Fernández-González and Gómez-Rodríguez, 2020) report a +0.7 and +2.0 increase for ID and OOD respectively. Using the biaffine architecture of (Dozat and Manning, 2018), He and Choi (2020) report a +2 and +3 point\nincrease in ID and OOD. In this work, we retain the simple O(n2) biaffine architecture of Dozat and Manning (2018) (hereafter DM18), and we investigate how simple auxiliary tasks can introduce some interdependence between arc decisions, in a multi-task learning setting (Caruana, 1997). We show modest but systematic improvements on the widely used Semeval2015task18 English data (Oepen et al., 2015). We also test another appealing property of the biaffine architecture, which is the absence of formal constraints on the output graphs. Experiments on French deep syntactic graphs (Ribeyre et al., 2014), which are highly cyclic, also demonstrate the effectiveness of our auxiliary tasks for SDP."
+    }, {
+      "heading" : "2 The baseline biafine graph parser",
+      "text" : "We reuse the computation of the arc and label scores of the DM18 model, which we modernized by using contextual representations: input sequence w1:n is passed into a pretrained language model. We represent a word-token wi by concatening a trainable word embedding e(word)i and the contextual vector h(bert)i\n1, and the sequence is passed into several layers of biLSTM:\nh (bert) i = (BERT(w1:n))i\nvi = e (word) i ⊕ h (bert) i\nr1:n = biLSTM(v1:n)\nThe recurrent representation ri is then specialized according to two binary features: head versus dependent, and arc versus label score:\nh (arc-head) i = MLP (arc-head) (ri) h (lab-head) i = MLP (lab-head) (ri) h (arc-dep) i = MLP (arc-dep) (ri) h (lab-dep) i = MLP (lab-dep) (ri)\n(1)\nWe use a simplified biaffine transformation for arc scores, and a per-label one for label scores:\ns (arc) i→j = h (arc-dep) j U (arc)h (arc-head)⊤ i + b (arc) s (l) i→j = h (lab-dep) j U (l)h (lab-head)⊤ i + b (l)\n(2) For each position pair i, j, a binary cross-entropy loss is used for the existence of arc i → j, and a cross-entropy loss is used for the labels of gold arcs. At inference time, any candidate arc with positive score s(arc)i→j is predicted, and receives the label with maximum score for this arc.\n1In all our experiments, we use the hidden BERT representation at the last layer, of the first subword of a word."
+    }, {
+      "heading" : "3 Auxiliary tasks targeting sets of arcs",
+      "text" : "Preliminary experiments on English semantic dependency graphs (Oepen et al., 2015) and on French deep syntactic graphs (Candito et al., 2014) have shown us that the biaffine graph parser gives good results, but with inconsistencies that are clearly related to the locality of decisions. In particular, a quick error analysis revealed incompatible arc combinations. More precisely, we noticed impossible sets of labels for the set of heads of a given dependent. For example in the DM dataset, tokens are sometimes attached with a mwe label (for a component of a multi-word expression, such as according to) and attached to another head with a non-mwe label, which never happens in the training set. In the predicted French deep syntactic graphs, we noticed punctuation tokens wrongly attached to two different heads with the specific punct dependency label. A second observation is a slight tendency for some of the datasets to predict zerohead tokens too frequently. More generally, when counting the number of predicted heads for each word-token in the predicted graphs, the accuracy is about 95% in the English datasets, and below 92% for the French one."
+    }, {
+      "heading" : "3.1 Auxiliary tasks",
+      "text" : "Hence the idea of using auxiliary tasks taking into account all the heads (resp. dependents) of a given token. More precisely, we experiment multi-task learning on the two target tasks (tasks A and L for arc and label prediction), plus the following auxiliary tasks, which predict for each token wj :\n• tasks H and D: the number of governors and number of dependents;\n• the labels of the incoming arcs, either as:\n– task S: the concatenated string of the incoming arcs labels, in alphabetic order (e.g. ARG1+ARG1+ARG2)\n– task B: or the \"bag of labels\" (BOL) sparse vector, whose component values are the numbers of incoming arcs to wj bearing each label.\nTechnically, for each auxiliary task, a specific MLP is used to specialize the recurrent representation rj of each word-token wj . Tasks H and D are regression tasks, which use MLPs with a single\noutput neuron and a squared error loss2.\nnbhj = MLP (H)(rj) nbdj = MLP (D)(rj)\nThe S task is a classification task into categories corresponding to multi-sets of labels encountered in the training set3. For wj , the vector of scores of all the label multi-sets is sj = MLP(S)(rj), and cross-entropy loss is used at training.\nFor the B task, we use a MLP with final layer of size |L|: BOLj = MLP(B)(rj). The component for label l, BOLjl, is interpreted as 1+ log of the number of l-labeled incoming arcs to wj . The loss we use is the L2 distance between gold and predicted BOL vectors."
+    }, {
+      "heading" : "3.2 Combining sublosses",
+      "text" : "The set of used auxiliary tasks is a hyperparameter. At training time, for each batch, we seek to minimize a weighted sum of the losses for all the tasks, whether main or auxiliary. Manually tuning these weights is cumbersome and suboptimal. We use the notion of task uncertainty and the approximation proposed by Kendall et al. (2018), who introduce a parameter σt for each subtask t, to be interpreted as its “uncertainty”. Noting T as the set of tasks, the overall loss for a batch is:\nL = ∑\nt∈T 1 σ2t Lt + ln(σt)\nThe parameters σt are initialized to 1 and modified during the learning process. The first term of the sum ensures that the more uncertain the task, the less its loss will count, while the second term prevents arbitrarily reducing the loss weights."
+    }, {
+      "heading" : "3.3 Stack propagation",
+      "text" : "We test two multi-task learning configurations: first, simple parameter sharing up to the biLSTM layers (all specialization MLPs applied on the recurrent token representations). Second, we test the technique of “stack propagation”, which Zhang and Weiss (2016) experimented for the POS tagging and parsing tasks. In our case, it amounts to using the dense layers of the auxiliary tasks MLPs to score the arcs and their labels.\nFor example, to use the H task in stack propagation mode, let hidden(H)j be the hidden layer\n2nbhj is interpreted as 1+ the log of the number of heads of wj , and same for nbdj , so as to penalize less errors in bigger numbers: e.g penalize more predicting one head instead of 0 than predicting 2 heads instead of 3.\n3The categories are label multi-sets because we neutralize the order of the heads when considering the incoming arcs. This limits the number of categories.\nof MLP(H) for the dependent j, and c(H) a coefficient hyperparameter. The computation of s(arc)i→j (cf. equation 2) is modified as follows:\nsp (arc-dep) j = h (arc-dep) j ⊕ c(H)hidden (H) j s (arc) i→j = sp (arc-dep) j U (arc)h (arc-head)⊤ i + b (arc)\nSimilarly, to use task B in stack propagation mode, we modify the score of each label:\nsp (lab-dep) j = h (lab-dep) j ⊕ c(B)hidden (B) j s (l) i→j = sp (lab-dep) j U (l)h (lab-head)⊤ i + b (l)\nNote that it forces to perform the auxiliary tasks during inference, instead of at training time only."
+    }, {
+      "heading" : "4 Experiments and discussion",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "We experiment on the three widely used English datasets of Semeval2015-Task18 (Oepen et al., 2015) (DM, PAS and PSD), which are acyclic graphs mainly representing predicate-argument relations. We also experiment on French deep syntactic graphs (Ribeyre et al., 2014) (Appendix D). These capture most of argument sharings (e.g. raising, obligatory and arbitrary control, subject sharing in VP coordination) but are closer to surface syntax in the sense that labels remain syntactic, even though syntactic alternations are neutralized (e.g. passive by-phrases are labeled as subjects). Cycles may appear e.g. in relative clauses4."
+    }, {
+      "heading" : "4.2 Experimental protocol",
+      "text" : "We chose to investigate the impact of the auxiliary tasks on a high baseline, using pretrained contextual representations, but no lemma nor POS information. We use our own implementation5 of the biaffine parser, and the BERTbase-uncased and FlauBERTbase-cased pretrained models for English and French respectively6, in fine-tuning mode.\nWe tuned the hyperparameters on the French data, and applied the same configuration to the English datasets. After a few tests, we set a configuration (see Appendix A), and searched for the best combination of auxiliary tasks. For each experiment, we report the macro-averaged labeled Fscore (including root arcs) over 9 repetitions.\n4In these deep graphs, the root tokens (usually unique) are attached to a dummy root token in practise. Thus for this dataset, in all the above formulations, the sequence w1:n corresponds to a sentence of n−1 word-tokens, with a dummy root w1. For its contextual representation, we use the contextual vector of the beginning of sequence token.\n5Anonymous code at https://we.tl/t-Gb7ejw2rlS. 6We used the HuggingFace library (Wolf et al., 2020)."
+    }, {
+      "heading" : "4.3 Results on French deep syntactic graphs",
+      "text" : "Table 1 shows the results with and without various combinations of auxiliary tasks7. While no auxiliary task provide a significative increase8, the combinations B+H and B+D+H+S bring a statistically significant +0.53 and +0.56 increase on average (see Appendix C for significance test).\nWe tested the impact of stack propagation using auxiliary tasks B+H. We observe a modest but statistically significant +.34 increment with weights c(B)=1 and c(H)=10. Considering that this makes the inference task more complex, we did not use it in later experiments on English."
+    }, {
+      "heading" : "4.4 Results on English semantic graphs",
+      "text" : "7Previous state-of-the art on this data is a non-neural system: Ribeyre et al. (2016) obtained LF=80.86, and went up to LF=84.91 thanks to features from constituency parses from the rich FrMG parser (Villemonte De La Clergerie, 2010). The biaffine architecture with contextual vectors, without auxiliary tasks, obtains a mean LF=86.79.\n8See Appendix D for results with each auxiliary task.\nWe then tested the B+H configuration on the English test sets. In Table 2, we observe that performance gains using B and H auxiliary tasks are systematic across datasets (DM, PAS, PSD) and across in- or out-of-domain test sets, which tends to show the robustness of our method9.\nWe can also measure the impact of the auxiliary tasks by evaluating how accurate the predicted graphs are, concerning the number of heads of each token: on average on the English dev sets, the proportion of word-tokens receiving the right number of heads in the predicted graphs is 94.9 without auxiliary tasks, and 95.5 with tasks B+H.\nWe provide in Table 3 a comparison to current state-of-the art SDP parsers, for English, in settings using BERTBASE, namely (He and Choi, 2020) for ID and (Fernández-González and GómezRodríguez, 2020) for OOD. Note that their results are not fully comparable to ours since they use gold lemmas and POS. Careful analysis of hyperparameters is needed in particular to explain the very high results of He and Choi (2020) in ID. While our results remain clearly below, note our proposed auxiliary tasks are directly usable with their system."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "When using a biaffine graph-based architecture for semantic dependency parsing (SDP), arcs are predicted independently from each other. We have proposed auxiliary tasks that introduce some form of interdependence of arc decisions. We showed that training recurrent word-token representations both for the SDP task and for predicting the number of heads and the incoming labels of each word is systematically beneficial, when tested either on English or French, on semantic or on deep syntactic graphs, and on in- or out-of-domain data.\n9The improvement tends to be higher for OOD, and for DM and PAS. One reason could be that the PSD graphs show less reentrancies, hence the number of heads is more predictable, and using a specific auxiliary task for it is less beneficial."
+    }, {
+      "heading" : "A Training details",
+      "text" : "All experiments are run on a Nvidia GTX 1080 Ti GPU.\n• mode for BERT and FlauBERT models : finetuned\n• lexical embedding size (e(word)i ) : 100\n• lexical dropout : 0.4. At learning, the lexical embedding of a token is replaced with probability 0.4 by a special token *DROP*, whose embedding is learned.\n• biLSTM : 3 layers of size 2 ∗ 600, with 0.33 dropout\n• MLPs for arc and label score : 1 hidden layer (600), output layer (600), dropout 0.33\n• MLPs for aux. tasks: 1 hidden layer (300), output layer (300), dropout 0.25\n• Optimizer = Adam, β1 = β2 = 0.9\n• Learning rate = 2× 105\n• Batch size = 8\n• Learning is stopped when all labeled Fscores decrease on the dev set. Note that beside the main FL score, tasks H and B give rise to their labeled Fscore, computed using the number of heads as predicted by task H (resp. B)."
+    }, {
+      "heading" : "B Unsuccessful tests",
+      "text" : "Various tests were abandoned as unsuccessful in our preliminary tests:\n• Using pre-trained lexical embeddings had no impact on performance on average.\n• Freezing BERT’s and FlauBERT’s parameters significantly decreased performance (by about 2 FL points).\n• Increasing the level of parameter sharing between tasks was not successful: instead of applying the MLPs of the auxiliary tasks on the recurrent representations ri, we tested applying them on the outputs of the specialization MLPs (i.e. on h(arc-head)i for task D, on h (arc-dep) i for task H, on h (lab-dep) i for tasks B\nand S). While this tends to increase the number of epochs, it does not improve the performance."
+    }, {
+      "heading" : "C Significance testing",
+      "text" : "We use a Fisher-Pitman exact permutation test to estimate the significance of the differences in performance between two configurations (as done for\nexample by (Bernard, 2021)). More precisely, suppose we consider two samples of Fscores, for nA runs corresponding to configuration A, and nB runs for configuration B, with on average configuration B better than A. The null hypothesis is that the two samples follow the same distribution. The p-value corresponds to the probability that separating the set of Fscores into two samples A’ and B’ of size nA and nB gives a difference in mean at least as large as the observed difference. With the exact test, the p-value is calculated exactly, on all possible splits into A’ and B’ samples."
+    }, {
+      "heading" : "D French data statistics and full results",
+      "text" : "The complete results on dev set for the French data is provided in Table 5, of which Table 1 is a truncated version."
+    } ],
+    "references" : [ {
+      "title" : "Enriching a French treebank",
+      "author" : [ "Anne Abeillé", "Nicolas Barrier." ],
+      "venue" : "Proceedings of the Fourth International Conference on Language Resources and Evaluation (LREC’04), Lisbon, Portugal. European Language Resources Association (ELRA).",
+      "citeRegEx" : "Abeillé and Barrier.,? 2004",
+      "shortCiteRegEx" : "Abeillé and Barrier.",
+      "year" : 2004
+    }, {
+      "title" : "Multiple tasks integration: Tagging, syntactic and semantic parsing as a single task",
+      "author" : [ "Timothée Bernard." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main Volume, pages 783–794,",
+      "citeRegEx" : "Bernard.,? 2021",
+      "shortCiteRegEx" : "Bernard.",
+      "year" : 2021
+    }, {
+      "title" : "Deep syntax annotation of the sequoia French treebank",
+      "author" : [ "Marie Candito", "Guy Perrier", "Bruno Guillaume", "Corentin Ribeyre", "Karën Fort", "Djamé Seddah", "Éric de la Clergerie." ],
+      "venue" : "Proceedings of the Ninth International Conference on Language Resources",
+      "citeRegEx" : "Candito et al\\.,? 2014",
+      "shortCiteRegEx" : "Candito et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Multitask learning",
+      "author" : [ "Rich Caruana." ],
+      "venue" : "Machine learning, 28:41–75.",
+      "citeRegEx" : "Caruana.,? 1997",
+      "shortCiteRegEx" : "Caruana.",
+      "year" : 1997
+    }, {
+      "title" : "Deep Biaffine Attention for Neural Dependency Parsing",
+      "author" : [ "Timothy Dozat", "Christopher D. Manning." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Conference Track Proceedings, Toulon, France. OpenReview.net.",
+      "citeRegEx" : "Dozat and Manning.,? 2017",
+      "shortCiteRegEx" : "Dozat and Manning.",
+      "year" : 2017
+    }, {
+      "title" : "Simpler but more accurate semantic dependency parsing",
+      "author" : [ "Timothy Dozat", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 484–490, Melbourne,",
+      "citeRegEx" : "Dozat and Manning.,? 2018",
+      "shortCiteRegEx" : "Dozat and Manning.",
+      "year" : 2018
+    }, {
+      "title" : "Transition-based semantic dependency parsing with pointer networks",
+      "author" : [ "Daniel Fernández-González", "Carlos GómezRodríguez." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7035–7046, On-",
+      "citeRegEx" : "Fernández.González and GómezRodríguez.,? 2020",
+      "shortCiteRegEx" : "Fernández.González and GómezRodríguez.",
+      "year" : 2020
+    }, {
+      "title" : "Establishing strong baselines for the new decade: Sequence tagging, syntactic and semantic parsing with BERT",
+      "author" : [ "Han He", "Jinho Choi." ],
+      "venue" : "Proceedings of Florida Artificial Intelligence Research Society Conference FLAIRS-33, pages 228–233.",
+      "citeRegEx" : "He and Choi.,? 2020",
+      "shortCiteRegEx" : "He and Choi.",
+      "year" : 2020
+    }, {
+      "title" : "Multi-task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics",
+      "author" : [ "Alex Kendall", "Yarin Gal", "Roberto Cipolla." ],
+      "venue" : "2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 7482–7491.",
+      "citeRegEx" : "Kendall et al\\.,? 2018",
+      "shortCiteRegEx" : "Kendall et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multi-task semantic dependency parsing with policy gradient for learning easy-first strategies",
+      "author" : [ "Shuhei Kurita", "Anders Søgaard." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 2420–2430, Florence,",
+      "citeRegEx" : "Kurita and Søgaard.,? 2019",
+      "shortCiteRegEx" : "Kurita and Søgaard.",
+      "year" : 2019
+    }, {
+      "title" : "SemEval 2015 task 18: Broad-coverage semantic dependency parsing",
+      "author" : [ "Stephan Oepen", "Marco Kuhlmann", "Yusuke Miyao", "Daniel Zeman", "Silvie Cinková", "Dan Flickinger", "Jan Hajič", "Zdeňka Urešová." ],
+      "venue" : "Proceedings of the 9th International Work-",
+      "citeRegEx" : "Oepen et al\\.,? 2015",
+      "shortCiteRegEx" : "Oepen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semi-Automatic Deep Syntactic Annotations of the French Treebank",
+      "author" : [ "Corentin Ribeyre", "Marie Candito", "Djam’e Seddah" ],
+      "venue" : "In Proceedings of the 13th International Workshop on Treebanks and Linguistic Theories",
+      "citeRegEx" : "Ribeyre et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Ribeyre et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Accurate deep syntactic parsing of graphs: The case of French",
+      "author" : [ "Corentin Ribeyre", "Eric Villemonte de la Clergerie", "Djamé Seddah." ],
+      "venue" : "Proceedings of the Tenth International Conference on Language Resources and Evaluation (LREC’16), pages 3563–",
+      "citeRegEx" : "Ribeyre et al\\.,? 2016",
+      "shortCiteRegEx" : "Ribeyre et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Convertir des dérivations TAG en dépendances",
+      "author" : [ "Éric Villemonte De La Clergerie." ],
+      "venue" : "Actes de la 17e conférence sur le Traitement Automatique des Langues Naturelles. Articles longs, pages 91–100, Montréal, Canada. ATALA.",
+      "citeRegEx" : "Clergerie.,? 2010",
+      "shortCiteRegEx" : "Clergerie.",
+      "year" : 2010
+    }, {
+      "title" : "Second-order semantic dependency parsing with endto-end neural networks",
+      "author" : [ "Xinyu Wang", "Jingxian Huang", "Kewei Tu." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 4609–4618, Florence, Italy. Asso-",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Stack-propagation: Improved representation learning for syntax",
+      "author" : [ "Yuan Zhang", "David Weiss." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1557–1566, Berlin, Germany. Associ-",
+      "citeRegEx" : "Zhang and Weiss.,? 2016",
+      "shortCiteRegEx" : "Zhang and Weiss.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 5,
+      "context" : "The biaffine parser of Dozat and Manning (2017) was successfully extended to semantic dependency parsing (SDP) (Dozat and Manning, 2018).",
+      "startOffset" : 111,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 10,
+      "context" : "Experiments on the three English acyclic datasets of SemEval-2015 task 18 (Oepen et al., 2015), and on French deep syntactic cyclic graphs (Ribeyre et al.",
+      "startOffset" : 74,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2015), and on French deep syntactic cyclic graphs (Ribeyre et al., 2014) show modest but systematic performance gains on a near-soa baseline using transformer-based contextualized representations.",
+      "startOffset" : 52,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 10,
+      "context" : "On the English dataset from the SemEval 2015 Task 18 (Oepen et al., 2015), (Fernández-González and Gómez-Rodríguez, 2020) report a +0.",
+      "startOffset" : 53,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 5,
+      "context" : "Using the biaffine architecture of (Dozat and Manning, 2018), He and Choi (2020) report a +2 and +3 point",
+      "startOffset" : 35,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 3,
+      "context" : "In this work, we retain the simple O(n2) biaffine architecture of Dozat and Manning (2018) (hereafter DM18), and we investigate how simple auxiliary tasks can introduce some interdependence between arc decisions, in a multi-task learning setting (Caruana, 1997).",
+      "startOffset" : 246,
+      "endOffset" : 261
+    }, {
+      "referenceID" : 10,
+      "context" : "We show modest but systematic improvements on the widely used Semeval2015task18 English data (Oepen et al., 2015).",
+      "startOffset" : 93,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 11,
+      "context" : "Experiments on French deep syntactic graphs (Ribeyre et al., 2014), which are highly cyclic, also demonstrate the effectiveness of our auxiliary tasks for SDP.",
+      "startOffset" : 44,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 10,
+      "context" : "Preliminary experiments on English semantic dependency graphs (Oepen et al., 2015) and on French deep syntactic graphs (Candito et al.",
+      "startOffset" : 62,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2015) and on French deep syntactic graphs (Candito et al., 2014) have shown us that the biaffine graph parser gives good results, but with inconsistencies that are clearly related to the locality of decisions.",
+      "startOffset" : 44,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 10,
+      "context" : "We experiment on the three widely used English datasets of Semeval2015-Task18 (Oepen et al., 2015) (DM, PAS and PSD), which are acyclic graphs mainly representing predicate-argument relations.",
+      "startOffset" : 78,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 11,
+      "context" : "We also experiment on French deep syntactic graphs (Ribeyre et al., 2014) (Appendix D).",
+      "startOffset" : 51,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 7,
+      "context" : "We provide in Table 3 a comparison to current state-of-the art SDP parsers, for English, in settings using BERTBASE, namely (He and Choi, 2020) for ID and (Fernández-González and GómezRodríguez, 2020) for OOD.",
+      "startOffset" : 124,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 6,
+      "context" : "We provide in Table 3 a comparison to current state-of-the art SDP parsers, for English, in settings using BERTBASE, namely (He and Choi, 2020) for ID and (Fernández-González and GómezRodríguez, 2020) for OOD.",
+      "startOffset" : 155,
+      "endOffset" : 200
+    } ],
+    "year" : 0,
+    "abstractText" : "The biaffine parser of Dozat and Manning (2017) was successfully extended to semantic dependency parsing (SDP) (Dozat and Manning, 2018). Its performance on graphs is surprisingly high given that, without the constraint of producing a tree, all arcs for a given sentence are predicted independently from each other (modulo a shared representation of tokens). To circumvent such an independence of decision, while retaining the O(n) complexity and highly parallelizable architecture, we propose to use simple auxiliary tasks that introduce some form of interdependence between arcs. Experiments on the three English acyclic datasets of SemEval-2015 task 18 (Oepen et al., 2015), and on French deep syntactic cyclic graphs (Ribeyre et al., 2014) show modest but systematic performance gains on a near-soa baseline using transformer-based contextualized representations. This provides a simple and robust method to boost SDP performance.",
+    "creator" : null
+  }
+}

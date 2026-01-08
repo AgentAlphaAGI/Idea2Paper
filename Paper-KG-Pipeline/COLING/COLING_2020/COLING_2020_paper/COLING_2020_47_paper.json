@@ -1,0 +1,707 @@
+{
+  "name" : "COLING_2020_47_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Dynamic Curriculum Learning for Low-Resource Neural Machine Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Recently, neural machine translation (NMT) has demonstrated impressive performance improvements and became the de-facto standard (Sutskever et al., 2014; Bahdanau et al., 2015; Wu et al., 2016; Vaswani et al., 2017). However, like other neural methods, NMT is data-hungry. This makes it challenging when we train such a model in low-resource scenarios (Koehn and Knowles, 2017). Researchers have developed promising approaches to low-resource NMT. Among these are data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017), transfer learning (Zoph et al., 2016; Kocmi and Bojar, 2018), and pre-trained models (Peters et al., 2018; Devlin et al., 2019). But these approaches rely on external data other than bi-text. To date, it is rare to see work on the effective use of bilingual data for low-resource NMT.\nIn general, the way of feeding samples plays an important role in training neural models. A good instance is that it is popular to shuffle the input data for robust training in state-of-the-art systems. More systematic studies on this issue can be found in recent papers (Bengio et al., 2009; Kumar et al., 2010; Shrivastava et al., 2016). For example, Arpit et al. (2017) have pointed out that deep neural networks tend to prioritize learning “easy” samples first. This agrees with the idea of curriculum learning (Bengio et al., 2009) in that an easy-to-hard learning strategy can yield better convergence for training.\nIn NMT, curriculum learning is not new. Several research groups have applied it to large-scale translation tasks although few of them discuss the issue in a low-resource setup (Zhang et al., 2018; Platanios et al., 2019; Liu et al., 2020). The first question here is how to define the “difficulty” of a training sample. Previous work resorts to functions that produce a difficulty score for each training sample. This score is then used to reorder samples before training. But the methods of this type enforce a static scoring strategy and somehow disagrees with the fact that the sample difficulty might be changing when the model is updated during training. Another assumption behind curriculum learning is that the difficulty of a sample should fit the competence of the model we are training. Researchers have implicitly modeled this issue by hand-crafted curriculum schedules (Zhang et al., 2018) or simple functions (Platanios et al., 2019), whereas there has no in-depth discussion on it yet.\nIn this paper, we continue the line of research on curriculum learning in low-resource NMT. We propose a dynamic curriculum learning (DCL) method to address the problems discussed above. The\nnovelty of DCL is two-fold. First, we define the difficulty of a sample to be the decline of loss (i.e., negative log-likelihood). In this way, we can measure how hard a sentence can be translated via the real objective used in training. Apart from this, the DCL method explicitly estimates the model competence once the model is updated, so that one can select samples that the newly-updated model has enough competence to learn.\nDCL is general and applicable to any NMT system. In this work, we test it in a Transformer-based system on three low-resource MT benchmarks and different sized data selected from the WMT’16 En-De task. Experimental results show that our system outperforms the strong baselines and several curriculum learning-based counterparts."
+    }, {
+      "heading" : "2 Related work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Low-Resource NMT",
+      "text" : "Koehn and Knowles (2017) show that NMT systems result in worse translation performance in lowresource scenarios. Researchers have developed promising approaches to this problem which mainly focus on introducing external knowledge to improve low-resource NMT performance. Data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017) alleviates this problem by generating pseudo parallel data. A large amount of auxiliary parallel corpus from other related language pairs can be used to pre-train model parameters and transfer to target language pair (Zoph et al., 2016; Chen et al., 2017; Gu et al., 2018a; Gu et al., 2018b; Kocmi and Bojar, 2018). Pre-trained language models trained with a large amount of monolingual data (Peters et al., 2018; Devlin et al., 2019) improve the quality of NMT model significantly (Clinchant et al., 2019; Yang et al., 2020; Zhu et al., 2020).\nHowever, these approaches rely on a large number of external resources or conditions, e.g., the auxiliary parallel corpus related to the source or target language, or a large amount of monolingual data. In this paper, we explore the effective use of bilingual data for low-resource NMT."
+    }, {
+      "heading" : "2.2 Curriculum Learning",
+      "text" : "Curriculum learning (Bengio et al., 2009) is motivated by the learning strategy of biological organisms which orders the training samples in an easy-to-hard manner (Elman, 1993). Benefited from organized training, the neural network explores harder samples effectively utilizing the previous knowledge learned from easier samples. Weinshall et al. (2018) demonstrate curriculum learning speeds up the learning process, especially at the beginning of training. Curriculum learning has been applied to several tasks, including language model (Bengio et al., 2009), image classification (Weinshall et al., 2018), and human attribute analysis (Wang et al., 2019b).\nCurriculum learning has recently shown to train large-scale translation tasks efficiently and effectively by controlling the way of feeding samples. Kocmi and Bojar (2017) construct mini-batch contains sentences similar in length and linguistic phenomena, then organize the order by increased complexity in one epoch. Zhang et al. (2018) group the training samples into shards based on model-based and linguistic difficulty criteria, then train with hand-crafted curriculum schedules. Platanios et al. (2019) propose competence-based curriculum learning that select training samples based on sample difficulty and model competence. Kumar et al. (2019) use reinforcement learning to learn the curriculum automatically. Liu et al. (2020) propose a norm-based curriculum learning method based on the norm of word embedding to improve the efficiency of training an NMT system. Zhou et al. (2020) propose uncertainty-aware curriculum learning. To the best of our knowledge, this is the first comprehensive discussion of curriculum learning in a low-resource setup.\nOn the other hand, curriculum learning is similar to data selection and data sampling methods. More similar work is that Wang et al. (2018) propose a dynamic sampling method that calculates the decline of loss during training to improve the NMT training efficiency. They start training from the full training set and then gradually decrease. This is contrary to the idea of curriculum learning.\nIn addition, the spirit of curriculum learning has been widely used in the NMT, such as data selection (Wang et al., 2019a; Zhao et al., 2020), non-autoregressive NMT (Guo et al., 2020), domain adaptation (Zhang et al., 2019)."
+    }, {
+      "heading" : "3 Problem Definition",
+      "text" : "Let Dtrain be the training corpus and |Dtrain| be the corpus size. s = (x,y) is a training sample in Dtrain, where x is the source sentence and y is the target sentence. NMT systems learn a conditional probability P (y|x):\nP (y|x;θ) = |y|∏ i=1 P (yi|x,y<i;θ) (1)\nwhere |y| is the length of y, θ is a set of model parameters. The training objective is to seek the optimal parameters θ̂ by minimizing the negative log-likelihood (NLL) of the training set:\nθ̂ = argmin θ ∑ s∈Dtrain −logP (y|x;θ)\n= argmin θ ∑ s∈Dtrain |y|∑ i=1 −logP (yi|x,y<i;θ) (2)\nOur objective is to learn better model parameters by curriculum learning in low-resource NMT. We decompose the whole training process into multiple phases T = (t0, t1, t2, . . . , tk)1. For every phase t, the sub-optimal process can be viewed as:\nθt+1 = argmin θt ∑ s∈Dttrain −logP (y|x;θt) (3)\nwhere θt is the model parameter at phase t. Two sub-questions (Platanios et al., 2019) in curriculum learning are separated to determine the training data Dttrain:\n• Sample Difficulty. How to measure the difficulty of a training sample with a quantified value?\n• Model Competence. How to estimate the competence of the model to arrange training data that model can learn effectively?\nPrevious work enforces a static scoring strategy to measure sample difficulty and encourage simple functions to estimate the model competence. In this way, the training data at each phase is pre-determined before training. But in fact, sample difficulty and model competence are not independent with the current model parameters.\nA natural idea is to re-arrange the curriculum once the model is updated, so that we can select training data with appropriate difficulty for current training. We discuss these two questions in-depth in the following section."
+    }, {
+      "heading" : "4 Dynamic Curriculum Learning",
+      "text" : "We propose a dynamic curriculum learning method to reorder training samples in training. We determine the order of training samples dynamically, rather than using a static scoring for reordering. Besides, we propose a batching method to reduce gradient noise."
+    }, {
+      "heading" : "4.1 Sample Difficulty",
+      "text" : "Equation 2 shows that the training objective of NMT is to minimize the loss (i.e., negative log-likelihood) of the training set. For a training sample s = (x,y) at phase t, the loss is calculated as:\nl(s;θt) = −logP (y|x;θt) (4) 1In the standard NMT, every epoch is a phase.\nThe NMT model generally translates sentences with lower loss better. Based on this idea, Zhang et al. (2018) define the difficulty as the probability of the top-1 translation candidates generated by a pre-trained NMT model. While translation probability related to the training objective represents the sample difficulty accurately compared with the heuristic metrics, it still suffers from the problem of static scoring. Therefore, a natural idea is calculating the loss of training samples dynamically to measure its difficulty. To this end, we evaluate the loss of all the training samples with the fixed model parameters before each training phase:\nd(s;θt) = l(s;θt) (5)\nwhere d(s;θt) is the difficulty of the sample s at phase t. While the loss shows the level that the current model can handle this sample, there also suffers from two drawbacks (Wang et al., 2018). First, the loss of a sample may be large at the initial phase but easy to decrease rapidly after a few phases. Second, one sentence with small loss may have no space to further decrease and training model with these sentences iteratively may lead to overfitting.\nTherefore, we define the difficulty of a sample to be the decline of loss. In this way, we take into account the model change between the previous phase and the current phase. The decline-based sample difficulty is measured as:\nd(s;θt,θt−a) =  l(s;θt) t < a\n− l(s;θ t−a)− l(s;θt) l(s;θt−a)\nt ≥ a (6)\nwhere a ≥ 1 represents we compare the loss decline at phase t− a and phase t. Based on this difficulty metric, the sentence with low difficulty indicates the NMT model improves the predicted accuracy of its translation result significantly. Therefore, it is more likely to learn better in the next phase. On the contrary, the sentence with high difficulty indicates the current NMT model does not have enough competence to handle it and may wait to be learned at a later phase."
+    }, {
+      "heading" : "4.2 Model Competence",
+      "text" : "Platanios et al. (2019) propose a competence-based curriculum learning framework which defines the model competence c(t) ∈ (0, 1] at training step t by simple functional forms:\nc(t) = min(1, p √ t\nT (1− cp0) + c p 0) (7)\nwhere c0 ≥ 0 is the initial competence, p is the coefficient to control the curriculum schedule. Competence is seen as a linear function when p = 1 and the harder samples increase by a constant amount, square root function when p = 2 and the harder samples increase faster in the early phases and slower in the later phases.\nHowever, these intuitive functions might not be universal for model competence. There is a gap between the high-resource and low-resource tasks. Limited by a small amount of data, the performance of the NMT model improves slowly at the early phases (see Section 7.1).\nIn this paper, we propose a dynamic model competence (DMC) estimation method, which measures it at every phase based on the performance of the development set. While the loss of development set is an optional method, the sentence-level evaluation metric BLEU (Papineni et al., 2002) presents more superiorities (Shen et al., 2016). In this way, the model competence avoids the prior hypothesis of the training process and is related to the real performance.\nSpecifically, we pre-train a vanilla NMT model and record the best BLEU value on the development set as curriculum length BLEUT . The model competence is estimated as:\nc(t) = min(1, BLEUt\nBLEUT ∗ β (1− c0) + c0) (8)\nAlgorithm 1 NMT with Dynamic curriculum learning Input: The training set Dtrain, the development set Ddev, the best BLEU value of a baseline model BLEUT . Output: A NMT model with dynamic curriculum learning.\n1: t = 0; Randomly initial the model parameters θ0; 2: while t < T do 3: Evaluate the Dtrain and get loss l(s;θt) of every training sample s; 4: for all s in Dtrain do 5: Measure the difficulty of s by Equation 6; 6: end for 7: Sort Dtrain with the difficulty of every training sample; 8: Evaluate the Ddev and get BLEUt; 9: Estimate the model competence c(t) by Equation 8;\n10: Train the NMT model with the |Dtrain| ∗ c(t) easiest training samples; 11: t← t+ 1; 12: end while\nwhere BLEUt is the BLEU at phase t, β ∈ (0, 1] is a coefficient to control the curriculum speed. With a smaller β, the progress of curriculum learning is faster and the model can be trained on the entire training set earlier.\nWe suppose that the model has weak competence to only learn well from the easiest training samples at the initial phase and gradually has enough competence to handle the entire training set Dtrain. We measure the sample difficulty and model competence before every phase, then the |Dtrain| ∗ c(t) easiest training samples are selected to train the NMT model. Benefited from dynamic measurement, the newlyupdated model has enough competence to learn samples with the appropriate difficulties."
+    }, {
+      "heading" : "4.3 Batching",
+      "text" : "Goyal et al. (2017) address the optimization difficulty when training a neural network with large batches and exhibit good generalization. Large batches have demonstrated better performance in high-resource NMT tasks due to the lower gradient noise scale (Ott et al., 2018; Popel and Bojar, 2018). However, this method degrades the performance in low-resource tasks due to poorer generalization (Keskar et al., 2017).\nThe dominant NMT batches the samples with similar lengths to speed training up (Khomenko et al., 2017). To reduce gradient noise, we propose a batching method which batches the samples based on similar difficulty in our curriculum learning method. Samples with similar difficulty indicate their losses fall at a similar rate. They might have a stabilized gradient direction and leads to better performance."
+    }, {
+      "heading" : "4.4 Training Strategy",
+      "text" : "Zhang et al. (2018) define two general types of curriculum learning strategy. The deterministic curriculum (Kocmi and Bojar, 2017) arranges the training samples with fixed order and performs worse due to lacking randomization. The probabilistic curriculum (Platanios et al., 2019) generates a batch uniformly sampled from the training set based on sample difficulty and model competence. The latter generally works well in the previous curriculum learning methods. However, in our preliminary experiments, we find that the vanilla model trained by sampling performs worse or converges slower slightly than the training strategy which trains the model with the whole training set in an epoch. A possible reason is sampling might lead to unbalanced training because some samples are not fully trained due to sampling omission.\nOur method dynamically measures the sample difficulty and model competence at each phase, then selects a certain proportion of easier samples to train based on model competence. It ensures that training samples are not missed due to sampling and also retains randomization to avoid overfitting. Algorithm 1 shows the overall training procedure of our method."
+    }, {
+      "heading" : "5 Experiment Setup",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Datasets",
+      "text" : "We consider three different low-resource machine translation benchmarks from IWSLT TED talk, running experiments in IWSLT’15 Chinese-English (Zh-En), IWSLT’15 Thai-English (Th-En), and IWSLT’17 English-Japanese (En-Ja). We concatenate dev2010, tst2010, tst2011, tst2012, and tst2013 as the development set. We use tst2015 as the test set for En-Th and Zh-En, tst2017 for En-Ja. To simulate different amounts of training resources, we randomly subsample 50K/100K/300K sentence pairs from WMT’16 English-German dataset and denote them as 50K/100K/300K. Furthermore, we also verify the effect of our method in the high-resource scenarios with all WMT’16 English-German training set (4.5M). We concatenate newstest2012 and newstest2013 as the development set and newstest2016 as the test set. Data statistics are shown in Table 1.\nWe tokenize the Chinese sentences using jieba2 and Japanese sentences using MeCab3. For other language pairs, we apply the same tokenization using Moses scripts (Koehn et al., 2007). We learn Byte-Pair Encoding (Sennrich et al., 2016b) subword segmentation with 10,000 merge operations for IWSLT datasets and 32,000 merge operations for WMT dataset. Especially, we learn BPE with a shared vocabulary for WMT dataset."
+    }, {
+      "heading" : "5.2 Model Settings",
+      "text" : "In all experiments, we use the fairseq (Ott et al., 2019)4 implementation of the Transformer. The model hyper-parameters are shown in Table 2. We use the Adam optimizer (Kingma and Ba, 2015) with β1 = 0.9, β2 = 0.98, and = 10−9. We increased the learning rate from 10−7 to 0.0005 for IWSLT datasets and 0.0007 for WMT dataset with linear warmup over the first 4000 steps and decayed the learning rate by inverse square root way. For all experiments, we use the dropout of 0.1 and label smoothing ls = 0.1 for regularization. We share the embedding and the output layers of the decoder for IWSLT experiments, share all embedding for WMT experiments.\n2https://github.com/fxsjy/jieba 3https://taku910.github.io/mecab/ 4https://github.com/pytorch/fairseq"
+    }, {
+      "heading" : "5.3 Training and Inference",
+      "text" : "We train the model with batch size consisted of 4096 tokens except for 4.5M which uses 4096 ∗ 8 tokens to compare with a standard setting. We evaluate the development set at every epoch during training by decoding using greedy search and calculate the BLEU5 (Papineni et al., 2002) score. We early stop training when there is no improvement of the BLEU for 10 consecutive checkpoints. During inference, we use beam search with the beam size of 5 and length penalty of 1 for IWSLT datasets, beam size of 4 and length penalty of 0.6 for WMT datasets."
+    }, {
+      "heading" : "5.4 Curriculum Learning Setup",
+      "text" : "We implement our method with fairseq by simply modifying. Our DCL method measures the sample difficulty and model competence before every phase dynamically. While it results in extra time consumption (about 30%), it is acceptable for low-resource tasks.\nIn all experiments, we set a = 1 uniformly in Equation 6 to measure the difficulty, which means the sample difficulty takes into account two adjacent phases. For the model competence described in Equation 8, we record the best BLEU of the baseline model on the development set as the BLEUT . Although hyper-parameter with careful selection can bring improvement, we set c0 = 0.2 and β = 0.9 universally for all experiments. It means we start training with the 20% easiest sentences and train the model with the whole training set when the performance achieves 90% of BLEUT .\nWe use the following notations to represent different curriculum learning strategies. For the sample difficulty, we compare our method with previous heuristic metrics and two other dynamic metrics:\n• Heuristic metrics: Source sentence length (Length) and source word rarity (Rarity) (Platanios et al., 2019). • Dynamic metrics: Random difficulty value (Random) and the loss at the current phase (Loss). • Our method: Loss decline between the previous phase and the current phase (Decline).\nFor the model competence, we experiment with the following methods:\n• Functional forms: Linear (Linear) and square root (Sqrt) model competence (Platanios et al., 2019). • Our method: Dynamic model competence (DMC) based on the performance."
+    }, {
+      "heading" : "6 Results",
+      "text" : "Table 3 summaries the experimental results with different curriculum learning methods. The existing curriculum learning methods (row 2 and row 3) can not improve performance stably or even degraded, which demonstrates the heuristic metrics are not helpful in low-resource scenarios.\nWith the dynamic model competence, we observe the BLEU scores of Random (row 4) fluctuates on the baseline model. Although the difficulty is measured dynamically during training, the meaningless value is not favorable for curriculum learning. We also measure the difficulty with loss dynamically (row 5), which leads to a slight improvement in the larger datasets. However, it degrades performance in the smaller datasets (Th-En, 50K, and 100K). It agrees with analysis in Section 4.1 that it is easy to fall into overfitting due to repeated training on some samples with low loss, especially in the extremely scarce datasets.\nThen, we test our proposed difficulty metric of Decline. With the simple competence functions (row 6 and row 7), they outperform significantly the strong baselines and previous methods. It demonstrates our proposed metric is of high relevance with sample difficulty for NMT than the other four metrics. However, the Sqrt competence function does not perform better than the Linear function in all datasets, this is not consistent with the previous conclusion (Platanios et al., 2019). The possible reason is that the model competence of some low-resource datasets improves slowly in the early phases. DMC (row 8) avoids the prior hypothesis of the performance change and achieves better or similar performance compared with the above methods.\n5https://github.com/moses-smt/mosesdecoder/tree/master/scripts/generic/multi-bleu.perl\nFinally, we batch the samples with similar difficulties 6 (row 9). While the model is trained with more training steps due to padding, it achieves further improvement over our curriculum learning method in all tasks. This verifies our hypothesis that the gradient of samples with similar difficulty is more stabilized. This is an interesting result and we will explore it in future work.\nOverall, the experimental results show our proposed method achieves better performance compared with strong baselines and several curriculum learning-based counterparts in the low-resource NMT tasks."
+    }, {
+      "heading" : "7 Analysis",
+      "text" : "We take En-De 50K dataset which achieves the most performance improvement to analyze our method. Although it is sampled from WMT dataset, we think it can demonstrate the advantages of our method obviously."
+    }, {
+      "heading" : "7.1 Learning Curve",
+      "text" : "We visual the learning curve for comparing the convergence of our method on WMT’16 En-De datasets of different sizes in Figure 1. One obvious difference in the learning curve is that the performance changes of high-resource datasets (300K/4.5M) during training are more similar to square root function, and low-resource datasets (50K/100K) are more similar to the linear function. This phenomenon is consistent with the above experimental results and shows the necessity of calculating the model competence self-adaptively.\nWe also observe that our proposed method converges faster and better than the baseline model significantly in all datasets, especially in early phases. On the extremely scarce dataset (50K), DCL improves\n6We do not do this experiment on the En-De 4.5M dataset because it is trained with large batches.\nBaseline Decline + DMC\n(0, 10) [20, 30) [40,+∞) 10\n15\n20\nSentence Lengths\nTr ai\nni ng\nC ou\nnt s\nFigure 3: Training counts of samples with different sentence lengths in the training set.\n(0, 10) [20, 30) [40,+∞) 6\n8\n10\n12\nSentence Lengths\nB L\nE U\nFigure 4: BLEU scores (%) of different sentence lengths in the test set.\nthe performance significantly by learning the bilingual data effectively. On the other hand, our method only slightly works for high-resource tasks of 4.5M parallel sentence pairs. A possible reason is that large-scale parallel corpus includes sufficient knowledge and reduces the benefits of the method."
+    }, {
+      "heading" : "7.2 Average Loss",
+      "text" : "As described in section 4, the loss of a training sample indicates whether the NMT model can predict it well. Figure 2 shows the average loss of all training samples when they are trained different counts on the En-De 50K dataset. Our method selects the samples with the fastest loss decline for learning at each training phase, which achieves the lower loss than baseline when training the same counts. It demonstrates learning with more training data is not always beneficial. The better strategy is to select dynamically according to the current model state."
+    }, {
+      "heading" : "7.3 BLEU with Different Sentence Lengths",
+      "text" : "Curriculum learning over-samples the easy samples and one possible drawback is that it may reduce performance on hard samples due to less training. Although sentence length can not represent the difficulty of the training samples accurately, a widely accepted conclusion is that it is more difficult to translate longer sentences. We visual the training counts of samples with different sentence lengths (based on words) in Figure 3. The training counts of samples in our method is significantly less than baseline, especially for long sentences. This also shows that long sentences are also more difficult in our measurement method.\nWe divide the test set into different groups according to sentence length and show the BLEU scores of baseline and our method in Figure 4. We observe that our method outperforms the baseline model significantly in translating different length sentences, especially in translating the shorter and longer sentences. This demonstrates the organized training process can achieve better translation performance for hard samples even with fewer training times."
+    }, {
+      "heading" : "8 Conclusion",
+      "text" : "In this paper, we propose a dynamic curriculum learning method to explore the effective use of bilingual data for low-resource NMT. We define the difficulty of a sample to be the decline of loss and estimate the model competence self-adaptively based on the performance of the development set. Different from previous work, we re-arrange the curriculum once the model is updated, so that the training data with appropriate difficulty is learned by the current model effectively. Experimental results show that our method outperforms the strong baselines and several curriculum learning-based counterparts on several low-resource translation tasks."
+    } ],
+    "references" : [ {
+      "title" : "A closer look at memorization in deep networks",
+      "author" : [ "Devansh Arpit", "Stanislaw Jastrzebski", "Nicolas Ballas", "David Krueger", "Emmanuel Bengio", "Maxinder S. Kanwal", "Tegan Maharaj", "Asja Fischer", "Aaron C. Courville", "Yoshua Bengio", "Simon Lacoste-Julien." ],
+      "venue" : "Doina Precup and Yee Whye Teh, editors, Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017, volume 70 of Proceedings of Machine Learning Research, pages 233–242. PMLR.",
+      "citeRegEx" : "Arpit et al\\.,? 2017",
+      "shortCiteRegEx" : "Arpit et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "Yoshua Bengio and Yann LeCun, editors, 3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Curriculum learning",
+      "author" : [ "Yoshua Bengio", "Jérôme Louradour", "Ronan Collobert", "Jason Weston." ],
+      "venue" : "Proceedings of the 26th Annual International Conference on Machine Learning, ICML 2009, Montreal, Quebec, Canada, June 14-18, 2009, pages 41–48.",
+      "citeRegEx" : "Bengio et al\\.,? 2009",
+      "shortCiteRegEx" : "Bengio et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "A teacher-student framework for zero-resource neural machine translation",
+      "author" : [ "Yun Chen", "Yang Liu", "Yong Cheng", "Victor O.K. Li." ],
+      "venue" : "Regina Barzilay and Min-Yen Kan, editors, Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, ACL 2017, Vancouver, Canada, July 30 - August 4, Volume 1: Long Papers, pages 1925–1935. Association for Computational Linguistics.",
+      "citeRegEx" : "Chen et al\\.,? 2017",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Semi-supervised learning for neural machine translation",
+      "author" : [ "Yong Cheng", "Wei Xu", "Zhongjun He", "Wei He", "Hua Wu", "Maosong Sun", "Yang Liu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Germany, Volume 1: Long Papers. The Association for Computer Linguistics.",
+      "citeRegEx" : "Cheng et al\\.,? 2016",
+      "shortCiteRegEx" : "Cheng et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "On the use of BERT for neural machine translation",
+      "author" : [ "Stéphane Clinchant", "Kweon Woo Jung", "Vassilina Nikoulina." ],
+      "venue" : "Alexandra Birch, Andrew M. Finch, Hiroaki Hayashi, Ioannis Konstas, Thang Luong, Graham Neubig, Yusuke Oda, and Katsuhito Sudoh, editors, Proceedings of the 3rd Workshop on Neural Generation and Translation@EMNLP-IJCNLP 2019, Hong Kong, November 4, 2019, pages 108–117. Association for Computational Linguistics.",
+      "citeRegEx" : "Clinchant et al\\.,? 2019",
+      "shortCiteRegEx" : "Clinchant et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT: pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Jill Burstein, Christy Doran, and Thamar Solorio, editors, Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and Short Papers), pages 4171–4186. Association for Computational Linguistics.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning and development in neural networks: The importance of starting small",
+      "author" : [ "Jeffrey L Elman." ],
+      "venue" : "Cognition, 48(1):71–99.",
+      "citeRegEx" : "Elman.,? 1993",
+      "shortCiteRegEx" : "Elman.",
+      "year" : 1993
+    }, {
+      "title" : "Data augmentation for low-resource neural machine translation",
+      "author" : [ "Marzieh Fadaee", "Arianna Bisazza", "Christof Monz." ],
+      "venue" : "Regina Barzilay and Min-Yen Kan, editors, Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, ACL 2017, Vancouver, Canada, July 30 - August 4, Volume 2: Short Papers, pages 567–573. Association for Computational Linguistics.",
+      "citeRegEx" : "Fadaee et al\\.,? 2017",
+      "shortCiteRegEx" : "Fadaee et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Accurate, large minibatch SGD: training imagenet in 1 hour",
+      "author" : [ "Priya Goyal", "Piotr Dollár", "Ross B. Girshick", "Pieter Noordhuis", "Lukasz Wesolowski", "Aapo Kyrola", "Andrew Tulloch", "Yangqing Jia", "Kaiming He." ],
+      "venue" : "CoRR, abs/1706.02677.",
+      "citeRegEx" : "Goyal et al\\.,? 2017",
+      "shortCiteRegEx" : "Goyal et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Universal neural machine translation for extremely low resource languages",
+      "author" : [ "Jiatao Gu", "Hany Hassan", "Jacob Devlin", "Victor O.K. Li." ],
+      "venue" : "Marilyn A. Walker, Heng Ji, and Amanda Stent, editors, Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2018, New Orleans, Louisiana, USA, June 1-6, 2018, Volume 1 (Long Papers), pages 344–354. Association for Computational Linguistics.",
+      "citeRegEx" : "Gu et al\\.,? 2018a",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Meta-learning for low-resource neural machine translation",
+      "author" : [ "Jiatao Gu", "Yong Wang", "Yun Chen", "Victor O.K. Li", "Kyunghyun Cho." ],
+      "venue" : "Ellen Riloff, David Chiang, Julia Hockenmaier, and Jun’ichi Tsujii, editors, Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, Brussels, Belgium, October 31 - November 4, 2018, pages 3622–3631. Association for Computational Linguistics.",
+      "citeRegEx" : "Gu et al\\.,? 2018b",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Fine-tuning by curriculum learning for non-autoregressive neural machine translation",
+      "author" : [ "Junliang Guo", "Xu Tan", "Linli Xu", "Tao Qin", "Enhong Chen", "Tie-Yan Liu." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February 7-12, 2020, pages 7839–7846. AAAI Press.",
+      "citeRegEx" : "Guo et al\\.,? 2020",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On large-batch training for deep learning: Generalization gap and sharp minima",
+      "author" : [ "Nitish Shirish Keskar", "Dheevatsa Mudigere", "Jorge Nocedal", "Mikhail Smelyanskiy", "Ping Tak Peter Tang." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings. OpenReview.net.",
+      "citeRegEx" : "Keskar et al\\.,? 2017",
+      "shortCiteRegEx" : "Keskar et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Accelerating recurrent neural network training using sequence bucketing and multi-gpu data parallelization",
+      "author" : [ "Viacheslav Khomenko", "Oleg Shyshkov", "Olga Radyvonenko", "Kostiantyn Bokhan." ],
+      "venue" : "CoRR, abs/1708.05604.",
+      "citeRegEx" : "Khomenko et al\\.,? 2017",
+      "shortCiteRegEx" : "Khomenko et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "Yoshua Bengio and Yann LeCun, editors, 3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Curriculum learning and minibatch bucketing in neural machine translation",
+      "author" : [ "Tom Kocmi", "Ondrej Bojar." ],
+      "venue" : "Ruslan Mitkov and Galia Angelova, editors, Proceedings of the International Conference Recent Advances in Natural Language Processing, RANLP 2017, Varna, Bulgaria, September 2 - 8, 2017, pages 379–386. INCOMA Ltd.",
+      "citeRegEx" : "Kocmi and Bojar.,? 2017",
+      "shortCiteRegEx" : "Kocmi and Bojar.",
+      "year" : 2017
+    }, {
+      "title" : "Trivial transfer learning for low-resource neural machine translation",
+      "author" : [ "Tom Kocmi", "Ondrej Bojar." ],
+      "venue" : "Ondrej Bojar, Rajen Chatterjee, Christian Federmann, Mark Fishel, Yvette Graham, Barry Haddow, Matthias Huck, Antonio Jimeno-Yepes, Philipp Koehn, Christof Monz, Matteo Negri, Aurélie Névéol, Mariana L. Neves, Matt Post, Lucia Specia, Marco Turchi, and Karin Verspoor, editors, Proceedings of the Third Conference on Machine Translation: Research Papers, WMT 2018, Belgium, Brussels, October 31 - November 1, 2018, pages",
+      "citeRegEx" : "Kocmi and Bojar.,? 2018",
+      "shortCiteRegEx" : "Kocmi and Bojar.",
+      "year" : 2018
+    }, {
+      "title" : "Six challenges for neural machine translation",
+      "author" : [ "Philipp Koehn", "Rebecca Knowles." ],
+      "venue" : "Proceedings of the First Workshop on Neural Machine Translation, NMT@ACL 2017, Vancouver, Canada, August 4, 2017, pages 28–39.",
+      "citeRegEx" : "Koehn and Knowles.,? 2017",
+      "shortCiteRegEx" : "Koehn and Knowles.",
+      "year" : 2017
+    }, {
+      "title" : "Moses: Open source toolkit for statistical machine translation",
+      "author" : [ "Philipp Koehn", "Hieu Hoang", "Alexandra Birch", "Chris Callison-Burch", "Marcello Federico", "Nicola Bertoldi", "Brooke Cowan", "Wade Shen", "Christine Moran", "Richard Zens", "Chris Dyer", "Ondrej Bojar", "Alexandra Constantin", "Evan Herbst." ],
+      "venue" : "John A. Carroll, Antal van den Bosch, and Annie Zaenen, editors, ACL 2007, Proceedings of the 45th Annual Meeting of the Association for Computational Linguistics, June 23-30, 2007, Prague, Czech Republic. The Association for Computational",
+      "citeRegEx" : "Koehn et al\\.,? 2007",
+      "shortCiteRegEx" : "Koehn et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Self-paced learning for latent variable models",
+      "author" : [ "M. Pawan Kumar", "Benjamin Packer", "Daphne Koller." ],
+      "venue" : "John D. Lafferty, Christopher K. I. Williams, John Shawe-Taylor, Richard S. Zemel, and Aron Culotta, editors, Advances in Neural Information Processing Systems 23: 24th Annual Conference on Neural Information Processing Systems 2010. Proceedings of a meeting held 6-9 December 2010, Vancouver, British Columbia, Canada, pages 1189–1197. Curran Associates, Inc.",
+      "citeRegEx" : "Kumar et al\\.,? 2010",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Reinforcement learning based curriculum optimization for neural machine translation",
+      "author" : [ "Gaurav Kumar", "George F. Foster", "Colin Cherry", "Maxim Krikun." ],
+      "venue" : "Jill Burstein, Christy Doran, and Thamar Solorio, editors, Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and Short Papers), pages 2054–2061. Association for Computational Linguistics.",
+      "citeRegEx" : "Kumar et al\\.,? 2019",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Norm-based curriculum learning for neural machine translation",
+      "author" : [ "Xuebo Liu", "Houtim Lai", "Derek F. Wong", "Lidia S. Chao." ],
+      "venue" : "Dan Jurafsky, Joyce Chai, Natalie Schluter, and Joel R. Tetreault, editors, Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020, Online, July 5-10, 2020, pages 427–436. Association for Computational Linguistics.",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Scaling neural machine translation",
+      "author" : [ "Myle Ott", "Sergey Edunov", "David Grangier", "Michael Auli." ],
+      "venue" : "Ondrej Bojar, Rajen Chatterjee, Christian Federmann, Mark Fishel, Yvette Graham, Barry Haddow, Matthias Huck, Antonio Jimeno-Yepes, Philipp Koehn, Christof Monz, Matteo Negri, Aurélie Névéol, Mariana L. Neves, Matt Post, Lucia Specia, Marco Turchi, and Karin Verspoor, editors, Proceedings of the Third Conference on Machine Translation: Research Papers, WMT 2018, Belgium, Brussels, October 31 - November 1, 2018, pages",
+      "citeRegEx" : "Ott et al\\.,? 2018",
+      "shortCiteRegEx" : "Ott et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "fairseq: A fast, extensible toolkit for sequence modeling",
+      "author" : [ "Myle Ott", "Sergey Edunov", "Alexei Baevski", "Angela Fan", "Sam Gross", "Nathan Ng", "David Grangier", "Michael Auli." ],
+      "venue" : "Waleed Ammar, Annie Louis, and Nasrin Mostafazadeh, editors, Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Demonstrations, pages 48–53. Association for Computational Linguistics.",
+      "citeRegEx" : "Ott et al\\.,? 2019",
+      "shortCiteRegEx" : "Ott et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, July 6-12, 2002, Philadelphia, PA, USA, pages 311–318. ACL.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Marilyn A. Walker, Heng Ji, and Amanda Stent, editors, Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2018, New Orleans, Louisiana, USA, June 1-6, 2018, Volume 1 (Long Papers), pages 2227–2237. Association for Computational Linguistics.",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Competence-based curriculum learning for neural machine translation",
+      "author" : [ "Emmanouil Antonios Platanios", "Otilia Stretcu", "Graham Neubig", "Barnabás Póczos", "Tom M. Mitchell." ],
+      "venue" : "Jill Burstein, Christy Doran, and Thamar Solorio, editors, Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and Short Papers), pages 1162–1172. Association for Computational",
+      "citeRegEx" : "Platanios et al\\.,? 2019",
+      "shortCiteRegEx" : "Platanios et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Training tips for the transformer model",
+      "author" : [ "Martin Popel", "Ondrej Bojar." ],
+      "venue" : "Prague Bull. Math. Linguistics, 110:43–70.",
+      "citeRegEx" : "Popel and Bojar.,? 2018",
+      "shortCiteRegEx" : "Popel and Bojar.",
+      "year" : 2018
+    }, {
+      "title" : "Improving neural machine translation models with monolingual data",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Germany, Volume 1: Long Papers. The Association for Computer Linguistics.",
+      "citeRegEx" : "Sennrich et al\\.,? 2016a",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Germany, Volume 1: Long Papers. The Association for Computer Linguistics.",
+      "citeRegEx" : "Sennrich et al\\.,? 2016b",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Minimum risk training for neural machine translation",
+      "author" : [ "Shiqi Shen", "Yong Cheng", "Zhongjun He", "Wei He", "Hua Wu", "Maosong Sun", "Yang Liu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Germany, Volume 1: Long Papers. The Association for Computer Linguistics.",
+      "citeRegEx" : "Shen et al\\.,? 2016",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Training region-based object detectors with online hard example mining",
+      "author" : [ "Abhinav Shrivastava", "Abhinav Gupta", "Ross B. Girshick." ],
+      "venue" : "2016 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2016, Las Vegas, NV, USA, June 27-30, 2016, pages 761–769. IEEE Computer Society.",
+      "citeRegEx" : "Shrivastava et al\\.,? 2016",
+      "shortCiteRegEx" : "Shrivastava et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V. Le." ],
+      "venue" : "Zoubin Ghahramani, Max Welling, Corinna Cortes, Neil D. Lawrence, and Kilian Q. Weinberger, editors, Advances in Neural Information Processing Systems 27: Annual Conference on Neural Information Processing Systems 2014, December 8-13 2014, Montreal, Quebec, Canada, pages 3104–3112.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural Information Processing Systems 2017, 4-9 December 2017, Long Beach, CA, USA, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Dynamic sentence sampling for efficient training of neural machine translation",
+      "author" : [ "Rui Wang", "Masao Utiyama", "Eiichiro Sumita." ],
+      "venue" : "Iryna Gurevych and Yusuke Miyao, editors, Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics, ACL 2018, Melbourne, Australia, July 15-20, 2018, Volume 2: Short Papers, pages 298–304. Association for Computational Linguistics.",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dynamically composing domain-data selection with clean-data selection by \"co-curricular learning\" for neural machine translation",
+      "author" : [ "Wei Wang", "Isaac Caswell", "Ciprian Chelba." ],
+      "venue" : "Anna Korhonen, David R. Traum, and Lluís Màrquez, editors, Proceedings of the 57th Conference of the Association for Computational Linguistics, ACL 2019, Florence, Italy, July 28- August 2, 2019, Volume 1: Long Papers, pages 1282–1292. Association for Computational Linguistics.",
+      "citeRegEx" : "Wang et al\\.,? 2019a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Dynamic curriculum learning for imbalanced data classification",
+      "author" : [ "Yiru Wang", "Weihao Gan", "Jie Yang", "Wei Wu", "Junjie Yan." ],
+      "venue" : "2019 IEEE/CVF International Conference on Computer Vision, ICCV 2019, Seoul, Korea (South), October 27 - November 2, 2019, pages 5016–5025. IEEE.",
+      "citeRegEx" : "Wang et al\\.,? 2019b",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Curriculum learning by transfer learning: Theory and experiments with deep networks",
+      "author" : [ "Daphna Weinshall", "Gad Cohen", "Dan Amir." ],
+      "venue" : "Jennifer G. Dy and Andreas Krause, editors, Proceedings of the 35th International Conference on Machine Learning, ICML 2018, Stockholmsmässan, Stockholm, Sweden, July 1015, 2018, volume 80 of Proceedings of Machine Learning Research, pages 5235–5243. PMLR.",
+      "citeRegEx" : "Weinshall et al\\.,? 2018",
+      "shortCiteRegEx" : "Weinshall et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Google’s neural machine translation system: Bridging the gap",
+      "author" : [ "Yonghui Wu", "Mike Schuster", "Zhifeng Chen", "Quoc V. Le", "Mohammad Norouzi", "Wolfgang Macherey", "Maxim Krikun", "Yuan Cao", "Qin Gao", "Klaus Macherey", "Jeff Klingner", "Apurva Shah", "Melvin Johnson", "Xiaobing Liu", "Lukasz Kaiser", "Stephan Gouws", "Yoshikiyo Kato", "Taku Kudo", "Hideto Kazawa", "Keith Stevens", "George Kurian", "Nishant Patil", "Wei Wang", "Cliff Young", "Jason Smith", "Jason Riesa", "Alex Rudnick", "Oriol Vinyals", "Greg Corrado", "Macduff Hughes", "Jeffrey Dean" ],
+      "venue" : null,
+      "citeRegEx" : "Wu et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Towards making the most of BERT in neural machine translation",
+      "author" : [ "Jiacheng Yang", "Mingxuan Wang", "Hao Zhou", "Chengqi Zhao", "Weinan Zhang", "Yong Yu", "Lei Li." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February 7-12, 2020, pages 9378–9385. AAAI Press.",
+      "citeRegEx" : "Yang et al\\.,? 2020",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "An empirical exploration of curriculum learning for neural machine translation",
+      "author" : [ "Xuan Zhang", "Gaurav Kumar", "Huda Khayrallah", "Kenton Murray", "Jeremy Gwinnup", "Marianna J. Martindale", "Paul McNamee", "Kevin Duh", "Marine Carpuat." ],
+      "venue" : "CoRR, abs/1811.00739.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Curriculum learning for domain adaptation in neural machine translation",
+      "author" : [ "Xuan Zhang", "Pamela Shapiro", "Gaurav Kumar", "Paul McNamee", "Marine Carpuat", "Kevin Duh." ],
+      "venue" : "Jill Burstein, Christy Doran, and Thamar Solorio, editors, Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and Short Papers), pages 1903–1915. Association for Computational Linguistics.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Reinforced curriculum learning on pre-trained neural machine translation models",
+      "author" : [ "Mingjun Zhao", "Haijiang Wu", "Di Niu", "Xiaoli Wang." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February 7-12, 2020, pages 9652–9659. AAAI Press.",
+      "citeRegEx" : "Zhao et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Uncertainty-aware curriculum learning for neural machine translation",
+      "author" : [ "Yikai Zhou", "Baosong Yang", "Derek F. Wong", "Yu Wan", "Lidia S. Chao." ],
+      "venue" : "Dan Jurafsky, Joyce Chai, Natalie Schluter, and Joel R. Tetreault, editors, Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020, Online, July 5-10, 2020, pages 6934–6944. Association for Computational Linguistics.",
+      "citeRegEx" : "Zhou et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Incorporating BERT into neural machine translation",
+      "author" : [ "Jinhua Zhu", "Yingce Xia", "Lijun Wu", "Di He", "Tao Qin", "Wengang Zhou", "Houqiang Li", "Tie-Yan Liu." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net.",
+      "citeRegEx" : "Zhu et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Transfer learning for low-resource neural machine translation",
+      "author" : [ "Barret Zoph", "Deniz Yuret", "Jonathan May", "Kevin Knight." ],
+      "venue" : "Jian Su, Xavier Carreras, and Kevin Duh, editors, Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, EMNLP 2016, Austin, Texas, USA, November 1-4, 2016, pages 1568–1575. The Association for Computational Linguistics.",
+      "citeRegEx" : "Zoph et al\\.,? 2016",
+      "shortCiteRegEx" : "Zoph et al\\.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 33,
+      "context" : "Recently, neural machine translation (NMT) has demonstrated impressive performance improvements and became the de-facto standard (Sutskever et al., 2014; Bahdanau et al., 2015; Wu et al., 2016; Vaswani et al., 2017).",
+      "startOffset" : 129,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 1,
+      "context" : "Recently, neural machine translation (NMT) has demonstrated impressive performance improvements and became the de-facto standard (Sutskever et al., 2014; Bahdanau et al., 2015; Wu et al., 2016; Vaswani et al., 2017).",
+      "startOffset" : 129,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 39,
+      "context" : "Recently, neural machine translation (NMT) has demonstrated impressive performance improvements and became the de-facto standard (Sutskever et al., 2014; Bahdanau et al., 2015; Wu et al., 2016; Vaswani et al., 2017).",
+      "startOffset" : 129,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 34,
+      "context" : "Recently, neural machine translation (NMT) has demonstrated impressive performance improvements and became the de-facto standard (Sutskever et al., 2014; Bahdanau et al., 2015; Wu et al., 2016; Vaswani et al., 2017).",
+      "startOffset" : 129,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 18,
+      "context" : "This makes it challenging when we train such a model in low-resource scenarios (Koehn and Knowles, 2017).",
+      "startOffset" : 79,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 29,
+      "context" : "Among these are data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017), transfer learning (Zoph et al.",
+      "startOffset" : 34,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 4,
+      "context" : "Among these are data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017), transfer learning (Zoph et al.",
+      "startOffset" : 34,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 8,
+      "context" : "Among these are data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017), transfer learning (Zoph et al.",
+      "startOffset" : 34,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2017), transfer learning (Zoph et al., 2016; Kocmi and Bojar, 2018), and pre-trained models (Peters et al.",
+      "startOffset" : 27,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2017), transfer learning (Zoph et al., 2016; Kocmi and Bojar, 2018), and pre-trained models (Peters et al.",
+      "startOffset" : 27,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2016; Kocmi and Bojar, 2018), and pre-trained models (Peters et al., 2018; Devlin et al., 2019).",
+      "startOffset" : 55,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2016; Kocmi and Bojar, 2018), and pre-trained models (Peters et al., 2018; Devlin et al., 2019).",
+      "startOffset" : 55,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 2,
+      "context" : "More systematic studies on this issue can be found in recent papers (Bengio et al., 2009; Kumar et al., 2010; Shrivastava et al., 2016).",
+      "startOffset" : 68,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 20,
+      "context" : "More systematic studies on this issue can be found in recent papers (Bengio et al., 2009; Kumar et al., 2010; Shrivastava et al., 2016).",
+      "startOffset" : 68,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 32,
+      "context" : "More systematic studies on this issue can be found in recent papers (Bengio et al., 2009; Kumar et al., 2010; Shrivastava et al., 2016).",
+      "startOffset" : 68,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 2,
+      "context" : "This agrees with the idea of curriculum learning (Bengio et al., 2009) in that an easy-to-hard learning strategy can yield better convergence for training.",
+      "startOffset" : 49,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 41,
+      "context" : "Several research groups have applied it to large-scale translation tasks although few of them discuss the issue in a low-resource setup (Zhang et al., 2018; Platanios et al., 2019; Liu et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 27,
+      "context" : "Several research groups have applied it to large-scale translation tasks although few of them discuss the issue in a low-resource setup (Zhang et al., 2018; Platanios et al., 2019; Liu et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 22,
+      "context" : "Several research groups have applied it to large-scale translation tasks although few of them discuss the issue in a low-resource setup (Zhang et al., 2018; Platanios et al., 2019; Liu et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 41,
+      "context" : "Researchers have implicitly modeled this issue by hand-crafted curriculum schedules (Zhang et al., 2018) or simple functions (Platanios et al.",
+      "startOffset" : 84,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2018) or simple functions (Platanios et al., 2019), whereas there has no in-depth discussion on it yet.",
+      "startOffset" : 28,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 29,
+      "context" : "Data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017) alleviates this problem by generating pseudo parallel data.",
+      "startOffset" : 18,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 4,
+      "context" : "Data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017) alleviates this problem by generating pseudo parallel data.",
+      "startOffset" : 18,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 8,
+      "context" : "Data augmentation (Sennrich et al., 2016a; Cheng et al., 2016; Fadaee et al., 2017) alleviates this problem by generating pseudo parallel data.",
+      "startOffset" : 18,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 46,
+      "context" : "A large amount of auxiliary parallel corpus from other related language pairs can be used to pre-train model parameters and transfer to target language pair (Zoph et al., 2016; Chen et al., 2017; Gu et al., 2018a; Gu et al., 2018b; Kocmi and Bojar, 2018).",
+      "startOffset" : 157,
+      "endOffset" : 254
+    }, {
+      "referenceID" : 3,
+      "context" : "A large amount of auxiliary parallel corpus from other related language pairs can be used to pre-train model parameters and transfer to target language pair (Zoph et al., 2016; Chen et al., 2017; Gu et al., 2018a; Gu et al., 2018b; Kocmi and Bojar, 2018).",
+      "startOffset" : 157,
+      "endOffset" : 254
+    }, {
+      "referenceID" : 10,
+      "context" : "A large amount of auxiliary parallel corpus from other related language pairs can be used to pre-train model parameters and transfer to target language pair (Zoph et al., 2016; Chen et al., 2017; Gu et al., 2018a; Gu et al., 2018b; Kocmi and Bojar, 2018).",
+      "startOffset" : 157,
+      "endOffset" : 254
+    }, {
+      "referenceID" : 11,
+      "context" : "A large amount of auxiliary parallel corpus from other related language pairs can be used to pre-train model parameters and transfer to target language pair (Zoph et al., 2016; Chen et al., 2017; Gu et al., 2018a; Gu et al., 2018b; Kocmi and Bojar, 2018).",
+      "startOffset" : 157,
+      "endOffset" : 254
+    }, {
+      "referenceID" : 17,
+      "context" : "A large amount of auxiliary parallel corpus from other related language pairs can be used to pre-train model parameters and transfer to target language pair (Zoph et al., 2016; Chen et al., 2017; Gu et al., 2018a; Gu et al., 2018b; Kocmi and Bojar, 2018).",
+      "startOffset" : 157,
+      "endOffset" : 254
+    }, {
+      "referenceID" : 26,
+      "context" : "Pre-trained language models trained with a large amount of monolingual data (Peters et al., 2018; Devlin et al., 2019) improve the quality of NMT model significantly (Clinchant et al.",
+      "startOffset" : 76,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 6,
+      "context" : "Pre-trained language models trained with a large amount of monolingual data (Peters et al., 2018; Devlin et al., 2019) improve the quality of NMT model significantly (Clinchant et al.",
+      "startOffset" : 76,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2019) improve the quality of NMT model significantly (Clinchant et al., 2019; Yang et al., 2020; Zhu et al., 2020).",
+      "startOffset" : 55,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2019) improve the quality of NMT model significantly (Clinchant et al., 2019; Yang et al., 2020; Zhu et al., 2020).",
+      "startOffset" : 55,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 45,
+      "context" : ", 2019) improve the quality of NMT model significantly (Clinchant et al., 2019; Yang et al., 2020; Zhu et al., 2020).",
+      "startOffset" : 55,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 2,
+      "context" : "2 Curriculum Learning Curriculum learning (Bengio et al., 2009) is motivated by the learning strategy of biological organisms which orders the training samples in an easy-to-hard manner (Elman, 1993).",
+      "startOffset" : 42,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2009) is motivated by the learning strategy of biological organisms which orders the training samples in an easy-to-hard manner (Elman, 1993).",
+      "startOffset" : 130,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 2,
+      "context" : "Curriculum learning has been applied to several tasks, including language model (Bengio et al., 2009), image classification (Weinshall et al.",
+      "startOffset" : 80,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2009), image classification (Weinshall et al., 2018), and human attribute analysis (Wang et al.",
+      "startOffset" : 30,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2018), and human attribute analysis (Wang et al., 2019b).",
+      "startOffset" : 38,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 36,
+      "context" : "In addition, the spirit of curriculum learning has been widely used in the NMT, such as data selection (Wang et al., 2019a; Zhao et al., 2020), non-autoregressive NMT (Guo et al.",
+      "startOffset" : 103,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 43,
+      "context" : "In addition, the spirit of curriculum learning has been widely used in the NMT, such as data selection (Wang et al., 2019a; Zhao et al., 2020), non-autoregressive NMT (Guo et al.",
+      "startOffset" : 103,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2020), non-autoregressive NMT (Guo et al., 2020), domain adaptation (Zhang et al.",
+      "startOffset" : 32,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 27,
+      "context" : "Two sub-questions (Platanios et al., 2019) in curriculum learning are separated to determine the training data Dt train:",
+      "startOffset" : 18,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 35,
+      "context" : "While the loss shows the level that the current model can handle this sample, there also suffers from two drawbacks (Wang et al., 2018).",
+      "startOffset" : 116,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 25,
+      "context" : "While the loss of development set is an optional method, the sentence-level evaluation metric BLEU (Papineni et al., 2002) presents more superiorities (Shen et al.",
+      "startOffset" : 99,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2002) presents more superiorities (Shen et al., 2016).",
+      "startOffset" : 36,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 23,
+      "context" : "Large batches have demonstrated better performance in high-resource NMT tasks due to the lower gradient noise scale (Ott et al., 2018; Popel and Bojar, 2018).",
+      "startOffset" : 116,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 28,
+      "context" : "Large batches have demonstrated better performance in high-resource NMT tasks due to the lower gradient noise scale (Ott et al., 2018; Popel and Bojar, 2018).",
+      "startOffset" : 116,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 13,
+      "context" : "However, this method degrades the performance in low-resource tasks due to poorer generalization (Keskar et al., 2017).",
+      "startOffset" : 97,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 14,
+      "context" : "The dominant NMT batches the samples with similar lengths to speed training up (Khomenko et al., 2017).",
+      "startOffset" : 79,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 16,
+      "context" : "The deterministic curriculum (Kocmi and Bojar, 2017) arranges the training samples with fixed order and performs worse due to lacking randomization.",
+      "startOffset" : 29,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 27,
+      "context" : "The probabilistic curriculum (Platanios et al., 2019) generates a batch uniformly sampled from the training set based on sample difficulty and model competence.",
+      "startOffset" : 29,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 19,
+      "context" : "For other language pairs, we apply the same tokenization using Moses scripts (Koehn et al., 2007).",
+      "startOffset" : 77,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 30,
+      "context" : "We learn Byte-Pair Encoding (Sennrich et al., 2016b) subword segmentation with 10,000 merge operations for IWSLT datasets and 32,000 merge operations for WMT dataset.",
+      "startOffset" : 28,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 24,
+      "context" : "2 Model Settings In all experiments, we use the fairseq (Ott et al., 2019)4 implementation of the Transformer.",
+      "startOffset" : 56,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 15,
+      "context" : "We use the Adam optimizer (Kingma and Ba, 2015) with β1 = 0.",
+      "startOffset" : 26,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 25,
+      "context" : "We evaluate the development set at every epoch during training by decoding using greedy search and calculate the BLEU5 (Papineni et al., 2002) score.",
+      "startOffset" : 119,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 27,
+      "context" : "• Heuristic metrics: Source sentence length (Length) and source word rarity (Rarity) (Platanios et al., 2019).",
+      "startOffset" : 85,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 27,
+      "context" : "• Functional forms: Linear (Linear) and square root (Sqrt) model competence (Platanios et al., 2019).",
+      "startOffset" : 76,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 27,
+      "context" : "However, the Sqrt competence function does not perform better than the Linear function in all datasets, this is not consistent with the previous conclusion (Platanios et al., 2019).",
+      "startOffset" : 156,
+      "endOffset" : 180
+    } ],
+    "year" : 2020,
+    "abstractText" : "Large amounts of data has made neural machine translation (NMT) a big success in recent years. But it is still a challenge if we train these models on small-scale corpora. In this case, the way of using data appears to be more important. Here, we investigate the effective use of training data for low-resource NMT. In particular, we propose a dynamic curriculum learning (DCL) method to reorder training samples in training. Unlike previous work, we do not use a static scoring function for reordering. Instead, the order of training samples is dynamically determined in two ways loss decline and model competence. This eases training by highlighting easy samples that the current model has enough competence to learn. We test our DCL method in a Transformerbased system. Experimental results show that DCL outperforms several strong baselines on three low-resource machine translation benchmarks and different sized data of WMT’16 En-De.",
+    "creator" : "TeX"
+  }
+}

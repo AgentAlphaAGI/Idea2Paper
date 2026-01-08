@@ -1,0 +1,892 @@
+{
+  "name" : "ACL_2017_388_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "1 ACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "The Universal Dependencies (UD) initiative seeks to develop cross-linguistically consistent annotation guidelines as well as a large number of uniformly annotated treebanks for many languages.1 Such resources could advance multilingual applications of parsing, improve comparability of evaluation results, enable cross-lingual learning, and more generally support natural language understanding.\nSeeking to exploit the benefits of UD for natural language understanding, we introduce UDEPLAMBDA, a semantic interface for UD that maps\n1http://www.universaldependencies.org/.\nnatural language to logical forms, representing underlying predicate-argument structures, in an almost language-independent manner. Our framework is based on DEPLAMBDA (Reddy et al., 2016) a recently developed method that converts English Stanford Dependencies (SD) to logical forms. The conversion process is illustrated in Figure 1 and discussed in more detail in Section 2. Whereas DEPLAMBDA works only for English, UDEPLAMBDA applies to any language for which UD annotations are available.2 In this paper, we describe the rationale behind UDEPLAMBDA and highlight important differences from DEPLAMBDA, some of which stem from the different treatment of various linguistic constructions in UD.\nOur experiments focus on semantic parsing as a testbed for evaluating the framework’s multilingual appeal. We address the task of learning to map natural language to machine interpretable formal meaning representations, specifically retrieving answers to questions from Freebase. To facilitate multilingual evaluation, we provide translations of the English WebQuestions (Berant et al., 2013) and GraphQuestions (Su et al., 2016) datasets to German and Spanish. We demonstrate that UDEPLAMBDA can be used to derive logical forms for these languages using a minimal amount of language-specific knowledge. Aside from developing the first multilingual semantic parsing tool for Freebase, we also experimentally show that UDEPLAMBDA outperforms strong baselines across languages and datasets. For English, it achieves the strongest result to date on GraphQuestions, with competitive results on WebQuestions. Beyond semantic parsing, we believe that the logical forms produced by our framework will be of use in various natural understanding tasks including entailment (Beltagy et al., 2016), text-based question\n2As of v1.3, UD annotations are available for 47 languages.\n2\nACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. answering (Lewis and Steedman, 2013), sentence simplification (Narayan and Gardent, 2014), summarization (Liu et al., 2015), paraphrasing (Pavlick et al., 2015), and relation extraction (Rocktäschel et al., 2015). Our implementation and translated datasets will be made publicly available."
+    }, {
+      "heading" : "2 DEPLAMBDA",
+      "text" : "Before describing UDEPLAMBDA, we provide an overview of DEPLAMBDA (Reddy et al., 2016) on which our approach is based. DEPLAMBDA converts a dependency tree to its logical form in three steps: binarization, substitution, and composition, each of which is briefly outlined below. Binarization A dependency tree is first mapped to a Lisp-style s-expression indicating the order of semantic composition. Figure 1(b) shows the s-expression for the sentence Disney won an Oscar for the movie Frozen, derived from the dependency tree in Figure 1(a). Here, the sub-expression (dobj won (det Oscar an)) indicates that the logical form of the phrase won an Oscar is derived by composing the logical form of the label dobj with the logical form of the word won and the logical form of the phrase an Oscar, derived analogously. An obliqueness hierarchy is employed to impose a strict ordering on the modifiers to each head in the dependency tree. As an example, won has three modifiers in Figure 1(a), which according to the obliqueness hierarchy are composed in the order dobj> nmod> nsubj. In constructions like coordination, this ordering is crucial to arrive at the correct semantics (see Section 3.3). Substitution Each symbol in the s-expressions is substituted for a lambda expression encoding its semantics. Words and dependency labels are assigned different types of expressions. In general, words have expressions of the following kind: ENTITY ⇒ λx.word(xa); e.g. Oscar⇒ λx.Oscar(xa) EVENT ⇒ λx.word(xe); e.g. won⇒ λx.won(xe) FUNCTIONAL⇒ λx.TRUE; e.g. an⇒ λx.TRUE Here, the subscripts ·a and ·e denote the types of individuals (Ind) and events (Event), respectively, whereas x denotes a paired variable (xa,xe) of type Ind×Event. Roughly speaking, proper nouns and adjectives invoke ENTITY expressions, verbs and adverbs invoke EVENT expressions, and common nouns invoke both ENTITY and EVENT expressions (see Section 3.3), while remaining words invoke FUNCTIONAL expressions. As in DEPLAMBDA,\nDisney won an Oscar for the movie Frozen propn verb det propn adp det noun propn nsubj dobj nmod det case det compound root (a) The dependency tree for Disney won an Oscar for the movie Frozen in the Universal Dependencies formalism. (nsubj (nmod (dobj won (det Oscar an)) (case (det (comp. Frozen movie) the) for)) Disney) (b) The binarized s-expression for the dependency tree. λx.∃yzw.won(xe)∧Disney(ya)∧Oscar(za) ∧Frozen(wa)∧ movie(wa) ∧arg1(xe,ya)∧ arg2(xe,za)∧ nmod.for(xe,wa) (c) The composed lambda-calculus expression.\nFigure 1: The mapping of a dependency tree to its logical form with the intermediate s-expression.\nwe enforce the constraint that every s-expression is of the type η = Ind×Event → Bool, which simplifies the type system considerably. Expressions for dependency labels glue the semantics of heads and modifiers to articulate predicate-argument structure. These expressions in general take one of the following forms: COPY ⇒ λ f gx.∃y. f (x)∧g(y)∧ rel(x,y) e.g. nsubj, dobj, nmod, advmod INVERT ⇒ λ f gx.∃y. f (x)∧g(y)∧ reli(y,x) e.g. amod, acl MERGE ⇒ λ f gx. f (x)∧g(x) e.g. compound, appos, amod, acl HEAD ⇒ λ f gx. f (x) e.g. case, punct, aux, mark . As an example of COPY, consider the lambda expression for dobj in (dobj won (det Oscar an)): λ f gx.∃y. f (x)∧ g(y)∧ arg2(xe,ya). This expression takes two functions f and g as input, where f represents the logical form of won and g represents the logical form of an Oscar. The predicateargument structure arg2(xe,ya) indicates that the arg2 of the event xe, i.e. won, is the individual ya, i.e. the entity Oscar. Since arg2(xe,ya) mimics the dependency structure dobj(won, Oscar), we refer to the expression kind evoked by dobj as COPY. Expressions that invert the dependency direction are referred to as INVERT (e.g. amod in running horse); expressions that merge two subexpressions without introducing any relation predicates are referred to as MERGE (e.g. compound in movie Frozen); and expressions that simply return the parent expression semantics are referred to as HEAD\n3\nACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. (e.g. case in for Frozen). While this generalization applies to most dependency labels, several labels take a different logical form not listed here, some of which are discussed in Section 3.3. Sometimes the mapping of dependency label to lambda expression may depend on surrounding part-of-speech tags or dependency labels. For example, amod acts as INVERT when the modifier is a verb (e.g. in running horse), and as MERGE when the modifier is an adjective (e.g. in beautiful horse).3 Composition The final logical form is computed by beta-reduction, treating expressions of the form\n(f x y) as the function f applied to the arguments x and y. For example, (dobj won (det Oscar an)) results in λx.∃z.won(xe)∧Oscar(za)∧ arg2(xe,za) when the expression for dobj is applied to those for won and (det Oscar an). Figure 1(c) shows the logical form for the s-expression in Figure 1(b)."
+    }, {
+      "heading" : "3 UDEPLAMBDA",
+      "text" : "We now introduce UDEPLAMBDA, a semantic interface for Universal Dependencies.4 Whereas DEPLAMBDA only applies to English Stanford Dependencies, UDEPLAMBDA takes advantage of the cross-lingual nature of UD to facilitate an (almost) language independent semantic interface. This is accomplished by restricting the binarization, substitution, and composition steps described above to rely solely on information encoded in the UD representation. Importantly, UDEPLAMBDA is designed to not rely on lexical forms in a language to assign lambda expressions, but only on information contained in dependency labels and postags. However, some linguistic phenomena are language specific (e.g. pronoun-dropping) or meaning specific (e.g. every and the in English have very different semantics, despite being both determiners) and are not encoded in the UD schema. Furthermore, some cross-linguistic phenomena, such as long-distance dependencies, are not part of the core UD representation. To circumvent this limitation, a simple enhancement step enriches the original UD representation before binarization takes place (Section 3.1). This step adds to the dependency tree missing syntactic information and long-distance dependencies, thereby creating a 3We use Tregex (Levy and Andrew, 2006) for substitution mappings and Cornell SPF (Artzi, 2013) as the lambdacalculus implementation. For example, in running horse, the tregex /label:amod/=target < /postag:verb/ matches amod to its INVERT expression λ f gx.∃y. f (x)∧g(y)∧ amodi(ye,xa). 4In what follows, all references to UD are to UD v1.3.\nAnna wants to marry Kristoff nsubj xcomp mark dobj nsubj (a) With long-distance dependency. Anna wants to marry Kristoff Ω Ω nsubj xcomp mark dobj bind nsubj (b) With variable binding.\nFigure 2: The original and enhanced dependency trees for Anna wants to marry Kristoff.\ngraph. Whereas DEPLAMBDA is not able to handle graph-structured input, UDEPLAMBDA is designed to work directly with dependency graphs (Section 3.2). Finally, the representation of several linguistic constructions differ between UD and SD, which requires different handling in the semantic interface (Section 3.3)."
+    }, {
+      "heading" : "3.1 Enhancement",
+      "text" : "Both Schuster and Manning (2016) and Nivre et al. (2016) note the necessity of an enhanced UD representation to enable semantic applications. However, such enhancements are currently only available for a subset of languages in UD. Instead, we rely on a small number of enhancements for our main application—semantic parsing for questionanswering—with the hope that this step can be replaced by an enhanced UD representation in the future. Specifically, we define three kinds of enhancements: (1) long-distance dependencies; (2) types of coordination; and (3) refined question word tags. First, we identify long-distance dependencies in relative clauses and control constructions. We follow Schuster and Manning (2016) and find these using the labels acl (relative) and xcomp (control). Figure 2(a) shows the long-distance dependency in the sentence Anna wants to marry Kristoff. Here, marry is provided with its missing nsubj (dashed arc). Second, UD conflates all coordinating constructions to a single dependency label, conj. To obtain the correct coordination scope, we refine conj to conj:verb, conj:vp, conj:sentence, conj:np, and conj:adj, similar to Reddy et al. (2016). Finally, unlike the PTB tags (Marcus et al., 1993) used by SD, the UD part-of-speech tags do\n4 ACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. not distinguish question words. Since these are crucial to question-answering, we use a small lexicon to refine the tags for determiners (DET), adverbs (ADV) and pronouns (PRON) to DET:WH, ADV:WH and PRON:WH, respectively. Specifically, we use a list of 12 (English), 14 (Spanish) and 35 (German) words, respectively. This is the only part of UDEPLAMBDA that relies on language-specific information. We hope that, as the coverage of morphological features in UD improves, this refinement can be replaced by relying on morphological features, such as the interrogative feature (INT)."
+    }, {
+      "heading" : "3.2 Graph Structures and BIND",
+      "text" : "To handle graph structures that may result from the enhancement step, such as those in Figure 2(a), we propose a variable-binding mechanism that differs from that of DEPLAMBDA. First, each longdistance dependency is split into independent arcs as shown in Figure 2(b). Here, Ω is a placeholder for the subject of marry, which in turn corresponds to Anna as indicated by the binding of Ω via the pseudo-label BIND. We treat BIND like an ordinary dependency label with semantics MERGE and process the resulting tree as usual, via the s-expression: (nsubj (xcomp wants (nsubj (mark (dobj marry Kristoff) to) Ω) (BIND Anna Ω)) , with the lambda-expression substitutions: wants, marry ∈ EVENT; to ∈ FUNCTIONAL; Anna, Kristoff ∈ ENTITY; mark ∈ HEAD; BIND ∈ MERGE; xcomp = λ f gx.∃y. f (x)∧g(y)∧xcomp(xe,ye) . These substitutions are based solely on unlexicalized context. For example, the part-of-speech tag PROPN of Anna invokes an ENTITY expression. The placeholder Ω has semantics λx.EQ(x,ω), where EQ(u,ω) is true iff u and ω are equal (have the same denotation), which unifies the subject variable of wants with the subject variable of marry. After substitution and composition, we get: λz.∃xywv.wants(ze)∧Anna(xa)∧ arg1(ze,xa)∧ EQ(x,ω) ∧marry(ye)∧xcomp(ze,ye)∧ arg1(ye,va)∧ EQ(v,ω) ∧ Kristoff(wa)∧ arg2(ye,wa) , This expression may be simplified further by replacing all occurrences of v with x and removing the unification predicates EQ, which results in: λz.∃xyw.wants(ze)∧Anna(xa)∧ arg1(ze,xa) ∧marry(ye)∧xcomp(ze,ye)∧ arg1(ye,xa) ∧ Kristoff(wa)∧ arg2(ye,wa) . This expression encodes the fact that Anna is the arg1 of the marry event, as desired. DEPLAMBDA, in contrast, cannot handle graph-structured input, since it lacks a principled way of generating sexpressions from graphs. Even given the above s-expression, BIND in DEPLAMBDA is defined in a way such that the composition fails to unify v and x, which is crucial for the correct semantics. Moreover, the definition of BIND in DEPLAMBDA does not have a formal interpretation within the lambda calculus, unlike ours."
+    }, {
+      "heading" : "3.3 Linguistic Constructions",
+      "text" : "Below, we highlight the most pertinent differences between UDEPLAMBDA and DEPLAMBDA, stemming from the different treatment of various linguistic constructions in UD versus SD. Prepositional Phrases UD uses a content-head analysis, in contrast to SD, which treats function words as heads of prepositional phrases, Accordingly, the s-expression for the phrase president in 2009 is (nmod president (case 2009 in)) in UDEPLAMBDA and (prep president (pobj in 2009)) in DEPLAMBDA. To achieve the desired semantics, λx.∃y.president(xa)∧president event(xe)∧ arg1(xe,xa)∧2009(ya)∧prep.in(xe,ya) , DEPLAMBDA relies on an intermediate logical form that requires some post-processing, whereas UDEPLAMBDA obtains the desired logical form directly through the following entries: in ∈ FUNCTIONAL; 2009 ∈ ENTITY; case ∈ HEAD; president = λx.president(xa)∧president event(xe) ∧arg1(xe,xa) ; nmod = λ f gx.∃y. f (x)∧g(y)∧nmod.in(xe,ya) . Other nmod constructions, such as possessives (nmod:poss), temporal modifiers (nmod:tmod) and adverbial modifiers (nmod:npmod), are handled similarly. Note how the common noun president, evokes both entity and event predicates above. Passives DEPLAMBDA gives special treatment to passive verbs, identified by the fine-grained partof-speech tags in the PTB tag together with dependency context. For example, An Oscar was won is analyzed as λx.won.pass(xe)∧Oscar(ya)∧ arg1(xe,ya), where won.pass represents a passive event. However, UD does not distinguish between active and passive forms.5 While the labels nsubjpass or auxpass indicate passive constructions, such clues are sometimes missing, such as in reduced relatives. We therefore opt to not have separate entries for passives, but aim to produce identical logical forms for active and passive forms when 5UD encodes voice as a morphological feature, but most syntactic analyzers do not produce this information yet.\n5\nACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. language target people x e1 y e2 Ghana speak .arg2 speak .arg1 people .arg1 people .nmod.in typ e typ e (a) English sprache target x e1 Ghana gesprochen .arg2 gesprochen .nmod.in typ e (b) German lengua target x e1 Ghana lengua .arg1 lengua .nmod.de typ e (c) Spanish language .human language\ntarget\nx m Ghana location.country\n.official language.2 location.country .official language.1\ntyp e\n(d) Freebase\nFigure 3: The ungrounded graphs for What language do the people in Ghana speak?, Welche Sprache wird in Ghana gesprochen? and Cuál es la lengua de Ghana?, and the corresponding grounded graph.\npossible (for example, by treating nsubjpass as direct object). With the following entries, won ∈ EVENT; an, was ∈ FUNCTIONAL; auxpass ∈ HEAD; nsubjpass = λ f gx.∃y. f (x)∧g(y)∧ arg2(xe,ya) ,\nthe lambda expression for An Oscar was won becomes λx.won(xe)∧Oscar(ya)∧arg2(xe,ya), identical to that of its active form. However, not having a special entry for passive verbs may have undesirable side-effects. For example, in the reducedrelative construction Pixar claimed the Oscar won for Frozen, the phrase the Oscar won ... will receive the semantics λx.Oscar(ya)∧won(xe)∧ arg1(xe,ya), which differs from that of an Oscar was won. We leave it to the target application to disambiguate the interpretation in such cases.\nLong-Distance Dependencies As discussed in Section 3.2, we handle long-distance dependencies evoked by clausal modifiers (acl) and control verbs (xcomp) with the BIND mechanism, whereas DEPLAMBDA cannot handle control constructions. For xcomp, as seen earlier, we use the mapping λ f gx.∃y. f (x)∧g(y)∧xcomp(xe,ye). For acl we use λ f gx.∃y. f (x)∧ g(y), to conjoin the main clause and the modifier clause. However, not all acl clauses evoke long-distance dependencies, e.g. in the news that Disney won an Oscar, the clause that Disney won an Oscar is a subordinating conjunction of news. In such cases, we instead assign acl the INVERT semantics.\nQuestions Question words are marked with the enhanced part-of-speech tags DET:WH, ADV:WH and PRON:WH, which are all assigned the semantics λx.${word}(xa)∧ TARGET(xa). The predicate TARGET indicates that xa represents the variable of interest, that is the answer to the question."
+    }, {
+      "heading" : "3.4 Limitations",
+      "text" : "In order to achieve language independence, UDEPLAMBDA has to sacrifice semantic specificity, since in many cases the semantics is carried by lexical information. Consider the sentences John broke the\nwindow and The window broke. Although it is the window that broke in both cases, our inferred logical forms do not canonicalize the relation between broke and window. To achieve this, we would have to make the substitution of nsubj depend on lexical context, such that when window occurs as nsubj with broke, the predicate arg2 is invoked rather than arg1. We do not address this problem, and leave it to the target application to infer that arg2 and arg1 have the same semantic function in these cases. We anticipate that the ability to make such lexicalized semantic inferences in a task-agnostic cross-lingual framework would be highly useful and a crucial avenue for future work on universal semantics.\nOther constructions that require lexical information are quantifiers like every, some and most, negation markers like no and not, and intentional verbs like believe and said. UD does not have special labels to indicate these. Although not currently implemented, we discuss how to handle quantifiers in this framework in the supplementary material."
+    }, {
+      "heading" : "4 Cross-lingual Semantic Parsing",
+      "text" : "To study the multilingual nature of UDEPLAMBDA, we conduct an empirical evaluation on question answering against Freebase in three different languages: English, Spanish, and German. Before discussing the details of this experiment, we briefly outline the semantic parsing framework employed."
+    }, {
+      "heading" : "4.1 Semantic Parsing as Graph Matching",
+      "text" : "UDEPLAMBDA generates ungrounded logical forms that are independent of any knowledge base, such as Freebase. We use GRAPHPARSER (Reddy et al., 2016) to map these logical forms to their grounded Freebase graphs, via corresponding ungrounded graphs. Figures 3(a) to 3(c) show the ungrounded graphs corresponding to logical forms from UDEPLAMBDA, each grounded to the same Freebase graph in Figure 3(d). Here, rectangles denote entities, circles denote events, rounded rectangles denote entity types, and edges between events\n6\nACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. WebQuestions en What language do the people in Ghana speak? de Welche Sprache wird in Ghana gesprochen? es ¿Cuál es la lengua de Ghana? en Who was Vincent van Gogh inspired by?\nde Von wem wurde Vincent van Gogh inspiriert? es ¿Qué inspiró a Van Gogh? GraphQuestions en NASA has how many launch sites? de Wie viele Abschussbasen besitzt NASA? es ¿Cuántos sitios de despegue tiene NASA? en Which loudspeakers are heavier than 82.0 kg? de Welche Lautsprecher sind schwerer als 82.0 kg? es ¿Qué altavoces pesan más de 82.0 kg?\nTable 1: Example questions and their translations.\nand entities denote predicates or Freebase relations. Finally, the TARGET node represents the set of values of x that are consistent with the Freebase graph, that is the answer to the question. GRAPHPARSER treats semantic parsing as a graph-matching problem with the goal of finding the Freebase graphs that are structurally isomorphic to an ungrounded graph and rank them according to a model. To account for structural mismatches, GRAPHPARSER uses two graph transformations: CONTRACT and EXPAND. In Figure 3(a) there are two edges between x and Ghana. CONTRACT collapses one of these edges to create a graph isomorphic to Freebase. EXPAND, in contrast, adds edges to connect the graph in the case of disconnected components. The search space is explored by beam search and model parameters are estimated with the averaged structured perceptron (Collins, 2002) from training data consisting of question-answer pairs, using answer F1-score as the objective."
+    }, {
+      "heading" : "4.2 Datasets",
+      "text" : "We evaluate our approach on two public benchmarks of question answering against Freebase: WebQuestions (Berant et al., 2013), a widely used benchmark consisting of English questions and their answers, and GraphQuestions (Su et al., 2016), a recently released dataset of English questions with both their answers and grounded logical forms. While WebQuestions is dominated by simple entityattribute questions, GraphQuestions contains a large number of compositional questions involving aggregation (e.g. How many children of Eddard Stark were born in Winterfell? ) and comparison (e.g. In which month does the average rainfall of\nk WebQuestions GraphQuestions en de es en de es 1 89.6 82.8 86.7 47.2 39.9 39.5 10 95.7 91.2 94.0 56.9 48.4 51.6\nTable 2: Structured perceptron k-best entity linking accuracies on the development sets.\nNew York City exceed 86 mm? ). The number of training, development and test questions is 2644, 1134, and 2032, respectively, for WebQuestions and 1794, 764, and 2608 for GraphQuestions. To support multilingual evaluation, we created translations of WebQuestions and GraphQuestions to German and Spanish.6 For WebQuestions two professional annotators were hired per language, while for GraphQuestions we used a trusted pool of 20 annotators per language (with a single annotator per question). Examples of the original questions and their translations are provided in Table 1."
+    }, {
+      "heading" : "4.3 Implementation Details",
+      "text" : "Here we provide details on the syntactic analyzers employed, our entity resolution algorithm, and the features used by the grounding model. Dependency Parsing The English, Spanish, and German Universal Dependencies (UD) treebanks (v1.3; Nivre et al 2016) were used to train part of speech taggers and dependency parsers. We used a bidirectional LSTM tagger (Plank et al., 2016) and a bidirectional LSTM shift-reduce parser (Kiperwasser and Goldberg, 2016). Both the tagger and parser require word embeddings. For English, we used GloVe embeddings (Pennington et al., 2014) trained on Wikipedia and the Gigaword corpus.7 For German and Spanish, we used SENNA embeddings (Collobert et al., 2011; Al-Rfou et al., 2013) trained on Wikipedia corpora (589M words German; 397M words Spanish).8 Measured on the UD test sets, the tagger accuracies are 94.5 (English), 92.2 (German), and 95.7 (Spanish), with corresponding labeled attachment parser scores of 81.8, 74.7, and 82.2. Entity Resolution We follow Reddy et al. (2016) and resolve entities in three steps: (1) potential entity spans are identified using seven handcrafted part-of-speech patterns; (2) each span is associated 6Translations will be publicly released upon publication. 7http://nlp.stanford.edu/projects/glove/. 8https://sites.google.com/site/rmyeid/projects/polyglot.\n7\nACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. WebQuestions GraphQuestions Method en de es en de es SINGLEEVENT 47.6 43.9 45.0 15.9 8.3 11.2 DEPTREE 47.8 43.9 44.5 15.8 7.9 11.0 CCGGRAPH 48.4 – – 15.9 – – UDEPLAMBDA 48.3 44.2 45.7 17.6 9.0 12.4\nTable 3: F1-scores on the test for models trained on the training set (excluding the development set).\nwith potential Freebase entities according to the Freebase/KG API;9 and (3) the 10-best entity linking lattices, scored by a structured perceptron, are input to GRAPHPARSER, leaving the final disambiguation to the semantic parsing problem. Table 2 shows the 1-best and 10-best entity disambiguation F1-scores for each language and dataset.10 Features We use features similar to Reddy et al. (2016): basic features of words and Freebase relations, and graph features crossing ungrounded events with grounded relations, ungrounded types with grounded relations, and ungrounded answer type crossed with a binary feature indicating if the answer is a number. In addition, we add features encoding the semantic similarity of ungrounded events and Freebase relations. Specifically, we used the cosine similarity of the translation-invariant embeddings of Huang et al. (2015).11"
+    }, {
+      "heading" : "4.4 Comparison Systems",
+      "text" : "We compared UDEPLAMBDA to prior work and three versions of GRAPHPARSER that operate on different representations: entity cliques, dependency trees, and CCG-based semantic derivations. SINGLEEVENT This model resembles the learning-to-rank model of Bast and Haussmann (2015). An ungrounded graph is generated by connecting all entities in the question with the TARGET node, representing a single event. Note that this baseline cannot handle compositional questions, or those with aggregation or comparison. DEPTREE An ungrounded graph is obtained directly from the original dependency tree. An event is created for each parent and its dependents in the tree. Each dependent is linked to this event with an edge labeled with its dependency relation, while the 9http://developers.google.com/freebase/. 10Due to the recent Freebase API shutdown, we used the KG API for GraphQuestions. We observed that this leads to inferior entity linking results compared to those of Freebase. 11http://128.2.220.95/multilingual/data/.\nMethod GraphQ. WebQ. SEMPRE (Berant et al., 2013) 10.8 35.7 JACANA (Yao and Van Durme, 2014) 5.1 33.0 PARASEMPRE (Berant and Liang, 2014) 12.8 39.9 QA (Yao, 2015) – 44.3 AQQU (Bast and Haussmann, 2015) – 49.4 AGENDAIL (Berant and Liang, 2015) – 49.7 DEPLAMBDA (Reddy et al., 2016) – 50.3 STAGG (Yih et al., 2015) – 48.4 (52.5) BILSTM (Türe and Jojic, 2016) – 24.9 (52.2) MCNN (Xu et al., 2016) – 47.0 (53.3) AGENDAIL-RANK (Yavuz et al., 2016) – 51.6 (52.6) UDEPLAMBDA 17.6 49.5\nTable 4: F1-scores on the English GraphQuestions and WebQuestions test sets (results with additional task-specific resources in parentheses). Following prior work, for WebQuestions the union of the training and development sets were used for training.\nparent is linked to the event with an edge labeled arg0. If a word is a question word, an additional TARGET predicate is attached to its entity node. CCGGRAPH This is the CCG-based semantic representation of Reddy et al. (2014). Note that this baseline exists only for English."
+    }, {
+      "heading" : "4.5 Results",
+      "text" : "Table 3 shows the performance of GRAPHPARSER with these different representations. Here and in what follows, we use average F1-score of predicted answers (Berant et al., 2013) as the evaluation metric. We first observe that UDEPLAMBDA consistently outperforms the SINGLEEVENT and DEPTREE representations in all languages.12 For English, performance is almost on par with CCGGRAPH, which suggests that UDEPLAMBDA does not sacrifice too much specificity for universality. With both datasets, results are lower for German compared to Spanish. This agrees with the lower performance of the syntactic parser on the German portion of the UD treebank. Finally, while these results confirm that GraphQuestions is much harder compared to WebQuestions, we note that both datasets predominantly contain single-hop questions, as indicated by the competitive performance of SINGLEEVENT on both datasets. Table 4 compares UDEPLAMBDA with previ12For the DEPTREE model, we CONTRACT each multihop path between the question word and an entity to a single edge. Without this constraint, DEPTREE F1 results are 45.5 (en), 42.9 (de), and 44.2 (es) on WebQuestions, and 11.0 (en), 6.6 (de), and 2.6 (es) on GraphQuestions.\n8 ACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE. ously published models which exist only for English and have been mainly evaluated on WebQuestions. These are either symbolic like ours (first block) or employ neural networks (second block). Results for models using additional task-specific training resources, such as ClueWeb09, Wikipedia, or SimpleQuestions (Bordes et al., 2015) are shown in parentheses. On GraphQuestions, we achieve a new state-of-the-art result with a gain of 4.8 F1points over the previously reported best result. On WebQuestions we are 2.1 points below the best model using comparable resources, and 3.8 points below the state of the art. Most related to our work is the English-specific system of Reddy et al. (2016). We attribute the 0.8 point difference in F1score to their use of the more fine-grained PTB tag set and Stanford Dependencies."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Our work continues the long tradition of building logical forms from syntactic representations initiated by Montague (1973). The literature is rife with attempts to develop semantic interfaces for HPSG (Copestake et al., 2005), LFG (Kaplan and Bresnan, 1982; Dalrymple et al., 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al., 2004; Artzi et al., 2015). Unlike existing semantic interfaces, UDEPLAMBDA (like DEPLAMBDA) uses dependency syntax, taking advantage of recent advances in multilingual parsing (McDonald et al., 2013; Nivre et al, 2016). A common trend in previous work on semantic interfaces is the reliance on rich typed feature structures or semantic types coupled with strong type constraints, which can be very informative but unavoidably language specific. Creating rich semantic types from dependency trees which lack a typing system would be labor intensive and brittle in the face of parsing errors. Instead, UDEPLAMBDA relies on generic unlexicalized information present in dependency treebanks and uses a simple type system (one type for dependency labels, and one for words) along with a combinatory mechanism, which avoids type collisions. Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al., 2010; Bédaride and Gardent, 2011). In contrast, UDEPLAMBDA derives semantic representations for multiple languages in a common schema directly from Universal Dependencies. This work parallels a growing interest in creating other forms of multilingual semantic representations (Akbik et al., 2015; Vanderwende et al., 2015; White et al., 2016; Evang and Bos, 2016). We evaluate UDEPLAMBDA on semantic parsing for question answering against a knowledge base. Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al., 2013; Reddy et al., 2014; Krishnamurthy and Mitchell, 2015; Gardner and Krishnamurthy, 2017). Our work belongs to the latter paradigm, as we map natural language to Freebase indirectly via logical forms. Capitalizing on natural-language syntax affords interpretability, scalability, and reduced duplication of effort across applications (Bender et al., 2015). Our work also relates to literature on parsing multiple languages to a common executable representation (Cimiano et al., 2013; Haas and Riezler, 2016). However, existing approaches (Kwiatkowksi et al., 2010; Jones et al., 2012; Jie and Lu, 2014) still map to the target meaning representations (more or less) directly."
+    }, {
+      "heading" : "6 Conclusions",
+      "text" : "We introduced UDEPLAMBDA, a semantic interface for Universal Dependencies, and showed that the resulting semantic representation can be used for question-answering against a knowledge base in multiple languages. We provided translations of benchmark datasets in German and Spanish, in the hope to stimulate further multilingual research on semantic parsing and question answering in general. We have only scratched the surface when it comes to applying UDEPLAMBDA to natural language understanding tasks. In the future, we would like to explore how this framework can benefit other tasks such as summarization and machine translation.\n9 ACL 2017 Submission 388. Confidential Review Copy. DO NOT DISTRIBUTE."
+    } ],
+    "references" : [ {
+      "title" : "Generating High Quality Proposition Banks for Multilingual Semantic Role Labeling",
+      "author" : [ "Alan Akbik", "laura chiticariu", "Marina Danilevsky", "Yunyao Li", "Shivakumar Vaithyanathan", "Huaiyu Zhu" ],
+      "venue" : "In Proceedings of the 53rd Annual Meeting of the Associ-",
+      "citeRegEx" : "Akbik et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Akbik et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Polyglot: Distributed Word Representations for Multilingual NLP",
+      "author" : [ "Rami Al-Rfou", "Bryan Perozzi", "Steven Skiena." ],
+      "venue" : "Proceedings of the Seventeenth Conference on Computational Natural Language Learning. Sofia, Bulgaria, pages 183–192.",
+      "citeRegEx" : "Al.Rfou et al\\.,? 2013",
+      "shortCiteRegEx" : "Al.Rfou et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Cornell SPF: Cornell Semantic Parsing Framework",
+      "author" : [ "Yoav Artzi." ],
+      "venue" : "arXiv:1311.3011 [cs.CL] .",
+      "citeRegEx" : "Artzi.,? 2013",
+      "shortCiteRegEx" : "Artzi.",
+      "year" : 2013
+    }, {
+      "title" : "Broad-coverage CCG Semantic Parsing with AMR",
+      "author" : [ "Yoav Artzi", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of Empirical Methods on Natural Language Processing. pages 1699–1710.",
+      "citeRegEx" : "Artzi et al\\.,? 2015",
+      "shortCiteRegEx" : "Artzi et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Coupling CCG and Hybrid Logic Dependency Semantics",
+      "author" : [ "Jason Baldridge", "Geert-Jan Kruijff." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 319–326.",
+      "citeRegEx" : "Baldridge and Kruijff.,? 2002",
+      "shortCiteRegEx" : "Baldridge and Kruijff.",
+      "year" : 2002
+    }, {
+      "title" : "More Accurate Question Answering on Freebase",
+      "author" : [ "Hannah Bast", "Elmar Haussmann." ],
+      "venue" : "Proceedings of ACM International Conference on Information and Knowledge Management. pages 1431– 1440.",
+      "citeRegEx" : "Bast and Haussmann.,? 2015",
+      "shortCiteRegEx" : "Bast and Haussmann.",
+      "year" : 2015
+    }, {
+      "title" : "Deep Semantics for Dependency Structures",
+      "author" : [ "Paul Bédaride", "Claire Gardent." ],
+      "venue" : "Proceedings of Conference on Intelligent Text Processing and Computational Linguistics. pages 277–288.",
+      "citeRegEx" : "Bédaride and Gardent.,? 2011",
+      "shortCiteRegEx" : "Bédaride and Gardent.",
+      "year" : 2011
+    }, {
+      "title" : "Natural Language Semantics Using Probabilistic Logic",
+      "author" : [ "Islam Beltagy." ],
+      "venue" : "Ph.D. thesis, Department of Computer Science, The University of Texas at Austin.",
+      "citeRegEx" : "Beltagy.,? 2016",
+      "shortCiteRegEx" : "Beltagy.",
+      "year" : 2016
+    }, {
+      "title" : "Representing meaning with a combination of logical and distributional models",
+      "author" : [ "Islam Beltagy", "Stephen Roller", "Pengxiang Cheng", "Katrin Erk", "Raymond J Mooney." ],
+      "venue" : "Computational Linguistics .",
+      "citeRegEx" : "Beltagy et al\\.,? 2016",
+      "shortCiteRegEx" : "Beltagy et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Layers of Interpretation: On Grammar and Compositionality",
+      "author" : [ "Emily M. Bender", "Dan Flickinger", "Stephan Oepen", "Woodley Packard", "Ann Copestake." ],
+      "venue" : "Proceedings of the 11th International Conference on Computational Semantics. Association",
+      "citeRegEx" : "Bender et al\\.,? 2015",
+      "shortCiteRegEx" : "Bender et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic Parsing on Freebase from Question-Answer Pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "Proceedings of Empirical Methods on Natural Language Processing. pages 1533–1544.",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Semantic Parsing via Paraphrasing",
+      "author" : [ "Jonathan Berant", "Percy Liang." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 1415–1425.",
+      "citeRegEx" : "Berant and Liang.,? 2014",
+      "shortCiteRegEx" : "Berant and Liang.",
+      "year" : 2014
+    }, {
+      "title" : "Imitation Learning of Agenda-Based Semantic Parsers",
+      "author" : [ "Jonathan Berant", "Percy Liang." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 3:545–558.",
+      "citeRegEx" : "Berant and Liang.,? 2015",
+      "shortCiteRegEx" : "Berant and Liang.",
+      "year" : 2015
+    }, {
+      "title" : "Large-scale simple question answering with memory networks",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "CoRR abs/1506.02075.",
+      "citeRegEx" : "Bordes et al\\.,? 2015",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "WideCoverage Semantic Representations from a CCG Parser",
+      "author" : [ "Johan Bos", "Stephen Clark", "Mark Steedman", "James R. Curran", "Julia Hockenmaier." ],
+      "venue" : "Proceedings of International Conference on Computational Linguistics. pages 1240–1246.",
+      "citeRegEx" : "Bos et al\\.,? 2004",
+      "shortCiteRegEx" : "Bos et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Multilingual question answering over linked data (QALD-3): Lab overview",
+      "author" : [ "Philipp Cimiano", "Vanessa Lopez", "Christina Unger", "Elena Cabrio", "Axel-Cyrille Ngonga Ngomo", "Sebastian Walter." ],
+      "venue" : "Information Access Evaluation. Multilinguality,",
+      "citeRegEx" : "Cimiano et al\\.,? 2013",
+      "shortCiteRegEx" : "Cimiano et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Discriminative Training Methods for Hidden Markov Models: Theory and Experiments with Perceptron Algorithms",
+      "author" : [ "Michael Collins." ],
+      "venue" : "Proceedings of Empirical Methods on Natural Language Processing. pages 1–8.",
+      "citeRegEx" : "Collins.,? 2002",
+      "shortCiteRegEx" : "Collins.",
+      "year" : 2002
+    }, {
+      "title" : "Natural language processing (almost) from scratch",
+      "author" : [ "Ronan Collobert", "Jason Weston", "Leon Bottou", "Michael Karlen", "Koray Kavukcuoglu", "Pavel Kuks." ],
+      "venue" : "Journal of Machine Learning Research 12:2493– 2537.",
+      "citeRegEx" : "Collobert et al\\.,? 2011",
+      "shortCiteRegEx" : "Collobert et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Minimal Recursion Semantics: An Introduction",
+      "author" : [ "Ann Copestake", "Dan Flickinger", "Carl Pollard", "Ivan A. Sag." ],
+      "venue" : "Research on Language and Computation 3(2-3):281–332.",
+      "citeRegEx" : "Copestake et al\\.,? 2005",
+      "shortCiteRegEx" : "Copestake et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "Semantics via f-structure rewriting",
+      "author" : [ "Dick Crouch", "Tracy Holloway King." ],
+      "venue" : "Proceedings of the LFG’06 Conference. CSLI Publications, page 145.",
+      "citeRegEx" : "Crouch and King.,? 2006",
+      "shortCiteRegEx" : "Crouch and King.",
+      "year" : 2006
+    }, {
+      "title" : "Linear Logic for Meaning Assembly",
+      "author" : [ "Mary Dalrymple", "John Lamping", "Fernando C.N. Pereira", "Vijay A. Saraswat." ],
+      "venue" : "Proceedings of Computational Logic for Natural Language Processing.",
+      "citeRegEx" : "Dalrymple et al\\.,? 1995",
+      "shortCiteRegEx" : "Dalrymple et al\\.",
+      "year" : 1995
+    }, {
+      "title" : "Cross-lingual Learning of an Open-domain Semantic Parser",
+      "author" : [ "Kilian Evang", "Johan Bos." ],
+      "venue" : "Proceedings of COLING 2016, the 26th International Conference on Computational Linguistics. The COLING 2016 Organizing Committee, Osaka,",
+      "citeRegEx" : "Evang and Bos.,? 2016",
+      "shortCiteRegEx" : "Evang and Bos.",
+      "year" : 2016
+    }, {
+      "title" : "Porting an Open Information Extraction System from English to German",
+      "author" : [ "Tobias Falke", "Gabriel Stanovsky", "Iryna Gurevych", "Ido Dagan." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing. Association",
+      "citeRegEx" : "Falke et al\\.,? 2016",
+      "shortCiteRegEx" : "Falke et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A Discriminative Graph-Based Parser for the Abstract Meaning Representation",
+      "author" : [ "Jeffrey Flanigan", "Sam Thomson", "Jaime Carbonell", "Chris Dyer", "Noah A. Smith." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 1426–1436.",
+      "citeRegEx" : "Flanigan et al\\.,? 2014",
+      "shortCiteRegEx" : "Flanigan et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Semantic Construction in Feature-based TAG",
+      "author" : [ "Claire Gardent", "Laura Kallmeyer." ],
+      "venue" : "Proceedings of European Chapter of the Association for Computational Linguistics. pages 123–130.",
+      "citeRegEx" : "Gardent and Kallmeyer.,? 2003",
+      "shortCiteRegEx" : "Gardent and Kallmeyer.",
+      "year" : 2003
+    }, {
+      "title" : "OpenVocabulary Semantic Parsing with both Distributional Statistics and Formal Knowledge",
+      "author" : [ "Matt Gardner", "Jayant Krishnamurthy." ],
+      "venue" : "Proceedings of Association for the Advancement of Artificial Intelligence.",
+      "citeRegEx" : "Gardner and Krishnamurthy.,? 2017",
+      "shortCiteRegEx" : "Gardner and Krishnamurthy.",
+      "year" : 2017
+    }, {
+      "title" : "Graph parsing with s-graph grammars",
+      "author" : [ "Jonas Groschwitz", "Alexander Koller", "Christoph Teichmann." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 1481–1490.",
+      "citeRegEx" : "Groschwitz et al\\.,? 2015",
+      "shortCiteRegEx" : "Groschwitz et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A Corpus and Semantic Parser for Multilingual Natural Language Querying of OpenStreetMap",
+      "author" : [ "Carolin Haas", "Stefan Riezler." ],
+      "venue" : "Proceedings of the North American Chapter of the Association for Computational Linguistics: Human Language Tech-",
+      "citeRegEx" : "Haas and Riezler.,? 2016",
+      "shortCiteRegEx" : "Haas and Riezler.",
+      "year" : 2016
+    }, {
+      "title" : "On deriving semantic representations from dependencies: A practical approach for evaluating meaning in learner corpora",
+      "author" : [ "Michael Hahn", "Detmar Meurers." ],
+      "venue" : "Proceedings of the Int. Conference on Dependency Linguistics (Depling 2011). Barcelona,",
+      "citeRegEx" : "Hahn and Meurers.,? 2011",
+      "shortCiteRegEx" : "Hahn and Meurers.",
+      "year" : 2011
+    }, {
+      "title" : "Translation Invariant Word Embeddings",
+      "author" : [ "Kejun Huang", "Matt Gardner", "Evangelos Papalexakis", "Christos Faloutsos", "Nikos Sidiropoulos", "Tom Mitchell", "Partha P. Talukdar", "Xiao Fu." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Meth-",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Mapping between Dependency Structures and Compositional Semantic Representations",
+      "author" : [ "Max Jakob", "Markéta Lopatková", "Valia Kordoni." ],
+      "venue" : "Proceedings of the Fifth International Conference on Language Resources and Evaluation.",
+      "citeRegEx" : "Jakob et al\\.,? 2010",
+      "shortCiteRegEx" : "Jakob et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Multilingual Semantic Parsing : Parsing Multiple Languages into Semantic Representations",
+      "author" : [ "Zhanming Jie", "Wei Lu." ],
+      "venue" : "Proceedings of International Conference on Computational Linguistics. Dublin City University and Association for Com-",
+      "citeRegEx" : "Jie and Lu.,? 2014",
+      "shortCiteRegEx" : "Jie and Lu.",
+      "year" : 2014
+    }, {
+      "title" : "Semantic Parsing with Bayesian Tree Transducers",
+      "author" : [ "Bevan Keeley Jones", "Mark Johnson", "Sharon Goldwater." ],
+      "venue" : "Proceedings of the 50th Annual",
+      "citeRegEx" : "Jones et al\\.,? 2012",
+      "shortCiteRegEx" : "Jones et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Factoring predicate argument and scope semantics: Underspecified semantics with LTAG",
+      "author" : [ "Laura Kallmeyer", "Aravind Joshi." ],
+      "venue" : "Research on Language and Computation 1(1-2):3–58.",
+      "citeRegEx" : "Kallmeyer and Joshi.,? 2003",
+      "shortCiteRegEx" : "Kallmeyer and Joshi.",
+      "year" : 2003
+    }, {
+      "title" : "Lexicalfunctional grammar: A formal system for grammatical representation",
+      "author" : [ "Ronald M Kaplan", "Joan Bresnan." ],
+      "venue" : "Formal Issues in LexicalFunctional Grammar pages 29–130.",
+      "citeRegEx" : "Kaplan and Bresnan.,? 1982",
+      "shortCiteRegEx" : "Kaplan and Bresnan.",
+      "year" : 1982
+    }, {
+      "title" : "Simple and Accurate Dependency Parsing Using Bidirectional LSTM Feature Representations",
+      "author" : [ "Eliyahu Kiperwasser", "Yoav Goldberg." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 4:313–327.",
+      "citeRegEx" : "Kiperwasser and Goldberg.,? 2016",
+      "shortCiteRegEx" : "Kiperwasser and Goldberg.",
+      "year" : 2016
+    }, {
+      "title" : "Learning a Compositional Semantics for Freebase with an Open Predicate Vocabulary",
+      "author" : [ "Jayant Krishnamurthy", "Tom M. Mitchell." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 3:257–270.",
+      "citeRegEx" : "Krishnamurthy and Mitchell.,? 2015",
+      "shortCiteRegEx" : "Krishnamurthy and Mitchell.",
+      "year" : 2015
+    }, {
+      "title" : "Inducing Probabilistic CCG Grammars from Logical Form with Higher-Order Unification",
+      "author" : [ "Tom Kwiatkowksi", "Luke Zettlemoyer", "Sharon Goldwater", "Mark Steedman." ],
+      "venue" : "Proceedings of Empirical Methods on Natural Language Processing.",
+      "citeRegEx" : "Kwiatkowksi et al\\.,? 2010",
+      "shortCiteRegEx" : "Kwiatkowksi et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Scaling Semantic Parsers with On-the-Fly Ontology Matching",
+      "author" : [ "Tom Kwiatkowski", "Eunsol Choi", "Yoav Artzi", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of Empirical Methods on Natural Language Processing. pages 1545–1556.",
+      "citeRegEx" : "Kwiatkowski et al\\.,? 2013",
+      "shortCiteRegEx" : "Kwiatkowski et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Tregex and tsurgeon: tools for querying and manipulating tree data structures",
+      "author" : [ "Roger Levy", "Galen Andrew." ],
+      "venue" : "Proceedings of LREC. pages 2231– 2234.",
+      "citeRegEx" : "Levy and Andrew.,? 2006",
+      "shortCiteRegEx" : "Levy and Andrew.",
+      "year" : 2006
+    }, {
+      "title" : "Combined Distributional and Logical Semantics",
+      "author" : [ "Mike Lewis", "Mark Steedman." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 1:179–192.",
+      "citeRegEx" : "Lewis and Steedman.,? 2013",
+      "shortCiteRegEx" : "Lewis and Steedman.",
+      "year" : 2013
+    }, {
+      "title" : "Learning Dependency-Based Compositional Semantics",
+      "author" : [ "Percy Liang", "Michael Jordan", "Dan Klein." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 590–599.",
+      "citeRegEx" : "Liang et al\\.,? 2011",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Toward Abstractive Summarization Using Semantic Representations",
+      "author" : [ "Fei Liu", "Jeffrey Flanigan", "Sam Thomson", "Norman Sadeh", "Noah A. Smith." ],
+      "venue" : "Proceedings of North American Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Liu et al\\.,? 2015",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Building a large annotated corpus of English: The Penn Treebank",
+      "author" : [ "Mitchell P. Marcus", "Mary Ann Marcinkiewicz", "Beatrice Santorini." ],
+      "venue" : "Computational linguistics 19(2):313–330.",
+      "citeRegEx" : "Marcus et al\\.,? 1993",
+      "shortCiteRegEx" : "Marcus et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "The Proper Treatment of Quantification in Ordinary English",
+      "author" : [ "Richard Montague." ],
+      "venue" : "K.J.J. Hintikka, J.M.E. Moravcsik, and P. Suppes, editors, Approaches to Natural Language, Springer Netherlands, volume 49 of Synthese Library, pages 221–",
+      "citeRegEx" : "Montague.,? 1973",
+      "shortCiteRegEx" : "Montague.",
+      "year" : 1973
+    }, {
+      "title" : "Hybrid Simplification using Deep Semantics and Machine Translation",
+      "author" : [ "Shashi Narayan", "Claire Gardent." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 435–445.",
+      "citeRegEx" : "Narayan and Gardent.,? 2014",
+      "shortCiteRegEx" : "Narayan and Gardent.",
+      "year" : 2014
+    }, {
+      "title" : "Simpler TAG Semantics Through Synchronization",
+      "author" : [ "Rebecca Nesson", "Stuart M. Shieber." ],
+      "venue" : "Proceedings of the 11th Conference on Formal Grammar. Center for the Study of Language and Information, Malaga, Spain, pages 129–142.",
+      "citeRegEx" : "Nesson and Shieber.,? 2006",
+      "shortCiteRegEx" : "Nesson and Shieber.",
+      "year" : 2006
+    }, {
+      "title" : "Universal Dependencies v1: A Multilingual",
+      "author" : [ "Joakim Nivre", "Marie-Catherine de Marneffe", "Filip Ginter", "Yoav Goldberg", "Jan Hajic", "Christopher D. Manning", "Ryan McDonald", "Slav Petrov", "Sampo Pyysalo", "Natalia Silveira", "Reut Tsarfaty", "Daniel Zeman" ],
+      "venue" : null,
+      "citeRegEx" : "Nivre et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Nivre et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Universal dependencies 1.3. LINDAT/CLARIN digital library at the Institute of Formal and Applied Linguistics, Charles University in Prague",
+      "author" : [ "Joakim Nivre" ],
+      "venue" : null,
+      "citeRegEx" : "Nivre,? \\Q2016\\E",
+      "shortCiteRegEx" : "Nivre",
+      "year" : 2016
+    }, {
+      "title" : "Compositional Semantic Parsing on Semi-Structured Tables",
+      "author" : [ "Panupong Pasupat", "Percy Liang." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 1470–1480.",
+      "citeRegEx" : "Pasupat and Liang.,? 2015",
+      "shortCiteRegEx" : "Pasupat and Liang.",
+      "year" : 2015
+    }, {
+      "title" : "Adding Semantics to Data-Driven Paraphrasing",
+      "author" : [ "Ellie Pavlick", "Johan Bos", "Malvina Nissim", "Charley Beller", "Benjamin Van Durme", "Chris CallisonBurch." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 1512–1522.",
+      "citeRegEx" : "Pavlick et al\\.,? 2015",
+      "shortCiteRegEx" : "Pavlick et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Glove: Global Vectors for Word Representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher Manning." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguis-",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Multilingual Part-of-Speech Tagging with Bidirectional Long Short-Term Memory Models and Auxiliary Loss",
+      "author" : [ "Barbara Plank", "Anders Søgaard", "Yoav Goldberg." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Plank et al\\.,? 2016",
+      "shortCiteRegEx" : "Plank et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Large-scale Semantic Parsing without QuestionAnswer Pairs",
+      "author" : [ "Siva Reddy", "Mirella Lapata", "Mark Steedman." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 2:377–392.",
+      "citeRegEx" : "Reddy et al\\.,? 2014",
+      "shortCiteRegEx" : "Reddy et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Transforming Dependency Structures to Logical Forms for Semantic Parsing",
+      "author" : [ "Siva Reddy", "Oscar Täckström", "Michael Collins", "Tom Kwiatkowski", "Dipanjan Das", "Mark Steedman", "Mirella Lapata." ],
+      "venue" : "Transactions of the Association for Computational",
+      "citeRegEx" : "Reddy et al\\.,? 2016",
+      "shortCiteRegEx" : "Reddy et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Injecting Logical Background Knowledge into Embeddings for Relation Extraction",
+      "author" : [ "Tim Rocktäschel", "Sameer Singh", "Sebastian Riedel." ],
+      "venue" : "Proceedings of North American Chapter of the Association for Computational Linguistics. pages 1119–",
+      "citeRegEx" : "Rocktäschel et al\\.,? 2015",
+      "shortCiteRegEx" : "Rocktäschel et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Enhanced English Universal Dependencies: An Improved Representation for Natural Language Understanding Tasks",
+      "author" : [ "Sebastian Schuster", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the Tenth International Conference on Language Resources and Eval-",
+      "citeRegEx" : "Schuster and Manning.,? 2016",
+      "shortCiteRegEx" : "Schuster and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "Towards Minimal Recursion Semantics over Bulgarian Dependency Parsing",
+      "author" : [ "Kiril Simov", "Petya Osenova." ],
+      "venue" : "Proceedings of the International Conference Recent Advances in Natural Language Processing 2011. RANLP 2011 Organising Commit-",
+      "citeRegEx" : "Simov and Osenova.,? 2011",
+      "shortCiteRegEx" : "Simov and Osenova.",
+      "year" : 2011
+    }, {
+      "title" : "Projecting RMRS from TIGER Dependencies",
+      "author" : [ "Kathrin Spreyer", "Anette Frank." ],
+      "venue" : "Proceedings of the HPSG 2005 Conference. CSLI Publications.",
+      "citeRegEx" : "Spreyer and Frank.,? 2005",
+      "shortCiteRegEx" : "Spreyer and Frank.",
+      "year" : 2005
+    }, {
+      "title" : "The Syntactic Process",
+      "author" : [ "Mark Steedman." ],
+      "venue" : "The MIT Press.",
+      "citeRegEx" : "Steedman.,? 2000",
+      "shortCiteRegEx" : "Steedman.",
+      "year" : 2000
+    }, {
+      "title" : "On Generating Characteristic-rich Question Sets for QA Evaluation",
+      "author" : [ "Yu Su", "Huan Sun", "Brian Sadler", "Mudhakar Srivatsa", "Izzeddin Gur", "Zenghui Yan", "Xifeng Yan." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Su et al\\.,? 2016",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Simple and Effective Question Answering with Recurrent Neural Networks",
+      "author" : [ "Ferhan Türe", "Oliver Jojic." ],
+      "venue" : "CoRR abs/1606.05029.",
+      "citeRegEx" : "Türe and Jojic.,? 2016",
+      "shortCiteRegEx" : "Türe and Jojic.",
+      "year" : 2016
+    }, {
+      "title" : "An AMR parser for English, French, German, Spanish and Japanese and a new AMR-annotated corpus",
+      "author" : [ "Lucy Vanderwende", "Arul Menezes", "Chris Quirk." ],
+      "venue" : "Proceedings of the 2015 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Vanderwende et al\\.,? 2015",
+      "shortCiteRegEx" : "Vanderwende et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Universal Decompositional Semantics on Universal Dependencies",
+      "author" : [ "Aaron Steven White", "Drew Reisinger", "Keisuke Sakaguchi", "Tim Vieira", "Sheng Zhang", "Rachel Rudinger", "Kyle Rawlins", "Benjamin Van Durme." ],
+      "venue" : "Proceedings of the 2016 Conference",
+      "citeRegEx" : "White et al\\.,? 2016",
+      "shortCiteRegEx" : "White et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Learning Synchronous Grammars for Semantic Parsing with Lambda Calculus",
+      "author" : [ "Yuk Wah Wong", "Raymond Mooney." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 960–967.",
+      "citeRegEx" : "Wong and Mooney.,? 2007",
+      "shortCiteRegEx" : "Wong and Mooney.",
+      "year" : 2007
+    }, {
+      "title" : "Question Answering on Freebase via Relation Extraction and Textual Evidence",
+      "author" : [ "Kun Xu", "Siva Reddy", "Yansong Feng", "Songfang Huang", "Dongyan Zhao." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics. Association for Computational",
+      "citeRegEx" : "Xu et al\\.,? 2016",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Lean Question Answering over Freebase from Scratch",
+      "author" : [ "Xuchen Yao." ],
+      "venue" : "Proceedings of North American Chapter of the Association for Computational Linguistics. pages 66–70.",
+      "citeRegEx" : "Yao.,? 2015",
+      "shortCiteRegEx" : "Yao.",
+      "year" : 2015
+    }, {
+      "title" : "Information Extraction over Structured Data: Question Answering with Freebase",
+      "author" : [ "Xuchen Yao", "Benjamin Van Durme." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 956–966.",
+      "citeRegEx" : "Yao and Durme.,? 2014",
+      "shortCiteRegEx" : "Yao and Durme.",
+      "year" : 2014
+    }, {
+      "title" : "Improving Semantic Parsing via Answer Type Inference",
+      "author" : [ "Semih Yavuz", "Izzeddin Gur", "Yu Su", "Mudhakar Srivatsa", "Xifeng Yan." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing. Association for Computa-",
+      "citeRegEx" : "Yavuz et al\\.,? 2016",
+      "shortCiteRegEx" : "Yavuz et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic Parsing via Staged Query Graph Generation: Question Answering with Knowledge Base",
+      "author" : [ "Wen-tau Yih", "Ming-Wei Chang", "Xiaodong He", "Jianfeng Gao." ],
+      "venue" : "Proceedings of Association for Computational Linguistics. pages 1321–1331.",
+      "citeRegEx" : "Yih et al\\.,? 2015",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Learning to Parse Database Queries Using Inductive Logic Programming",
+      "author" : [ "John M. Zelle", "Raymond J. Mooney." ],
+      "venue" : "Proceedings of Association for the Advancement of Artificial Intelligence. pages 1050– 1055.",
+      "citeRegEx" : "Zelle and Mooney.,? 1996",
+      "shortCiteRegEx" : "Zelle and Mooney.",
+      "year" : 1996
+    }, {
+      "title" : "Learning to Map Sentences to Logical Form: Structured Classification with Probabilistic Categorial Grammars",
+      "author" : [ "Luke S. Zettlemoyer", "Michael Collins." ],
+      "venue" : "Proceedings of Uncertainty in Artificial Intelligence. pages 658–666.",
+      "citeRegEx" : "Zettlemoyer and Collins.,? 2005",
+      "shortCiteRegEx" : "Zettlemoyer and Collins.",
+      "year" : 2005
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 54,
+      "context" : "Our framework is based on DEPLAMBDA (Reddy et al., 2016) a recently developed method that converts English Stanford Dependencies (SD) to logical forms.",
+      "startOffset" : 36,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 10,
+      "context" : "To facilitate multilingual evaluation, we provide translations of the English WebQuestions (Berant et al., 2013) and GraphQuestions (Su et al.",
+      "startOffset" : 91,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 60,
+      "context" : ", 2013) and GraphQuestions (Su et al., 2016) datasets to German and Spanish.",
+      "startOffset" : 27,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 8,
+      "context" : "Beyond semantic parsing, we believe that the logical forms produced by our framework will be of use in various natural understanding tasks including entailment (Beltagy et al., 2016), text-based question",
+      "startOffset" : 160,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 40,
+      "context" : "answering (Lewis and Steedman, 2013), sentence simplification (Narayan and Gardent, 2014), summarization (Liu et al.",
+      "startOffset" : 10,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 45,
+      "context" : "answering (Lewis and Steedman, 2013), sentence simplification (Narayan and Gardent, 2014), summarization (Liu et al.",
+      "startOffset" : 62,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 42,
+      "context" : "answering (Lewis and Steedman, 2013), sentence simplification (Narayan and Gardent, 2014), summarization (Liu et al., 2015), paraphrasing (Pavlick et al.",
+      "startOffset" : 105,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 50,
+      "context" : ", 2015), paraphrasing (Pavlick et al., 2015), and relation extraction (Rocktäschel et al.",
+      "startOffset" : 22,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 54,
+      "context" : "Before describing UDEPLAMBDA, we provide an overview of DEPLAMBDA (Reddy et al., 2016) on which our approach is based.",
+      "startOffset" : 66,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 39,
+      "context" : "3We use Tregex (Levy and Andrew, 2006) for substitution mappings and Cornell SPF (Artzi, 2013) as the lambdacalculus implementation.",
+      "startOffset" : 15,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 2,
+      "context" : "3We use Tregex (Levy and Andrew, 2006) for substitution mappings and Cornell SPF (Artzi, 2013) as the lambdacalculus implementation.",
+      "startOffset" : 81,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 43,
+      "context" : "Finally, unlike the PTB tags (Marcus et al., 1993) used by SD, the UD part-of-speech tags do",
+      "startOffset" : 29,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 54,
+      "context" : "We use GRAPHPARSER (Reddy et al., 2016) to map these logical forms to their grounded Freebase graphs, via corresponding ungrounded graphs.",
+      "startOffset" : 19,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 16,
+      "context" : "The search space is explored by beam search and model parameters are estimated with the averaged structured perceptron (Collins, 2002) from training data consisting of question-answer pairs, using answer F1-score as the objective.",
+      "startOffset" : 119,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 10,
+      "context" : "We evaluate our approach on two public benchmarks of question answering against Freebase: WebQuestions (Berant et al., 2013), a widely used benchmark consisting of English questions and their answers, and GraphQuestions (Su et al.",
+      "startOffset" : 103,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 60,
+      "context" : ", 2013), a widely used benchmark consisting of English questions and their answers, and GraphQuestions (Su et al., 2016), a recently released dataset of English questions with both their answers and grounded logical forms.",
+      "startOffset" : 103,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 52,
+      "context" : "We used a bidirectional LSTM tagger (Plank et al., 2016) and a bidirectional LSTM shift-reduce parser (Kiperwasser and Goldberg, 2016).",
+      "startOffset" : 36,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 35,
+      "context" : ", 2016) and a bidirectional LSTM shift-reduce parser (Kiperwasser and Goldberg, 2016).",
+      "startOffset" : 53,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 51,
+      "context" : "For English, we used GloVe embeddings (Pennington et al., 2014) trained on Wikipedia and the Gigaword corpus.",
+      "startOffset" : 38,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 17,
+      "context" : "7 For German and Spanish, we used SENNA embeddings (Collobert et al., 2011; Al-Rfou et al., 2013) trained on Wikipedia corpora (589M words German; 397M words Spanish).",
+      "startOffset" : 51,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 1,
+      "context" : "7 For German and Spanish, we used SENNA embeddings (Collobert et al., 2011; Al-Rfou et al., 2013) trained on Wikipedia corpora (589M words German; 397M words Spanish).",
+      "startOffset" : 51,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 10,
+      "context" : "Here and in what follows, we use average F1-score of predicted answers (Berant et al., 2013) as the evaluation met-",
+      "startOffset" : 71,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 13,
+      "context" : "Results for models using additional task-specific training resources, such as ClueWeb09, Wikipedia, or SimpleQuestions (Bordes et al., 2015) are shown in parentheses.",
+      "startOffset" : 119,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 18,
+      "context" : "The literature is rife with attempts to develop semantic interfaces for HPSG (Copestake et al., 2005), LFG (Kaplan and Bresnan, 1982; Dalrymple et al.",
+      "startOffset" : 77,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2005), LFG (Kaplan and Bresnan, 1982; Dalrymple et al., 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al.",
+      "startOffset" : 13,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2005), LFG (Kaplan and Bresnan, 1982; Dalrymple et al., 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al.",
+      "startOffset" : 13,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2005), LFG (Kaplan and Bresnan, 1982; Dalrymple et al., 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al.",
+      "startOffset" : 13,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 33,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al.",
+      "startOffset" : 36,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 24,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al.",
+      "startOffset" : 36,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 46,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al.",
+      "startOffset" : 36,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 59,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al., 2004; Artzi et al., 2015).",
+      "startOffset" : 128,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 4,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al., 2004; Artzi et al., 2015).",
+      "startOffset" : 128,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 14,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al., 2004; Artzi et al., 2015).",
+      "startOffset" : 128,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 3,
+      "context" : ", 1995; Crouch and King, 2006), TAG (Kallmeyer and Joshi, 2003; Gardent and Kallmeyer, 2003; Nesson and Shieber, 2006), and CCG (Steedman, 2000; Baldridge and Kruijff, 2002; Bos et al., 2004; Artzi et al., 2015).",
+      "startOffset" : 128,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 58,
+      "context" : "Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al.",
+      "startOffset" : 142,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 57,
+      "context" : "Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al.",
+      "startOffset" : 142,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 28,
+      "context" : "Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al.",
+      "startOffset" : 142,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 54,
+      "context" : "Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al.",
+      "startOffset" : 142,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 22,
+      "context" : "Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al.",
+      "startOffset" : 142,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 7,
+      "context" : "Earlier attempts at extracting semantic representations from dependencies have mainly focused on language-specific dependency representations (Spreyer and Frank, 2005; Simov and Osenova, 2011; Hahn and Meurers, 2011; Reddy et al., 2016; Falke et al., 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al.",
+      "startOffset" : 142,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al., 2010; Bédaride and Gardent, 2011).",
+      "startOffset" : 65,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2016; Beltagy, 2016), and multi-layered dependency annotations (Jakob et al., 2010; Bédaride and Gardent, 2011).",
+      "startOffset" : 65,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 0,
+      "context" : "This work parallels a growing interest in creating other forms of multilingual semantic representations (Akbik et al., 2015; Vanderwende et al., 2015; White et al., 2016; Evang and Bos, 2016).",
+      "startOffset" : 104,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 62,
+      "context" : "This work parallels a growing interest in creating other forms of multilingual semantic representations (Akbik et al., 2015; Vanderwende et al., 2015; White et al., 2016; Evang and Bos, 2016).",
+      "startOffset" : 104,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 63,
+      "context" : "This work parallels a growing interest in creating other forms of multilingual semantic representations (Akbik et al., 2015; Vanderwende et al., 2015; White et al., 2016; Evang and Bos, 2016).",
+      "startOffset" : 104,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 21,
+      "context" : "This work parallels a growing interest in creating other forms of multilingual semantic representations (Akbik et al., 2015; Vanderwende et al., 2015; White et al., 2016; Evang and Bos, 2016).",
+      "startOffset" : 104,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 70,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 71,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 64,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 37,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 41,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 10,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 23,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 49,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 26,
+      "context" : "Here, the literature offers two main modeling paradigms: (1) learning of task-specific grammars that directly parse language to a grounded representation (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Wong and Mooney, 2007; Kwiatkowksi et al., 2010; Liang et al., 2011; Berant et al., 2013; Flanigan et al., 2014; Pasupat and Liang, 2015; Groschwitz et al., 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al.",
+      "startOffset" : 154,
+      "endOffset" : 372
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al., 2013; Reddy et al., 2014; Krishnamurthy and Mitchell, 2015; Gardner and Krishnamurthy, 2017).",
+      "startOffset" : 147,
+      "endOffset" : 260
+    }, {
+      "referenceID" : 53,
+      "context" : ", 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al., 2013; Reddy et al., 2014; Krishnamurthy and Mitchell, 2015; Gardner and Krishnamurthy, 2017).",
+      "startOffset" : 147,
+      "endOffset" : 260
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al., 2013; Reddy et al., 2014; Krishnamurthy and Mitchell, 2015; Gardner and Krishnamurthy, 2017).",
+      "startOffset" : 147,
+      "endOffset" : 260
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2015); and (2) converting language to a linguistically motivated taskindependent representation that is then mapped to a grounded representation (Kwiatkowski et al., 2013; Reddy et al., 2014; Krishnamurthy and Mitchell, 2015; Gardner and Krishnamurthy, 2017).",
+      "startOffset" : 147,
+      "endOffset" : 260
+    }, {
+      "referenceID" : 9,
+      "context" : "Capitalizing on natural-language syntax affords interpretability, scalability, and reduced duplication of effort across applications (Bender et al., 2015).",
+      "startOffset" : 133,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 15,
+      "context" : "Our work also relates to literature on parsing multiple languages to a common executable representation (Cimiano et al., 2013; Haas and Riezler, 2016).",
+      "startOffset" : 104,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 27,
+      "context" : "Our work also relates to literature on parsing multiple languages to a common executable representation (Cimiano et al., 2013; Haas and Riezler, 2016).",
+      "startOffset" : 104,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 37,
+      "context" : "However, existing approaches (Kwiatkowksi et al., 2010; Jones et al., 2012; Jie and Lu, 2014) still map to the target meaning representations (more or less) directly.",
+      "startOffset" : 29,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 32,
+      "context" : "However, existing approaches (Kwiatkowksi et al., 2010; Jones et al., 2012; Jie and Lu, 2014) still map to the target meaning representations (more or less) directly.",
+      "startOffset" : 29,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 31,
+      "context" : "However, existing approaches (Kwiatkowksi et al., 2010; Jones et al., 2012; Jie and Lu, 2014) still map to the target meaning representations (more or less) directly.",
+      "startOffset" : 29,
+      "endOffset" : 93
+    } ],
+    "year" : 0,
+    "abstractText" : "Universal Dependencies (UD) provides a cross-linguistically uniform syntactic representation, with the aim of advancing multilingual applications of parsing and natural language understanding. Reddy et al. (2016) recently developed a semantic interface for (English) Stanford Dependencies, based on the lambda calculus. In this work, we introduce UDEPLAMBDA, a similar semantic interface for UD, which allows mapping natural language to logical forms in an almost language-independent framework. We evaluate our approach on semantic parsing for the task of question answering against Freebase. To facilitate multilingual evaluation, we provide German and Spanish translations of the WebQuestions and GraphQuestions datasets. Results show that UDEPLAMBDA outperforms strong baselines across languages and datasets. For English, it achieves the strongest result to date on GraphQuestions, with competitive results on WebQuestions.",
+    "creator" : null
+  }
+}

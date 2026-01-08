@@ -1,0 +1,484 @@
+{
+  "name" : "ACL_2017_16_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Exploiting Argument Information to Improve Event Detection via Supervised Attention Mechanisms",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "This paper tackles the task of event detection (ED), which involves identifying and categorizing events. We argue that arguments provide significant clues to this task, but they are either completely ignored or exploited in an indirect manner in existing detection approaches. In this work, we propose to exploit argument information explicitly for ED via supervised attention mechanisms. In specific, we systematically investigate the proposed model under the supervision of different attention strategies. Experimental results show that our approach advances state-ofthe-arts and achieves the best F1 score on ACE 2005 dataset."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "In the ACE (Automatic Context Extraction) event extraction program, an event is represented as a structure comprising an event trigger and a set of arguments. This work tackles event detection (ED) task, which is a crucial part of event extraction (EE) and focuses on identifying event triggers and categorizing them. For instance, in the sentence “He died in the hospital”, an ED system is expected to detect a Die event along with the trigger word “died”. Besides, the task of EE also includes event argument extraction (AE), which involves event argument identification and role classification. In the above sentence, the arguments of the event include “He”(Role = Person) and “hospital”(Role = Place). However, this paper does not focus on AE and only tackles the former task.\nAccording to the above definitions, event arguments seem to be not essentially necessary to ED. However, we argue that they are capable of providing significant clues for identifying and categorizing events. They are especially useful for ambiguous trigger words. For example, consider a sentence in ACE 2005 dataset:\nMohamad fired Anwar, his former protege, in 1998.\nIn this sentence, “fired” is the trigger word and the other bold words are event arguments. The correct type of the event triggered by “fired” in this case is End-Position . However, it might be easily misidentified as Attack because “fired” is a multivocal word. In this case, if we consider the phrase “former protege”, which serves as an argument (Role = Position) of the target event, we would have more confidence in predicting it as an End-Position event.\nUnfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016). Although some joint learning based methods have been proposed, which tackled event detection and argument extraction simultaneously (Riedel et al., 2009; Li et al., 2013; Venugopal et al., 2014; Nguyen et al., 2016), these approaches usually only make remarkable improvements to AE, but insignificant to ED. Table 1 illustrates our observations. Li et al. (2013) and Nguyen et al. (2016) are state-of-the-art joint models in symbolic and embedding methods for event extraction, respectively. Compared with state-of-the-art pipeline systems, both join-\nt methods achieved remarkable improvements on AE (over 1.9 points), whereas achieved insignificant improvements on ED (less than 0.2 points). The symbolic joint method even performed worse (67.5 vs. 68.3) than pipeline system on ED.\nWe believe that this phenomenon may be caused by the following two reasons. On the one hand, since joint methods simultaneously solve ED and AE, methods following this paradigm usually combine the loss functions of these two tasks and are jointly trained under the supervision of annotated triggers and arguments. However, training corpus contains much more annotated arguments than triggers (about 9800 arguments and 5300 triggers in ACE 2005 dataset) because each trigger may be along with multiple event arguments. Thus, the unbalanced data may cause joint models to favor AE task. On the other hand, in implementation, joint models usually pre-predict several potential triggers and arguments first and then make global inference to select correct items. When pre-predicting potential triggers, almost all existing approaches do not leverage any argument information. In this way, ED does hardly benefit from the annotated arguments. By contrast, the component for pre-prediction of arguments always exploits the extracted trigger information. Thus, we argue that annotated arguments are actually used for AE, not for ED in existing joint methods, which is also the reason we call it an indirect way to use arguments for ED.\nContrast to joint methods, this paper proposes to exploit argument information explicitly for ED. We have analyzed that arguments are capable of providing significant clues to ED, which gives us an enlightenment that ar-\nguments should be focused on when performing this task. Therefore, we propose a neural network based approach to detect events in texts. And in the proposed approach, we adopt a supervised attention mechanism to achieve this goal, where argument words are expected to acquire more attention than other words. The attention value of each word in a given sentence is calculated by an operation between the current word and the target trigger candidate. Specifically, in training procedure, we first construct gold attentions for each trigger candidate based on annotated arguments. Then, treating gold attentions as the supervision to train the attention mechanism, we learn attention and event detector jointly both in supervised manner. In testing procedure, we use the ED model with learned attention mechanisms to detect events.\nIn the experiment section, we systematically conduct comparisons on a widely used benchmark dataset ACE20051. In order to further demonstrate the effectiveness of our approach, we also use events from FrameNet (FN) (F. Baker et al., 1998) as extra training data, as the same as Liu et al. (2016a) to alleviate the data-sparseness problem for ED to augment the performance of the proposed approach. The experimental results demonstrate that the proposed approach is effective for ED task, and it outperforms state-of-the-art approaches with remarkable gains.\nTo sum up, our main contributions are: (1) we analyze the problem of joint models on the task of ED, and propose to use the annotated argument information explicitly for this task. (2) to achieve this goal, we introduce a supervised attention based ED model. Furthermore, we systematically investigate different attention strategies for the proposed model. (3) we improve the performance of ED and achieve the best performance on the widely used benchmark dataset ACE 2005."
+    }, {
+      "heading" : "2 Task Description",
+      "text" : "The ED task is a subtask of ACE event evaluations where an event is defined as a specific occurrence involving one or more participants. Event extraction task requires certain specified types of events, which are mentioned\n1https://catalog.ldc.upenn.edu/LDC2006T06\nin the source language data, be detected. We firstly introduce some ACE terminologies to facilitate the understanding of this task:\nEntity: an object or a set of objects in one of the semantic categories of interests.\nEntity mention: a reference to an entity (typically, a noun phrase).\nEvent trigger: the main word that most clearly expresses an event occurrence.\nEvent arguments: the mentions that are involved in an event (participants).\nEvent mention: a phrase or sentence within which an event is described, including the trigger and arguments.\nThe goal of ED is to identify event triggers and categorize their event types. For instance, in the sentence “He died in the hospital”, an ED system is expected to detect a Die event along with the trigger word “died”. The detection of event arguments “He”(Role = Person) and “hospital”(Role = Place) is not involved in the ED task. The 2005 ACE evaluation included 8 super types of events, with 33 subtypes. Following previous work, we treat these simply as 33 separate event types and ignore the hierarchical structure among them."
+    }, {
+      "heading" : "3 The Proposed Approach",
+      "text" : "Similar to existing work, we model ED as a multi-class classification task. In detail, given a sentence, we treat every token in that sentence as a trigger candidate, and our goal is to classify each of these candidates into one of 34 classes (33 event types plus an NA class).\nIn our approach, every word along with its context, which includes the contextual words and entities, constitute an event trigger candidate. Figure 1 describes the architecture of the proposed approach, which involves two components: (i) Context Representation Learning (CRL), which reveals the representation of both contextual words and entities via attention mechanisms; (ii) Event Detector (ED), which assigns an event type (including the NA type) to each candidate based on the learned contextual representations."
+    }, {
+      "heading" : "3.1 Context Representation Learning",
+      "text" : "In order to prepare for Context Representation Learning (CRL), we limit the context to a fixed length by trimming longer sen-\ntences and padding shorter sentences with a special token when necessary. Let n be the fixed length and w0 be the current candidate trigger word, then its contextual words Cw is [w−n\n2 , w−n 2 +1, ..., w−1, w1, ..., wn 2 −1, wn 2 ]2, and its contextual entities, which is the corresponding entity types (including an NA type) of Cw, is [e−n\n2 , e−n 2 +1, ..., e−1, e1, ..., en 2 −1, en 2 ].\nFor convenience, we use w to denote the current word, [w1, w2, ..., wn] to denote the contextual words Cw and [e1, e2, ..., en] to denote the contextual entities Ce in figure 1. Note that, both w, Cw and Ce mentioned above are originally in symbolic representation. Before entering CRL component, we transform them into real-valued vector by looking up word embedding table and entity type embedding table. Then we calculate attention vectors for both contextual words and entities by performing operations between the current word w and its contexts. Finally, the contextual words representation cw and contextual entities representation ce are formed by the weighted sum of the corresponding embeddings of each word and entity in Cw and Ce, respectively. We will give the details in the fol-\n2The current candidate trigger word w0 is not included in the context.\nlowing subsections."
+    }, {
+      "heading" : "3.1.1 Word Embedding Table",
+      "text" : "Word embeddings learned from a large amount of unlabeled data have been shown to be able to capture the meaningful semantic regularities of words (Bengio et al., 2003; Erhan et al., 2010). This paper uses the learned word embeddings as the source of basic features. Specifically, we use the Skip-gram model (Mikolov et al., 2013) to learn word embeddings on the NYT corpus3."
+    }, {
+      "heading" : "3.1.2 Entity Type Embedding Table",
+      "text" : "The ACE 2005 corpus annotated not only events but also entities for each given sentence. Following existing work (Li et al., 2013; Chen et al., 2015; Nguyen and Grishman, 2015), we exploit the annotated entity information in our ED system. We randomly initialize embedding vector for each entity type (including the NA type) and update it in training procedure."
+    }, {
+      "heading" : "3.1.3 Representation Learning",
+      "text" : "In this subsection, we illustrate our proposed approach to learn representations of both contextual words and entities, which serve as inputs to the following event detector component. Recall that, we use the matrix Cw and Ce to denote contextual words and contextual entities, respectively.\nAs illustrated in figure 1, the CRL component needs three inputs: the current candidate trigger word w, the contextual words Cw and the contextual entities Ce. Then, two attention vectors, which reflect different aspects of the context, are calculated in the next step. The contextual word attention vector αw is computed based on the current word w and its contextual words Cw. We firstly transform each word wk (including w and every word in Cw) into a hidden representation wk by the following equation:\nwk = f(wk Ww) (1)\nwhere f(·) is a non-linear function such as the hyperbolic tangent, and Ww is the transformation matrix. Then, we use the hidden representations to compute the attention value for each\n3https://catalog.ldc.upenn.edu/LDC2008T19\nword in Cw:\nαkw = exp(w wTk )∑ i exp(w w T i )\n(2)\nThe contextual entity attention vector αe is calculated with a similar method to αw.\nαke = exp(we eTk )∑ i exp(we e T i )\n(3)\nNote that, we do not use the entity information of the current candidate token to compute the attention vector. The reason is that only a small percentage of true event triggers are entities4. Therefore, the entity type of a candidate trigger is meaningless for ED. Instead, we use we, which is calculated by transforming w from the word space into the entity type space, as the attention source.\nWe combine αw and αe to obtain the final attention vector, α = αw+αe. Finally, the contextual words representation cw and the contextual entities representation ce are formed by weighted sum of Cw and Ce, respectively:\ncw = Cwα T (4)\nce = Ceα T (5)"
+    }, {
+      "heading" : "3.2 Event Detector",
+      "text" : "As illustrated in figure 1, we employ a threelayer (an input layer, a hidden layer and a softmax output layer) Artificial Neural Networks (ANNs) (Hagan et al., 1996) to model the ED task, which has been demonstrated very effective for event detection by Liu et al. (2016a)."
+    }, {
+      "heading" : "3.2.1 Basic ED Model",
+      "text" : "Given a sentence, as illustrated in figure 1, we concatenate the embedding vectors of the context (including contextual words and entities) and the current candidate trigger to serve as the input to ED model. Then, for a given input sample x, ANN with parameter θ outputs a vector O, where the i-th value oi of O is the confident score for classifying x to the i-th event type. To obtain the conditional probability p(i|x, θ), we apply a softmax operation over all event types:\np(i|x, θ) = e oi∑m\nk=1 e ok\n(6)\n4Only 10% of triggers in ACE 2005 are entities.\nGiven all of our (suppose T) training instances (x(i); y(i)), we can then define the negative loglikelihood loss function:\nJ(θ) = − T∑ i=1 log p(y(i)|x(i), θ) (7)\nWe train the model by using a simple optimization technique called stochastic gradient descent (SGD) over shuffled mini-batches with the Adadelta rule (Zeiler, 2012). Regularization is implemented by a dropout (Kim, 2014; Hinton et al., 2012) and L2 norm."
+    }, {
+      "heading" : "3.2.2 Supervised Attention",
+      "text" : "In this subsection, we introduce supervised attention to explicitly use annotated argument information to improve ED. Our basic idea is simple: argument words should acquire more attention than other words. To achieve this goal, we first construct vectors using annotated arguments as the gold attentions. Then, we employ them as supervision to train the attention mechanism.\nConstructing Gold Attention Vectors\nOur goal is to encourage argument words to obtain more attention than other words. To achieve this goal, we propose two strategies to construct gold attention vectors:"
+    }, {
+      "heading" : "S1: only pay attention to argument",
+      "text" : "words. That is, all argument words in the given context obtain the same attention, whereas other words get no attention. For candidates without any annotated arguments in context, we force all entities to average the whole attention. Figure 2 illustrates the details, where α∗ is the final gold attention vector."
+    }, {
+      "heading" : "S2: pay attention to both arguments",
+      "text" : "and the words around them. The assumption is that, not only arguments are important\nto ED, the words around them are also helpful. And the nearer a word is to arguments, the more attention it should obtain. Inspired by Mi et al. (2016), we use a gaussian distribution g(·) to model the attention distribution of words around arguments. In detail, given an instance, we first obtain the raw attention vector α in the same manner as S1 (see figure 2). Then, we create a new vector α ′ with all points initialized with zero, and for each αi = 1, we update α ′ by adding g(d, µ, σ) with window size w, where d is the distance from a word to the argument (positioned at i) and µ, σ are hyper-parameters of the gaussian distribution. Finally, similar to S1, we normalize α ′ to obtain the target attention vector α∗.\nJointly Training ED and Attention Given the gold attention α∗ (see subsection 3.2.2) and the machine attention α produced by our model (see subsection 3.1.3), we employ the square error as the loss function of attentions:\nD(θ) = T∑ i=1 n∑ j=1 (α∗ij − αij)2 (8)\nCombining equation 7 and equation 8, we define the joint loss function of our proposed model as follows:\nJ ′ (θ) = J(θ) + λD(θ) (9)\nwhere λ is a hyper-parameter for trade-off between J and D. Similar to basic ED model, we minimize the loss function J ′ (θ) by using SGD over shuffled mini-batches with the Adadelta update rule."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Dataset and Experimental Setup",
+      "text" : "Dataset\nWe conducted experiments on ACE 2005 dataset. For the purpose of comparison, we followed the evaluation of (Li et al., 2013; Chen et al., 2015; Liu et al., 2016b): randomly selected 30 articles from different genres as the development set, and subsequently conducted a blind test on a separate set of 40 ACE 2005 newswire documents. We used the remaining 529 articles as our training set.\nHyper-parameter Setting\nHyper-parameters are tuned on the development dataset. We set the dimension of word embeddings to 200, the dimension of entity type embeddings to 50, the size of hidden layer to 300, the output size of word transformation matrix Ww in equation 1 to 200, the batch size to 100, the hyper-parameter for the L2 norm to 10\n−6 and the dropout rate to 0.6. In addition, we use the standard normal distribution to model attention distributions of words around arguments, which means that µ = 0.0, σ = 1.0, and the window size is set to 3 (see Subsection 3.2.2). The hyper-parameter λ in equation 9 is various for different attention strategies, we will give its setting in the next section."
+    }, {
+      "heading" : "4.2 Correctness of Our Assumption",
+      "text" : "In this section, we conduct experiments on ACE 2005 corpus to demonstrate the correctness of our assumption that argument information is crucial to ED. To achieve this goal, we design a series of systems for comparison.\nANN is the basic event detection model, in which the hyper-parameter λ is set to 0. This system does not employ argument information and computes attentions without supervision (see Subsection 3.1.3).\nANN-ENT assigns λ with 0, too. The difference is that it constructs the attention vector α by forcing all entities in the context to average the attention instead of computing it in the manner introduced in Subsection 3.1.3. Since all arguments are entities, this system is designed to investigate the effects of entities.\nANN-Gold1 uses the gold attentions constructed by strategy S1 in both training and testing procedure.\nANN-Gold2 is akin to ANN-Gold1, but uses the second strategy to construct its gold attentions.\nNote that, in order to avoid the interference of attention mechanisms, the last two systems are designed to use argument information (via gold attentions) in both training and testing procedure.\nTable 2 compares these systems on ACE 2005 corpus. From the table, we observe that systems with argument information (the last two systems) significantly outperform system-\ns without argument information (the first two systems), which demonstrates that argument information is very useful for this task. Moreover, since all arguments are entities, for preciseness we also investigate that whether ANN-Gold1/2 on earth benefits from entities or arguments. Compared with ANN-ENT (revising that this system only uses entity information), ANN-Gold1/2 performs much better, which illustrates that entity information is not enough and further demonstrates that argument information is necessary for ED."
+    }, {
+      "heading" : "4.3 Results on ACE 2005 Corpus",
+      "text" : "In this section, we conduct experiments on ACE 2005 corpus to demonstrate the effectiveness of the proposed approach. Firstly, we introduce systems implemented in this work.\nANN-S1 uses gold attentions constructed by strategy S1 as supervision to learn attention. In our experiments, λ is set to 1.0.\nANN-S2 is akin to ANN-S1, but use strategy S2 to construct gold attentions and the hyper-parameter λ is set to 5.0.\nThese two systems both employ supervised attention mechanisms. For comparison, we use an unsupervised-attention system ANN as our baseline, which is introduced in Subsection 4.2. In addition, we select the following state-ofthe-art methods for comparison.\n1). Li’s joint model (Li et al., 2013) extracts events based on structure prediction. It is the best structure-based system.\n2). Liu’s PSL (Liu et al., 2016b) employs both latent local and global information for event detection. It is the best-reported featurebased system.\n3). Liu’s FN-Based approach (Liu et al., 2016a) leverages the annotated corpus of FrameNet to alleviate data sparseness problem of ED based on the observation that frames in\nFN are analogous to events in ACE.\n4). Ngyen’s joint model (Nguyen et al., 2016) employs a bi-directional RNN to jointly extract event triggers and arguments. It is the best-reported representation-based joint approach proposed on this task.\n5). Skip-CNN (Nguyen and Grishman, 2016) introduces the non-consecutive convolution to capture non-consecutive k-grams for event detection. It is the best reported representation-based approach on this task.\nTable 3 presents the experimental results on ACE 2005 corpus. From the table, we make the following observations:\n1). ANN performs unexpectedly poorly, which indicates that unsupervised-attention mechanisms do not work well for ED. We believe the reason is that the training data of ACE 2005 corpus is insufficient to train a precise attention in an unsupervised manner, considering that data sparseness is an important issue of ED (Zhu et al., 2014; Liu et al., 2016a).\n2). With argument information employed via supervised attention mechanisms, both ANN-S1 and ANN-S2 outperform ANN with remarkable gains, which illustrates the effectiveness of the proposed approach.\n3). ANN-S2 outperforms ANN-S1, but the latter achieves higher precision. It is not difficult to understand. On the one hand, strategy S1 only focuses on argument words, which provides accurate information to identify event type, thus ANN-S1 could achieve higher precision. On the other hand, S2 focus-\nes on both arguments and words around them, which provides more general but noised clues. Thus, ANN-S2 achieves higher recall with a little loss of precision.\n4). Compared with state-of-the-art approaches, our method ANN-S2 achieves the best performance. We also perform a t-test (p 6 0.05), which indicates that our method significantly outperforms all of the compared methods. Furthermore, another noticeable advantage of our approach is that it achieves much higher precision than state-of-the-arts."
+    }, {
+      "heading" : "4.4 Augmentation with FrameNet",
+      "text" : "Recently, Liu et al. (2016a) used events automatically detected from FN as extra training data to alleviate the data-sparseness problem for event detection. To further demonstrate the effectiveness of the proposed approach, we also use the events from FN to augment the performance of our approach.\nIn this work, we use the events published by Liu et al. (2016a)5 as extra training data. However, their data can not be used in the proposed approach without further processing, because it lacks of both argument and entity information. Figure 3 shows several examples of this data.\nProcessing of Events from FN\nLiu et al. (2016a) detected events from FrameNet based on the observation that frames in FN are analogous to events in ACE (lexical unit of a frame ↔ trigger of an event, frame elements of a frame ↔ arguments of an event). All events they published are also frames in FN. Thus, we treat frame elements annotated in FN corpus as event arguments. Since frames generally contain more frame elements than events, we only use core6 elements\n5https://github.com/subacl/acl16 6FrameNet classifies frame elements into three\ngroups: core, peripheral and extra-thematic.\nin this work. Moreover, to obtain entity information, we use RPI Joint Information Extraction System7 (Li et al., 2013, 2014; Li and Ji, 2014) to label ACE entity mentions.\nExperimental Results\nWe use the events from FN as extra training data and keep the development and test datasets unchanged.Table 4 presents the experimental results.\nFrom the results, we observe that: 1). With extra training data, ANN achieves significant improvements on F1 measure (66.2 vs. 64.6). This result, to some extent, demonstrates the correctness of our assumption that the data sparseness problem is the reason that causes unsupervised attention mechanisms to be ineffective to ED.\n2). Augmented with external data, both ANN-S1 and ANN-S2 achieve higher recall with a little loss of precision. This is to be expected. On the one hand, more positive training samples consequently make higher recall. On the other hand, the extra event samples are automatically extracted from FN, thus false-positive samples are inevitable to be involved, which may result in hurting the precision. Anyhow, with events from FN, our approach achieves higher F1 score."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Event detection is an increasingly hot and challenging research topic in NLP. Generally, existing approaches could roughly be divided into two groups.\nThe first kind of approach tackled this task under the supervision of annotated triggers and entities, but totally ignored anno-\n7http://nlp.cs.rpi.edu/software/\ntated arguments. The majority of existing work followed this paradigm, which includes feature-based methods and representationbased methods. Feature-based methods exploited a diverse set of strategies to convert classification clues (i.e., POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b). Representation-based methods typically represent candidate event mentions by embeddings and feed them into neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a; Nguyen and Grishman, 2016).\nThe second kind of approach, on the contrast, tackled event detection and argument extraction simultaneously, which is called joint approach (Riedel et al., 2009; Poon and Vanderwende, 2010; Li et al., 2013, 2014; Venugopal et al., 2014; Nguyen et al., 2016). Joint approach is proposed to capture internal and external dependencies of events, including trigger-trigger, argument-argument and trigger-argument dependencies. Theoretically, both ED and AE are expected to benefit from joint methods because triggers and arguments are jointly considered. However, in practice, existing joint methods usually only make remarkable improvements to AE, but insignificant to ED. Different from them, this work investigates the exploitation of argument information to improve the performance of ED."
+    }, {
+      "heading" : "6 Conclusions",
+      "text" : "In this work, we propose a novel approach to model argument information explicitly for ED via supervised attention mechanisms. Besides, we also investigate two strategies to construct gold attentions using the annotated arguments. To demonstrate the effectiveness of the proposed method, we systematically conduct a series of experiments on the widely used benchmark dataset ACE 2005. Moreover, we also use events from FN to augment the performance of the proposed approach. Experimental results show that our approach outperforms state-of-the-art methods, which demonstrates that the proposed approach is effective for event detection."
+    } ],
+    "references" : [ {
+      "title" : "Proceedings of the workshop on annotating and reasoning about time and events",
+      "author" : [ "David Ahn." ],
+      "venue" : "Association for Computational Linguistics, pages 1–8. http://aclweb.org/anthology/W06-0901.",
+      "citeRegEx" : "Ahn.,? 2006",
+      "shortCiteRegEx" : "Ahn.",
+      "year" : 2006
+    }, {
+      "title" : "A neural probabilistic language model",
+      "author" : [ "Yoshua Bengio", "Réjean Ducharme", "Pascal Vincent", "Christian Janvin." ],
+      "venue" : "The Journal of Machine Learning Research 3:1137–1155.",
+      "citeRegEx" : "Bengio et al\\.,? 2003",
+      "shortCiteRegEx" : "Bengio et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Event extraction via dynamic multi-pooling convolutional neural networks",
+      "author" : [ "Yubo Chen", "Liheng Xu", "Kang Liu", "Daojian Zeng", "Jun Zhao." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Compu-",
+      "citeRegEx" : "Chen et al\\.,? 2015",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Why does unsupervised pre-training help deep learning? The Journal of Machine Learning Research 11:625–660",
+      "author" : [ "Dumitru Erhan", "Yoshua Bengio", "Aaron Courville", "Pierre-Antoine Manzagol", "Pascal Vincent", "Samy Bengio" ],
+      "venue" : null,
+      "citeRegEx" : "Erhan et al\\.,? \\Q2010\\E",
+      "shortCiteRegEx" : "Erhan et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "The berkeley framenet project",
+      "author" : [ "Collin F. Baker", "Charles J. Fillmore", "John B. Lowe." ],
+      "venue" : "COLING 1998 Volume 1: The 17th International Conference on Computational Linguistics. http://aclweb.org/anthology/C98-1013.",
+      "citeRegEx" : "Baker et al\\.,? 1998",
+      "shortCiteRegEx" : "Baker et al\\.",
+      "year" : 1998
+    }, {
+      "title" : "Predicting unknown time arguments based on crossevent propagation",
+      "author" : [ "Prashant Gupta", "Heng Ji." ],
+      "venue" : "Proceedings of the ACLIJCNLP 2009 Conference Short Papers. Association for Computational Linguistics, pages 369–",
+      "citeRegEx" : "Gupta and Ji.,? 2009",
+      "shortCiteRegEx" : "Gupta and Ji.",
+      "year" : 2009
+    }, {
+      "title" : "Neural network design",
+      "author" : [ "Martin T Hagan", "Howard B Demuth", "Mark H Beale" ],
+      "venue" : "Pws Pub. Boston",
+      "citeRegEx" : "Hagan et al\\.,? \\Q1996\\E",
+      "shortCiteRegEx" : "Hagan et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "Improving neural networks by preventing co-adaptation of feature detectors",
+      "author" : [ "Geoffrey E Hinton", "Nitish Srivastava", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan R Salakhutdinov." ],
+      "venue" : "arXiv preprint arXiv:1207.0580 http-",
+      "citeRegEx" : "Hinton et al\\.,? 2012",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Using cross-entity inference to improve event extraction",
+      "author" : [ "Yu Hong", "Jianfeng Zhang", "Bin Ma", "Jianmin Yao", "Guodong Zhou", "Qiaoming Zhu." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistic-",
+      "citeRegEx" : "Hong et al\\.,? 2011",
+      "shortCiteRegEx" : "Hong et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Refining event extraction through cross-document inference",
+      "author" : [ "Heng Ji", "Ralph Grishman." ],
+      "venue" : "Proceedings of ACL-08: HLT . Association",
+      "citeRegEx" : "Ji and Grishman.,? 2008",
+      "shortCiteRegEx" : "Ji and Grishman.",
+      "year" : 2008
+    }, {
+      "title" : "Convolutional neural networks for sentence classification",
+      "author" : [ "Yoon Kim." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing . pages 1746–1751. http://www.anthology.aclweb.org/D14-1181.",
+      "citeRegEx" : "Kim.,? 2014",
+      "shortCiteRegEx" : "Kim.",
+      "year" : 2014
+    }, {
+      "title" : "Incremental joint extraction of entity mentions and relations",
+      "author" : [ "Qi Li", "Heng Ji." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Association",
+      "citeRegEx" : "Li and Ji.,? 2014",
+      "shortCiteRegEx" : "Li and Ji.",
+      "year" : 2014
+    }, {
+      "title" : "Constructing information networks using one single model",
+      "author" : [ "Qi Li", "Heng Ji", "Yu HONG", "Sujian Li." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP). Association for",
+      "citeRegEx" : "Li et al\\.,? 2014",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Joint event extraction via structured prediction with global features",
+      "author" : [ "Qi Li", "Heng Ji", "Liang Huang." ],
+      "venue" : "Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Associa-",
+      "citeRegEx" : "Li et al\\.,? 2013",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Using document level cross-event inference to improve event extraction",
+      "author" : [ "Shasha Liao", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 48th Annual Meeting of the Association for Computational Linguistics. Association",
+      "citeRegEx" : "Liao and Grishman.,? 2010",
+      "shortCiteRegEx" : "Liao and Grishman.",
+      "year" : 2010
+    }, {
+      "title" : "Leveraging framenet to improve automatic event detection",
+      "author" : [ "Shulin Liu", "Yubo Chen", "Shizhu He", "Kang Liu", "Jun Zhao." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistic-",
+      "citeRegEx" : "Liu et al\\.,? 2016a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A probabilistic soft logic based approach to exploiting latent and global information in event classification",
+      "author" : [ "Shulin Liu", "Kang Liu", "Shizhu He", "Jun Zhao." ],
+      "venue" : "Proceedings of the thirtieth AAAI Conference",
+      "citeRegEx" : "Liu et al\\.,? 2016b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Supervised attentions for neural machine translation",
+      "author" : [ "Haitao Mi", "Zhiguo Wang", "Abe Ittycheriah." ],
+      "venue" : "arXiv preprint arXiv:1608.00112 https://arxiv.org/abs/1608.00112.",
+      "citeRegEx" : "Mi et al\\.,? 2016",
+      "shortCiteRegEx" : "Mi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Efficient estimation of word representations in vector space",
+      "author" : [ "Tomas Mikolov", "Kai Chen", "Greg Corrado", "Jeffrey Dean." ],
+      "venue" : "arXiv preprint arXiv:1301.3781 https://arxiv.org/abs/1301.3781.",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Joint event extraction via recurrent neural networks",
+      "author" : [ "Huu Thien Nguyen", "Kyunghyun Cho", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistic-",
+      "citeRegEx" : "Nguyen et al\\.,? 2016",
+      "shortCiteRegEx" : "Nguyen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Event detection and domain adaptation with convolutional neural networks",
+      "author" : [ "Huu Thien Nguyen", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th Inter-",
+      "citeRegEx" : "Nguyen and Grishman.,? 2015",
+      "shortCiteRegEx" : "Nguyen and Grishman.",
+      "year" : 2015
+    }, {
+      "title" : "Modeling skip-grams for event detection with convolutional neural networks",
+      "author" : [ "Huu Thien Nguyen", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing . Association",
+      "citeRegEx" : "Nguyen and Grishman.,? 2016",
+      "shortCiteRegEx" : "Nguyen and Grishman.",
+      "year" : 2016
+    }, {
+      "title" : "A unified model of phrasal and sentential evidence for information extraction",
+      "author" : [ "Siddharth Patwardhan", "Ellen Riloff." ],
+      "venue" : "Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing . Association",
+      "citeRegEx" : "Patwardhan and Riloff.,? 2009",
+      "shortCiteRegEx" : "Patwardhan and Riloff.",
+      "year" : 2009
+    }, {
+      "title" : "Joint inference for knowledge extraction from biomedical literature",
+      "author" : [ "Hoifung Poon", "Lucy Vanderwende." ],
+      "venue" : "Human Language Technologies: The 2010 Annual Conference of the North American Chapter of the Associa-",
+      "citeRegEx" : "Poon and Vanderwende.,? 2010",
+      "shortCiteRegEx" : "Poon and Vanderwende.",
+      "year" : 2010
+    }, {
+      "title" : "Relieving the computational bottleneck: Joint inference for event extraction with high-dimensional features",
+      "author" : [ "Deepak Venugopal", "Chen Chen", "Vibhav Gogate", "Vincent Ng." ],
+      "venue" : "Proceedings of the 2014 Con-",
+      "citeRegEx" : "Venugopal et al\\.,? 2014",
+      "shortCiteRegEx" : "Venugopal et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Adadelta: An adaptive learning rate method",
+      "author" : [ "Matthew D Zeiler." ],
+      "venue" : "arXiv preprint arXiv:1212.5701 https://arxiv.org/abs/1212.5701.",
+      "citeRegEx" : "Zeiler.,? 2012",
+      "shortCiteRegEx" : "Zeiler.",
+      "year" : 2012
+    }, {
+      "title" : "Bilingual event extraction: a case study on trigger type determination",
+      "author" : [ "Zhu Zhu", "Shoushan Li", "Guodong Zhou", "Rui Xia." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguis-",
+      "citeRegEx" : "Zhu et al\\.,? 2014",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2014
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 9,
+      "context" : "Unfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 5,
+      "context" : "Unfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 8,
+      "context" : "Unfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 2,
+      "context" : "Unfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 20,
+      "context" : "Unfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 21,
+      "context" : "Unfortunately, most exiting methods performed event detection individually, where the annotated arguments in training set are totally ignored (Ji and Grishman, 2008; Gupta and Ji, 2009; Hong et al., 2011; Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a,b; Nguyen and Grishman, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 13,
+      "context" : "Although some joint learning based methods have been proposed, which tackled event detection and argument extraction simultaneously (Riedel et al., 2009; Li et al., 2013; Venugopal et al., 2014; Nguyen et al., 2016), these approaches usually only make remarkable improvements to AE, but insignificant to ED.",
+      "startOffset" : 132,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 24,
+      "context" : "Although some joint learning based methods have been proposed, which tackled event detection and argument extraction simultaneously (Riedel et al., 2009; Li et al., 2013; Venugopal et al., 2014; Nguyen et al., 2016), these approaches usually only make remarkable improvements to AE, but insignificant to ED.",
+      "startOffset" : 132,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 19,
+      "context" : "Although some joint learning based methods have been proposed, which tackled event detection and argument extraction simultaneously (Riedel et al., 2009; Li et al., 2013; Venugopal et al., 2014; Nguyen et al., 2016), these approaches usually only make remarkable improvements to AE, but insignificant to ED.",
+      "startOffset" : 132,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 1,
+      "context" : "Word embeddings learned from a large amount of unlabeled data have been shown to be able to capture the meaningful semantic regularities of words (Bengio et al., 2003; Erhan et al., 2010).",
+      "startOffset" : 146,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 3,
+      "context" : "Word embeddings learned from a large amount of unlabeled data have been shown to be able to capture the meaningful semantic regularities of words (Bengio et al., 2003; Erhan et al., 2010).",
+      "startOffset" : 146,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 18,
+      "context" : "Specifically, we use the Skip-gram model (Mikolov et al., 2013) to learn word embeddings on the NYT corpus3.",
+      "startOffset" : 41,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 13,
+      "context" : "Following existing work (Li et al., 2013; Chen et al., 2015; Nguyen and Grishman, 2015), we exploit the annotated entity information in our ED system.",
+      "startOffset" : 24,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 2,
+      "context" : "Following existing work (Li et al., 2013; Chen et al., 2015; Nguyen and Grishman, 2015), we exploit the annotated entity information in our ED system.",
+      "startOffset" : 24,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 20,
+      "context" : "Following existing work (Li et al., 2013; Chen et al., 2015; Nguyen and Grishman, 2015), we exploit the annotated entity information in our ED system.",
+      "startOffset" : 24,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 6,
+      "context" : "As illustrated in figure 1, we employ a threelayer (an input layer, a hidden layer and a softmax output layer) Artificial Neural Networks (ANNs) (Hagan et al., 1996) to model the ED task, which has been demonstrated very effective for event detection by Liu et al.",
+      "startOffset" : 145,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 25,
+      "context" : "We train the model by using a simple optimization technique called stochastic gradient descent (SGD) over shuffled mini-batches with the Adadelta rule (Zeiler, 2012).",
+      "startOffset" : 151,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 10,
+      "context" : "Regularization is implemented by a dropout (Kim, 2014; Hinton et al., 2012) and L2 norm.",
+      "startOffset" : 43,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 7,
+      "context" : "Regularization is implemented by a dropout (Kim, 2014; Hinton et al., 2012) and L2 norm.",
+      "startOffset" : 43,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 13,
+      "context" : "For the purpose of comparison, we followed the evaluation of (Li et al., 2013; Chen et al., 2015; Liu et al., 2016b): randomly selected 30 articles from different genres as the development set, and subsequently conducted a blind test on a separate set of 40 ACE 2005 newswire documents.",
+      "startOffset" : 61,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 2,
+      "context" : "For the purpose of comparison, we followed the evaluation of (Li et al., 2013; Chen et al., 2015; Liu et al., 2016b): randomly selected 30 articles from different genres as the development set, and subsequently conducted a blind test on a separate set of 40 ACE 2005 newswire documents.",
+      "startOffset" : 61,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 16,
+      "context" : "For the purpose of comparison, we followed the evaluation of (Li et al., 2013; Chen et al., 2015; Liu et al., 2016b): randomly selected 30 articles from different genres as the development set, and subsequently conducted a blind test on a separate set of 40 ACE 2005 newswire documents.",
+      "startOffset" : 61,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 13,
+      "context" : "Li’s joint model (Li et al., 2013) extracts events based on structure prediction.",
+      "startOffset" : 17,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 16,
+      "context" : "Liu’s PSL (Liu et al., 2016b) employs both latent local and global information for event detection.",
+      "startOffset" : 10,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 15,
+      "context" : "Liu’s FN-Based approach (Liu et al., 2016a) leverages the annotated corpus of FrameNet to alleviate data sparseness problem of ED based on the observation that frames in",
+      "startOffset" : 24,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 19,
+      "context" : "Ngyen’s joint model (Nguyen et al., 2016) employs a bi-directional RNN to jointly extract event triggers and arguments.",
+      "startOffset" : 20,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 21,
+      "context" : "Skip-CNN (Nguyen and Grishman, 2016) introduces the non-consecutive convolution to capture non-consecutive k-grams for event detection.",
+      "startOffset" : 9,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 26,
+      "context" : "We believe the reason is that the training data of ACE 2005 corpus is insufficient to train a precise attention in an unsupervised manner, considering that data sparseness is an important issue of ED (Zhu et al., 2014; Liu et al., 2016a).",
+      "startOffset" : 200,
+      "endOffset" : 237
+    }, {
+      "referenceID" : 15,
+      "context" : "We believe the reason is that the training data of ACE 2005 corpus is insufficient to train a precise attention in an unsupervised manner, considering that data sparseness is an important issue of ED (Zhu et al., 2014; Liu et al., 2016a).",
+      "startOffset" : 200,
+      "endOffset" : 237
+    }, {
+      "referenceID" : 11,
+      "context" : "Moreover, to obtain entity information, we use RPI Joint Information Extraction System7 (Li et al., 2013, 2014; Li and Ji, 2014) to label ACE entity mentions.",
+      "startOffset" : 88,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 0,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 9,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 22,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 5,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 14,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 8,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 16,
+      "context" : ", POS tags, dependency relations) into feature vectors (Ahn, 2006; Ji and Grishman, 2008; Patwardhan and Riloff, 2009; Gupta and Ji, 2009; Liao and Grishman, 2010; Hong et al., 2011; Liu et al., 2016b).",
+      "startOffset" : 55,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 2,
+      "context" : "Representation-based methods typically represent candidate event mentions by embeddings and feed them into neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a; Nguyen and Grishman, 2016).",
+      "startOffset" : 123,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 20,
+      "context" : "Representation-based methods typically represent candidate event mentions by embeddings and feed them into neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a; Nguyen and Grishman, 2016).",
+      "startOffset" : 123,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 15,
+      "context" : "Representation-based methods typically represent candidate event mentions by embeddings and feed them into neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a; Nguyen and Grishman, 2016).",
+      "startOffset" : 123,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 21,
+      "context" : "Representation-based methods typically represent candidate event mentions by embeddings and feed them into neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Liu et al., 2016a; Nguyen and Grishman, 2016).",
+      "startOffset" : 123,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 23,
+      "context" : "The second kind of approach, on the contrast, tackled event detection and argument extraction simultaneously, which is called joint approach (Riedel et al., 2009; Poon and Vanderwende, 2010; Li et al., 2013, 2014; Venugopal et al., 2014; Nguyen et al., 2016).",
+      "startOffset" : 141,
+      "endOffset" : 258
+    }, {
+      "referenceID" : 24,
+      "context" : "The second kind of approach, on the contrast, tackled event detection and argument extraction simultaneously, which is called joint approach (Riedel et al., 2009; Poon and Vanderwende, 2010; Li et al., 2013, 2014; Venugopal et al., 2014; Nguyen et al., 2016).",
+      "startOffset" : 141,
+      "endOffset" : 258
+    }, {
+      "referenceID" : 19,
+      "context" : "The second kind of approach, on the contrast, tackled event detection and argument extraction simultaneously, which is called joint approach (Riedel et al., 2009; Poon and Vanderwende, 2010; Li et al., 2013, 2014; Venugopal et al., 2014; Nguyen et al., 2016).",
+      "startOffset" : 141,
+      "endOffset" : 258
+    } ],
+    "year" : 0,
+    "abstractText" : "This paper tackles the task of event detection (ED), which involves identifying and categorizing events. We argue that arguments provide significant clues to this task, but they are either completely ignored or exploited in an indirect manner in existing detection approaches. In this work, we propose to exploit argument information explicitly for ED via supervised attention mechanisms. In specific, we systematically investigate the proposed model under the supervision of different attention strategies. Experimental results show that our approach advances state-ofthe-arts and achieves the best F1 score on ACE 2005 dataset.",
+    "creator" : null
+  }
+}

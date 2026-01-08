@@ -1,0 +1,798 @@
+{
+  "name" : "ARR_2022_137_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "ODE Transformer: An Ordinary Differential Equation-Inspired Model for Sequence Generation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Residual networks have been used with a great success as a standard method of easing information flow in multi-layer neural models (He et al., 2016; Vaswani et al., 2017). Given an input yt, models of this kind define the output of a layer t to be:\nyt+1 = yt + F (yt, θt) (1)\nwhere F (·, ·) is the function of the layer and θt is its parameter. Interestingly, recent work in machine learning (Weinan, 2017; Lu et al., 2018; Haber et al., 2018; Chang et al., 2018; Ruthotto and Haber, 2019) points out that Eq. (1) is an Euler discretization of the Ordinary Differential Equation (ODE), like this:\ndy(t)\ndt = F (y(t), θ(t)) (2)\nwhere y(t) and θ(t) are continuous with respect to t. In this way, we can call Eq. (1) an ODE block.\nThis finding offers a new way of explaining residual networks in the view of numerical algorithms. Then, one can think of a multi-layer network as applying the Euler method (i.e., Eq. (1)) to solve Eq. (2) subject to the initial conditions y(0) = y0 and θ(0) = θ0.\nThe solution of Eq. (2) has a sufficiently low error bound (call it a stable solution) only if θ(t) changes slow along t (Haber and Ruthotto, 2017; Chen et al., 2018). But this assumption does not always hold for state-of-the-art natural language processing (NLP) systems, in which models are non-linear and over-parameterized. For example, language modeling and machine translation systems learn quite different parameters for different layers, especially when the layers are close to the model input (Vaswani et al., 2017; Dai et al., 2019). Also, truncation errors are nonnegligible for the Euler method because it is a first-order approximation to the true solution (He et al., 2019). These problems make the situation worse, when more layers are stacked and errors are propagated through the neural network. It might explain why recent Machine Translation (MT) systems cannot benefit from extremely deep models (Wang et al., 2019; Liu et al., 2020a; Wei et al., 2020; Li et al., 2020).\nThis paper continues the line of research on the\nODE-inspired method. The basic idea is to use a high-order method for more accurate numerical solutions to the ODE. This leads to a larger ODE block that generates a sequence of intermediate approximations to the solution. We find that the larger ODE block is sufficient to take the role of several ODE blocks with first-order solutions. The benefit is obvious: the use of fewer ODE blocks lowers the risk of introducing errors in block switching, and the high-order method reduces the approximation error in each ODE block. See Figure 1 for a comparison of different models.\nOur method is parameter-efficient because θ(t) is re-used within the same ODE block. As another “bonus\", the model can be improved by learning coefficients of different intermediate approximations in a block. We evaluate our method in strong Transformer systems, covering both the wide (and big) model and the deep model. For machine translation tasks, ODE Transformer achieves 30.77 and 44.11 BLEU scores on the WMT’14 En-De and En-Fr test sets, setting a new state-of-the-art on the WMT’14 En-Fr task. It also significantly outperforms baselines on abstractive summarization and grammar error correction tasks."
+    }, {
+      "heading" : "2 Transformer and ODEs",
+      "text" : "We start with a description of Transformer, followed by its relationship with ODEs. We choose Transformer for our discussion and experiments because it is one of the state-of-the-art models in recent sentence generation tasks."
+    }, {
+      "heading" : "2.1 Transformer",
+      "text" : "Transformer is an example of the encoder-decoder paradigm (Vaswani et al., 2017). The encoder is a stack of identical layers. Each layer consists of a self-attention block and a feedforward network (FFN) block. Both of them equip with a residual connection and a layer normalization unit. Note that the term “block” is used in many different ways. In this paper, the term refers to any neural network that is enhanced by the residual connection (occasionally call it a residual block). Following the Pre-norm architecture (Wang et al., 2019), we define a block as\nyt+1 = yt +G(LN(yt), θt) (3)\nwhere LN(·) is the layer normalization function,1 and G(·) is either the self-attention or feedforward\n1We drop the parameter of LN(·) for simplicity.\nnetwork. The decoder shares a similar architecture, having an additional encoder-decoder attention block sandwiched between the self-attention and FFN blocks."
+    }, {
+      "heading" : "2.2 Ordinary Differential Equations",
+      "text" : "An ordinary differential equation is an equation involving a function y(t) of a variable t and its derivatives. A simple form of ODE is an equation that defines the first-order derivative of y(t), like\ndy(t)\ndt = f(y(t), t) (4)\nwhere f(y(t), t) defines a time-dependent vector field if we know its value at all points of y and all instants of time t. Eq. (4) covers a broad range of problems, in that the change of a variable is determined by its current value and a time variable t. This formulation also works with Pre-norm Transformer blocks. For notational simplicity, we redefine G(LN(yt), θt) as a new function F (yt, θt):\nF (yt, θt) = G(LN(yt), θt)) (5)\nWe then relax yt and θt to continuous functions y(t) and θ(t), and rewrite Eq. (3) to be:\ny(t+ ∆t) = y(t) + ∆t · F (y(t), θ(t)) (6)\nwhere ∆t is the change of t, and is general called step size. Obviously, we have ∆t = 1 in Transformer. But we can adjust step size ∆t using a limit, and have\nlim ∆t→0 y(t+ ∆t)− y(t) ∆t = F (y(t), θ(t)) (7)\nGiven the fact that lim∆t→0 y(t+∆t)−y(t) ∆t = dy(t)\ndt , Eq. (7) is an instance of Eq. (4). The only difference lies in that we introduce θ(t) into the righthand side of Eq. (4). Then, we say that a Pre-norm Transformer block describes an ODE. It has been found that Eq. (3) shares the same form as the Euler method of solving the ODE described in Eq. (7) (Haber and Ruthotto, 2017). This establishes a relationship between Transformer and ODEs, in that, given F (·, ·) and learned parameters {θt}, the forward pass of a multi-block Transformer is a process of running the Euler method for several steps."
+    }, {
+      "heading" : "3 The ODE Transformer",
+      "text" : "In numerical methods of ODEs, we want to ensure the precise solutions to the ODEs in a minimum number of computation steps. But the Euler\nmethod is not “precise” because it is a first-order method, and naturally with local truncation errors. The global error might be larger if we run it for a number of times.2 This is obviously the case for Transformer, especially when the multi-layer neural network arises a higher risk of unstability in solving the ODEs (Haber and Ruthotto, 2017)."
+    }, {
+      "heading" : "3.1 High-Order ODE Solvers",
+      "text" : "Here we use the Runge-Kutta methods for a higher order solution to ODEs (Runge, 1895; Kutta, 1901; Butcher, 1996; Ascher and Petzold, 1998). They are a classic family of iterative methods with different orders of precision.3 More formally, the explicit Runge-Kutta methods of an n-step solution is defined to be:\nyt+1 = yt + n∑ i=1 γiFi (8)\nF1 = hf(yt, t) (9)\nFi = hf(yt + i−1∑ j=1 βijFj , t+ αih) (10)\nwhere h is the step size and could be simply 1 in most cases. Fi is an intermediate approximation to the solution at step t+ αih. α, β and γ are coefficients which can be determined by the Taylor series of yt+1 (Butcher, 1963). Eq. (10) describes a sequence of solution approximations {F1, ..., Fn} over n steps {t + α1h, ..., t + αnh}. These approximations are then interpolated to form the final solution, as in Eq. (8).\nThe Runge-Kutta methods are straightforwardly applicable to the design of a Transformer block. All we need is to replace the function f (see Eq. (10)) with the function F (see Eq. (5)). The advantage is that the function F is re-used in a block. Also, the model parameter θt can be shared within the block.4 In this way, one can omit t + αih in Eq. (10), and compute Fi by\nFi = F (yt + i−1∑ j=1 βijFj , θt) (11)\n2The global error is what we would ordinarily call the error: the difference between y(t) and the true solution. The local error is the error introduced in a single step: the difference between y(t) and the solution obtained by assuming that y(t− 1) is the true solution\n3A p-order numerical method means that the global truncation error is proportional to p power of the step size.\n4Although we could distinguish the parameters at different steps in a block, we found that it did not help and made the model difficult to learn.\nThis makes the system more parameter-efficient. As would be shown in our experiments, the highorder Runge-Kutta methods can learn strong NMT systems with significantly smaller models.\nThe Runge-Kutta methods are general. For example, the Euler method is a first-order instance of them. For a second-order Runge-Kutta (RK2) block, we have\nyt+1 = yt + 1\n2 (F1 + F2) (12)\nF1 = F (yt, θt) (13)\nF2 = F (yt + F1, θt) (14)\nThis is also known as the improved Euler method. Likewise, we can define a fourth-order RungeKutta (RK4) block to be:\nyt+1 = yt + 1\n6 (F1 + 2F2 + 2F3 + F4) (15)\nF1 = F (yt, θt) (16) F2 = F (yt + 1\n2 F1, θt) (17)\nF3 = F (yt + 1\n2 F2, θt) (18)\nF4 = F (yt + F3, θt) (19)\nSee Figure 2 for a comparison of different Runge-Kutta blocks. It should be noted that the method presented here can be interpreted from the perspective of representation refinement (Greff et al., 2017). It provides a way for a function to update the function itself. For example, Universal Transformer refines the representation of the input sequence using the same function and the same parameters in a block-wise manner (Dehghani et al., 2019). Here we show that inner block refinements can be modeled with a good theoretical support."
+    }, {
+      "heading" : "3.2 Coefficient Learning",
+      "text" : "In our preliminary experiments, the RK2 and RK4 methods yielded promising BLEU improvements when the model was shallow. But it was found that the improvements did not persist for deeper models. To figure out why this happened, let us review the Runge-Kutta methods from the angle of training. Take the RK2 method as an example. We rewrite Eq. (12) by substituting F1 and F2, as follow\nyt+1 = yt + 1\n2 F (yt, θt) +\n1 2 F (yt + F (yt, θt), θt) (20)\nLet E be the loss of training, L be the number blocks of the model, and yL be the model output. The gradient of E at yt is\n∂E ∂yt = ∂E ∂yL · 1 2L−t · L−1∏ k=t (1 + gk) (21)\nwhere gk = ( 1 + ∂F (yk, θk)\n∂yk ) ·(\n1 + ∂F (yk + F (yk, θk), θk)\n∂yk + F (yk, θk)\n) (22)\nSeen from Eq. (21), ∂E∂yt is proportional to the factor 1\n2L−t . This leads to a higher risk of gradient\nvanishing when L is larger. The problem somehow attributes to the small coefficients of Fi, that is, γ1 = γ2 = 12 . A natural idea is to empirically set γi = 1 to eliminate the product factor of less than 1 in gradient computation, although this is not theoretically grounded in standard Runge-Kutta methods. We rewrite Eq. (20) with the new coefficients, as follows\nyt+1 = yt + F (yt, θt) +\nF (yt + F (yt, θt), θt) (23)\nThen, we have the gradient, like this\n∂E ∂yt = ∂E ∂yL · L−1∏ k=t gk (24)\nThis model is easy to optimize because ∂E∂yL can be passed to lower-level blocks with no scales. Note that, the methods here are instances of parameter\nsharing (Dehghani et al., 2019; Lan et al., 2020). For example, in each ODE block, we use the same function F with the same parameter θt for all intermediate steps. Setting γi = 1 is a further step towards this because Fi is passed to next steps with the same scale. Here we call it implicit parameter sharing.\nAnother way of scaling Fi to further improve ODE functions is to learn the coefficients automatically on the training data. The simplest method is to initialize γi = 1 and independently optimize each scale. It helps the system learn the way of flowing Fi in a block. Based on it, scaling Fi by a weighted gate mechanism (Srivastava et al., 2015) empirically achieves the best performance (see Section 4). Take RK2-block as an instance, the concatenation of F1 and F2 is transformed to a scalar (0, 1) through a sigmoid gate, then the block output yt+1 is\nyt+1 = yt + g · F1 + (1− g) · F2 (25) g = sigmoid([F1, F2] ·W + b) (26)\nwhere [, ] denotes the concatenation operation and W, b are learnable parameters. We call it RK2block (learnable γi), and the architecture is shown in Figure 2 (d). This kind of formulation offers a more flexible way to decide which part contributes more and is also easy to be optimized. Moreover, we also summarize the comparison of various scaling functions in Appendix C."
+    }, {
+      "heading" : "3.3 Efficiency Discussion",
+      "text" : "ODE Transformer is efficient to use. As we only apply the ODE design schema into the encoder side, it only brings minor impacts on the inference\nspeed due to the autoregressive decoding schema. Another concern here is the memory consumption. ODE Transformer consumes more memory than the baseline in the same depth since we need to store the intermediate approximations in the forward pass. But the additional consumption is less than that of the baseline who has the same computation cost. We give a quantitative analysis in Section 5."
+    }, {
+      "heading" : "4 Experimental Results",
+      "text" : "Due to the limited space, the details of experimental setups could be found in Appendix A and B.\nResults of En-De and En-Fr Table 1 compares ODE Transformer with several state-of-the-art systems. Both RK2-block and RK4-block outperform the baselines by a large margin with different model capacities. For example, RK2-block obtains a +1.00 BLEU improvement with the base configuration when the depth is 6. RK4-block yields a gain of 0.17 BLEU points on top of RK2-block. This observation empirically validates the conjecture that high-order ODE functions are more efficient. When we switch to deep models, our method is more parameter efficient. E.g., RK2-block is comparable with a strong 48-layer system (Li et al., 2020) with half of the encoder depth. Similarly,\nwide models can also benefit from the enlarging layer depth (Wei et al., 2020; Li et al., 2020). RK2block achieves BLEU scores of 30.77 and 44.11 on the En-De and the En-Fr tasks, significantly surpassing the standard Big model by 1.32 and 0.70 BLEU points. This sets a new state-of-the-art on these tasks with fewer parameters.\nResults of En-Ro Table 2 exhibits model parameters, total training steps and BLEU scores of several strong systems on the En-Ro task. Again, ODE Transformer outperforms these baselines. As stated in (Mehta et al., 2020), they trained the model up to 170 epochs and obtained a BLEU score of 34.70 through the DeLight model. However, the observation here is quite different. The validation PPL begins to increase after 20 epochs. Thus, our baseline is slightly inferior to theirs, but matches the result reported in Lin et al. (2020). ODE blocks achieve even better performance with DeLight within much less training cost. For a bigger model (line 6), it obtains a BLEU score of 35.28.\nParameter Efficiency Table 3 summaries the results of several efficient Transformer variants, including Lite Transformer (Wu et al., 2020), DeLight (Mehta et al., 2020) and a light version of the Evolved Transformer (So et al., 2019). As expected, ODE Transformer is promising for smaller models. It is comparable in BLEU with DeLight but having 9M fewer parameters. Under the same model capacity, it outperforms DeLight by 0.64 BLEU points. It may offer a new choice for deploying NMT systems on edge devices.\nResults of Summarization and Correction We also evaluated the ODE Transformer on another two sequence generation tasks. Table 4 shows that both RK2-block and RK4-block outperform the baselines by a margin. Similarly, RK4-block is more superior to RK2-block when the model is shallow. More results and case studies could be found in Appendix C."
+    }, {
+      "heading" : "5 Analysis",
+      "text" : "Here we investigate some interesting issues. For simplicity to lengend, we call RK2-block with coefficients initialized by 1 as RK2-block-v1, and learnable coefficients (Eq. (25) ) as RK2-block-v2.\nQuantization of the Truncation Error Actually, we cannot obtain the “true” solution of each block output in NMT, because we mainly experimented on the encoder side. Instead, we tested our system on the language modeling task, where the perplexity between the single layer model output and the ground truth could be regarded as the truncation error with no error propagations. Table 5 shows the perplexities on the Penn Treebank dataset (Mikolov et al., 2011). All ODE Transformer variants reduce the errors significantly. RK4-order achieves the lowest PPL on both settings. In addition, RK2-block can even obtain a lower PPL than a 2-layer residual-block. The observation here again verifies larger ODE blocks behave superior to the standard residual-block.\nInference Speed and Memory Consumption Table 6 shows the comparison of inference speed and memory consumption discussed in Section 3.3. Experimental results demonstrate the proposed ODE design schema results in acceptable inference speeds. And it is also memory friendly through the memory comparison between the baseline and the RK variants in both base and big configurations.\nBLEU against Encoder Depth Figure 3 (left) depicts BLEU scores of several ODE Transformer variants and the baseline under different encoder depths. All ODE Transformer variants are significantly superior to the baseline when depth ≤ 24 . RK2-block-v2 almost achieves the best performance over all depths, especially when the model becomes deeper. Interestingly, Figure 3 confirms again that ODE Transformer is parameter efficient, e.g., a 6-layer RK2-block is comparable with the 18-layer baseline system. Another finding here is RK4-block performs well on shallow models, but it is inferior to RK2-block when the depth is going deep. This is because original coefficients may cause the optimization problem in the backward propagation in deep models (see Section 3.2). Also, Figure 3 (right) plots BLEU as a function of the model size when the hidden size is 256. The RK2 method significantly surpasses the baseline using much fewer parameters.\nAblation Study on Different F (·, ·) As stated in Section 3, the F (·, ·) function can either be SAN, FFN or both of them (SAN+FFN). As shown in Figure 4, high-order ODE works better with FFN than SAN. An explanation might be that the FFN component has more parameters than the SAN component.5 The model that treats FFN and SAN as a single ODE block behaves the best.\n5There are 2 · dmodel · 4dmodel parameters in FFN and dmodel · 3dmodel + dmodel · dmodel in SAN.\nTraining and Validation Perplexity Figure 5 plots the training and validation PPL curves of RK blocks and the baseline enhanced by RPR (Shaw et al., 2018). RK2-block obtains lower training and validation PPLs in both configurations (base and wide models).\nVisualization of the Gradient Norm We also collect the gradient information of several welltrained systems during training. Figure 6 plots the gradient norm of RK2-block-v2, RK4-block and the standard residual-block (baseline). As we can see that Pre-Norm residual block is able to make the training stable (Wang et al., 2019). Both RK2block-v2 and RK4-block provide richer signals due to the implicit parameter sharing among intermediate approximations. The two learning curves appear to be nearly the same, which is consistent with the results in Table 1.\nComparison of Different ODE Design Schemas Then, we take a comprehensive analysis of several ODE design schemas. As stated in Lu et al. (2018)’s work, several models in computer vision, such as LeapfrogNet (He et al., 2019), PolyNet (Zhang et al., 2017) and MultistepNet (Lu et al., 2018), can also be interpreted from the ODE perspective. The related ODE functions are summarized in Table 7. We re-implemented these methods using the same codebase for fair comparisons. We conducted experiments following the base configuration on the En-De task.\nAt time t, Multistep Euler methods requires previous states, e.g. yt−1, to generate the current approximation, instead of iterative refinements based on the current-time state. So these methods are heavier than ODE Transformer. Note that DLCL (Wang et al., 2019) can also be regarded as a multistep Euler method, which is more competitive in deep Transformer. But there is just a modest improvement upon the shallow baseline. Theoretically, the Backward Euler method is slightly better than the Forward Euler method in numerical analysis, but the improvement is marginal. Note that our ODE Transformer achieves consistent BLEU improvements over the aforementioned methods. The reason is that such iterative refinements provide more efficient and effective parameters learning."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Deep Transformer models Recently, deep Transformer has witnessed tremendous success in machine translation. A straightforward way is to shorten the path from upper-level layers to lowerlevel layers thus to alleviate the gradient vanishing or exploding problems (Bapna et al., 2018; Wang et al., 2019; Wu et al., 2019; Wei et al., 2020). For deeper models, the training cost is nonnegligible. To speed up the training, an alternative way is to train a shallow model first and progressively increasing the model depth (Li et al., 2020; Dong et al., 2020). Apart from the model architecture improvements, another way of easing the optimization is to utilize carefully designed parameter initialization strategies (Zhang et al., 2019; Xu et al., 2020; Huang et al., 2020; Liu et al., 2020a). Note that ODE Transformer is orthogonal to the aforementioned methods, and we will test it on these methods in the future work.\nOrdinary Differential Equations The relationship between ResNet and ODEs was first proposed by Weinan (2017). This shows a brandnew perspective on the design of effective deep architectures. Moreover, the success of Neural ODENet (Chen et al., 2018) have attracted researchers. Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective. But, in NLP, it is still rare to see studies on designing models from the ODE perspective. Zhang et al. (2021) proposed continuous self-attention models using the same merit with neural ODE. Perhaps the most relevant work with us is an (2021)’s work. They redesigned the Transformer architecture from a multi-particle dynamic system view in terms of efficiency. Unlike them, we show that the stacked first-order ODE blocks may cause error accumulation, thus hindering the model performance. We address this issue by introducing high-order blocks, and demonstrate significant performance improvements on three sequence generation tasks, which is complementary to Baier-Reinio and De Sterck (2020)’s work."
+    }, {
+      "heading" : "7 Conclusions",
+      "text" : "This paper explores the relationship between Transformer and ODEs. We propose ODE Transformer to help the model benefit from high-order ODE solutions. Experimental results on the three representative sentence generations tasks (i.e., machine translation, abstractive summarization, and grammatical error correction) show the effectiveness and efficiency of ODE Transformer. It achieves 30.77 and 44.11 BLEU scores on the WMT’14 En-De and En-Fr benchmarks, setting a new state-of-theart result on the En-Fr."
+    }, {
+      "heading" : "A Experimental Setups",
+      "text" : "Machine Translation We report results on three WMT benchmarks. For the WMT’14 EnglishGerman (En-De) task, the training data consisted of approximately 4.5M tokenized sentence pairs, as in (Vaswani et al., 2017). All sentences were segmented into sequences of sub-word units (Sennrich et al., 2016) with 32K merge operations using a shared vocabulary. We selected newstest2013 as the validation data and newstest2014 as the test data. For the WMT’14 English-French (EnFr) task, we used the dataset provided within Fairseq, i.e., 36M training sentence pairs from WMT’14. newstest2012+newstest2013 was the validation data and newstest2014 was the test data. For the WMT’16 English-Romanian (En-Ro) task, we replicated the setup of (Mehta et al., 2020), which used 600K/2K/2K sentence pairs for training, evaluation and inference, respectively.\nAbstractive Summarization We also tested the models’s ability to process long sequences on the CNN-DailyMail summarization task (Nallapati et al., 2016; Hermann et al., 2015). The preprocessed method was the same as in (Ott et al., 2019). We used a shared BPE with 30K operations, resulting in a vocabulary of 32, 580 entries. The evaluation metric was F1-Rouge (Lin, 2004) (Rouge-1, Rouge-2 and Rouge-L).\nGrammar Error Correction We borrowed the setup from Chollampatt and Ng (2018) and used the provided preprocessed script. Word-level dropout technique was also applied to prevent the overfitting problem.\nLanguage Modeling Here, we introduce the details about the Penn Treebank dataset (Mikolov et al., 2011) and the corresponding configuration. It contains 88K, 3, 370 and 3, 761 sentences for training, validation and test. The vocabulary size was 10K. To evaluate the truncation error, we set the layer depth of the language model to 1 or 2 for a comprehensive comparison. Assume the layer depth is 1, then the loss between the block output\nand the ground-truth can be regarded as the truncation error. It alleviates the influence of the error accumulation across different layers.\nTable 8 summarizes the details of our datasets. We both present the sentences and tokens of each task. For the En-De and En-Fr tasks, the datasets used in this work could be found in Fairseq.6 For the En-Ro task, we used the preprocessed dataset provided by DeLight.7 Note that we only shared the target embedding and the softmax embedding instead of a shared vocabulary between the source side and the target side. The CNN/DailyMail dataset consists of CNN stories8 and Daily emails9. For the grammar error correction task (GEC), we conducted experiments on the CONLL dataset 10."
+    }, {
+      "heading" : "B Training and Evaluation",
+      "text" : "Training As suggested in Li et al. (2020)’s work, we adopted relative positional representation (RPR) (Shaw et al., 2018) for stronger baselines. All experiments were trained on 8 GPUs, with 4, 096 tokens on each GPU. For the En-De and the EnFr tasks, we employed the gradient accumulation strategy with a step of 2 and 8, respectively. We used the Adam optimizer (Kingma and Ba, 2015) whose hyperparameters were set to (0.9, 0.997). The hyperparameters including the learning rate, the warmup step and the total training steps of three tasks could be found in Table 8. It is noteworthy that we trained Base/Deep and Big models for 50K and 100K steps on the En-De task. We regarded merging SAN and FFN as the default ODE block. In addition, main results were the average of three times running with different random seeds, and we averaged the last 5/10 checkpoints for fair comparisons with previous work.\nSince the proposed method is orthogonal to the model capacity, we evaluated the ODE Transformer on Base/Deep/Wide configurations, respectively. The detail of each configuration is as follows:\n• Base/Deep Model. The hidden size of self6https://github.com/pytorch/fairseq/\ntree/master/examples/scaling_nmt 7https://github.com/sacmehta/delight/ blob/master/readme_files/nmt/wmt16_en2ro. md\n8https://drive.google.com/uc?export= download&id=0BwmD_VLjROrfTHk4NFg2SndKcjQ\n9https://drive.google.com/uc?export= download&id=0BwmD_VLjROrfM1BxdkxVaTY2bWs\n10https://www.cl.cam.ac.uk/research/nl/ bea2019st\nattention was 512, and the dimension of the inner-layer in FFN was 2, 048. We used 8 heads for attention. For training, we set all dropout to 0.1 as default, including residual dropout, attention dropout, ReLU dropout. Label smoothing ls = 0.1 was applied to enhance the generation ability of the model. For deep models, we only enlarged the encoder depth considering the inference speed.\n• Wide (or Big) Model. We used the same architecture as Transformer-Base but with a larger hidden layer size 1, 024, more attention heads (16), and a larger feed forward inner-layer (4, 096 dimensions). The residual dropout was set to 0.3 for the En-De task and 0.1 for the En-Fr task.\nFor the language modeling task, the hidden size was 512, and the filter size of the FFN was 2, 048. We set all the dropout rate as 0.1, including the residual dropout, attention dropout and the ReLU dropout. Each model was trained up to 20 epochs, and most models achieved the lowest PPL on the validation set when the epoch is 10. Then the validation PPL began to increase, though the training PPL is still declining. The warmup step was 2, 000 and the batch size was 4, 096. The max learning rate was set to 0.0007.\nEvaluation For machine translation, we measured performance in terms of BLEU. Both tokenized BLEU and SacreBLEU11 scores were reported on the En-De and En-Fr tasks. Also, we reported tokenized BLEU scores on the En-Ro task. In addition, we measured Rouge-1, Rouge-2,\n11BLEU+case.mixed+numrefs.1+smooth.exp+ tok.13a+version.1.2.12\nRouge-L for CNN/DailyMail and precision, recall, F0.5 for CONLL. The beam size and length penalty of each task are summarized in Table 8."
+    }, {
+      "heading" : "C Additional Results and Analyses",
+      "text" : "Comparison on the CNN/DailyMail Dataset We summarize the previous results on the CNN/DailyMail dataset (See Table 9). The performance was evaluated by ROUGE-1, ROUGE-2 and ROUGE-L, respectively. Intuitively, high-order ODE functions can significantly improve on top of the Euler method as well as several strong existing models.12 Again, RK4-block beats the baseline and RK2-block by up to 1.36 and 0.25 scores in terms of ROUGE-1, respectively.\nComparison of Various Scaling Methods We have emphasized the importance of automatic coefficient learning in Section 3.2. The forward pass of RK2-block can be described as yt+1 = yt + γ1 · F1 + γ2 · F2, where γ1 and γ2 are coefficients which can be numerical suggested or learnable. Here we exhibit the comparison of various scaling methods on the WMT’14 En-De dataset, and the results are listed in Table 10. We can see that RK2-block (learnable γi) equips with single sigmoid gate (line 5 in Table 10) yields best results on both shallow and deep configurations. The observation here reveals that appropriate scaling functions can further improve the RK2-block. Tanh activation even brings negative impacts on the performance, especially when the model is deep. A possible explanation is that Tanh produces a larger range ([−1, 1]) which is more difficult to optimize than the sigmoid function.\n12We only compared models without using pre-training.\nCase Study on the GEC Task Table 11 summarizes several cases from the GEC task. Here, we take a comparison between the baseline and the RK4-block due to its superiority on the GEC task. We can clearly see that the proposed RK4block delivers more accurate corrections compared with the baseline when handling subject verb agreement (Case2), collocation (Case1, Case3), spelling (Case4) and other issues. More specifically, Figure 7 illustrates the statistics of different error type annotated by ERRANT (Bryant et al., 2017), a grammatical ERRor ANnotation Toolkit designed to automatically annotate parallel error correction data. More details please refer to Bryant et al. (2017)’s work. With the help of ERRANT, we can carry out a detailed error type analysis. As shown in Figure 7, RK4-block corrects the input in a more similar way with the reference, though there is still a large gap between them. Limited by the model ability, the baseline sometimes even cannot generate the right corrections, e.g. R:PUNCT and M:OTHER cases."
+    }, {
+      "heading" : "D Comparison with Related Work",
+      "text" : "As we aforementioned, the ODE design schema somehow shares a similar merit with the weight\nsharing, especially when the coefficients are set to 1. This is because we reuse the same function F to compute the intermediate approximation at each timestep, and it is also a effective way to apply the higher-order ODE into the Transformer architecture. Compared with weight sharing (line 1 in Table 10), ODE Transformer variants can deliver better performance within the same computation cost, demonstrating the effectiveness of ODE design schema.\nNext, we make a detail comparison between the proposed ODE Transformer and previous studies (Baier-Reinio and De Sterck, 2020; Zhu and Fu, 2018; Zhang et al., 2021) to avoid the potential misunderstandings.\nCompared with RKNet RKNet (Zhu and Fu, 2018) is mainly designed to improve the ResNet using implicit Runge-Kutta methods for vision tasks. There are some differences between ours and RKNet. (i) We mainly conduct experiments on sequence generation tasks, e.g. machine translation, abstract summarization, and grammar error correction tasks. They focused on the image classification task. (ii) Except for the integration of ODE into the Transformer design schema, we also make an analysis on how to choose appropriate coefficients\nof intermediate approximations. And we bridge the relationship between the ODE design schema with the explicit weight sharing. (iii) We also offer an automatically coefficient learning method for RK2-block which delivers the best performance in different configurations.\nCompared with N-ODE As we discussed in the related work, our work is complementary to BaierReinio and De Sterck (2020)’s work, that we empirically demonstrate the effectiveness of integrating ODE design schema into Transformer on several sequence generation tasks. This work may shed light on the design of effective Transformer architectures from the numerical perspective and provides stronger baselines to the literature.\nCompared with CSAODE The differences between these two work are summarized below: (i) As we emphasized above, the benchmarks we experimented on are quite different. They mainly validated the proposed CSAODE on text classification and QA tasks. (ii) The proposed CSAODE (Zhang et al., 2021) is an extension of neural ODE (cheng et al., 2018), the motivation is quite different. They aim to effectively calculate the contiguous states of hidden features only via one-layer parameters and proposed a self-attention solver to fix the issue. While our motivation is to employ higher-order ODE solutions to reduce the truncation errors produced by each layer. On the other hand, CSAODE is still a single-layer model, and ours is a multi-layer sequence-to-sequence model. We also show the comparison of different components based on higher-order ODE solutions (See Figure 4). (iii) Single-layer model is not strong enough to solve complicated tasks, e.g. machine translation. However, when stacking several layers, we need to re-consider the error accumulation among layers, that each layer is an individual ODE solver. How to mitigate the error accumulation is the main goal in this work, which is not discussed in their work."
+    }, {
+      "heading" : "E Derivations of the Equation",
+      "text" : "Let E be the loss of training, L be the number blocks of the model, and yL be the model output. Here, we define\nzk = yk + F (yk, θk) (27)\nThen the information flow of the RK2 method can be described as follows:\nyk+1 = yk + 1\n2 F (yk, θk) +\n1 2 F (yk + F (yk, θk), θk)\n= yk + 1\n2 F (yk, θk) +\n1 2 F (zk, θk)(28)\nwhere ∂zk∂yk = 1 + ∂F (yk,θk) ∂yk . In this way, the detail derivation of Eq. (28) is as follows:\n∂yk+1 ∂yk = 1 + 1 2 ∂F (yk, θk) ∂yk + 1 2 ∂F (zk, θk) ∂zk · ∂zk ∂yk\n= 1 2 · ( 1 + 1 + ∂F (yk, θk) ∂yk + ∂F (zk, θk)\n∂zk ·(\n1 + ∂F (yk, θk)\n∂yk )) = 1 2 · ( 1 + ( 1 + ∂F (zk, θk)\n∂zk ) ·(\n1 + ∂F (yk, θk)\n∂yk\n)) (29)\nWith the chain rule, the error E propagates from the top layer yL to layer yt by the following formula:\n∂E ∂yt = ∂E ∂yL · ∂yL ∂yL−1 · ∂yL−1 ∂yL−2 · · · ∂yt+1 ∂yt (30)\nHere we have\ngk = ( 1 + ∂F (yk, θk)\n∂yk\n) · ( 1 + ∂F (zk, θk)\n∂zk ) Then, put the Eq. (30) into Eq. (29), the gradient\nof E at yt is\n∂E ∂yt = ∂E ∂yL · 1 2L−t · L−1∏ k=t (1 + gk) (31)\nSimilarly, we can easily obtain the gradient of RK2 method where γi = 1:\n∂E ∂yt = ∂E ∂yL · gL−1 · gL−2 · · · gt\n= ∂E ∂yL · L−1∏ k=t gk (32)"
+    } ],
+    "references" : [ {
+      "title" : "Redesigning the transformer architecture with insights from multi-particl",
+      "author" : [ "Subhabrata Dutta an." ],
+      "venue" : "ArXiv preprint, abs/2109.15142.",
+      "citeRegEx" : "an.,? 2021",
+      "shortCiteRegEx" : "an.",
+      "year" : 2021
+    }, {
+      "title" : "Computer methods for ordinary differential equations and differential-algebraic equations, volume 61",
+      "author" : [ "Uri M Ascher", "Linda R Petzold." ],
+      "venue" : "Siam.",
+      "citeRegEx" : "Ascher and Petzold.,? 1998",
+      "shortCiteRegEx" : "Ascher and Petzold.",
+      "year" : 1998
+    }, {
+      "title" : "N-ode transformer: A depth-adaptive variant of the transformer using neural ordinary differential equations",
+      "author" : [ "Aaron Baier-Reinio", "Hans De Sterck." ],
+      "venue" : "ArXiv preprint, abs/2010.11358.",
+      "citeRegEx" : "Baier.Reinio and Sterck.,? 2020",
+      "shortCiteRegEx" : "Baier.Reinio and Sterck.",
+      "year" : 2020
+    }, {
+      "title" : "Training deeper neural machine translation models with transparent attention",
+      "author" : [ "Ankur Bapna", "Mia Chen", "Orhan Firat", "Yuan Cao", "Yonghui Wu." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Bapna et al\\.,? 2018",
+      "shortCiteRegEx" : "Bapna et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Automatic annotation and evaluation of error types for grammatical error correction",
+      "author" : [ "Christopher Bryant", "Mariano Felice", "Ted Briscoe." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Pa-",
+      "citeRegEx" : "Bryant et al\\.,? 2017",
+      "shortCiteRegEx" : "Bryant et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Coefficients for the study of runge-kutta integration processes",
+      "author" : [ "John C Butcher." ],
+      "venue" : "Journal of the Australian Mathematical Society, 3(2):185–201.",
+      "citeRegEx" : "Butcher.,? 1963",
+      "shortCiteRegEx" : "Butcher.",
+      "year" : 1963
+    }, {
+      "title" : "A history of rungekutta methods",
+      "author" : [ "John Charles Butcher." ],
+      "venue" : "Applied numerical mathematics, 20(3):247–260.",
+      "citeRegEx" : "Butcher.,? 1996",
+      "shortCiteRegEx" : "Butcher.",
+      "year" : 1996
+    }, {
+      "title" : "Reversible architectures for arbitrarily deep residual neural networks",
+      "author" : [ "Bo Chang", "Lili Meng", "Eldad Haber", "Lars Ruthotto", "David Begert", "Elliot Holtham." ],
+      "venue" : "Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence, (AAAI-",
+      "citeRegEx" : "Chang et al\\.,? 2018",
+      "shortCiteRegEx" : "Chang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Neural ordinary differential equations",
+      "author" : [ "Tian Qi Chen", "Yulia Rubanova", "Jesse Bettencourt", "David Duvenaud." ],
+      "venue" : "Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems 2018, NeurIPS",
+      "citeRegEx" : "Chen et al\\.,? 2018",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A multilayer convolutional encoder-decoder neural network for grammatical error correction",
+      "author" : [ "Shamil Chollampatt", "Hwee Tou Ng." ],
+      "venue" : "Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence, (AAAI-18), the 30th innovative Ap-",
+      "citeRegEx" : "Chollampatt and Ng.,? 2018",
+      "shortCiteRegEx" : "Chollampatt and Ng.",
+      "year" : 2018
+    }, {
+      "title" : "Transformer-XL: Attentive language models beyond a fixed-length context",
+      "author" : [ "Zihang Dai", "Zhilin Yang", "Yiming Yang", "Jaime Carbonell", "Quoc Le", "Ruslan Salakhutdinov." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computa-",
+      "citeRegEx" : "Dai et al\\.,? 2019",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Universal transformers",
+      "author" : [ "Mostafa Dehghani", "Stephan Gouws", "Oriol Vinyals", "Jakob Uszkoreit", "Lukasz Kaiser." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net.",
+      "citeRegEx" : "Dehghani et al\\.,? 2019",
+      "shortCiteRegEx" : "Dehghani et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Towards adaptive residual network training: A neural-ode perspective",
+      "author" : [ "Chengyu Dong", "Liyuan Liu", "Zichao Li", "Jingbo Shang." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Vir-",
+      "citeRegEx" : "Dong et al\\.,? 2020",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bottom-up abstractive summarization",
+      "author" : [ "Sebastian Gehrmann", "Yuntian Deng", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 4098–4109, Brussels, Belgium.",
+      "citeRegEx" : "Gehrmann et al\\.,? 2018",
+      "shortCiteRegEx" : "Gehrmann et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Highway and residual networks learn unrolled iterative estimation",
+      "author" : [ "Klaus Greff", "Rupesh Kumar Srivastava", "Jürgen Schmidhuber." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017,",
+      "citeRegEx" : "Greff et al\\.,? 2017",
+      "shortCiteRegEx" : "Greff et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Stable architectures for deep neural networks",
+      "author" : [ "Eldad Haber", "Lars Ruthotto." ],
+      "venue" : "Inverse Problems, 34(1):014004.",
+      "citeRegEx" : "Haber and Ruthotto.,? 2017",
+      "shortCiteRegEx" : "Haber and Ruthotto.",
+      "year" : 2017
+    }, {
+      "title" : "Learning across scales multiscale methods for convolution neural networks",
+      "author" : [ "Eldad Haber", "Lars Ruthotto", "Elliot Holtham", "Seong-Hwan Jun." ],
+      "venue" : "Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence, (AAAI-18), the 30th",
+      "citeRegEx" : "Haber et al\\.,? 2018",
+      "shortCiteRegEx" : "Haber et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Deep residual learning for image recognition",
+      "author" : [ "Kaiming He", "Xiangyu Zhang", "Shaoqing Ren", "Jian Sun." ],
+      "venue" : "2016 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2016, Las Vegas, NV, USA, June 27-30, 2016, pages 770–778.",
+      "citeRegEx" : "He et al\\.,? 2016",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Odeinspired network design for single image superresolution",
+      "author" : [ "Xiangyu He", "Zitao Mo", "Peisong Wang", "Yang Liu", "Mingyuan Yang", "Jian Cheng." ],
+      "venue" : "IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2019, Long Beach,",
+      "citeRegEx" : "He et al\\.,? 2019",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomás Kociský", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Advances in Neural Information Processing Systems 28: Annual Conference",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Improving transformer optimization through better initialization",
+      "author" : [ "Xiao Shi Huang", "Felipe Pérez", "Jimmy Ba", "Maksims Volkovs." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Vir-",
+      "citeRegEx" : "Huang et al\\.,? 2020",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Beitrag zur naherungsweisen integration totaler differentialgleichungen",
+      "author" : [ "Wilhelm Kutta." ],
+      "venue" : "Z. Math. Phys., 46:435–453.",
+      "citeRegEx" : "Kutta.,? 1901",
+      "shortCiteRegEx" : "Kutta.",
+      "year" : 1901
+    }, {
+      "title" : "ALBERT: A lite BERT for self-supervised learning of language representations",
+      "author" : [ "Zhenzhong Lan", "Mingda Chen", "Sebastian Goodman", "Kevin Gimpel", "Piyush Sharma", "Radu Soricut." ],
+      "venue" : "8th International Conference on Learning Representations,",
+      "citeRegEx" : "Lan et al\\.,? 2020",
+      "shortCiteRegEx" : "Lan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Fractalnet: Ultra-deep neural networks without residuals",
+      "author" : [ "Gustav Larsson", "Michael Maire", "Gregory Shakhnarovich." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017,",
+      "citeRegEx" : "Larsson et al\\.,? 2017",
+      "shortCiteRegEx" : "Larsson et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Shallow-to-deep training for neural machine translation",
+      "author" : [ "Bei Li", "Ziyang Wang", "Hui Liu", "Yufan Jiang", "Quan Du", "Tong Xiao", "Huizhen Wang", "Jingbo Zhu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81, Barcelona, Spain. Association for Computational Linguistics.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Towards fully 8-bit integer inference for the transformer model",
+      "author" : [ "Ye Lin", "Yanyang Li", "Tengbo Liu", "Tong Xiao", "Tongran Liu", "Jingbo Zhu." ],
+      "venue" : "Proceedings of the Twenty-Ninth International Joint Conference on Artificial Intelligence, IJCAI 2020, pages",
+      "citeRegEx" : "Lin et al\\.,? 2020",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding the difficulty of training transformers",
+      "author" : [ "Liyuan Liu", "Xiaodong Liu", "Jianfeng Gao", "Weizhu Chen", "Jiawei Han." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Liu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding and improving encoder layer fusion in sequence-to-sequence learning",
+      "author" : [ "Xuebo Liu", "Longyue Wang", "Derek F Wong", "Liang Ding", "Lidia S Chao", "Zhaopeng Tu." ],
+      "venue" : "ArXiv preprint, abs/2012.14768.",
+      "citeRegEx" : "Liu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding and improving transformer from a multi-particle dynamic system point of view",
+      "author" : [ "Yiping Lu", "Zhuohan Li", "Di He", "Zhiqing Sun", "Bin Dong", "Tao Qin", "Liwei Wang", "Tie-Yan Liu." ],
+      "venue" : "ArXiv preprint, abs/1906.02762.",
+      "citeRegEx" : "Lu et al\\.,? 2019",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Beyond finite layer neural networks: Bridging deep architectures and numerical differential equations",
+      "author" : [ "Yiping Lu", "Aoxiao Zhong", "Quanzheng Li", "Bin Dong." ],
+      "venue" : "Proceedings of the 35th International Conference on Machine Learning, ICML",
+      "citeRegEx" : "Lu et al\\.,? 2018",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Delight: Very deep and light-weight transformer",
+      "author" : [ "Sachin Mehta", "Marjan Ghazvininejad", "Srinivasan Iyer", "Luke Zettlemoyer", "Hannaneh Hajishirzi." ],
+      "venue" : "ArXiv preprint, abs/2008.00623.",
+      "citeRegEx" : "Mehta et al\\.,? 2020",
+      "shortCiteRegEx" : "Mehta et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Empirical evaluation and combination of advanced language modeling techniques",
+      "author" : [ "Tomáš Mikolov", "Anoop Deoras", "Stefan Kombrink", "Lukáš Burget", "Jan Černockỳ." ],
+      "venue" : "Twelfth annual conference of the international speech communication associa-",
+      "citeRegEx" : "Mikolov et al\\.,? 2011",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Abstractive text summarization using sequence-tosequence rnns and beyond",
+      "author" : [ "Ramesh Nallapati", "Bowen Zhou", "Cícero Nogueira dos Santos", "Çaglar Gülçehre", "Bing Xiang." ],
+      "venue" : "Proceedings of the 20th SIGNLL Conference on Computational Natural",
+      "citeRegEx" : "Nallapati et al\\.,? 2016",
+      "shortCiteRegEx" : "Nallapati et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "fairseq: A fast, extensible toolkit for sequence modeling",
+      "author" : [ "Myle Ott", "Sergey Edunov", "Alexei Baevski", "Angela Fan", "Sam Gross", "Nathan Ng", "David Grangier", "Michael Auli." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chap-",
+      "citeRegEx" : "Ott et al\\.,? 2019",
+      "shortCiteRegEx" : "Ott et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Über die numerische auflösung von differentialgleichungen",
+      "author" : [ "Carl Runge." ],
+      "venue" : "Mathematische Annalen, 46(2):167–178.",
+      "citeRegEx" : "Runge.,? 1895",
+      "shortCiteRegEx" : "Runge.",
+      "year" : 1895
+    }, {
+      "title" : "Deep neural networks motivated by partial differential equations",
+      "author" : [ "Lars Ruthotto", "Eldad Haber." ],
+      "venue" : "Journal of Mathematical Imaging and Vision volume, 62:352–364. 10",
+      "citeRegEx" : "Ruthotto and Haber.,? 2019",
+      "shortCiteRegEx" : "Ruthotto and Haber.",
+      "year" : 2019
+    }, {
+      "title" : "Momentum residual neural networks",
+      "author" : [ "Michael E. Sander", "Pierre Ablin", "Mathieu Blondel", "Gabriel Peyré." ],
+      "venue" : "Proceedings of the 38th International Conference on Machine Learning, ICML 2021, 1824 July 2021, Virtual Event, volume 139 of Proceed-",
+      "citeRegEx" : "Sander et al\\.,? 2021",
+      "shortCiteRegEx" : "Sander et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Get to the point: Summarization with pointergenerator networks",
+      "author" : [ "Abigail See", "Peter J. Liu", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1073–",
+      "citeRegEx" : "See et al\\.,? 2017",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1715–",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Self-attention with relative position representations",
+      "author" : [ "Peter Shaw", "Jakob Uszkoreit", "Ashish Vaswani." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Tech-",
+      "citeRegEx" : "Shaw et al\\.,? 2018",
+      "shortCiteRegEx" : "Shaw et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The evolved transformer",
+      "author" : [ "David R. So", "Quoc V. Le", "Chen Liang." ],
+      "venue" : "Proceedings of the 36th International Conference on Machine Learning, ICML 2019, 9-15 June 2019, Long Beach, California, USA, volume 97 of Proceedings of Machine Learning Re-",
+      "citeRegEx" : "So et al\\.,? 2019",
+      "shortCiteRegEx" : "So et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Highway networks",
+      "author" : [ "Rupesh Kumar Srivastava", "Klaus Greff", "Jürgen Schmidhuber." ],
+      "venue" : "ArXiv preprint, abs/1505.00387.",
+      "citeRegEx" : "Srivastava et al\\.,? 2015",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Learning deep transformer models for machine translation",
+      "author" : [ "Qiang Wang", "Bei Li", "Tong Xiao", "Jingbo Zhu", "Changliang Li", "Derek F. Wong", "Lidia S. Chao." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multiscale collaborative deep models for neural machine translation",
+      "author" : [ "Xiangpeng Wei", "Heng Yu", "Yue Hu", "Yue Zhang", "Rongxiang Weng", "Weihua Luo." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Wei et al\\.,? 2020",
+      "shortCiteRegEx" : "Wei et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A proposal on machine learning via dynamical systems",
+      "author" : [ "E Weinan." ],
+      "venue" : "Communications in Mathematics and Statistics, 5(1):1–11.",
+      "citeRegEx" : "Weinan.,? 2017",
+      "shortCiteRegEx" : "Weinan.",
+      "year" : 2017
+    }, {
+      "title" : "Depth growing for neural machine translation",
+      "author" : [ "Lijun Wu", "Yiren Wang", "Yingce Xia", "Fei Tian", "Fei Gao", "Tao Qin", "Jianhuang Lai", "Tie-Yan Liu." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Wu et al\\.,? 2019",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Lite transformer with long-short range attention",
+      "author" : [ "Zhanghao Wu", "Zhijian Liu", "Ji Lin", "Yujun Lin", "Song Han." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net.",
+      "citeRegEx" : "Wu et al\\.,? 2020",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lipschitz constrained parameter initialization for deep transformers",
+      "author" : [ "Hongfei Xu", "Qiuhui Liu", "Josef van Genabith", "Deyi Xiong", "Jingyi Zhang." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Xu et al\\.,? 2020",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving deep transformer with depth-scaled initialization and merged attention",
+      "author" : [ "Biao Zhang", "Ivan Titov", "Rico Sennrich." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th Interna-",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Continuous self-attention models with neural ODE networks",
+      "author" : [ "Jing Zhang", "Peng Zhang", "Baiwen Kong", "Junqiu Wei", "Xin Jiang." ],
+      "venue" : "Thirty-Fifth AAAI Conference on Artificial Intelligence, AAAI 2021, Thirty-Third Conference on Innovative Applications",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Polynet: A pursuit of structural diversity in very deep networks",
+      "author" : [ "Xingcheng Zhang", "Zhizhong Li", "Chen Change Loy", "Dahua Lin." ],
+      "venue" : "2017 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2017, Honolulu, HI, USA, July 21-26,",
+      "citeRegEx" : "Zhang et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural document summarization by jointly learning to score and select sentences",
+      "author" : [ "Qingyu Zhou", "Nan Yang", "Furu Wei", "Shaohan Huang", "Ming Zhou", "Tiejun Zhao." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Zhou et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Incorporating BERT into neural machine translation",
+      "author" : [ "Jinhua Zhu", "Yingce Xia", "Lijun Wu", "Di He", "Tao Qin", "Wengang Zhou", "Houqiang Li", "Tie-Yan Liu." ],
+      "venue" : "8th International Conference on 11",
+      "citeRegEx" : "Zhu et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "Residual networks have been used with a great success as a standard method of easing information flow in multi-layer neural models (He et al., 2016; Vaswani et al., 2017).",
+      "startOffset" : 131,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 44,
+      "context" : "Residual networks have been used with a great success as a standard method of easing information flow in multi-layer neural models (He et al., 2016; Vaswani et al., 2017).",
+      "startOffset" : 131,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 47,
+      "context" : "Interestingly, recent work in machine learning (Weinan, 2017; Lu et al., 2018; Haber et al., 2018; Chang et al., 2018; Ruthotto and Haber, 2019) points out that Eq.",
+      "startOffset" : 47,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 31,
+      "context" : "Interestingly, recent work in machine learning (Weinan, 2017; Lu et al., 2018; Haber et al., 2018; Chang et al., 2018; Ruthotto and Haber, 2019) points out that Eq.",
+      "startOffset" : 47,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 16,
+      "context" : "Interestingly, recent work in machine learning (Weinan, 2017; Lu et al., 2018; Haber et al., 2018; Chang et al., 2018; Ruthotto and Haber, 2019) points out that Eq.",
+      "startOffset" : 47,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 7,
+      "context" : "Interestingly, recent work in machine learning (Weinan, 2017; Lu et al., 2018; Haber et al., 2018; Chang et al., 2018; Ruthotto and Haber, 2019) points out that Eq.",
+      "startOffset" : 47,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 37,
+      "context" : "Interestingly, recent work in machine learning (Weinan, 2017; Lu et al., 2018; Haber et al., 2018; Chang et al., 2018; Ruthotto and Haber, 2019) points out that Eq.",
+      "startOffset" : 47,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 15,
+      "context" : "(2) has a sufficiently low error bound (call it a stable solution) only if θ(t) changes slow along t (Haber and Ruthotto, 2017; Chen et al., 2018).",
+      "startOffset" : 101,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 8,
+      "context" : "(2) has a sufficiently low error bound (call it a stable solution) only if θ(t) changes slow along t (Haber and Ruthotto, 2017; Chen et al., 2018).",
+      "startOffset" : 101,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 44,
+      "context" : "For example, language modeling and machine translation systems learn quite different parameters for different layers, especially when the layers are close to the model input (Vaswani et al., 2017; Dai et al., 2019).",
+      "startOffset" : 174,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 10,
+      "context" : "For example, language modeling and machine translation systems learn quite different parameters for different layers, especially when the layers are close to the model input (Vaswani et al., 2017; Dai et al., 2019).",
+      "startOffset" : 174,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 18,
+      "context" : "Also, truncation errors are nonnegligible for the Euler method because it is a first-order approximation to the true solution (He et al., 2019).",
+      "startOffset" : 126,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 45,
+      "context" : "It might explain why recent Machine Translation (MT) systems cannot benefit from extremely deep models (Wang et al., 2019; Liu et al., 2020a; Wei et al., 2020; Li et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 28,
+      "context" : "It might explain why recent Machine Translation (MT) systems cannot benefit from extremely deep models (Wang et al., 2019; Liu et al., 2020a; Wei et al., 2020; Li et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 46,
+      "context" : "It might explain why recent Machine Translation (MT) systems cannot benefit from extremely deep models (Wang et al., 2019; Liu et al., 2020a; Wei et al., 2020; Li et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 25,
+      "context" : "It might explain why recent Machine Translation (MT) systems cannot benefit from extremely deep models (Wang et al., 2019; Liu et al., 2020a; Wei et al., 2020; Li et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 44,
+      "context" : "Transformer is an example of the encoder-decoder paradigm (Vaswani et al., 2017).",
+      "startOffset" : 58,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 45,
+      "context" : "Following the Pre-norm architecture (Wang et al., 2019), we define a block as",
+      "startOffset" : 36,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 15,
+      "context" : "2 This is obviously the case for Transformer, especially when the multi-layer neural network arises a higher risk of unstability in solving the ODEs (Haber and Ruthotto, 2017).",
+      "startOffset" : 149,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 36,
+      "context" : "Here we use the Runge-Kutta methods for a higher order solution to ODEs (Runge, 1895; Kutta, 1901; Butcher, 1996; Ascher and Petzold, 1998).",
+      "startOffset" : 72,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 22,
+      "context" : "Here we use the Runge-Kutta methods for a higher order solution to ODEs (Runge, 1895; Kutta, 1901; Butcher, 1996; Ascher and Petzold, 1998).",
+      "startOffset" : 72,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 6,
+      "context" : "Here we use the Runge-Kutta methods for a higher order solution to ODEs (Runge, 1895; Kutta, 1901; Butcher, 1996; Ascher and Petzold, 1998).",
+      "startOffset" : 72,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 1,
+      "context" : "Here we use the Runge-Kutta methods for a higher order solution to ODEs (Runge, 1895; Kutta, 1901; Butcher, 1996; Ascher and Petzold, 1998).",
+      "startOffset" : 72,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 5,
+      "context" : "α, β and γ are coefficients which can be determined by the Taylor series of yt+1 (Butcher, 1963).",
+      "startOffset" : 81,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 14,
+      "context" : "It should be noted that the method presented here can be interpreted from the perspective of representation refinement (Greff et al., 2017).",
+      "startOffset" : 119,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 11,
+      "context" : "For example, Universal Transformer refines the representation of the input sequence using the same function and the same parameters in a block-wise manner (Dehghani et al., 2019).",
+      "startOffset" : 155,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 11,
+      "context" : "Note that, the methods here are instances of parameter sharing (Dehghani et al., 2019; Lan et al., 2020).",
+      "startOffset" : 63,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 23,
+      "context" : "Note that, the methods here are instances of parameter sharing (Dehghani et al., 2019; Lan et al., 2020).",
+      "startOffset" : 63,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 43,
+      "context" : "Based on it, scaling Fi by a weighted gate mechanism (Srivastava et al., 2015) empirically achieves the best performance (see Section 4).",
+      "startOffset" : 53,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 48,
+      "context" : "20 - - - Depth growing (Wu et al., 2019) 8-8 270M 800K 29.",
+      "startOffset" : 23,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 45,
+      "context" : "27 Transformer-DLCL (Wang et al., 2019) 30-6 137M 50K 29.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 46,
+      "context" : "6 - - - Multiscale Collaborative (Wei et al., 2020) 18-6 512M 300K 30.",
+      "startOffset" : 33,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 28,
+      "context" : "56 - - - ADMIN (Liu et al., 2020a) 60-12 262M 250K 30.",
+      "startOffset" : 15,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 25,
+      "context" : ", RK2-block is comparable with a strong 48-layer system (Li et al., 2020) with half of the encoder depth.",
+      "startOffset" : 56,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 46,
+      "context" : "wide models can also benefit from the enlarging layer depth (Wei et al., 2020; Li et al., 2020).",
+      "startOffset" : 60,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 25,
+      "context" : "wide models can also benefit from the enlarging layer depth (Wei et al., 2020; Li et al., 2020).",
+      "startOffset" : 60,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 32,
+      "context" : "As stated in (Mehta et al., 2020), they trained the model up to 170 epochs and obtained a BLEU score of 34.",
+      "startOffset" : 13,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 49,
+      "context" : "Parameter Efficiency Table 3 summaries the results of several efficient Transformer variants, including Lite Transformer (Wu et al., 2020), DeLight (Mehta et al.",
+      "startOffset" : 121,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020), DeLight (Mehta et al., 2020) and a light version of the Evolved Transformer (So et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2020) and a light version of the Evolved Transformer (So et al., 2019).",
+      "startOffset" : 55,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 33,
+      "context" : "Table 5 shows the perplexities on the Penn Treebank dataset (Mikolov et al., 2011).",
+      "startOffset" : 60,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 41,
+      "context" : "Training and Validation Perplexity Figure 5 plots the training and validation PPL curves of RK blocks and the baseline enhanced by RPR (Shaw et al., 2018).",
+      "startOffset" : 135,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 45,
+      "context" : "As we can see that Pre-Norm residual block is able to make the training stable (Wang et al., 2019).",
+      "startOffset" : 79,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 18,
+      "context" : "(2018)’s work, several models in computer vision, such as LeapfrogNet (He et al., 2019), PolyNet (Zhang et al.",
+      "startOffset" : 70,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 53,
+      "context" : ", 2019), PolyNet (Zhang et al., 2017) and MultistepNet (Lu et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2017) and MultistepNet (Lu et al., 2018), can also be interpreted from the ODE perspective.",
+      "startOffset" : 25,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 18,
+      "context" : "Leapfrog (He et al., 2019) yt+1 = yt−1 + 2F (yt, θt) Multistep Euler 28.",
+      "startOffset" : 9,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 31,
+      "context" : "07 Multistep (Lu et al., 2018) yt+1 = kn · yt + (1− kn) · yt−1 + F (yt, θt) Multistep Euler 28.",
+      "startOffset" : 13,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 45,
+      "context" : "17 DLCL (Wang et al., 2019) yt+1 = y0 + ∑t l=0WlF (yl, θl) Multistep Euler 27.",
+      "startOffset" : 8,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 53,
+      "context" : "78 PolyNet (Zhang et al., 2017) yt+1 = yt + F (yt, θt) + F (F (yt, θt), θt) Backward Euler 28.",
+      "startOffset" : 11,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 45,
+      "context" : "Note that DLCL (Wang et al., 2019) can also be regarded as a multistep Euler method, which is more competitive in deep Transformer.",
+      "startOffset" : 15,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 3,
+      "context" : "A straightforward way is to shorten the path from upper-level layers to lowerlevel layers thus to alleviate the gradient vanishing or exploding problems (Bapna et al., 2018; Wang et al., 2019; Wu et al., 2019; Wei et al., 2020).",
+      "startOffset" : 153,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 45,
+      "context" : "A straightforward way is to shorten the path from upper-level layers to lowerlevel layers thus to alleviate the gradient vanishing or exploding problems (Bapna et al., 2018; Wang et al., 2019; Wu et al., 2019; Wei et al., 2020).",
+      "startOffset" : 153,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 48,
+      "context" : "A straightforward way is to shorten the path from upper-level layers to lowerlevel layers thus to alleviate the gradient vanishing or exploding problems (Bapna et al., 2018; Wang et al., 2019; Wu et al., 2019; Wei et al., 2020).",
+      "startOffset" : 153,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 46,
+      "context" : "A straightforward way is to shorten the path from upper-level layers to lowerlevel layers thus to alleviate the gradient vanishing or exploding problems (Bapna et al., 2018; Wang et al., 2019; Wu et al., 2019; Wei et al., 2020).",
+      "startOffset" : 153,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 25,
+      "context" : "To speed up the training, an alternative way is to train a shallow model first and progressively increasing the model depth (Li et al., 2020; Dong et al., 2020).",
+      "startOffset" : 124,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 12,
+      "context" : "To speed up the training, an alternative way is to train a shallow model first and progressively increasing the model depth (Li et al., 2020; Dong et al., 2020).",
+      "startOffset" : 124,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 51,
+      "context" : "Apart from the model architecture improvements, another way of easing the optimization is to utilize carefully designed parameter initialization strategies (Zhang et al., 2019; Xu et al., 2020; Huang et al., 2020; Liu et al., 2020a).",
+      "startOffset" : 156,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 50,
+      "context" : "Apart from the model architecture improvements, another way of easing the optimization is to utilize carefully designed parameter initialization strategies (Zhang et al., 2019; Xu et al., 2020; Huang et al., 2020; Liu et al., 2020a).",
+      "startOffset" : 156,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 20,
+      "context" : "Apart from the model architecture improvements, another way of easing the optimization is to utilize carefully designed parameter initialization strategies (Zhang et al., 2019; Xu et al., 2020; Huang et al., 2020; Liu et al., 2020a).",
+      "startOffset" : 156,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 28,
+      "context" : "Apart from the model architecture improvements, another way of easing the optimization is to utilize carefully designed parameter initialization strategies (Zhang et al., 2019; Xu et al., 2020; Huang et al., 2020; Liu et al., 2020a).",
+      "startOffset" : 156,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 8,
+      "context" : "Moreover, the success of Neural ODENet (Chen et al., 2018) have attracted researchers.",
+      "startOffset" : 39,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 53,
+      "context" : "Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective.",
+      "startOffset" : 30,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 24,
+      "context" : "Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective.",
+      "startOffset" : 30,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 31,
+      "context" : "Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective.",
+      "startOffset" : 30,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 18,
+      "context" : "Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective.",
+      "startOffset" : 30,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 30,
+      "context" : "Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective.",
+      "startOffset" : 30,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 38,
+      "context" : "Some insightful architectures (Zhang et al., 2017; Larsson et al., 2017; Lu et al., 2018; He et al., 2019; Zhu and Fu, 2018; Lu et al., 2019; Sander et al., 2021) can also be interpreted from the ODE perspective.",
+      "startOffset" : 30,
+      "endOffset" : 162
+    } ],
+    "year" : 0,
+    "abstractText" : "Residual networks are an Euler discretization of solutions to Ordinary Differential Equations (ODE). This paper explores a deeper relationship between Transformer and numerical ODE methods. We first show that a residual block of layers in Transformer can be described as a higher-order solution to ODE. Inspired by this, we design a new architecture, ODE Transformer, which is analogous to the Runge-Kutta method that is well motivated in ODE. As a natural extension to Transformer, ODE Transformer is easy to implement and efficient to use. Experimental results on the large-scale machine translation, abstractive summarization, and grammar error correction tasks demonstrate the high genericity of ODE Transformer. It can gain large improvements in model performance over strong baselines (e.g., 30.77 and 44.11 BLEU scores on the WMT’14 English-German and EnglishFrench benchmarks) at a slight cost in inference efficiency.",
+    "creator" : null
+  }
+}

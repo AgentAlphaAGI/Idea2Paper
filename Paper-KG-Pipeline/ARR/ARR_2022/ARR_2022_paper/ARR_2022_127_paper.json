@@ -1,0 +1,442 @@
+{
+  "name" : "ARR_2022_127_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Delving Deep into Regularity: A Simple but Effective Method for Chinese Named Entity Recognition",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Named entity recognition (NER) aims at identifying text spans pertaining to specific entity types. It plays an important role in many downstream tasks such as relation extraction (Ji et al., 2017), entity linking (Sevgili et al., 2020), co-reference resolution (Clark and Manning, 2016), and knowledge graph (Ji et al., 2020). Due to the complex composition (Gui et al., 2019), character-level Chinese NER is more challenging compared to English NER. As shown in Figure 1 (a), the middle charac-\nter “流” can constitute words with the characters to both their left and their right, such as “河流 (River)” and “流经 (flows)”, leading to ambiguous character boundaries.\nThere are two typical frameworks for NER. The first one conceptualizes NER as a sequence labeling task (Huang et al., 2015; Lample et al., 2016; Ma and Hovy, 2016), where each character is assigned to a special label (e.g., B-LOC, I-LOC). The second one is span-based method (Li et al., 2020a; Yu et al., 2020), which classifies candidate spans based on their span-level representations. However, despite the success of these two types of methods, they do not explicitly take the complex composition of Chinese NER into consideration. Recently, several works (Zhang and Yang, 2018; Gui et al., 2019; Li et al., 2020b) utilize external lexicon knowledge to help connect related characters and promote capturing the local composition. Nevertheless, building the lexicon is time-consuming and the quality of the lexicon may not be satisfied.\nIn contrast to previous works, we observe that the regularity exists in the common NER types (e.g., ORG and LOC). As shown in Figure 1 (a), “尼日尔河 (Niger River)” follows the specific composition pattern “XX+河 (XX + River)” which ends with indicator character “河\" and mostly belongs to location type, and the ambiguous character “流”\ncan properly constitute “流经” with the right character “经”. Thus, the regularity information serves as important clues for entity type recognition and identifying the character composition. Formally, we refer to regularity as specific internal patterns contained in a type of entity (Lin et al., 2020). However, too immersed regularity leads to unfavorable boundary detection of entities and disturbing character composition. As shown in Figure 1 (b), “中国队 (Chinese team)” conforms to the pattern “XX+队 (XX + Team)”, but the correct entity boundary should be “中国 (Chinese)” and “队员 (players)” according to the context. Therefore, the context also plays a key role in determining the character boundary.\nIn this paper, we introduce a simple but effective method to explore the regularity information of entity spans for Chinese NER, dubbed as RegularityInspired reCOgnition Network (RICON). The proposed model consists of two branches named regularity-aware module and regularity-agnostic module, where each module has task-specific encoder and optimization object. Concretely, the regularity-aware module aims at analyzing the internal regularity of each span and integrates the significant regularity information into the corresponding span-level representation, leading to precise entity type prediction. Meanwhile, the regularityagnostic module is devised to capture context information and avoid excessive focus on intra-span regularity. Furthermore, we adopt an orthogonality space restriction to encourage two branches to extract different features with regard to the regularity. To verify the effectiveness of our method, we conduct extensive experiments on three large-scale benchmark datasets (OntoNotes V4.0, OntoNotes V5.0, and MSRA). The results show that RICON achieves considerable improvements compared to the state-of-the-art models, even outperforming existing lexicon-based models. Moreover, we experiment on a practical medical dataset (CBLUE) to further demonstrate the ability of RICON.\nOur contributions can be summarized as follows:\n• This is the first work that explicitly explores the internal regularity of entity mentions for Chinese NER.\n• We propose a simple but effective method for Chinese NER, which effectively utilizes regularity information while avoiding excessive focus on intra-span regularity.\n• Extensive experiments on three large-scale benchmark datasets and a practical medical dataset demonstrate the effectiveness of our proposed method."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Traditional methods treat NER as a sequence labeling task, where each word or character in the sentence is assigned to a special label. As a representative, Huang et al. (2015) utilized the BiLSTM as an encoder to learn the contextual representation, and then exploited Conditional Random Field (CRF) as a decoder to label the tokens. The BiLSTMCRF architecture achieved superior performance on various datasets, hence many following works (Lample et al., 2016; Ma and Hovy, 2016) adopt such architecture. More recently, strong pre-trained language models such as ELMo (Peters et al., 2018) and BERT (Devlin et al., 2019) are incorporated to further enhance the performance of NER. Although the sequence labeling framework achieves decent performance on flat NER, it struggles for nested NER. As a result, span-based models are proposed to solve the nested problem by classifying all possible spans into predefined types (e.g. PER, LOC) in the sentence. For example, Yu et al. (2020) adopted a biaffine attention model to assign scores for all potential spans and achieved the state-of-the-art performance on both flat and nested English NER datasets. Shen et al. (2021) also employed spanbased framework on Chinese NER datasets. In this paper, we adopt span-based method as our basic framework for two reasons. Firstly, the span-based method considers each span and naturally suits analyzing inner-span character composition. Secondly, the span-based framework can easily extend our method from flat NER to nested NER.\nRecently, for Chinese NER, researchers proposed various lexicon-based models that incorporate the external lexicon information and obtained better results. Zhang and Yang (2018) investigated Lattice-LSTM for incorporating word lexicons into the character-based NER model. However, the lattice structure fails to compute in parallel. To address this problem, Gui et al. (2019) introduced a lexicon-based graph neural network that recasts Chinese NER as a node classification task. There are also several works that focus on incorporating all matched words from the lexicon into the character embeddings (Ma et al., 2020; Liu et al., 2021). Different from the aforementioned lexicon-based\nworks that incorporate external resources, in this paper, we focus on exploring the internal regularity information of spans."
+    }, {
+      "heading" : "3 Method",
+      "text" : "The overall architecture of our RICON is shown in Figure 2, which mainly consists of two branches: the regularity-aware module and the regularityagnostic module."
+    }, {
+      "heading" : "3.1 Embedding and Task-specific Encoder",
+      "text" : "First of all, each character of the input sequence is embedded into a dense vector. Then the character vectors are separately fed into two task-specific bidirectional LSTM (BiLSTM) layers to extract the corresponding hidden states for each module respectively. Formally, given a sentence with l characters s = {c1, c2, ..., cl}. We use a standard BERT (Devlin et al., 2019) to obtain the context dependent embeddings for a target token:\nxi = BERT(ci) (1)\nThen, the sequence of character embeddings will be fed to two separate BiLSTM layers for regularityaware module and regularity-agnostic module. The hidden state of BiLSTM is expressed as follows:\n−→ h i,τ = −−−−→ LSTM(xi, −→ h i−1,τ ) (2)\n←− h i,τ = ←−−−− LSTM(xi, ←− h i−1,τ ) (3)\nhi,τ = [ −→ h i,τ ; ←− h i,τ ] (4)\nwhere τ ∈ {aware, agnostic}, [;] denotes concatenation, and the dimension of hi,τ is 2d. The character sequence representation can be denoted as Hτ = {h1,τ , ..., hi,τ , ..., hl,τ}."
+    }, {
+      "heading" : "3.2 Regularity-aware Module",
+      "text" : "In this module, we aim to explore the internal regularity of each span. As shown in Figure 3 (a), typical span-based NER methods (Sohrab and Miwa, 2018; Xia et al., 2019; Li et al., 2020a) represent each entity span via concatenating corresponding head and tail features, and use a linear classifier to predict the type of this span. In this way, the span features are coarse-grained. Then, as denoted in Figure 3 (b), Yu et al. (2020) propose a biaffine\ndecoder to enhance the interaction between head and tail representations after two MLPs and predict span types simultaneously. Nevertheless, the internal regularity among characters in the span is still neglected in this biaffine method.\nConsequently for this, our regularity-aware module is devised to capture the internal regularity feature for each span si,j , as demonstrated in Figure 3 (c). It is worth noting that span representations are obtained by the head and tail characters of the span, while the regularity representations stem from each character in the span. To achieve this goal, we utilize a linear attention to obtain the regularity representation of each span as follows:\nat = W ⊤ reght + breg (5)\nαt = exp(at)∑j k=i exp(ak)\n(6)\nh(reg)si,j = j∑ t=i αt · ht (7)\nwhere ht = ht,aware and t ∈ {i, i+ 1, ..., j} is the index of the span, Wreg ∈ R2d×1 and breg ∈ R1 are learnable weights and bias respectively. For a span whose length is 1, we do not extract extra features but use the hidden representation hi,aware to denote its regularity. The regularity feature H(reg) ∈ Rl×l×2d will be used for the subsequent entity type prediction.\nTo predict the type of an entity, our model integrates the regularity feature of each span into the span representations. Firstly, we acquire the span representation via a biaffine attention mechanism by interacting head and tail features:\nh(span)si,j = h ⊤ i U (1)hj + (hi ⊕ hj)U (2) + b1 (8)\nwhere hi, hj ∈ Haware are the head and tail representations of span si,j . U (1) is a 2d× 2d× 2d tensor, U (2) is a 4d× 2d matrix, and b1 is the bias. It is worth noting that here we do not apply two separate MLPs like Figure 3 (b) to generate different representations for the head and tail features of the spans, as different MLPs will project the head, tail, and regularity representation into distinct spaces. The experiment also verifies that such space inconsistency degrades the recognition performance. Then a gated network is devised to integrate the span and regularity representation as below:\ngsi,j = σ(U (3)[h(span)si,j ;h (reg) si,j ] + b2) (9)\nhsi,j = gsi,j ⊙ h(span)si,j +(1− gsi,j )⊙ h (reg) si,j (10)\nwhere U (3) ∈ R4d×1 is a trainable parameter and b2 is the bias. σ denotes the sigmoid function and⊙ mean the element-wise dot multiplication. Finally, we adopt a standard linear classifier with a softmax function to predict the entity type for each span.\nỹsi,j = Softmax(Wtype ⊤hsi,j + b3) (11)\nwhere Wtype ∈ R2d×c is a trainable parameter and b3 is the bias. The loss function of the regularityaware module is defined as cross-entropy:\nLaware = − 1\nN N∑ n=1 l∑ i=1 l∑ j=1 y(n)si,j log(ỹ (n) si,j ), i ≤ j\n(12) where ỹsi,j denotes the prediction and ysi,j is the the ground truth type of the span. N is the number of training samples in the regularity-aware module."
+    }, {
+      "heading" : "3.3 Regularity-agnostic Module",
+      "text" : "By considering regularity, above regularity-aware module makes the model stricter in terms of predicting the entity type, thus improving the precision of entity prediction. Nevertheless, too immersed regularity may result in inaccurate word boundaries. To get rid of it, we propose to erase the concrete form of golden entities and relieve the excessive learning of structural pattern by regularity-aware module. In this scenario, the head and tail features which determine boundary become more significant, thereby we first apply two multi-layer perceptrons (MLPs) on the hidden states from BiLSTM to get separate representations for head and tail. Then a biaffine decoder is leveraged for obtaining entity probability of the span si,j as follows:\nh̄i = MLPhead(hi) h̄j = MLPtail(hj) (13)\nȳij = σ([h̄i; 1] ⊤ Um[h̄j ; 1]) (14)\nwhere hi = hi,agnostic, hj = hj,agnostic, Um is a (2d + 1) × 1 × (2d + 1) trainable parameter, σ is the sigmoid function. Finally, we adopt binary cross-entropy loss to train this task.\nLagnostic = − 1\nN N∑ n=1 l∑ i=1 l∑ j=1 [y (n) ij log(ȳ (n) ij )\n+(1− y(n)ij )log(1− ȳ (n) ij )], i ≤ j\n(15)\nwhere ȳij denotes the prediction and yij is the binary target indicating whether the span is an entity or not. N is the number of training samples in the regularity-agnostic module."
+    }, {
+      "heading" : "3.4 Orthogonality Space Restriction",
+      "text" : "As regularity-aware module aims to capture the regularity information while regularity-agnostic module pays no attention to the concrete regularity, we expect to learn different features for these two modules. To this end, we construct an orthogonality space on the top of two BiLSTM layers to encourage encoding different aspects of the input embeddings. The loss is calculated as follows:\nHorth = Haware ⊤Hagnostic (16)\nLorth = ∥Horth∥2F = − 1\nN N∑ n=1 l∑ i=1 l∑ j=1 |h(n)ij | 2\n(17) where ∥·∥2F is the squared Frobenius norm and N is the number of training elements."
+    }, {
+      "heading" : "3.5 Training and Inference",
+      "text" : "During training, our RICON can be trained by joint optimizing above three sub-tasks, so we define the total loss as below:\nL = λ1Laware + λ2Lagnostic + λ3Lorth (18)\nwhere λ1, λ2, and λ3 are hyperparameter. During inference, we directly use regularity-aware module to predict the entity type for each span and apply a post-processing constraint for two overlapped entity candidates E1 and E2 that if E1i < E2i ≤ E1j < E2j , where i and j are start and end indexes, we only select the entity with the higher type score."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "OntoNotes V4.0 (Weischedel et al., 2011). It is a multilingual corpus in the news domain. This dataset has 4 entity types. We use the same split as (Zhang and Yang, 2018). OntoNotes V5.0 (Pradhan et al., 2013). Compared with V4.0, this version has more news data and contains 18 types of entities. We use the same split as (Jie and Lu, 2019). MSRA (Levow, 2006). It contains 3 types of named entities collected from the news domain. We use the same split as (Gui et al., 2019).\nCBLUE-CMeEE (Hongying et al., 2020). CBLUE is Chinese biomedical language understanding evaluation which consists of 10 sub-tasks. Among them, CMeEE focuses on Chinese medical entity extraction and has 9 types of entities. We use the official train and dev split. In addition, all types of OntoNotes V4.0, OntoNotes V5.0, MSRA, and 8 types of CBLUECMeEE are flat NER, while the symptom type of CBLUE-CMeEE is nested NER.\nDue to the space limitation, the statistics of all datasets are listed in the appendix."
+    }, {
+      "heading" : "4.2 Implementation Details",
+      "text" : "In our experiments, we use the same settings for all datasets. Specifically, we adopt the standard pre-trained Chinese BERT-base model with 768 dimensions hidden representation to obtain character embeddings. We use Adam optimizer with 2e-5 learning rate for BERT embedding fine-tuning and 0.001 learning rate for other parts. The number of layer and dropout rate of BiLSTM encoders are set to 3 and 0.4. The hidden state size of BiLSTM encoders is set to 200. For the regularity-agnostic module, the output dimension of MLPs and the dropout rate are set to 150 and 0.2. To avoid overfitting, we also apply 0.1 dropout rate for the BERT output embeddings. For the hyper-parameters in loss, we set λ1 = λ2 = 1 and λ3 = 0.5. For all experiments including ablation study, we adopt an average of performance over five different runs to reduce randomness."
+    }, {
+      "heading" : "4.3 Comparison Methods",
+      "text" : "In our experiments, we compare our RICON with recent state-of-the-art methods, where part of them contain pre-trained language model BERT or external Chinese lexicon information. Here we briefly describe five typical methods: (1) Star-GAT (Chen and Kong, 2021) propose a Star-transformer based NER system. They utilize explicit head and tail boundary information and Dependency GAT-based implicit boundary information to improve the performance. It is the SOTA model on the OntoNotes V5.0 dataset. (2) BERT+Biaffine (Yu et al., 2020) recast NER as a task of identifying start and end positions and assigning a type to each span by a biaffine attention. (3) BERT+FLAT (Li et al., 2020b) devise a FLAT model for Chinese NER, which converts the lattice structure into a flat structure consisting of spans to overcome the shortage of lattice-based model\n(Zhang and Yang, 2018). They also equipped with BERT embeddings and achieved the SOTA performance on the MSRA dataset. (4) BERT+SoftLexicon (Ma et al., 2020) incorporate the word lexicon into the character features. They leverage Chinese lexicon to match every character in the sentence with word appeared in the lexicon to improve the performance, which achieves the SOTA performance on OntoNotes V4.0. (5) LEBERT (Liu et al., 2021) introduce a Lexicon Adapter layer to integrate external lexicon knowledge into BERT layers directly."
+    }, {
+      "heading" : "4.4 Results",
+      "text" : "We present the results on three benchmark datasets in Table 1. From this table, we can observe that our RICON achieves the state-of-the-art performance on these datasets. Moreover, RICON even outperforms recent methods with Chinese lexicon significantly. Concretely, on OntoNotes V4.0, RICON achieves 0.81 absolute F1 improvement over the strong method BERT+Biaffine and 0.52 absolute improvement compared with the SOTA lexicon-based method BERT+SoftLexicon. On OntoNotes V5.0, we obtain a decent improvement compared to the SOTA approach Star-GAT by 0.90 F1 score. In addition, on MSRA, although the improvement of our model over the SOTA model BERT-FLAT is limited, our model still surpasses the other two lexicon-based models LEBERT and BERT+SoftLexicon by 0.44 and 0.72 respectively.\nIn addition, we present the model performance on CBLUE-CMeEE in Table 2. Considering there are no available lexicons for this task, we only compare RICON with typical models. As shown in this table, RICON outperforms the strong BERTBiaffine model with a 3.28 F1 score improvement\nover 9 types. It is remarkable progress in this challenging dataset. Meanwhile, we provided the result of nested symptom type. RICON performs much better than BERT-Biaffine with a 5.81 F1 improvement. This observation also denotes that our RICON also applies to nested NER."
+    }, {
+      "heading" : "4.5 Ablation Study",
+      "text" : "We conduct abundant ablation studies on OntoNotes V4.0 and V5.0 from module and implementation perspectives in Table 3 and 4. Vanilla in tables is built from RICON by removing orthogonality space and regularity-agnostic module, and omitting to capture regularity features and integrate it in the regularity-aware module.\nFrom the results in Table 3, we can observe that: (1) When applying regularity-agnostic module to the vanilla, the performances improve by 0.21 and 0.48 respectively, showing the effectiveness of this module. (2) When the vanilla equips with regularity-aware module, the F1 scores significantly improve by 0.57 and 0.65 respectively, which verifies that regularity plays a significant role in entity recognition. (3) After combining regularity-aware and regularity-agnostic modules, we achieve further improvements, which indicates that two modules can mutually reinforce each other. (4) The orthogonality space is a valid method ac-\ncording to the further F1 score improvements. Furthermore, we notice that adding the regularity-aware module significantly increases the Precision (1.41 on both datasets, Vanilla vs Vanilla+Reg-aware) but reduces the Recall (0.31 and 1.04 respectively), which conforms to that focusing on regularity feature would reinforce the type prediction, while missing several spans that are supposed to be entities. Nevertheless, this situation can be remedied by the regularity-agnostic module and the Recall improved 1.03 and 0.58, respectively (Vanilla+Reg-aware vs Vanilla+Regaware & agnostic). This result also meets our motivation that regularity-agnostic module can reinforce the entity boundary detection.\nAs shown in Table 4, there are several alternative ways to extract regularity information instead of linear attention used in this paper, such as meanpooling, max-pooling, or more complex multi-head self-attention (Vaswani et al., 2017), but these methods all perform worse. It is one future direction to explore how to obtain regularity by a more sophisticated architecture. However, considering the model complexity and performance, we choose linear attention to capture regularity. In addition, replacing our devised gate mechanism with a simple concatenate or add operation both degrades the performance, denoting that gate mechanism is more efficient to integrate span feature and regularity feature. We also explored adding two MLPs separately to head and tail features when generating span features in the regularity-aware module. The experimental results prove that different feature space for span feature and regularity feature leads to worse performance."
+    }, {
+      "heading" : "4.6 Analysis",
+      "text" : "In this section, We deeply analyze our proposed RICON from the following aspects."
+    }, {
+      "heading" : "4.6.1 Regularity: A Latent Adaptive Lexicon.",
+      "text" : "The lexicon-based methods focus on incorporating external word lexicons to improve the performance of character-based NER. The core concept of them\nis preserving all words which match a specific character and let the subsequent NER model determine which word to apply (Zhang and Yang, 2018; Ma et al., 2020). In our model, we calculate the regularity for each span, namely, all words containing a specific character are considered, and then the best word and corresponding regularity will be determined. In this sense, our explored regularity can be seen as a latent adaptive lexicon. Furthermore, this latent adaptive lexicon is more complete than external lexicons because all spans matching the specific character are considered, while lexicon-based methods only match a limited number of words. As shown in Table 1, the previous SOTA method BERT+Biaffine performs worse than lexicon-based methods, but our regularity-based method RICON outperforms the lexicon-based methods. Actually, our regularity-based method can further be combined with lexicon-based methods."
+    }, {
+      "heading" : "4.6.2 Performance vs. Entity Type.",
+      "text" : "We examine how regularity affects each entity type. As Figure 4 shows, 12 types of entities achieve better performance with the regularity. This result conforms to the fact that types like GPE, ORG, and DATE have strong regularity. Nevertheless, for the types with little regularity information, such as WORK_OF_ART and PERSON, immersed regularity leads to performance degradation. We notice that the MONEY type typically contains regularity but we do not observe an improvement in this category. This is, due to inconsistencies between the training and test dataset. For instance, the training data contains the abundant pattern \"number+dollar\", while only numbers exist in the test set. To remedy the excessive regularity, our RICON further utilizes a regularity-agnostic module to rectify the captured regularity. The above observations also inspire us to devise more elaborate NER for different entity types with various degree regularity properties in the future. Our regularity-aware module may also serve as a potential tool for evaluating\nthe intensity of regularity."
+    }, {
+      "heading" : "4.6.3 Performance vs. Entity Length.",
+      "text" : "Figure 5 depicts the performance on the OntoNotes V4.0 and V5.0 datasets with different length of entities. From this figure, we can observe that our RICON consistently outperforms BERT-Biaffine (Yu et al., 2020) when the entity length is longer than 2, which illustrates that the regularity information is helpful to predict the types for long entities. In contrast, BERT-Biaffine performs comparable to RICON when entity length is 2 as there are no additional character information except the head and tail representations."
+    }, {
+      "heading" : "4.6.4 Case study.",
+      "text" : "Table 7 shows two examples from OntoNotes V4.0. In the first example, the Vanilla misidentifies the\nentity type, while Vanilla+reg-aware learns regularity “XX+海\" by the greatest weight 0.83 on “海\", thus obtaining the accurate entity type. It is worth noting that regularity can capture more complex character compositions besides explicit patterns in the first example. More complex examples are presented in the appendix. In the second example, “美国公司\" conforms to the regularity \"XX +公 司\" and is recognized as organization type by our Vanilla+Reg-aware model. After equipping with the regularity-agnostic module, we obtain the precise character boundary and relieve the excessive attention to regularity."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this paper, we proposed a simple but effective method to explore the regularity information for Chinese NER, dubbed as Regularity-Inspired reCOgnition Network (RICON). It contains a regularity-aware module to capture the internal regularity feature of each span, and a regularityagnostic module to reinforce the entity boundary detection while avoid imposing excessive attention on regularity. The features of two modules are encouraged to be dissimilar by an orthogonality space restriction. Evaluation shows that RICON achieves the state-of-the-art performance on four datasets."
+    }, {
+      "heading" : "A Data Statistics",
+      "text" : "Table 6 shows the detailed statistics of each dataset."
+    }, {
+      "heading" : "B More Case Study",
+      "text" : "B.1 Complex Regularity\nBesides explicit patterns like the first example in Table 5, Table 7 shows a more complex form of regularity that our model can capture. In this example, the Vanilla+Reg-aware model pays highest attention weight 0.92 to important character ”和” (and), and recognize that A and B are independent entities according to the regularity “A 和 B (A and B)”. For comparison, the vanilla fails to distinguish these two entities. This example further reveals that our regularity-aware module can discover more complex character compositions.\nB.2 Case Study in Medical Domain\nTo further demonstrate the effectiveness of our RICON in Chinese NER, we present six examples of the CBLUE-CMeEE dataset from the medical domain. As shown in the first three examples in Table 8, the biaffine model fails to identify the accurate boundary of the entities, thus leading to unrecognized entity type. However, our RICON achieves detecting the correct span boundary as well as predicting golden type type (Symptom) of the entities according to the regularity \"XX+病变\"\n(XX+lesion). In the last three examples, both biaffine model and our RICON successfully detect the correct span boundary of the entities. For entity type prediction, the biaffine model assigns a wrong type (Disease) to these entities, but our RICON predicts types correctly as a result of it captures the regularity feature \"XX+损害\" (XX+damage) from \"Symptom\" type. To sum up, our RICON is also beneficial for domain datasets."
+    } ],
+    "references" : [ {
+      "title" : "Enhancing entity boundary detection for better Chinese named entity recognition",
+      "author" : [ "Chun Chen", "Fang Kong." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint",
+      "citeRegEx" : "Chen and Kong.,? 2021",
+      "shortCiteRegEx" : "Chen and Kong.",
+      "year" : 2021
+    }, {
+      "title" : "Improving coreference resolution by learning entitylevel distributed representations",
+      "author" : [ "Kevin Clark", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long",
+      "citeRegEx" : "Clark and Manning.,? 2016",
+      "shortCiteRegEx" : "Clark and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A lexicon-based graph neural network for Chinese NER",
+      "author" : [ "Tao Gui", "Yicheng Zou", "Qi Zhang", "Minlong Peng", "Jinlan Fu", "Zhongyu Wei", "Xuanjing Huang." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Gui et al\\.,? 2019",
+      "shortCiteRegEx" : "Gui et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Building a pediatric medical corpus: Word segmentation and named entity annotation",
+      "author" : [ "Zan Hongying", "Li Wenxin", "Zhang Kunli", "Ye Yajuan", "Chang Baobao", "Sui Zhifang." ],
+      "venue" : "Workshop on Chinese Lexical Semantics, pages 652–664.",
+      "citeRegEx" : "Hongying et al\\.,? 2020",
+      "shortCiteRegEx" : "Hongying et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bidirectional lstmcrf models for sequence tagging",
+      "author" : [ "Z. Huang", "X. Wei", "Y. Kai." ],
+      "venue" : "Computer Science arXiv preprint arXiv:1508.01991.",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Distant supervision for relation extraction with sentence-level attention and entity descriptions",
+      "author" : [ "Guoliang Ji", "Kang Liu", "Shizhu He", "Jun Zhao." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 1.",
+      "citeRegEx" : "Ji et al\\.,? 2017",
+      "shortCiteRegEx" : "Ji et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A survey on knowledge graphs: Representation, acquisition and applications",
+      "author" : [ "S. Ji", "S. Pan", "E. Cambria", "P. Marttinen", "P.S. Yu." ],
+      "venue" : "Computer Science arXiv preprint arXiv:2002.00388.",
+      "citeRegEx" : "Ji et al\\.,? 2020",
+      "shortCiteRegEx" : "Ji et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Dependency-guided lstmcrf for named entity recognition",
+      "author" : [ "Z. Jie", "W. Lu." ],
+      "venue" : "arXiv preprint arXiv:1909.10148.",
+      "citeRegEx" : "Jie and Lu.,? 2019",
+      "shortCiteRegEx" : "Jie and Lu.",
+      "year" : 2019
+    }, {
+      "title" : "The third international Chinese language processing bakeoff: Word segmentation and named entity recognition",
+      "author" : [ "Gina-Anne Levow." ],
+      "venue" : "Proceedings of the Fifth SIGHAN Workshop on Chinese Language Processing, pages 108–117, Sydney, Australia. Asso-",
+      "citeRegEx" : "Levow.,? 2006",
+      "shortCiteRegEx" : "Levow.",
+      "year" : 2006
+    }, {
+      "title" : "Neural named entity boundary detection",
+      "author" : [ "J. Li", "A. Sun", "Y. Ma." ],
+      "venue" : "IEEE Transactions on Knowledge and Data Engineering, PP(99):1–1.",
+      "citeRegEx" : "Li et al\\.,? 2020a",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "FLAT: Chinese NER using flat-lattice transformer",
+      "author" : [ "Xiaonan Li", "Hang Yan", "Xipeng Qiu", "Xuanjing Huang." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 6836–6842, On-",
+      "citeRegEx" : "Li et al\\.,? 2020b",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A rigorous study on named entity recognition: Can fine-tuning pretrained model lead to the promised land? arXiv preprint arXiv:2004.12126",
+      "author" : [ "Hongyu Lin", "Yaojie Lu", "Jialong Tang", "Xianpei Han", "Le Sun", "Zhicheng Wei", "Nicholas Jing Yuan" ],
+      "venue" : null,
+      "citeRegEx" : "Lin et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lexicon enhanced chinese sequence labelling using bert adapter",
+      "author" : [ "W. Liu", "X. Fu", "Y. Zhang", "W. Xiao." ],
+      "venue" : "arXiv preprint arXiv:2105.07148.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Simplify the usage of lexicon in Chinese NER",
+      "author" : [ "Ruotian Ma", "Minlong Peng", "Qi Zhang", "Zhongyu Wei", "Xuanjing Huang." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 5951–5960, On-",
+      "citeRegEx" : "Ma et al\\.,? 2020",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "End-to-end sequence labeling via bi-directional LSTM-CNNs-CRF",
+      "author" : [ "Xuezhe Ma", "Eduard Hovy." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1064–1074, Berlin, Germany.",
+      "citeRegEx" : "Ma and Hovy.,? 2016",
+      "shortCiteRegEx" : "Ma and Hovy.",
+      "year" : 2016
+    }, {
+      "title" : "Porous lattice transformer encoder for Chinese NER",
+      "author" : [ "Xue Mengge", "Bowen Yu", "Tingwen Liu", "Yue Zhang", "Erli Meng", "Bin Wang." ],
+      "venue" : "Proceedings of the 28th International Conference on Computational Linguistics, pages 3831–3841, Barcelona, Spain (On-",
+      "citeRegEx" : "Mengge et al\\.,? 2020",
+      "shortCiteRegEx" : "Mengge et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Towards robust linguistic analysis using OntoNotes",
+      "author" : [ "Sameer Pradhan", "Alessandro Moschitti", "Nianwen Xue", "Hwee Tou Ng", "Anders Björkelund", "Olga Uryupina", "Yuchen Zhang", "Zhi Zhong." ],
+      "venue" : "Proceedings of the Seventeenth Conference on Computational",
+      "citeRegEx" : "Pradhan et al\\.,? 2013",
+      "shortCiteRegEx" : "Pradhan et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Neural entity linking: A survey of models based on deep learning",
+      "author" : [ "O. Sevgili", "A. Shelmanov", "M. Arkhipov", "A. Panchenko", "C. Biemann." ],
+      "venue" : "Computer Science arXiv preprint arXiv:2006.00575.",
+      "citeRegEx" : "Sevgili et al\\.,? 2020",
+      "shortCiteRegEx" : "Sevgili et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Locate and label: A two-stage identifier for nested named entity recognition",
+      "author" : [ "Yongliang Shen", "Xinyin Ma", "Zeqi Tan", "Shuai Zhang", "Wen Wang", "Weiming Lu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics.",
+      "citeRegEx" : "Shen et al\\.,? 2021",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Deep exhaustive model for nested named entity recognition",
+      "author" : [ "Mohammad Golam Sohrab", "Makoto Miwa." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 2843–2849, Brussels,",
+      "citeRegEx" : "Sohrab and Miwa.,? 2018",
+      "shortCiteRegEx" : "Sohrab and Miwa.",
+      "year" : 2018
+    }, {
+      "title" : "Leverage lexical knowledge for Chinese named entity recognition via collaborative graph network",
+      "author" : [ "Dianbo Sui", "Yubo Chen", "Kang Liu", "Jun Zhao", "Shengping Liu." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural",
+      "citeRegEx" : "Sui et al\\.,? 2019",
+      "shortCiteRegEx" : "Sui et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Word-character graph convolution network for chinese named entity recognition",
+      "author" : [ "Z. Tang", "B. Wan", "L. Yang." ],
+      "venue" : "IEEE/ACM Transactions on Audio, Speech, and Language Processing, PP(99):1–1.",
+      "citeRegEx" : "Tang et al\\.,? 2020",
+      "shortCiteRegEx" : "Tang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multi-grained named entity recognition",
+      "author" : [ "Congying Xia", "Chenwei Zhang", "Tao Yang", "Yaliang Li", "Nan Du", "Xian Wu", "Wei Fan", "Fenglong Ma", "Philip Yu." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages",
+      "citeRegEx" : "Xia et al\\.,? 2019",
+      "shortCiteRegEx" : "Xia et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Named entity recognition as dependency parsing",
+      "author" : [ "Juntao Yu", "Bernd Bohnet", "Massimo Poesio." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages",
+      "citeRegEx" : "Yu et al\\.,? 2020",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Chinese NER using lattice LSTM",
+      "author" : [ "Yue Zhang", "Jie Yang." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1554– 1564, Melbourne, Australia. Association for Compu-",
+      "citeRegEx" : "Zhang and Yang.,? 2018",
+      "shortCiteRegEx" : "Zhang and Yang.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "It plays an important role in many downstream tasks such as relation extraction (Ji et al., 2017), entity linking (Sevgili et al.",
+      "startOffset" : 80,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2017), entity linking (Sevgili et al., 2020), co-reference resolution (Clark and Manning, 2016), and knowledge graph (Ji et al.",
+      "startOffset" : 24,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2020), co-reference resolution (Clark and Manning, 2016), and knowledge graph (Ji et al.",
+      "startOffset" : 33,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020), co-reference resolution (Clark and Manning, 2016), and knowledge graph (Ji et al., 2020).",
+      "startOffset" : 80,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 3,
+      "context" : "Due to the complex composition (Gui et al., 2019), character-level Chinese NER is more challenging compared to English NER.",
+      "startOffset" : 31,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 5,
+      "context" : "The first one conceptualizes NER as a sequence labeling task (Huang et al., 2015; Lample et al., 2016; Ma and Hovy, 2016), where each character is assigned to a special label (e.",
+      "startOffset" : 61,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 15,
+      "context" : "The first one conceptualizes NER as a sequence labeling task (Huang et al., 2015; Lample et al., 2016; Ma and Hovy, 2016), where each character is assigned to a special label (e.",
+      "startOffset" : 61,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 10,
+      "context" : "The second one is span-based method (Li et al., 2020a; Yu et al., 2020), which classifies candidate spans based on their span-level representations.",
+      "startOffset" : 36,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 26,
+      "context" : "The second one is span-based method (Li et al., 2020a; Yu et al., 2020), which classifies candidate spans based on their span-level representations.",
+      "startOffset" : 36,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 27,
+      "context" : "Recently, several works (Zhang and Yang, 2018; Gui et al., 2019; Li et al., 2020b) utilize external lexicon knowledge to help connect related characters and promote capturing the local composition.",
+      "startOffset" : 24,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 3,
+      "context" : "Recently, several works (Zhang and Yang, 2018; Gui et al., 2019; Li et al., 2020b) utilize external lexicon knowledge to help connect related characters and promote capturing the local composition.",
+      "startOffset" : 24,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 11,
+      "context" : "Recently, several works (Zhang and Yang, 2018; Gui et al., 2019; Li et al., 2020b) utilize external lexicon knowledge to help connect related characters and promote capturing the local composition.",
+      "startOffset" : 24,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 12,
+      "context" : "Formally, we refer to regularity as specific internal patterns contained in a type of entity (Lin et al., 2020).",
+      "startOffset" : 93,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 15,
+      "context" : "The BiLSTMCRF architecture achieved superior performance on various datasets, hence many following works (Lample et al., 2016; Ma and Hovy, 2016) adopt such architecture.",
+      "startOffset" : 105,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 17,
+      "context" : "More recently, strong pre-trained language models such as ELMo (Peters et al., 2018) and BERT (Devlin et al.",
+      "startOffset" : 63,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2018) and BERT (Devlin et al., 2019) are incorporated to further enhance the performance of NER.",
+      "startOffset" : 17,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 14,
+      "context" : "There are also several works that focus on incorporating all matched words from the lexicon into the character embeddings (Ma et al., 2020; Liu et al., 2021).",
+      "startOffset" : 122,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 13,
+      "context" : "There are also several works that focus on incorporating all matched words from the lexicon into the character embeddings (Ma et al., 2020; Liu et al., 2021).",
+      "startOffset" : 122,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 2,
+      "context" : "We use a standard BERT (Devlin et al., 2019) to obtain the context dependent embeddings for a target token:",
+      "startOffset" : 23,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 21,
+      "context" : "As shown in Figure 3 (a), typical span-based NER methods (Sohrab and Miwa, 2018; Xia et al., 2019; Li et al., 2020a) represent each entity span via concatenating corresponding head and tail features, and use a linear classifier to predict the type of this span.",
+      "startOffset" : 57,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 25,
+      "context" : "As shown in Figure 3 (a), typical span-based NER methods (Sohrab and Miwa, 2018; Xia et al., 2019; Li et al., 2020a) represent each entity span via concatenating corresponding head and tail features, and use a linear classifier to predict the type of this span.",
+      "startOffset" : 57,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 10,
+      "context" : "As shown in Figure 3 (a), typical span-based NER methods (Sohrab and Miwa, 2018; Xia et al., 2019; Li et al., 2020a) represent each entity span via concatenating corresponding head and tail features, and use a linear classifier to predict the type of this span.",
+      "startOffset" : 57,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 0,
+      "context" : "Here we briefly describe five typical methods: (1) Star-GAT (Chen and Kong, 2021) propose a Star-transformer based NER system.",
+      "startOffset" : 60,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 26,
+      "context" : "(2) BERT+Biaffine (Yu et al., 2020) recast NER as a task of identifying start and end positions and assigning a type to each span by a biaffine attention.",
+      "startOffset" : 18,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 11,
+      "context" : "(3) BERT+FLAT (Li et al., 2020b) devise a FLAT model for Chinese NER, which converts the lattice structure into a flat structure consisting of spans to overcome the shortage of lattice-based model",
+      "startOffset" : 14,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 27,
+      "context" : "0 MSRA P R F1 P R F1 P R F1 Lattice LSTM (Zhang and Yang, 2018) ✓ 76.",
+      "startOffset" : 41,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 22,
+      "context" : "18 Collaborative Graph Network (Sui et al., 2019) ✓ 75.",
+      "startOffset" : 31,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 14,
+      "context" : "(4) BERT+SoftLexicon (Ma et al., 2020) incorporate the word lexicon into the character features.",
+      "startOffset" : 21,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 13,
+      "context" : "(5) LEBERT (Liu et al., 2021) introduce a Lexicon Adapter layer to integrate external lexicon knowledge into BERT layers directly.",
+      "startOffset" : 11,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 24,
+      "context" : "As shown in Table 4, there are several alternative ways to extract regularity information instead of linear attention used in this paper, such as meanpooling, max-pooling, or more complex multi-head self-attention (Vaswani et al., 2017), but these methods all perform worse.",
+      "startOffset" : 214,
+      "endOffset" : 236
+    }, {
+      "referenceID" : 27,
+      "context" : "is preserving all words which match a specific character and let the subsequent NER model determine which word to apply (Zhang and Yang, 2018; Ma et al., 2020).",
+      "startOffset" : 120,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 14,
+      "context" : "is preserving all words which match a specific character and let the subsequent NER model determine which word to apply (Zhang and Yang, 2018; Ma et al., 2020).",
+      "startOffset" : 120,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 26,
+      "context" : "From this figure, we can observe that our RICON consistently outperforms BERT-Biaffine (Yu et al., 2020) when the entity length is longer than 2, which illustrates that the regularity information is helpful to predict the types for long entities.",
+      "startOffset" : 87,
+      "endOffset" : 104
+    } ],
+    "year" : 0,
+    "abstractText" : "Recent years have witnessed the improving performance of Chinese Named Entity Recognition (NER) from proposing new frameworks or incorporating word lexicons. However, the inner composition of entity mentions in characterlevel Chinese NER has been rarely studied. Actually, most mentions of regular types have strong name regularity. For example, entities end with indicator words such as “公司 (company) ” or “银行 (bank)” usually belong to organization. In this paper, we propose a simple but effective method for investigating the regularity of entity spans in Chinese NER, dubbed as Regularity-Inspired reCOgnition Network (RICON). Specifically, the proposed model consists of two branches: a regularity-aware module and a regularity-agnostic module. The regularity-aware module captures the internal regularity of each span for better entity type prediction, while the regularity-agnostic module is employed to locate the boundary of entities and relieve the excessive attention to span regularity. An orthogonality space is further constructed to encourage two modules to extract different aspects of regularity features. To verify the effectiveness of our method, we conduct extensive experiments on three benchmark datasets and a practical medical dataset. The experimental results show that our RICON significantly outperforms previous state-of-the-art methods, including various lexicon-based methods.",
+    "creator" : null
+  }
+}

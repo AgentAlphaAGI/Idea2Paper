@@ -1,0 +1,589 @@
+{
+  "name" : "ARR_2022_347_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "E-LANG: Energy-Based Joint Inferencing of Super and Swift Language Models",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "With the introduction of influential language models such as BERT (Devlin et al., 2019), a trend in natural language processing (NLP) research has been to develop high capacity models and push their performance to new levels. Consequently, state-of-the-art (SOTA) results were achieved on various benchmarks using these models; GPT-3 (Brown et al., 2020), XLNet (Yang et al., 2019), RoBERTa (Liu et al., 2019), T5 (Raffel et al., 2020),\nELECTRA (Clark et al., 2020), and DeBERTa (He et al., 2021) to name a few. A potential down-side, however, is that the number of parameters or floating point operations (FLOPs) for these models can get extremely large. For example, Gshard (Lepikhin et al., 2021) comes with 600B parameters with an enormous amount of computation. This in turn results in a higher inference latency, which is not desirable for latency-sensitive applications.\nA common solution to speed-up the large language models is to apply model compression (Gupta et al., 2020). Although generally successful, compression does come with a trade-off on accuracy, and may lose performance if compression is heavy. In addition, these methods usually compress a model to a fixed smaller size, where a separate model is required for each possible computational budget. An alternative approach explored in the literature is to leverage dynamic inferencing in a way that examples may be routed to different (potentially lower cost) paths throughout the network. For example, a temporal early-exit model (Shen et al., 2017; Yu et al., 2018) terminates the procedure of reading the input sequence when sufficient evidence has been found for accurate predictions. Instance-wise early-exiting (Xin et al., 2020) is another technique, which allows a sample to adaptively choose from multiple available exit nodes if some conditions are met. Consequently, earlier exists require less computation and lead to a lower latency. Adjusting the size of the model at the inference time by choosing adaptive width and depth is also another approach employed for dynamic inference (Kim and Cho, 2021; Hou et al., 2020). There is a variety of adaptive/dynamic inference approaches proposed, however, a general down-side for many of these methods is that often times they require a careful architecture design, manipulation of network modules, or even re-training.\nIn this paper, we propose a simple but rather effective approach of dynamically distributing the inference between the original large model (called the Super model) and a light-weight (e.g., compressed)\nmodel referred to as the Swift model. To this end, we design an energy-based decision making module that routes examples to the appropriate model based on the negative free energy of the latent space representations, such that the Swift model attains a high accuracy on the examples sent to it. The remaining samples are then forwarded to the Super model that is supposed to have a good performance on all examples. Since the Swift model can make highly accurate predictions over the majority of the samples, E-LANG significantly reduces the overall computational cost, while maintains the high accuracy of the Super model. Although simple, this strategy achieves SOTA results on multiple structures (e.g., T5 and BERT) and benchmarks (e.g., GLUE and SuperGLUE). Due to its desirable practical characteristics, this method is a strong candidate for the practical application of Super models. The main contributions of the paper are as follows: • Combining Super models with high accuracy\nand latency and Swift models with lower accuracy and latency, to achieve high accuracy and low latency. In other words, by employing our method, we can achieve the high levels of accuracy provided by Super models, but at a lower computational cost. Our method is easily adoptable, architecture agnostic, and orthogonal to many other existing methods. It can be applied to black-box pre-trained models without a need for architectural manipulations, careful reassembling of modules, or re-training. • An energy-based routing mechanism for di-\nrecting examples to the Super or Swift. This provides a dynamic trade-off between the accuracy and computational cost that outperforms the previous works in both fixed-size and dynamic inference (with zero overhead for real-time adjustment of speed/accuracy). As such, E-LANG acts like a knob for adjusting the accuracy-latency trade-off in real-time during model serving. • To the best of our knowledge, our method is\nthe first generic approach to apply dynamic inference on both encoder-only and encoderdecoder architectures (e.g., T5) and also can extend the usage beyond classification tasks, to sequence-to-sequence tasks such as translation."
+    }, {
+      "heading" : "2 Related Works",
+      "text" : "As mentioned, compression is a widely used strategy to speed-up the large language models (Gupta et al., 2020; Gupta and Agrawal, 2020). This involves incorporating techniques such as quantization of weights and activations (Bai et al., 2020;\nShen et al., 2020; Kim et al., 2021; Zhang et al., 2020; Jin et al., 2021), knowledge distillation (KD) (Hinton et al., 2015; Jiao et al., 2020; Sanh et al., 2019), pruning/sharing (Gordon et al., 2020; Chen et al., 2020), multi-device distribution (BanitalebiDehkordi et al., 2021), or a combination of these techniques (Cheng et al., 2017; Polino et al., 2018).\nAmong all the compression techniques, creating a fixed-size small version of large models along with distillation has been popular in the recent years. Sanh et al. (2019) introduced DistillBERT, which was a smaller version of BERT trained with distillation for general purposes. Another compact variant of BERT was proposed by MobileBERT (Sun et al., 2020) in which inverted bottleneck structures and progressive knowledge transfer were used. TinyBERT (Jiao et al., 2020) also presented a novel two-stage transformer distillation for both pre-training and task-specific fine-tuning. In (Iandola et al., 2020), the usage of grouped convolutions was studied to design SqueezeBERT. ELM (Jiao et al., 2021), a layer mapping search framework, was also proposed for improving downstream BERT distillation. A recent method, GhostBERT (Huang et al., 2021), employed softmaxnormalized 1D convolutions as ghost modules to generate more features with cheap operations.\nAlthough compression techniques in general are effective, they come with a trade-off on accuracy, and may lose performance in case of high ratio compression. In addition, an individual fixed-size model is required for each possible computational budget. As stated in the introduction, the alternative solution is dynamic inference, which can be achieved with either early-exit or length/depthadaptive models. One of the first temporal earlyexit strategies was proposed by ReasoNet (Shen et al., 2017), which stops its reading procedure when sufficient evidence has been found for answering a question. Similarly, in (Yu et al., 2018), an early stopping method applicable to classification tasks was presented. DeeBERT (Xin et al., 2020) also proposed an instance-wise multi-exit method via the entropy of the output probability distribution to speed-up BERT inference.\nAs a length-adaptive method, Kim and Cho (2021) introduced a dynamic inference framework with one-shot training of transformers for both sequence- and token-level classification. Also, in (Hou et al., 2020), an architecture named DynaBERT was proposed for adaptively adjusting the computations by choosing sub-networks of different widths and depths. Both Length-Adaptive and\nDynaBERT utilized knowledge distillation and data augmentation to improve their performance.\nAlthough early-exit and adaptive methods have made significant progress and work well in practice, they often require architectural manipulation and re-training. In addition, they are only applicable to encoder-only backbones and classification tasks. In contrast, our method can work with out-of-the-box pre-trained models without a need for re-training and are also applicable for encoder-decoder structures and sequence-to-sequence tasks."
+    }, {
+      "heading" : "3 Proposed Method",
+      "text" : "We propose a new energy-based joint inference method called E-LANG, where a large/accurate language model (Super) is jointly employed with a small/fast one (Swift) to achieve efficient inference without sacrificing the accuracy. To this end, a routing mechanism empowered by energy-based models (EBM) is introduced to dynamically distribute the input samples between the Super and Swift models. Similar to the out-of-distribution (OOD) detection problem, our goal is to identify the OOD samples that are hard to handle for the Swift and forward them to the Super model. On the other hand, we have the in-distribution data for which the Swift can make highly reliable and accurate predictions. In other words, the routing mechanism needs to detect whether or not the input data fits in the Swift’s distribution (i.e., the one the Swift has been trained with). Inspired by the success of EBMs in dealing with OOD detection problems (Lee et al., 2019), the energy characteristics of data samples for an efficient and effective routing are investigated in our work. The overall framework of E-LANG is shown in Figure 1."
+    }, {
+      "heading" : "3.1 Energy-Based Models",
+      "text" : "The goal of EBM is to build an energy function denoted by E(x) : RD → R that maps an input\ndata x ∈ RD to a non-probabilistic energy value y ∈ R. To turn a collection of arbitrary energies for all possible outputs (denoted by Y ) into a normalized probability distribution, Gibbs distribution can be used as follows (LeCun et al., 2006):\np(y|x) = e −E(x,y)∫\ny′∈Y e −E(x,y′) , (1)\nwhere the negative log of the denominator expresses the Helmholtz free energy (LeCun et al., 2006) defined as F (x) = −log ( ∫ y′∈Y e −E(x,y′)). In machine learning, there is a deep relationship between the EBMs and discriminative models, which can be seen by connecting the Gibbs distribution in Equation (1) and the categorical distribution derived for a discriminative model. A discriminative classifier is defined as a function for mapping the input x to C real-valued logits (i.e., for C number of class labels): f(x) : RD → RC . In order to derive a categorical distribution over C possible outputs, the softmax function is utilized:\np(y|x) = e fy(x)∑C i e fi(x) , (2)\nwhere fy(x) denotes the logit (probability) of the yth class label. Based on the inherent connection between the Gibbs and categorical distributions defined in (1) and (2), the energy function for a given input (x, y) can be defined as E(x, y) = −fy(x). The free energy function F (x; f) can then be obtained by taking the negative log of the categorical distribution denominator as:\nF (x; f) = −log C∑ i efi(x). (3)"
+    }, {
+      "heading" : "3.2 Energy-Based Joint Inference",
+      "text" : "Our goal is to detect the easy samples suitable for the Swift, which are indeed the ones with high likelihood in the density function. The energy-\nbased density function for Swift is then defined as:\np(x) = e−F (x;f)∫ x e −F (x;f) , (4)\nwhere the denominator is the normalized densities, which can be intractable to compute or estimate. By taking the logarithm of both sides, we obtain:\nlog ( p(x) ) = −F (x; f)− log( ∫ x e−F (x;f)). (5)\nThe log( ∫\nx e −F (x;f)) term has no effect on the\ndistribution of the overall energy values because it is constant for all x. As a result, −F (x; f), i.e., the negative free energy, has a linear alignment with the log likelihood function, which makes it a well-suited solution to the easy vs. hard detection problem in our framework. To this end, lower energy values indicate higher likelihood and represent easier (more fit) samples for the Swift model.\nMore precisely, for a threshold δ on the density function such that p(x) < δ, then a threshold t on the negative free energy can be calculated according to (5) as −F (x; f) < t = log(δ ∫ x e −F (x;f)). In practice, for a given input, an energy function is applied to the outputs of the Swift model during inference time to calculate the energy score. Then, if the negative energy value is smaller than a threshold, the input is identified as a bad sample for the Swift, and is sent to the Super model.\nGiven the energy threshold t, the Swift classifier f(x), and the Super classifier defined as g(x) : RD → RC , the joint inference function J(x; f, g, t) ∈ [1, C] for a classification task with C classes can then be expressed by:\nJ(x; f, g, t) = { f(x) if − F (x; f) ≥ t g(x) otherwise. (6)"
+    }, {
+      "heading" : "3.2.1 Encoder-Decoder Architectures",
+      "text" : "The proposed energy-based joint inference solution can be directly applied to the encoder-only models such as BERT that are designed for text classification tasks. To this end, the energy scores corresponding to the BERT-based Swift model are obtained using Equation (3) and the joint inference is performed based on Equation 6.\nOn the other hand, for the encoder-decoder (autoencoder) architectures such as T5, which are usually considered as generative models, some modifications are required. Encoder-decoder models are basically designed for sequence-to-sequence (e.g., text-to-text) problems such as translation or summarization. Although such models can also be employed for classification tasks, they still consider\nthe task as a text generation (sequence-to-sequence) problem, where the target labels and the output predictions are treated as a sequence or a piece of text.\nIn Section 3.1, it was discussed that there is an inherent connection between the discriminative classifiers and the EBMs. In order to benefit from this characteristic for encoder-decoder architectures, we consider adding an extra classification head (i.e., a single linear layer) to the Swift model. As encoders are commonly considered as better feature extractors for training a classifier rather than the decoders, we place the extra head after the Swift encoder. While freezing the pre-trained encoder model (denoted by fE), the extra energy head (denoted by h) is trained as a regular classifier head with C class labels. Note that the decoder is not required for training the head. The corresponding free energy function is then defined as follows:\nF (x; fE , h) = −log C∑ i ehi ( fE(x) ) , (7)\nwhere fE(x) denotes the outputs of the encoder’s last hidden state. These features are then fed to the extra head h to obtain the logits for the ith class required for computing the energy scores.\nIn this approach, as the decoder part of the Swift model is not required for calculating the energy scores, less computations are involved and the joint inference is performed more efficiently.\nFor text-to-text (or sequence-to-sequence) problems such as translation, the output is a sequence of M word-pieces from a vocabulary/dictionary of size N . To still utilize the relationship of discriminative models and EBMs in designing and training the extra energy head, we can treat the text-to-text models as M multi-class classifiers. In this case, the number of class labels, i.e., C in (7), is equal to N . The final energy score is then calculated as the average of M energy values as follows:\nF (x; fE , h) = − 1M ∑M m ( log ∑C i e hm,i ( fE(x) )) , (8)\nwhere hm,i(.) denotes the logits corresponding to the mth word in the sequence and ith class label.\nDenote the Swift’s decoder by fD, the joint inference function, J(x; f, g, h, t), based on energy scores in either Equation (7) or (8) is expressed as:\nJ =\n{ fD ( fE(x) ) if − F (x; fE , h) ≥ t\ng(x) otherwise. (9)"
+    }, {
+      "heading" : "3.3 Softmax and Entropy Mechanisms",
+      "text" : "In addition to energy, softmax and entropy (Xin et al., 2020) scores can also be used for analyz-\ning the Swift model’s performance in the routing mechanism. In this sub-section, we study the mathematical connection of them with the energy score and their potential to solve our problem."
+    }, {
+      "heading" : "3.3.1 Softmax-Based Mechanism",
+      "text" : "The softmax score for a classifier is expressed by: maxy p(y|x) = maxy e fy(x)∑C i e fi(x) = e fmax(x)∑C i e fi(x) . (10)\nBy taking the logarithm of both sides, we see the connection between the log of the softmax and the free energy score formulated in Equation (3):\nlogmax y p(y|x) = log(efmax(x))− log C∑ i efi(x)\n= fmax(x) + F (x; f), (11)\nwhere all logits are shifted by their maximum fmax(x). Plugging in the energy term to (5) yields:\nlogmax y p(y|x) = −log(p(x)) + fmax(x) −log ( ∫\nx e−F (x;f)\n) .\n(12)\nIt is observed that for the samples with high likelihood of being in the Swift’s distribution, the free energy goes lower, but the max logit tends to go higher. Due to this shifting, unlike the energy score, the softmax score is not well-aligned with the probability density p(x). As a result, the softmax score is less reliable for our routing module to analyze the performance of the Swift."
+    }, {
+      "heading" : "3.3.2 Entropy-Based Mechanism",
+      "text" : "The entropy score is a measure of randomness in the processed information, and is calculated as:\nH(x; f) = − C∑ i fi.log(fi), (13)\nwhere fi(x) is the probability (logit) corresponding to the ith class label. Let U be the internal energy, i.e., the expectation value of the energy function (Oh et al., 2020), defined by:\nU(x; f) = C∑ i E(x, i)fi. (14)\nAccording to Oh et al. (2020), the entropy can be defined in terms of the internal and free energy functions as: H(x; f) = U(x; f)−F (x; f), where all logits are shifted by the internal energy U . Substituting the free energy from (5) yields:\nH(x; f) = log(p(x)) + U(x; f) + log ( ∫ x e −F (x;f)), (15)\nwhich shows, due to the shifting caused by internal energy, the entropy is not reliably aligned with the\nprobability density p(x). Thus, it is a less suitable routing mechanism unlike the energy score."
+    }, {
+      "heading" : "4 Experimental Results",
+      "text" : "In this section, the performance of E-LANG on different architectures such as T5 and BERT; and benchmarks such as GLUE (Wang et al., 2019b), SuperGLUE (Wang et al., 2019a), and WMT (Bojar et al., 2016) is evaluated and compared with the Super models and previous works."
+    }, {
+      "heading" : "4.1 T5-Based Joint Inference",
+      "text" : "In Table 1, the T5-based results on GLUE, SuperGLUE, and WMT benchmarks are reported. For all the tasks, we use T5-11B (with 87×1011 FLOPs) and T5-large (with 4.25×1011 FLOPs) as our Super and Swift models, respectively. The average GPUbased running time and accuracy of both models compared with E-LANG are also summarized in the table. Note that the T5 models used in this experiment have been separately fine-tuned on each of the downstream tasks given in Table 1. The extra energy head for each of these tasks was also separately trained and used based on the task-specific number of classes, i.e., C in Equation (7).\nThe total FLOPs for our method is measured as a weighted average of the Super and Swift FLOPs based on their usage frequency as:\nFLOPs = 1\nNsw +Nsu\n( Nsw.(F E sw+Fh+F D sw)\n+Nsu.(F E sw + Fh + Fsu)\n) , (16)\nwhere Nsu and Nsw are respectively the number of samples processed by the Super (with Fsu FLOPs) and Swift (with FEsw, F D sw, and Fh FLOPs for the encoder, decoder, and energy head). Note that Fh is equal to ≈0.00001×1011, which has a very insignificant overhead in our framework.\nAs presented in Table 1, E-LANG can reach the Super model’s accuracy on all GLUE tasks with an average 3.3X in FLOPs and 1.8X in running time speed-ups. For some tasks such as QNLI, MRPC, and COLA, we even outperform the Super model, which leads to a higher average accuracy of 89.7% than the Super model with 89.5% on GLUE. For the SuperGLUE benchmark, with an average FLOPs and running time speed-up of 2.9X and 2.0X, our method achieves the same accuracy as the Super model on MRC and CB; and better accuracy on RTE and WIC. On BoolQ and COPA, although 99% and 97% of the Super’s accuracy are respectively obtained, it is with 1.7X and 1.4X less FLOPs and latency, on average.\nIn order to analyze the generality of E-LANG to other NLP problems rather than text classification (Section 3.2.1), we also apply our method to two text-to-text tasks including SuperGLUE’s WSC and WMT’s English-to-Romanian (EnRo) translation. As given in the table, our method achieves the Super model’s accuracy on both WSC and EnRo with 4.2X and 1.4X less FLOPs, respectively.\nFigure 2 illustrates the accuracy vs. FLOPs trade-off curves for some tasks in GLUE and SuperGLUE benchmarks. The curves related to all tasks are given in the appendix. The trade-off points on the curves are dynamically achieved at the inference time by selecting different thresholds, i.e., t in Equations (6) and (9). Larger values for t will result in routing more input data to the Super model, which consequently provides more accurate, but slower inference. As the Swift is able to make accurate predictions for the majority of input data, the dynamic inference with a small enough t can reach the Super model’s accuracy but with a much\nlower computational cost and latency."
+    }, {
+      "heading" : "4.1.1 Ablation Studies",
+      "text" : "In Sections 3.3.1 and 3.3.2, the possibility of using softmax and entropy scores instead of energy score was theoretically analyzed. To support that analysis and also experimentally evaluate the performance of different routing mechanisms, an ablation study on GLUE is performed, which is presented in Table 2. In this study, we report the joint inference results based on softmax, entropy, and random scores (i.e., randomly distributing the samples between Super and Swift). Our experiments show that, compared to the random score, softmax and entropy can result in satisfactory performance on routing the samples. However, as also discussed in Sections 3.3.1 and 3.3.2, the energy score is still a better routing mechanism with about 14% less FLOPs.\nThe results with the usage of different Swift models including T5-small (with 0.33×1011 FLOPs) and T5-base (with 1.24×1011 FLOPs) are also\ngiven in Table 2. Using these models as Swifts can lead to good performance on some tasks, but not all of them. For example, on SST2, the joint inference with T5-small and T5-base Swifts can respectively reach the Super’s accuracy with 1.9X and 2.X less computations. In general, although these models are smaller and require less FLOPs, our results in Table 2 indicate that they perform worse than T5-large in our joint inference structure. In Figure 2, the trade-off curves for different Swift models are shown for GLUE and SuperGLUE.\nMoreover, to show the effectiveness of the extra energy head for the Swift encoder, the E-LANG results based on last linear layer of the Swift decoder is also given and compared in Table 2. As reported, the E-LANG empowered by the energy head on the Swift encoder outperforms the case with the decoder’s head in both FLOPs (36.8% less) and accuracy (0.7% better). As explained in Section 3.2.1, this shows the deep connection between the encoder’s features, discriminative models, and the proposed routing mechanism via the energy head.\nWe observed that E-LANG can achieve a high performance even when applied to individually pretrained Super and Swift models. However, more improvement can still be obtained by performing KD from the Super model to the Swift model, especially at the fine-tuning process for downstream tasks. To study this, we apply the KD technique in (Sanh et al., 2019) to the Super and Swift models for some GLUE tasks. As summarized in Table 3, the Super model’s accuracy for QNLI, SST2, and COLA is respectively attained by the distillationbased E-LANG with 29.2%, 48.5%, and 14.3% less FLOPs than E-LANG (without distillation). The results in this experiment show the effectiveness of E-LANG along with other compression techniques such as distillation. The trade-off curves for this\nexperiment will be provided in the appendix."
+    }, {
+      "heading" : "4.2 BERT-Based Joint Inference",
+      "text" : "In this section, the proposed energy-based joint inference method is applied to the BERT architecture (Devlin et al., 2019) and compared with BERT-based SOTA in both fixed-size and dynamic inference. The majority of the previous methods employ knowledge distillation and data augmentation techniques for training their student models. For a fair comparison, we follow the same practice and use the transformer distillation and augmentation strategies in TinyBERT (Jiao et al., 2020) to train and prepare our Swift model (i.e., BERTT iny with 1.2 × 109 FLOPs). Moreover, similar to the other works, we use BERTBase (with 21.8 × 109 FLOPs) as our Super (i.e., teacher) model.\nIn Table 4, the comparison results with the baseline BERTBase and SOTA on GLUE benchmark are presented in terms of accuracy, FLOPs, and latency. Compared to the Super model, E-LANG delivers better accuracy on SST2 and RTE with 3.5X and 2.0X FLOPs speed-up; and the same accuracy on QNLI, MRPC, and QQP with 2.4X, 2.7X, and 7.0X FLOPs speed-up, respectively. On MNLI and COLA, 99.8% and 97.3% of the Super model’s accuracy are achieved, but with an average FLOPs speed-up of 2.3X. On average, E-LANG outperforms the Super model with 0.1% higher accuracy, 3.2X less FLOPs, and 1.6X less latency.\nCompared with SOTA, our method achieves the best performance on all GLUE tasks, except MRPC for which SqueezeBERT outperforms all due to having a more accurate teacher (Iandola et al., 2020). There are some works such as ELECTRA (Clark et al., 2020) and MobileBERT (Sun et al., 2020) that require less FLOPs than our method, but they only reach 95% of the baseline’s accuracy. Compared to other methods, GhostBERT (Huang et al., 2021) and DynaBERT (Hou et al., 2020) give the closest performance to the baseline and even the same as ours on some tasks such as QNLI. However, on average, they still need about 30% more FLOPs on GLUE compared to E-LANG.\nThe E-LANG accuracy vs. FLOPs trade-off\ncurves compared to SOTA on some of GLUE tasks are shown in Figure 3. The trade-off curves for all the tasks are reported in the appendix. Among the SOTA methods presented in Table 4 and Figure 3, only DeeBERT (Xin et al., 2020), LengthAdaptive (Kim and Cho, 2021), and DynaBERT (Hou et al., 2020) are in the category of dynamic inference, where a single model can operate at different trade-off points between accuracy and computational cost. The other approaches propose fixedsize smaller versions of BERTBase, which require re-training for every trade-off point.\nTo investigate the orthogonality of E-LANG with others, we integrate our energy-based joint inference strategy with DynaBERT that is SOTA in BERT-based adaptive inference. In other words, we analyze whether E-LANG can be added on top of other efficient methods to benefit both from their designs and our approach. In this experiment, the DynaBERT configurations with the highest accuracy (i.e., width=0.75 & depth=1.0) and the lowest FLOPs (i.e., width=0.5 & depth=0.25) are respectively employed as the Super and Swift models in our framework. The corresponding joint inference results on MNLI, SST2, and QQP are reported in Table 5. As observed, we accomplish the DynaBERT Super’s accuracy for MNLI and SST2 with 1.7X and 3.1X less FLOPs. For QQP, our method\ncombined with DynaBERT even outperforms DynaBERT by 0.1% with 2.6X FLOPs speed-up."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this paper, we introduced E-LANG, an energybased joint inference approach, which integrates Super and Swift language models for achieving efficient inference without sacrificing the accuracy. Our method can work with both encoder-only (e.g., BERT) and encoder-decoder (e.g., T5) architectures, and is also applicable for text classification and sequence-to-sequence problems. The proposed joint inference strategy was theoretically and experimentally analyzed with an extensive set of experiments and ablation studies. Our results showed that E-LANG outperforms SOTA in both fixed-size and dynamic inference over different benchmarks such as GLUE and SuperGLUE. One future direction to this work is to apply E-LANG to multiple Super and Swift models with different sizes."
+    }, {
+      "heading" : "A Supplementary Materials",
+      "text" : "This section contains the supplementary materials.\nA.1 Code and Demo We share our code to make it easy to reproduce the results. The source code with the detailed instructions are available in a ‘code’ directory in the supplementary materials file. In addition to the code, we also include a ‘Demo.mp4’ video file that contains a demonstration of our framework. This is based on screen recording of a web application we built to show the use-cases of our method in real-world scenarios. Figure 4 shows a screenshot of the demo application.\nA.2 Additional Results and Visualizations Figure 5 illustrates the distribution of the energy scores across the input samples in GLUE tasks. For each task, the distributions of the samples processed by the Super and the Swift models are plotted. As shown, the samples routed to the Super model tend to have lower energy scores that are indeed considered as out-of-distribution samples for the Swift. On the other hand, in overall, higher scores are observed for the Swift distribution, that is for the samples handled by the Swift only. For some tasks such as MRPC and QNLI, the Swift is shown to be highly capable of handling the majority of the input samples. This is also supported by the results in Table 1 and Figure 2, where 91% (for MRPC) and 75% (for QNLI) of the samples are accurately processed by the Swift. In contrast, for other datasets including RTE and MNLI with\nSwift ratio of less than 50%, most of the samples are hard for the Swift, which are transferred to the Super model. Based on our experiments, the most optimal results for our joint inference framework is achieved when the crossing point of the two distributions (highlighted in green in the figures) is chosen as the threshold t in Equation (9).\nMoreover, the trade-off curves (for the experiments given in Table 1) with T5 architecture on GLUE and SuperGLUE tasks are respectively shown in Figures 6 and 7. The ablation over different Swift models are also given in the figures.\nIn Figure 8, the accuracy vs. FLOPs trade-off curves for distillation-based experiments (reported in Table 3) are also given. On QNLI, distillationbased E-LANG (denoted by DE-LANG) with 4.8× less computations than the Super model outperforms E-LANG with 3.4× FLOPs speed-up, although both methods performs 0.1% more accurate than the Super model. DE-LANG on SST2 can also achieve the Super model’s accuracy with 5.7× less computations, while the original E-LANG achieves the same performance with only 2.9× speed-up. Moreover, DE-LANG can improve the Super model’s accuracy by 0.1% with 2.9× speedup on SST2. For COLA, DE-LANG achieves a better FLOPs speed-up of 2.5× than E-LANG with 2.2× speed-up, where both outperform the Super model’s accuracy by 0.4%.\nFigure 9 also illustrates the corresponding curves for the BERT-based results of Table 4, which are compared with previous works in fixed-size and adaptive inference."
+    } ],
+    "references" : [ {
+      "title" : "Binarybert: Pushing the limit of bert quantization",
+      "author" : [ "Haoli Bai", "Wei Zhang", "Lu Hou", "Lifeng Shang", "Jing Jin", "Xin Jiang", "Qun Liu", "Michael Lyu", "Irwin King." ],
+      "venue" : "arXiv preprint arXiv:2012.15701.",
+      "citeRegEx" : "Bai et al\\.,? 2020",
+      "shortCiteRegEx" : "Bai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Auto-split: A general framework of collaborative edge-cloud ai",
+      "author" : [ "Amin Banitalebi-Dehkordi", "Naveen Vedula", "Jian Pei", "Fei Xia", "Lanjun Wang", "Yong Zhang." ],
+      "venue" : "Proceedings of the 27th ACM SIGKDD Conference on Knowledge Discovery &",
+      "citeRegEx" : "Banitalebi.Dehkordi et al\\.,? 2021",
+      "shortCiteRegEx" : "Banitalebi.Dehkordi et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models are few-shot learners. arXiv preprint arXiv:2005.14165",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The lottery ticket hypothesis for pretrained bert networks",
+      "author" : [ "Tianlong Chen", "Jonathan Frankle", "Shiyu Chang", "Sijia Liu", "Yang Zhang", "Zhangyang Wang", "Michael Carbin." ],
+      "venue" : "Advances in neural information processing systems.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A survey of model compression and acceleration for deep neural networks",
+      "author" : [ "Y. Cheng", "D. Wang", "P. Zhou", "T. Zhang." ],
+      "venue" : "arXiv:1710.09282.",
+      "citeRegEx" : "Cheng et al\\.,? 2017",
+      "shortCiteRegEx" : "Cheng et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Electra: Pre-training text encoders as discriminators rather than generators",
+      "author" : [ "Kevin Clark", "Minh-Thang Luong", "Quoc V Le", "Christopher D Manning." ],
+      "venue" : "International Conference on Learning Representations, ICLR.",
+      "citeRegEx" : "Clark et al\\.,? 2020",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "NAACL-HLT (1).",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Compressing bert: Studying the effects of weight pruning on transfer learning",
+      "author" : [ "Mitchell A Gordon", "Kevin Duh", "Nicholas Andrews." ],
+      "venue" : "ACL 2020, page 143.",
+      "citeRegEx" : "Gordon et al\\.,? 2020",
+      "shortCiteRegEx" : "Gordon et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Compression of deep learning models for text: A survey",
+      "author" : [ "Manish Gupta", "Puneet Agrawal." ],
+      "venue" : "arXiv preprint arXiv:2008.05221.",
+      "citeRegEx" : "Gupta and Agrawal.,? 2020",
+      "shortCiteRegEx" : "Gupta and Agrawal.",
+      "year" : 2020
+    }, {
+      "title" : "Compression of deep learning models for nlp",
+      "author" : [ "Manish Gupta", "Vasudeva Varma", "Sonam Damani", "Kedhar Nath Narahari." ],
+      "venue" : "Proceedings of the 29th ACM International Conference on Information & Knowledge Management, CIKM, pages 3507–3508.",
+      "citeRegEx" : "Gupta et al\\.,? 2020",
+      "shortCiteRegEx" : "Gupta et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deberta: Decoding-enhanced bert with disentangled attention",
+      "author" : [ "Pengcheng He", "Xiaodong Liu", "Jianfeng Gao", "Weizhu Chen." ],
+      "venue" : "International Conference on Learning Representations, ICLR.",
+      "citeRegEx" : "He et al\\.,? 2021",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Distilling the knowledge in a neural network",
+      "author" : [ "G.E. Hinton", "O. Vinyals", "J. Dean." ],
+      "venue" : "ArXiv, abs/1503.02531.",
+      "citeRegEx" : "Hinton et al\\.,? 2015",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Dynabert: Dynamic bert with adaptive width and depth",
+      "author" : [ "Lu Hou", "Zhiqi Huang", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Qun Liu." ],
+      "venue" : "Advances in Neural Information Processing Systems, 33.",
+      "citeRegEx" : "Hou et al\\.,? 2020",
+      "shortCiteRegEx" : "Hou et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Ghostbert: Generate more features with cheap operations for bert",
+      "author" : [ "Zhiqi Huang", "Lu Hou", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Qun Liu." ],
+      "venue" : "ACL/IJCNLP.",
+      "citeRegEx" : "Huang et al\\.,? 2021",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "SqueezeBERT: What can computer vision teach NLP about efficient neural networks",
+      "author" : [ "Forrest Iandola", "Albert Shaw", "Ravi Krishna", "Kurt Keutzer" ],
+      "venue" : "In Proceedings of SustaiNLP: Workshop on Simple and Efficient Natural Language Processing,",
+      "citeRegEx" : "Iandola et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Iandola et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving task-agnostic bert distillation with layer mapping search",
+      "author" : [ "Xiaoqi Jiao", "Huating Chang", "Yichun Yin", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Linlin Li", "Fang Wang", "Qun Liu." ],
+      "venue" : "Neurocomputing, 461:194–203.",
+      "citeRegEx" : "Jiao et al\\.,? 2021",
+      "shortCiteRegEx" : "Jiao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Tinybert: Distilling bert for natural language understanding",
+      "author" : [ "Xiaoqi Jiao", "Yichun Yin", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Linlin Li", "Fang Wang", "Qun Liu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Jiao et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Kdlsq-bert: A quantized bert combining knowledge distillation with learned step size quantization",
+      "author" : [ "Jing Jin", "Cai Liang", "Tiancheng Wu", "Liqin Zou", "Zhiliang Gan." ],
+      "venue" : "arXiv preprint arXiv:2101.05938.",
+      "citeRegEx" : "Jin et al\\.,? 2021",
+      "shortCiteRegEx" : "Jin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Lengthadaptive transformer: Train once with length drop, use anytime with search",
+      "author" : [ "Gyuwan Kim", "Kyunghyun Cho." ],
+      "venue" : "ACL 2021.",
+      "citeRegEx" : "Kim and Cho.,? 2021",
+      "shortCiteRegEx" : "Kim and Cho.",
+      "year" : 2021
+    }, {
+      "title" : "I-bert: Integer-only bert quantization",
+      "author" : [ "Sehoon Kim", "Amir Gholami", "Zhewei Yao", "Michael W Mahoney", "Kurt Keutzer." ],
+      "venue" : "arXiv preprint arXiv:2101.01321.",
+      "citeRegEx" : "Kim et al\\.,? 2021",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A tutorial on energy-based learning",
+      "author" : [ "Yann LeCun", "Sumit Chopra", "Raia Hadsell", "M Ranzato", "F Huang." ],
+      "venue" : "Predicting structured data, 1(0).",
+      "citeRegEx" : "LeCun et al\\.,? 2006",
+      "shortCiteRegEx" : "LeCun et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "An energy and gpu-computation efficient backbone network for real-time object detection",
+      "author" : [ "Youngwan Lee", "Joong-won Hwang", "Sangrok Lee", "Yuseok Bae", "Jongyoul Park." ],
+      "venue" : "Proceedings of the IEEE/CVF Conference on Computer Vision and Pat-",
+      "citeRegEx" : "Lee et al\\.,? 2019",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Gshard: Scaling giant models with conditional computation and automatic sharding",
+      "author" : [ "Dmitry Lepikhin", "HyoukJoong Lee", "Yuanzhong Xu", "Dehao Chen", "Orhan Firat", "Yanping Huang", "Maxim Krikun", "Noam Shazeer", "Zhifeng Chen." ],
+      "venue" : "International Con-",
+      "citeRegEx" : "Lepikhin et al\\.,? 2021",
+      "shortCiteRegEx" : "Lepikhin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Entropy, free energy, and work of restricted boltzmann machines",
+      "author" : [ "Sangchul Oh", "Abdelkader Baggag", "Hyunchul Nha." ],
+      "venue" : "Entropy, 22(5):538.",
+      "citeRegEx" : "Oh et al\\.,? 2020",
+      "shortCiteRegEx" : "Oh et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Model compression via distillation and quantization",
+      "author" : [ "A. Polino", "R. Pascanu", "Dan Alistarh." ],
+      "venue" : "ArXiv, abs/1802.05668.",
+      "citeRegEx" : "Polino et al\\.,? 2018",
+      "shortCiteRegEx" : "Polino et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "Journal of Machine Learning Research,",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "5th Workshop on Energy Efficient Machine Learning and Cognitive Computing - NeurIPS 2019.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Q-bert: Hessian based ultra low precision quantization of bert",
+      "author" : [ "Sheng Shen", "Zhen Dong", "Jiayu Ye", "Linjian Ma", "Zhewei Yao", "Amir Gholami", "Michael W Mahoney", "Kurt Keutzer." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, vol-",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Reasonet: Learning to stop reading in machine comprehension",
+      "author" : [ "Yelong Shen", "Po-Sen Huang", "Jianfeng Gao", "Weizhu Chen." ],
+      "venue" : "Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, pages",
+      "citeRegEx" : "Shen et al\\.,? 2017",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Mobilebert: a compact task-agnostic bert for resource-limited devices",
+      "author" : [ "Zhiqing Sun", "Hongkun Yu", "Xiaodan Song", "Renjie Liu", "Yiming Yang", "Denny Zhou." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Sun et al\\.,? 2020",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Superglue: a stickier benchmark for general-purpose language understanding systems",
+      "author" : [ "Alex Wang", "Yada Pruksachatkun", "Nikita Nangia", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel R Bowman." ],
+      "venue" : "Proceedings of the 33rd In-",
+      "citeRegEx" : "Wang et al\\.,? 2019a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "2019b. Glue: A multi-task benchmark and analysis platform",
+      "author" : [ "Alex Wang", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel R Bowman" ],
+      "venue" : null,
+      "citeRegEx" : "Wang et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Deebert: Dynamic early exiting for accelerating bert inference",
+      "author" : [ "Ji Xin", "Raphael Tang", "Jaejun Lee", "Yaoliang Yu", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 2246–2251.",
+      "citeRegEx" : "Xin et al\\.,? 2020",
+      "shortCiteRegEx" : "Xin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Xlnet: Generalized autoregressive pretraining for language understanding",
+      "author" : [ "Zhilin Yang", "Zihang Dai", "Yiming Yang", "Jaime Carbonell", "Russ R Salakhutdinov", "Quoc V Le." ],
+      "venue" : "Advances in neural information processing systems, 32.",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Fast and accurate text classification: Skimming, rereading and early stopping",
+      "author" : [ "Keyi Yu", "Yang Liu", "Alexander G Schwing", "Jian Peng." ],
+      "venue" : "6th International Conference on Learning Representations, ICLR 2018.",
+      "citeRegEx" : "Yu et al\\.,? 2018",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Ternarybert: Distillation-aware ultra-low bit bert",
+      "author" : [ "Wei Zhang", "Lu Hou", "Yichun Yin", "Lifeng Shang", "Xiao Chen", "Xin Jiang", "Qun Liu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 509–",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "With the introduction of influential language models such as BERT (Devlin et al., 2019), a trend in natural language processing (NLP) research has been to develop high capacity models and push their performance to new levels.",
+      "startOffset" : 66,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 2,
+      "context" : "Consequently, state-of-the-art (SOTA) results were achieved on various benchmarks using these models; GPT-3 (Brown et al., 2020), XLNet (Yang et al.",
+      "startOffset" : 108,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2020), XLNet (Yang et al., 2019), RoBERTa (Liu et al.",
+      "startOffset" : 15,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2019), RoBERTa (Liu et al., 2019), T5 (Raffel et al.",
+      "startOffset" : 17,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2019), T5 (Raffel et al., 2020), ELECTRA (Clark et al.",
+      "startOffset" : 12,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2020), ELECTRA (Clark et al., 2020), and DeBERTa (He et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2020), and DeBERTa (He et al., 2021) to name a few.",
+      "startOffset" : 21,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 22,
+      "context" : "For example, Gshard (Lepikhin et al., 2021) comes with 600B parameters with an enormous amount of computation.",
+      "startOffset" : 20,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 9,
+      "context" : "A common solution to speed-up the large language models is to apply model compression (Gupta et al., 2020).",
+      "startOffset" : 86,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 29,
+      "context" : "For example, a temporal early-exit model (Shen et al., 2017; Yu et al., 2018) terminates the procedure of reading the input sequence when sufficient evidence has been found for accurate predictions.",
+      "startOffset" : 41,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 35,
+      "context" : "For example, a temporal early-exit model (Shen et al., 2017; Yu et al., 2018) terminates the procedure of reading the input sequence when sufficient evidence has been found for accurate predictions.",
+      "startOffset" : 41,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 33,
+      "context" : "Instance-wise early-exiting (Xin et al., 2020) is another technique, which allows a sample to adaptively choose from multiple available exit nodes if some conditions are met.",
+      "startOffset" : 28,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 18,
+      "context" : "Adjusting the size of the model at the inference time by choosing adaptive width and depth is also another approach employed for dynamic inference (Kim and Cho, 2021; Hou et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 12,
+      "context" : "Adjusting the size of the model at the inference time by choosing adaptive width and depth is also another approach employed for dynamic inference (Kim and Cho, 2021; Hou et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 9,
+      "context" : "As mentioned, compression is a widely used strategy to speed-up the large language models (Gupta et al., 2020; Gupta and Agrawal, 2020).",
+      "startOffset" : 90,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 8,
+      "context" : "As mentioned, compression is a widely used strategy to speed-up the large language models (Gupta et al., 2020; Gupta and Agrawal, 2020).",
+      "startOffset" : 90,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 0,
+      "context" : "This involves incorporating techniques such as quantization of weights and activations (Bai et al., 2020; Shen et al., 2020; Kim et al., 2021; Zhang et al., 2020; Jin et al., 2021), knowledge distillation (KD) (Hinton et al.",
+      "startOffset" : 87,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 28,
+      "context" : "This involves incorporating techniques such as quantization of weights and activations (Bai et al., 2020; Shen et al., 2020; Kim et al., 2021; Zhang et al., 2020; Jin et al., 2021), knowledge distillation (KD) (Hinton et al.",
+      "startOffset" : 87,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 19,
+      "context" : "This involves incorporating techniques such as quantization of weights and activations (Bai et al., 2020; Shen et al., 2020; Kim et al., 2021; Zhang et al., 2020; Jin et al., 2021), knowledge distillation (KD) (Hinton et al.",
+      "startOffset" : 87,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 36,
+      "context" : "This involves incorporating techniques such as quantization of weights and activations (Bai et al., 2020; Shen et al., 2020; Kim et al., 2021; Zhang et al., 2020; Jin et al., 2021), knowledge distillation (KD) (Hinton et al.",
+      "startOffset" : 87,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 17,
+      "context" : "This involves incorporating techniques such as quantization of weights and activations (Bai et al., 2020; Shen et al., 2020; Kim et al., 2021; Zhang et al., 2020; Jin et al., 2021), knowledge distillation (KD) (Hinton et al.",
+      "startOffset" : 87,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2021), knowledge distillation (KD) (Hinton et al., 2015; Jiao et al., 2020; Sanh et al., 2019), pruning/sharing (Gordon et al.",
+      "startOffset" : 37,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2021), knowledge distillation (KD) (Hinton et al., 2015; Jiao et al., 2020; Sanh et al., 2019), pruning/sharing (Gordon et al.",
+      "startOffset" : 37,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2021), knowledge distillation (KD) (Hinton et al., 2015; Jiao et al., 2020; Sanh et al., 2019), pruning/sharing (Gordon et al.",
+      "startOffset" : 37,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2019), pruning/sharing (Gordon et al., 2020; Chen et al., 2020), multi-device distribution (BanitalebiDehkordi et al.",
+      "startOffset" : 25,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2019), pruning/sharing (Gordon et al., 2020; Chen et al., 2020), multi-device distribution (BanitalebiDehkordi et al.",
+      "startOffset" : 25,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2021), or a combination of these techniques (Cheng et al., 2017; Polino et al., 2018).",
+      "startOffset" : 46,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2021), or a combination of these techniques (Cheng et al., 2017; Polino et al., 2018).",
+      "startOffset" : 46,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 30,
+      "context" : "Another compact variant of BERT was proposed by MobileBERT (Sun et al., 2020) in which inverted bottleneck structures and progressive knowledge transfer were used.",
+      "startOffset" : 59,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 16,
+      "context" : "TinyBERT (Jiao et al., 2020) also presented a novel two-stage transformer distillation for both pre-training and task-specific fine-tuning.",
+      "startOffset" : 9,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 14,
+      "context" : "In (Iandola et al., 2020), the usage of grouped convolutions was studied to design SqueezeBERT.",
+      "startOffset" : 3,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 15,
+      "context" : "ELM (Jiao et al., 2021), a layer mapping search framework, was also proposed for improving downstream BERT distillation.",
+      "startOffset" : 4,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 13,
+      "context" : "A recent method, GhostBERT (Huang et al., 2021), employed softmaxnormalized 1D convolutions as ghost modules to generate more features with cheap operations.",
+      "startOffset" : 27,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 29,
+      "context" : "One of the first temporal earlyexit strategies was proposed by ReasoNet (Shen et al., 2017), which stops its reading procedure when sufficient evidence has been found for answering a question.",
+      "startOffset" : 72,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 35,
+      "context" : "Similarly, in (Yu et al., 2018), an early stopping method applicable to classification tasks was presented.",
+      "startOffset" : 14,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 33,
+      "context" : "DeeBERT (Xin et al., 2020) also proposed an instance-wise multi-exit method via the entropy of the output probability distribution to speed-up BERT inference.",
+      "startOffset" : 8,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 12,
+      "context" : "Also, in (Hou et al., 2020), an architecture named DynaBERT was proposed for adaptively adjusting the computations by choosing sub-networks of different widths and depths.",
+      "startOffset" : 9,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 21,
+      "context" : "Inspired by the success of EBMs in dealing with OOD detection problems (Lee et al., 2019), the energy characteristics of data samples for an efficient and effective routing are investigated in our work.",
+      "startOffset" : 71,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 20,
+      "context" : "To turn a collection of arbitrary energies for all possible outputs (denoted by Y ) into a normalized probability distribution, Gibbs distribution can be used as follows (LeCun et al., 2006):",
+      "startOffset" : 170,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 20,
+      "context" : "where the negative log of the denominator expresses the Helmholtz free energy (LeCun et al., 2006) defined as F (x) = −log ( ∫ y′∈Y e −E(x,y′)).",
+      "startOffset" : 78,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 33,
+      "context" : "In addition to energy, softmax and entropy (Xin et al., 2020) scores can also be used for analyz-",
+      "startOffset" : 43,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 24,
+      "context" : ", the expectation value of the energy function (Oh et al., 2020), defined by:",
+      "startOffset" : 47,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2019b), SuperGLUE (Wang et al., 2019a), and WMT (Bojar et al.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 27,
+      "context" : "To study this, we apply the KD technique in (Sanh et al., 2019) to the Super and Swift models for some GLUE tasks.",
+      "startOffset" : 44,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 6,
+      "context" : "In this section, the proposed energy-based joint inference method is applied to the BERT architecture (Devlin et al., 2019) and compared with BERT-based SOTA in both fixed-size and dynamic inference.",
+      "startOffset" : 102,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 16,
+      "context" : "For a fair comparison, we follow the same practice and use the transformer distillation and augmentation strategies in TinyBERT (Jiao et al., 2020) to train and prepare our Swift model (i.",
+      "startOffset" : 128,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 14,
+      "context" : "Compared with SOTA, our method achieves the best performance on all GLUE tasks, except MRPC for which SqueezeBERT outperforms all due to having a more accurate teacher (Iandola et al., 2020).",
+      "startOffset" : 168,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 5,
+      "context" : "There are some works such as ELECTRA (Clark et al., 2020) and MobileBERT (Sun et al.",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2020) and MobileBERT (Sun et al., 2020) that require less FLOPs than our method, but they only reach 95% of the baseline’s accuracy.",
+      "startOffset" : 23,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 13,
+      "context" : "Compared to other methods, GhostBERT (Huang et al., 2021) and DynaBERT (Hou et al.",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2021) and DynaBERT (Hou et al., 2020) give the closest performance to the baseline and even the same as ours on some tasks such as QNLI.",
+      "startOffset" : 21,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 33,
+      "context" : "Among the SOTA methods presented in Table 4 and Figure 3, only DeeBERT (Xin et al., 2020), LengthAdaptive (Kim and Cho, 2021), and DynaBERT (Hou et al.",
+      "startOffset" : 71,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2020), LengthAdaptive (Kim and Cho, 2021), and DynaBERT (Hou et al.",
+      "startOffset" : 24,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2020), LengthAdaptive (Kim and Cho, 2021), and DynaBERT (Hou et al., 2020) are in the category of dynamic inference, where a single model can operate at different trade-off points between accuracy and computational cost.",
+      "startOffset" : 58,
+      "endOffset" : 76
+    } ],
+    "year" : 0,
+    "abstractText" : "Building huge and highly capable language models has been a trend in the past years. Despite their great performance, they incur high computational cost. A common solution is to apply model compression or choose light-weight architectures, which often need a separate fixed-size model for each desirable computational budget, and may lose performance in case of heavy compression. This paper proposes an effective dynamic inference approach, called E-LANG, which distributes the inference between large accurate Supermodels and light-weight Swift models. To this end, a decision making module routes the inputs to Super or Swift models based on the energy characteristics of the representations in the latent space. This method is easily adoptable and architecture agnostic. As such, it can be applied to black-box pre-trained models without a need for architectural manipulations, reassembling of modules, or re-training. Unlike existing methods that are only applicable to encoder-only backbones and classification tasks, our method also works for encoderdecoder structures and sequence-to-sequence tasks such as translation. The E-LANG performance is verified through a set of experiments with T5 and BERT backbones on GLUE, SuperGLUE, and WMT. In particular, we outperform T5-11B with an average computations speed-up of 3.3× on GLUE and 2.9× on SuperGLUE. We also achieve BERT-based SOTA on GLUE with 3.2× less computations. Code is available in supplementary materials.",
+    "creator" : null
+  }
+}

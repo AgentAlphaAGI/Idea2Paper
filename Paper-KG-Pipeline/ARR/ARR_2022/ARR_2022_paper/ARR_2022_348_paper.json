@@ -1,0 +1,583 @@
+{
+  "name" : "ARR_2022_348_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Leveraging Uni-Modal Self-Supervised Learning for Multimodal Audio-visual Speech Recognition",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Audio-Visual Speech Recognition (AVSR) is a speech recognition task that leverages both an audio input of human voice and an aligned visual input of lip motions. It has been one of the successful application fields that involve multiple modalities in recent years. Due to the limited amount of labeled, multi-modal parallel data and the difficulty of recognition from the visual inputs (i.e., lip reading), it is a challenging task to tackle.\nExisting AVSR models tend to use extra data to increase the performance of the system, in a form of inserting an extra supervised learning stage in the training process. For example, many existing methods rely on an extra sequence level classification to bootstrap its learning on visual features. Petridis et al. (2018); Zhang et al. (2019) train their visual front-end on LRW (Chung and Zisserman, 2016) before learning on the AVSR task. Afouras et al. (2018a,b) chunks the MV-LRS data (Chung and Zisserman, 2017) into pieces of words and pre-train the model through classification. VoxCeleb (Chung et al., 2018) are also used in Afouras et al. (2020) for the same purpose. Learning an effective visual front-end could still be notoriously hard, even with these extra supervised learning tasks. Sometimes curriculum learning is required to adapt the learned visual front-end into AVSR task (Afouras et al., 2018a). End-to-end learning of large-scale AVSR data hasn’t been successful until recently (Ma et al., 2021).\nAlthough self-supervised learning could enable leveraging unlabelled or even non-parallel data, it hasn’t been adequately explored on this task. Shukla et al. (2020) is among the few attempts in this facet, in which it predicts lip motions from audio inputs. Their proposed learning schemes yield strong emotion recognition results but are relatively weak in speech recognition. Moreover, since in AVSR it is the lip shape and motions between frames rather than the objects in a single image that matters for recognizing speech contents, if pre-trained visual models tailored for tasks targeting at single frame images could work for AVSR remains unknown. In another scenario, selfsupervised learning in uni-modality has been well established as a paradigm to learn general representations from unlabelled examples, such as in natural language processing (Brown et al., 2020; Devlin et al., 2018), speech recognition (Baevski et al., 2020), and computer vision (He et al., 2019;\nChen et al., 2020a; Grill et al., 2020). In this work, we rely on a simple but effective approach, which is to utilize unlabelled uni-modal data by using pre-trained models that are trained in single-modality through self-supervised learning. Specifically, we use Baevski et al. (2020) pretrained on the large LibriLight (Kahn et al., 2020) dataset as our audio front-end. For visual front-end, we found that it is not as straight-forward for it to leverage pre-trained models, as we have to substitute the first ResNet block in MoCo v2 (Chen et al., 2020b) by 3-D convolution layer and fine-tune it through LRW. In total, our approach doesn’t require a curriculum learning stage, and the overall training time has been decreased.\nExperimental results show that our new frontends significantly outperform previous ones by a big margin in both audio-only and visual-only settings, and a new state-of-the-art has been achieved in the final AVSR setting. To our best knowledge, this is the first work that successfully applies uni-modal pre-trained models in the multimodal setting of AVSR. We also ensure this research is reproducible by publishing our codes at anonymized_url."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Audio-Visual Speech Recognition",
+      "text" : "The earliest work on AVSR could be dated back to around two decades ago, when Dupont and Luettin (2000) showed hand-crafted visual feature improves HMM-based ASR systems. The first modern AVSR system is proposed in Afouras et al. (2018a) where deep neural networks are used. The field has been rapidly developing since then. Most of the works are devoted into the architectural improvements, for example, Zhang et al. (2019) proposed temporal focal block and spatio-temporal fusion, and Lee et al. (2020a) explored to use crossmodality attentions with Transformer.\nThe other line of research focuses on a more diversified learning scheme to improve AVSR performance. Li et al. (2019) uses a cross-modal student-teacher training scheme. Paraskevopoulos et al. (2020) proposes a multi-task learning scheme by making the model to predict on both character and subword level. Self-supervised learning has also been explored in Shukla et al. (2020), where the cross-modality setting is utilized by predicting frames of videos from audio inputs.\nThe end-to-end learning of AVSR systems are\nfirst seen in Tao and Busso (2020), albeit in a much simpler dataset than LRS2. More recent work (Ma et al., 2021) has made end-to-end learning on LRS2 possible by using a Conformer acoustic model and a hybrid CTC/attention decoder."
+    }, {
+      "heading" : "2.2 Self-Supervised Learning",
+      "text" : "Self-supervised learning has been chased in recent years since its ability to learn general representations of data through simple tasks that don’t require labeling. Contrastive learning (Hadsell et al., 2006) has become the most impactful learning scheme in this field. In natural language processing, uni-or bi-directional language modelling (Brown et al., 2020; Devlin et al., 2018) have been used to significantly increase performances on various tasks. In audio speech processing, contrastive predictive coding (Baevski et al., 2020) has been proven to be powerful in speech recognition. In the visual domain, Earlier works create self-supervised tasks through image processing based methods, such as distortion (Gidaris et al., 2018),colorization (Zhang et al., 2016) and context prediction (Doersch et al., 2015). More recently, contrastive learning emerged as a paradigm of self-supervised learning, which results in a group of more expressive general visual representations, such as MoCo (He et al., 2019; Chen et al., 2020b), SimCLR (Chen et al., 2020a), BYOL (Grill et al., 2020), etc."
+    }, {
+      "heading" : "3 Architecture",
+      "text" : "The overall architecture of our model is shown in Fig. 1. The audio-visual model is comprised of four components, the front-ends and back-ends for both modalities, the fusion module, and the decoders."
+    }, {
+      "heading" : "3.1 Front-ends",
+      "text" : "Visual Front-end: Visual front-end serves as a component to capture the lip motion and reflect the lip position differences in its output representations. A naive way to apply pre-trained models in the visual front-end is to directly feed the RGB channels of each frame as input. However, since frames within a same clip in AVSR are largely similar in their contents while most pre-trained models in vision target at learning general representations reflecting the content of the whole image, this approach will result in similar outputs for all the frames, collapsing the informative lip position differences between frames.\nTo overcome the aforementioned problem while\nstill being able to utilize the pre-trained model, we truncate the first convolutional layer in MoCo v2 (Chen et al., 2020b), which is pre-trained on ImageNet (Deng et al., 2009), and replace it by a layer of 3-D convolution. The outputs of 3-D convolution layer are intentionally made identical to the input of the first ResBlock in MoCo v2 (see Table 1), thus providing a compatible interface to transfer higher layers of MoCo v2 into this task. On the other hand, we also adopt the common practice to convert the RGB input image to gray-scale before feeding it into the model, as it prevents the model from learning chromatic aberration information.\nAudio Front-end: The audio front-end is rather straight-forward. We use wav2vec 2.0 (Schneider et al., 2019) pre-trained on Libri-Light (Kahn et al., 2020), like it is normally used for ASR tasks, both the 1-D convolution layers and the stacked Transformer encoder layers are transferred into our audio front-end. The audio front-end takes as input raw audio wave of 16kHz, and produces one vector representation every 20ms. The audio feature dimensions are shown in Table 2."
+    }, {
+      "heading" : "3.2 Back-ends",
+      "text" : "Since the visual frames are in 25 FPS and the wav2vec 2.0 outputs are around 49 Hz1, one should\n1The odds are due to the larger receptive fields of wav2vec 2.0 1-D convolution layers, which we circumvent by properly prefixing and suffixing the audio sequence and truncate the trailing audio vector. Thus a perfect 1:2 ratio of visual frames\nnote that there is 2x difference in the frequency of frame-wise visual and audio representations at the output of their front-ends. In the back-end, we use 1-D convolution layers on the time dimension combined with Transformer encoder layers to provide single modality temporal modeling, as well as adjusting the features to have the same frequency.\nVisual Back-end: The incoming MoCo v2 output to the visual back-end has a feature dimension of 2048, at a frequency of 25 vectors per second. In the visual backend, we keep this frequency while reducing the feature size to 512. See Table 1. For positional encodings of the Transformer, we use fixed positional encoding in the form of sinusoidal functions.\nAudio Back-end: In the audio back-end, the incoming wav2vec 2.0 outputs have a feature size of\nand audio front-end outputs are ensured.\n1024, at a frequency of 50 vectors per second. We downscale the frequency by setting the stride of 1- D convolution layer to 2. The Transformer encoder layers have the identical size to that of the visual back-end, while using a separate set of parameters. Table 2 shows a clearer picture of audio front- and back-end dimensions."
+    }, {
+      "heading" : "3.3 Fusion Module",
+      "text" : "Features from both the audio and visual modalities are fused together in this section, forming vector representation of 1024 dimensions at a relatively low rate of 25 Hz. We use LayerNorm (Ba et al., 2016) separately on each of the modalities before concatenating them on the feature dimension. The LayerNorm is required since it avoids one modality overtaking the whole representation with larger variance. Similar 1-D convolution layers and a subsequent Transformer encoder block of 6 layers take the fused representations as input, and encode them for the two decoders."
+    }, {
+      "heading" : "3.4 Decoder",
+      "text" : "Following the setting of Petridis et al. (2018), there are two decoders trained simultaneously based on the same encoder output in the fusion module.\nThe first is a Transformer seq2seq decoder, a canonical Transformer decoder with 6 layers is used, and we perform teacher forcing at character level by using ground truth characters as input during training.\nThe second one is arguably a decoder since it yields character probabilities for each timestep and relies on the CTC loss in training. 4 extra 1-D convolution layers with ReLU activation are used on top of the last Transformer encoder layer output. We also include LayerNorm between each of the layers."
+    }, {
+      "heading" : "3.5 Loss Functions",
+      "text" : "In this work, we use a so called hybrid CTC/attention loss (Watanabe et al., 2017) for our training process. Let x = [x1, · · · , xT ] be the input frame sequence at the input of Transformer encoder in the fusion module and y = [y1, · · · , yL] being the targets, where T and L denote the input and target lengths, respectively.\nThe CTC loss assumes conditional independence between each output prediction and has a form of\npCTC(y|x) ≈ T∏ t=1 p(yt|x) (1)\nOn the other hand, an auto-regressive decoder gets rid of this assumption by directly estimating the posterior on the basis of the chain rule, which has a form of\npCE(y|x) = L∏ l=1 p(yl|y<l,x) (2)\nThe overall objective function is computed as follows:\nL = λ log pCTC(y|x)+(1−λ) log pCE(y|x) (3)\nwhere λ controls the relative weight between CTC loss and seq2seq loss in the hybrid CTC/attention mechanisms. The weight is needed not only when integrating the two losses into one training loss, but also fusing the two predictions during decoding, which we will revisit in the following subsections."
+    }, {
+      "heading" : "3.6 Training Pipeline",
+      "text" : "The final AVSR model is achieved through a pipeline of training stages.\nFor audio modality, the audio front-end is first pre-trained through self-supervised learning, which is done by wav2vec 2.0. Then the audio backend is trained through the audio-only (AO) setting, together with a dedicated decoder.\nFor the visual modality, we first pre-train the 3- D convolution layer and visual back-end through sequence classification at word level video clips in LRW data. After that, the visual front-end are inherited by the visual-only (VO) model, where dedicated visual back-end and decoder are used.\nThe final AVSR model can be trained after the audio-only and visual-only models have converged.\nDue to computational constraints, we pre-compute the audio and visual back-end outputs, and only learn the parameters in the fusion model and decoder part in this final stage. A detailed visualization of our training pipeline is depicted in Figure 2."
+    }, {
+      "heading" : "3.7 Decoding",
+      "text" : "Decoding is performed using joint CTC/attention one-pass decoding (Watanabe et al., 2017) with beam search. We apply shallow fusion to incorporate CTC and seq2seq predictions:\nŷ = argmax y∈Ŷ\n{α log pCTC(y|x)\n+ (1− α) log pCE(y|x)} (4)\nwhere Ŷ denotes predictions set of target symbols, while α is the relative weight that tuned on validation set."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section, we will first introduce the datasets and various settings we used in each component of our model. Then we will present results of audioonly, visual-only and audio-visual settings. We also present a breakdown of the relative contribution of every component through ablation study."
+    }, {
+      "heading" : "4.1 Dataset",
+      "text" : "We use the large-scale publicly AVSR dataset, the Lip Reading Sentences 2 (LRS2) (Chung et al., 2017) as our main testbed. During training, we also use the Lip Reading in the Wild (LRW) (Chung and Zisserman, 2016) as a word-level video classification task to pre-train our visual encoder.\nLRS2 consists of 224 hours of aligned audio and videos, with a total of 144K clips from BBC videos, the clips are at a length of sentence level. The training data contains over 2M word instances and a vocabulary of over 40K. The dataset is very challenging as there are large variations in head pose, lighting conditions, genres and the number of speakers.\nLRW is a word-level dataset, consisting of 157 hours of aligned audio and videos, totalling 489K video clips from BBC videos, each containing the utterance of a single word out of a vocabulary of 500. The videos have a fixed length of 29 frames, the target word occurring in the middle of the clip and surrounded by co-articulation. All of the\nvideos are either frontal or near-frontal. In our experiment, we only use the visual modality from this dataset to train our visual front-end."
+    }, {
+      "heading" : "4.2 Experimental Settings",
+      "text" : "We use character level prediction with an output size of 40, consisting of the 26 characters in the alphabet, the 10 digits, the apostrophe, and special tokens for [space], [blank] and [EOS/SOS]. Since the transcriptions of the datasets do not contain other punctuations, we do not include them in the vocabulary.\nOur implementation is based on the Pytorch library (Paszke et al., 2019) and trained on four NVIDIA A100 GPUs with a total of 160GB memory. The network is trained using the Adam optimiser (Kingma and Ba, 2014) with β1 = 0.9, β2 = 0.999 and = 10−8 and an initial learning rate of 10−4. We use label smoothing with a weight set to 0.01, learning rate warm up and reduce on plateau. The relative weight in CTC loss and seq2seq loss λ is set to 0.2. When decoding, we set α to 0.1. The samples in the pre-train set are cropped by randomly sampling a continuous range of 1/3 words of the whole utterances, in order to match the length of clips in the train set. Overlength samples are further truncated at 160 frames to reduce memory occupation.\nPreprocessing: We detected and tracked 68 facial landmarks using dlib (King, 2009) for each video. To remove differences related to face rotation and scale, the faces are aligned to a neural reference frame using a similarity transformation following (Martinez et al., 2020). Interpolation and frame smoothing with a window width of 12 frames are used to deal with the frames that dlib fails to detect. Then a bounding box of 120× 120 is used to crop the mouth ROIs. The cropped frame is further converted to gray-scale and normalized with respect to the overall mean and variance of the train set. Each raw audio waveform is normalized to zero mean and unit variance following (Baevski et al., 2020).\nData Augmentation: Following (Ma et al., 2021), random cropping with a size of 112 × 112 and horizontal flipping with a probability of 0.5 are performed consistently across all frames of a given image sequence when training visual-only and audiovisual models. For each audio waveform, additive noise is performed in the time domain following (Afouras et al., 2018a) during training audio-only and audio-visual models. Babble noise are added\nto the audio stream with 5dB SNR and probability of pn = 0.25. The babble noise is synthesized by mixing 20 different audio samples from LRS2.\nEvaluation: For all experiments, word error rate (WER) are reported which is defined as WER = (S + D + I)/N . The S, D and I in the formula denotes the number of substitutions, deletions and insertions respectively from the reference to the hypothesis, and N is the number of words in the inference. The babble noise added to the audio waveform during evaluation is generated using the same manner as training, while we set a different seed to avoid model fit to a specific generated noise. Decoding is performed using joint CTC/attention one-pass decoding (Watanabe et al., 2017) with beam width 5 (the values were determined on the\nheld-out validation set of LRS2). We don’t use an external language model in our experiments."
+    }, {
+      "heading" : "4.3 Results",
+      "text" : "We present results for all experiments in Table 3, reporting WERs on audio-only, visual-only and audio-visual models. Note that many of the models listed here are also using extra training data in different stages of training pipeline, such as MVLRS (Chung and Zisserman, 2017), LRS3 (Afouras et al., 2018b), LibriSpeech (Panayotov et al., 2015) and LRW.\nAudio-visual Setting: In the main audio-visual (AV) setting, the pre-train and train sets in LRS2 are used as train set in the final training stage. Our proposed audio-visual model achieves a WER of 2.6% without the help of an external language model, which improves by 1.1% over the current state-ofthe-art (Ma et al., 2021). This is rather a big improvement, with a relative improvement of around 30%.\nAudio-only Setting: The training data used for training audio-only model consists of 224 hours labelled data from LRS2, as well as the 60K hours unlabelled data from LibriLight (Kahn et al., 2020) that are indirectly used through inheriting wav2vec 2.0 parameters. Our model also achieves a WER of 2.7%, which reduces the WER of the current stateof-the-art (Ma et al., 2021) by 1.2%, indicating a relative improvement of 30%.\nVisual-only Setting: The visual-only model uses labelled LRS2 data in its pre-train and train sets, the LRW for supervised pre-training, and indirectly using the 1.28M unlabelled images from ImageNet through MoCo v2. The visual-only model achieves a WER of 43.8%, lagging behind the current stateof-the-art (E2E Conformer) with 5.3%. Compared to E2E Conformer, the main difference is that a big Transformer language model is used during decoding, which itself brings a 4.5% difference compared with a normal RNN language model in their ablation study (Ma et al., 2021). The gap between our visual-only model and the E2E Conformer model with a RNN language model is 0.8%, which resides in a quite reasonable range. Additionally, we use a 6-layers Transformer encoder for temporal modelling instead of a 12-layers conformer encoder, which resulted in a smaller model size.\nIf we consider a fairer comparison by only looking at benchmarks without using an external lan-\nguage model, the best-reported benchmark is Ren et al. (2021), which achieved a WER of 49.2%, lagging behind our model by 6.0%."
+    }, {
+      "heading" : "4.4 Ablation Studies",
+      "text" : "In this section, we investigate the impact of every individual building block by testing them in LRW, visual-only and audio-only settings.\nMoCo v2 Contribution in Visual Word Classification: Results of visual word classification on LRW are shown in Table 4. We first train a model by replacing the ResNet-18 front-end in (Stafylakis and Tzimiropoulos, 2017) with a ResNet-50 frontend, matching the size of MoCo v2 but with fresh weights. This results in an absolute improvement of 2.1%. Then we initialize the ResNet-50 frontend with MoCo v2 weights and a further absolute improvement of 2.3% is observed, which implies that self-supervised learning is actually functioning in better represent the lip movement. Additionally, When Using 6 layers of Transformer encoder instead of TCN as back-end, we can observe another absolute improvement of 5.0%. We also noticed that using MoCo v2 front-end could significantly reduce the training time.\nPerformance Breakdown in Audio-only Setting: Results of audio-only model on LRS2 are shown in Table 5. Starting from (Afouras et al., 2018a), we first train a model by replacing the STFT audio feature with a wav2vec 2.0 front-end pre-trained on LibriSpeech, resulting in an absolute improvement of 11.1%. Then we use another pre-trained model learned on an even larger unlabelled single modality dataset Libri-Light, and a further absolute improvement of 0.6% is observed. We further train the model with hybrid CTC/attention decoder during the training stage, which results in another absolute improvement of 0.9%. Performance Breakdown in Visual-only Setting: Results of the visual-only model on LRS2 are shown in Table 6. Starting from (Afouras et al., 2018a), we first introduce end-to-end training by\nusing a hybrid CTC/attention decoder (the frontend is still pre-trained through LRW), resulting in an absolute improvement of 16.0%. Then we initialize the front-end with MoCo v2 weights, a same end-to-end training manner results in a further absolute improvement of 5.8%.\nRobustness under Noisy Inputs: To evaluate the model’s tolerance to audio noise, we tested the performance of our model under babble noise with different SNR levels. Our audio-only and audiovisual models reach WERs of 32.5% and 24.5% when the SNR level is 0dB, respectively, which reduce the reported result in (Afouras et al., 2018a) by 25.5% and 9%2. When the SNR level rises to 5dB, our audio-only and audio-visual model obtain WERs of 6.8% and 6.3%.\nBesides achieving significant improvement over the baseline model under babble noise environment, we further investigate the model performance under human noise environment. The human noise is extremely challenging cause the noise itself contains some words, while the model cannot easily distinguish which audio signal is the one to be recognized. We synthesize the human noise by randomly crop many 1 second signals from different audio samples in the LRS2 dataset. As shown in Fig. 3, we conduct experiments varying different levels of human noise, the models are trained using babble noise augmented audio. The WER increases greatly after the SNR level drops down under 0db. It is because the model may not be able to distinguish the two overlapped spoken words at a low\n2Ma et al. (2021) also provides a performance under noisy inputs, however, we are not able to compare with them due to a lack of necessary details to generate the same noise.\nSNR level. And the overall performance under each SNR level is worse than babble noise, indicating that noise with specific information is harder than disorganized babble noise.\nRecognition under Low Resource: A significant benefit of using self-supervised pre-trained models is that only a small amount of labelled data is needed for training a model. To further investigate the models’ performance in low resource environment, we use the 28 hours train set of LRS2 to train an audio-only and a visual-only model. The results are shown in Table 8. The audio-only model trained with 28 hours data achieves a WER of 3.4%, which is a little bit worse than the one trained with 224 hours data. The result indicates that for the audio-only model, the self-supervised model pretrained on a large-scale single modality dataset can significantly reduce the demands of data. While the visual-only model trained with 28 hours data has a great gap with the one trained with 224 hours data, the reason can be that the visual-only model is harder to train and demands a larger amount of data."
+    }, {
+      "heading" : "4.5 Discussion and Conclusion",
+      "text" : "In this work, we propose to utilize self-supervised learning for AVSR by simply incorporating the pretrained model trained in massive unlabelled single modality data. Although the visual pre-trained models are not straight-forward to be transplanted into visual front-end, we still manage to integrate pre-trained models in both modalities for the AVSR task. Experimental results are impressive, resulting in a 30% relative improvement.\nIt’s interesting to observe that self-supervised model in audio modality has an even larger improvement than that of the visual counterpart. We believe the reasons can be listed as follows:\n• The training data scale of audio modality is significantly larger than that of visual modality, with the Libri-Light dataset used for pretraining wav2vec 2.0 consists of 60K hours audio signals, the ImageNet dataset, on the contrary, has only 1.28M images, roughly equivalent to 14 hours silent video under 25 FPS.\n• The MoCo v2 model is pre-trained on images to better represent frame-level contents, while there are no pre-training steps to model the temporal correlation between frames. In contrast, the wav2vec 2.0 model is pre-trained on consistent audios, thus having a better temporal modelling ability.\nAs there has not emerged a dominating crossmodality self-supervised learning approach in the field of AVSR, in future work, we are going to explore two more directions in the self-supervised learning scenario based on this work. The first is utilizing the temporal correlations within the visual domain, while the other is the cross-modal correlations between the audio and visual modality. We hope this work could pave the way towards multimodality self-supervised learning, especially for various aspects in audio-visual speech recognition."
+    }, {
+      "heading" : "A Decoding Algorithm",
+      "text" : "Algorithm 1 Hybrid CTC/attention one-pass decoding adapted from (Watanabe et al., 2017). Notation: X is the speech input; Lmax is the maximum length of the hypotheses to be searched, we set it to T ; C is the decoded symbol sequence; [b] denotes [blank]. Input: X,Lmax Output: C 1: Ω0 = {[SOS]} 2: Ω̂ = ∅ 3: γ(b)0 ([SOS]) = 1 4: for t = 1, · · · , T do 5: γ(n)t ([SOS]) = 0\n6: γ(b)t ([SOS]) = t∏\nτ=1\nγ (b) τ−1([SOS]) ·p(zτ = [b]|X)\n7: end for 8: for l = 1 · · ·Lmax do 9: Ωl = ∅\n10: while Ωl−1 6= ∅ do 11: g = HEAD(Ωl−1) 12: DEQUEUE(Ωl−1) 13: for each c ∈ U do 14: h = g · c 15: if c = [EOS] then 16: log pctc(h|X) = log{γ(n)T (g) + γ (b) T (g)} 17: else 18: if g = [SOS] then 19: γ(n)1 (h) = p(z1 = c|X) 20: else 21: γ(n)1 (h) = 0 22: end if 23: γ(b)1 (h) = 0 24: Ψ = γ(n)1 (h) 25: for t = 2 · · ·T do 26: if last(g) = c then 27: Φ = γ(b)t−1(g) 28: else 29: Φ = γ(b)t−1(g) + γ (n) t−1(g) 30: end if 31: γ(n)t (h) = (γ (n) t−1(h) + Φ)p(zt = c|X) 32: γ(b)t (h) = (γ (b) t−1(h) + γ (n) t−1(h))p(zt = [b]|X) 33: Ψ = Ψ + Φ · p(zt = c|X) 34: end for 35: log pctc(h|X) = log(Ψ) 36: end if 37: log p(h|X) = α log pctc(h|X) +(1− α) log patt(h|X) 38: if c = [EOS] then 39: ENQUEUE(Ω̂, h) 40: else 41: ENQUEUE(Ωl, h) 42: end if 43: end for 44: end while 45: Ωl = TOPK(Ωl,W ) 46: end for 47: return arg maxC∈Ω̂ log p(C|X)\nAlgorithm 1 describes the hybrid CTC/attention decoding procedure. The CTC prefix probability is defined as the cumulative probability of all label\nsequences that have h as their prefix:\npctc(h|X) = ∑\nv∈(U)+ pctc(h · v|X) (5)\nwhere v denotes all possible symbol sequences except the empty. The CTC probability can be computed by keeping the forward hypothesis probabilities γ(n)t and γ (b) t , where the superscripts (n) and (b) represents all CTC paths end with a non[blank] or [blank] symbol, respectively.\nThe decoding algorithm is also a beam search with width W and hyperparameter α control the relative weight given to CTC and attention decoding. U is a set of symbols excluding [blank], and a same token is used to represent [SOS] and [EOS] in our implementation."
+    }, {
+      "heading" : "B Decoding Examples",
+      "text" : "Table 9 is examples of sentences that audio-only model fails to predict while audio-visual model\ncorrectly predicts. The visual modality enhances the model from a wide range of error cases."
+    }, {
+      "heading" : "C Preprocessing Example",
+      "text" : "The input images are sampled at 25 FPS and resized to 224× 224 pixels. We crop a 120× 120 mouth ROI from each frame. Fig. 4 shows the process to generate."
+    } ],
+    "references" : [ {
+      "title" : "Deep audio-visual speech recognition",
+      "author" : [ "T. Afouras", "J. Chung", "A. Senior", "O. Vinyals", "A. Zisserman." ],
+      "venue" : "IEEE Transactions on Pattern Analysis & Machine Intelligence, pages 1–1.",
+      "citeRegEx" : "Afouras et al\\.,? 2018a",
+      "shortCiteRegEx" : "Afouras et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Lrs3-ted: a large-scale dataset for visual speech recognition",
+      "author" : [ "Triantafyllos Afouras", "Joon Son Chung", "Andrew Zisserman." ],
+      "venue" : "arXiv preprint arXiv:1809.00496.",
+      "citeRegEx" : "Afouras et al\\.,? 2018b",
+      "shortCiteRegEx" : "Afouras et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Asr is all you need: Cross-modal distillation for lip reading",
+      "author" : [ "Triantafyllos Afouras", "Joon Son Chung", "Andrew Zisserman." ],
+      "venue" : "ICASSP 2020-2020 IEEE International Conference on Acoustics, Speech and Signal Processing",
+      "citeRegEx" : "Afouras et al\\.,? 2020",
+      "shortCiteRegEx" : "Afouras et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Layer normalization",
+      "author" : [ "Jimmy Lei Ba", "Jamie Ryan Kiros", "Geoffrey E Hinton." ],
+      "venue" : "arXiv preprint arXiv:1607.06450.",
+      "citeRegEx" : "Ba et al\\.,? 2016",
+      "shortCiteRegEx" : "Ba et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "wav2vec 2.0: A framework for self-supervised learning of speech representations. arXiv preprint arXiv:2006.11477",
+      "author" : [ "Alexei Baevski", "Henry Zhou", "Abdelrahman Mohamed", "Michael Auli" ],
+      "venue" : null,
+      "citeRegEx" : "Baevski et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Baevski et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language models are few-shot learners. arXiv preprint arXiv:2005.14165",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "International conference on machine learning, pages 1597–1607. PMLR.",
+      "citeRegEx" : "Chen et al\\.,? 2020a",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improved baselines with momentum contrastive learning",
+      "author" : [ "Xinlei Chen", "Haoqi Fan", "Ross Girshick", "Kaiming He." ],
+      "venue" : "arXiv preprint arXiv:2003.04297.",
+      "citeRegEx" : "Chen et al\\.,? 2020b",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Voxceleb2: Deep speaker recognition",
+      "author" : [ "Joon Son Chung", "Arsha Nagrani", "Andrew Zisserman." ],
+      "venue" : "arXiv preprint arXiv:1806.05622.",
+      "citeRegEx" : "Chung et al\\.,? 2018",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Lip reading sentences in the wild",
+      "author" : [ "Joon Son Chung", "Andrew Senior", "Oriol Vinyals", "Andrew Zisserman." ],
+      "venue" : "2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pages 3444–3453. IEEE.",
+      "citeRegEx" : "Chung et al\\.,? 2017",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Lip reading in the wild",
+      "author" : [ "Joon Son Chung", "Andrew Zisserman." ],
+      "venue" : "Asian conference on computer vision, pages 87–103. Springer.",
+      "citeRegEx" : "Chung and Zisserman.,? 2016",
+      "shortCiteRegEx" : "Chung and Zisserman.",
+      "year" : 2016
+    }, {
+      "title" : "Imagenet: A large-scale hierarchical image database",
+      "author" : [ "Jia Deng", "Wei Dong", "Richard Socher", "Li-Jia Li", "Kai Li", "Li Fei-Fei." ],
+      "venue" : "2009 IEEE conference on computer vision and pattern recognition, pages 248–255. Ieee.",
+      "citeRegEx" : "Deng et al\\.,? 2009",
+      "shortCiteRegEx" : "Deng et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "arXiv preprint arXiv:1810.04805.",
+      "citeRegEx" : "Devlin et al\\.,? 2018",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unsupervised visual representation learning by context prediction",
+      "author" : [ "Carl Doersch", "Abhinav Gupta", "Alexei A Efros." ],
+      "venue" : "Proceedings of the IEEE international conference on computer vision, pages 1422–1430.",
+      "citeRegEx" : "Doersch et al\\.,? 2015",
+      "shortCiteRegEx" : "Doersch et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Audio-visual speech modeling for continuous speech recognition",
+      "author" : [ "S. Dupont", "J. Luettin." ],
+      "venue" : "IEEE Transactions on Multimedia, 2(3):141–151.",
+      "citeRegEx" : "Dupont and Luettin.,? 2000",
+      "shortCiteRegEx" : "Dupont and Luettin.",
+      "year" : 2000
+    }, {
+      "title" : "Unsupervised representation learning by predicting image rotations",
+      "author" : [ "Spyros Gidaris", "Praveer Singh", "Nikos Komodakis." ],
+      "venue" : "arXiv preprint arXiv:1803.07728.",
+      "citeRegEx" : "Gidaris et al\\.,? 2018",
+      "shortCiteRegEx" : "Gidaris et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dimensionality reduction by learning an invariant mapping",
+      "author" : [ "Raia Hadsell", "Sumit Chopra", "Yann LeCun." ],
+      "venue" : "2006 IEEE Computer Society Conference on Computer Vision and Pattern Recognition (CVPR’06), volume 2, pages 1735–",
+      "citeRegEx" : "Hadsell et al\\.,? 2006",
+      "shortCiteRegEx" : "Hadsell et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross B Girshick." ],
+      "venue" : "corr abs/1911.05722 (2019). arXiv preprint arxiv:1911.05722.",
+      "citeRegEx" : "He et al\\.,? 2019",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Libri-light: A benchmark for asr with limited",
+      "author" : [ "Jacob Kahn", "Morgane Rivière", "Weiyi Zheng", "Evgeny Kharitonov", "Qiantong Xu", "Pierre-Emmanuel Mazaré", "Julien Karadayi", "Vitaliy Liptchinsky", "Ronan Collobert", "Christian Fuegen" ],
+      "venue" : null,
+      "citeRegEx" : "Kahn et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Kahn et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Dlib-ml: A machine learning toolkit",
+      "author" : [ "Davis E King." ],
+      "venue" : "The Journal of Machine Learning Research, 10:1755–1758.",
+      "citeRegEx" : "King.,? 2009",
+      "shortCiteRegEx" : "King.",
+      "year" : 2009
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Audio– visual speech recognition based on dual crossmodality attentions with the transformer model",
+      "author" : [ "Yong-Hyeok Lee", "Dong-Won Jang", "Jae-Bin Kim", "RaeHong Park", "Hyung-Min Park." ],
+      "venue" : "Applied Sciences, 10(20):7263.",
+      "citeRegEx" : "Lee et al\\.,? 2020a",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Audio– visual speech recognition based on dual crossmodality attentions with the transformer model",
+      "author" : [ "Yong-Hyeok Lee", "Dong-Won Jang", "Jae-Bin Kim", "RaeHong Park", "Hyung-Min Park." ],
+      "venue" : "Applied Sciences, 10(20):7263.",
+      "citeRegEx" : "Lee et al\\.,? 2020b",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving audio-visual speech recognition performance with cross-modal student-teacher training",
+      "author" : [ "Wei Li", "Sicheng Wang", "Ming Lei", "Sabato Marco Siniscalchi", "Chin-Hui Lee." ],
+      "venue" : "ICASSP 2019-2019 IEEE International Conference",
+      "citeRegEx" : "Li et al\\.,? 2019",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "End-to-end audio-visual speech recognition with conformers",
+      "author" : [ "Pingchuan Ma", "Stavros Petridis", "Maja Pantic." ],
+      "venue" : "ICASSP 2021-2021 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 7613–7617.",
+      "citeRegEx" : "Ma et al\\.,? 2021",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Lipreading using temporal convolutional networks",
+      "author" : [ "Brais Martinez", "Pingchuan Ma", "Stavros Petridis", "Maja Pantic." ],
+      "venue" : "ICASSP 2020-2020 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 6319–6323.",
+      "citeRegEx" : "Martinez et al\\.,? 2020",
+      "shortCiteRegEx" : "Martinez et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Librispeech: an asr corpus based on public domain audio books",
+      "author" : [ "Vassil Panayotov", "Guoguo Chen", "Daniel Povey", "Sanjeev Khudanpur." ],
+      "venue" : "2015 IEEE international conference on acoustics, speech and signal processing (ICASSP), pages 5206–5210.",
+      "citeRegEx" : "Panayotov et al\\.,? 2015",
+      "shortCiteRegEx" : "Panayotov et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Multiresolution and multimodal speech recognition with transformers",
+      "author" : [ "Georgios Paraskevopoulos", "Srinivas Parthasarathy", "Aparna Khare", "Shiva Sundaram." ],
+      "venue" : "arXiv preprint arXiv:2004.14840.",
+      "citeRegEx" : "Paraskevopoulos et al\\.,? 2020",
+      "shortCiteRegEx" : "Paraskevopoulos et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Pytorch: An imperative style, high-performance deep learning",
+      "author" : [ "Adam Paszke", "Sam Gross", "Francisco Massa", "Adam Lerer", "James Bradbury", "Gregory Chanan", "Trevor Killeen", "Zeming Lin", "Natalia Gimelshein", "Luca Antiga" ],
+      "venue" : null,
+      "citeRegEx" : "Paszke et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Paszke et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Audio-visual speech recognition with a hybrid ctc/attention architecture",
+      "author" : [ "Stavros Petridis", "Themos Stafylakis", "Pingchuan Ma", "Georgios Tzimiropoulos", "Maja Pantic." ],
+      "venue" : "2018 IEEE Spoken Language Technology Workshop (SLT), pages 513–",
+      "citeRegEx" : "Petridis et al\\.,? 2018",
+      "shortCiteRegEx" : "Petridis et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Learning from the master: Distilling cross-modal advanced knowledge for lip reading",
+      "author" : [ "Sucheng Ren", "Yong Du", "Jianming Lv", "Guoqiang Han", "Shengfeng He." ],
+      "venue" : "Proceedings of the IEEE/CVF Conference on Computer Vision and",
+      "citeRegEx" : "Ren et al\\.,? 2021",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "wav2vec: Unsupervised pre-training for speech recognition",
+      "author" : [ "Steffen Schneider", "Alexei Baevski", "Ronan Collobert", "Michael Auli." ],
+      "venue" : "arXiv preprint arXiv:1904.05862.",
+      "citeRegEx" : "Schneider et al\\.,? 2019",
+      "shortCiteRegEx" : "Schneider et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Visually guided self supervised learning of speech representations",
+      "author" : [ "Abhinav Shukla", "Konstantinos Vougioukas", "Pingchuan Ma", "Stavros Petridis", "Maja Pantic." ],
+      "venue" : "ICASSP 2020-2020 IEEE International Conference on Acoustics, Speech and",
+      "citeRegEx" : "Shukla et al\\.,? 2020",
+      "shortCiteRegEx" : "Shukla et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Combining residual networks with lstms for lipreading",
+      "author" : [ "Themos Stafylakis", "Georgios Tzimiropoulos." ],
+      "venue" : "arXiv preprint arXiv:1703.04105.",
+      "citeRegEx" : "Stafylakis and Tzimiropoulos.,? 2017",
+      "shortCiteRegEx" : "Stafylakis and Tzimiropoulos.",
+      "year" : 2017
+    }, {
+      "title" : "End-to-end audiovisual speech recognition system with multitask learning",
+      "author" : [ "Fei Tao", "Carlos Busso." ],
+      "venue" : "IEEE Transactions on Multimedia, 23:1–11.",
+      "citeRegEx" : "Tao and Busso.,? 2020",
+      "shortCiteRegEx" : "Tao and Busso.",
+      "year" : 2020
+    }, {
+      "title" : "Hybrid ctc/attention architecture for end-to-end speech recognition",
+      "author" : [ "Shinji Watanabe", "Takaaki Hori", "Suyoun Kim", "John R Hershey", "Tomoki Hayashi." ],
+      "venue" : "IEEE Journal of Selected Topics in Signal Processing, 11(8):1240–1253.",
+      "citeRegEx" : "Watanabe et al\\.,? 2017",
+      "shortCiteRegEx" : "Watanabe et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Audio-visual recognition of overlapped speech for the lrs2 dataset",
+      "author" : [ "Jianwei Yu", "Shi-Xiong Zhang", "Jian Wu", "Shahram Ghorbani", "Bo Wu", "Shiyin Kang", "Shansong Liu", "Xunying Liu", "Helen Meng", "Dong Yu." ],
+      "venue" : "ICASSP 2020-2020 IEEE",
+      "citeRegEx" : "Yu et al\\.,? 2020",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Colorful image colorization",
+      "author" : [ "Richard Zhang", "Phillip Isola", "Alexei A Efros." ],
+      "venue" : "European conference on computer vision, pages 649–666. Springer.",
+      "citeRegEx" : "Zhang et al\\.,? 2016",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Spatio-temporal fusion based convolutional sequence learning for lip reading",
+      "author" : [ "Xingxuan Zhang", "Feng Cheng", "Shilin Wang." ],
+      "venue" : "Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 713–722.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Hearing lips: Improving lip reading by distilling speech recognizers",
+      "author" : [ "Ya Zhao", "Rui Xu", "Xinchao Wang", "Peng Hou", "Haihong Tang", "Mingli Song." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 34, pages 6917–6924.",
+      "citeRegEx" : "Zhao et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 10,
+      "context" : "(2019) train their visual front-end on LRW (Chung and Zisserman, 2016) before learning on the AVSR task.",
+      "startOffset" : 43,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 8,
+      "context" : "VoxCeleb (Chung et al., 2018) are also used in Afouras et al.",
+      "startOffset" : 9,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 0,
+      "context" : "Sometimes curriculum learning is required to adapt the learned visual front-end into AVSR task (Afouras et al., 2018a).",
+      "startOffset" : 95,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 24,
+      "context" : "End-to-end learning of large-scale AVSR data hasn’t been successful until recently (Ma et al., 2021).",
+      "startOffset" : 83,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 5,
+      "context" : "In another scenario, selfsupervised learning in uni-modality has been well established as a paradigm to learn general representations from unlabelled examples, such as in natural language processing (Brown et al., 2020; Devlin et al., 2018), speech recognition (Baevski et al.",
+      "startOffset" : 199,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 12,
+      "context" : "In another scenario, selfsupervised learning in uni-modality has been well established as a paradigm to learn general representations from unlabelled examples, such as in natural language processing (Brown et al., 2020; Devlin et al., 2018), speech recognition (Baevski et al.",
+      "startOffset" : 199,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2018), speech recognition (Baevski et al., 2020), and computer vision (He et al.",
+      "startOffset" : 28,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 18,
+      "context" : "(2020) pretrained on the large LibriLight (Kahn et al., 2020) dataset as our audio front-end.",
+      "startOffset" : 42,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 7,
+      "context" : "For visual front-end, we found that it is not as straight-forward for it to leverage pre-trained models, as we have to substitute the first ResNet block in MoCo v2 (Chen et al., 2020b) by 3-D convolution layer and fine-tune it through LRW.",
+      "startOffset" : 164,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 24,
+      "context" : "More recent work (Ma et al., 2021) has made end-to-end learning on LRS2 possible by using a Conformer acoustic model and a hybrid CTC/attention decoder.",
+      "startOffset" : 17,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 16,
+      "context" : "Contrastive learning (Hadsell et al., 2006) has become the most impactful learning scheme in this field.",
+      "startOffset" : 21,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 5,
+      "context" : "In natural language processing, uni-or bi-directional language modelling (Brown et al., 2020; Devlin et al., 2018) have been used to significantly increase performances on various tasks.",
+      "startOffset" : 73,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 12,
+      "context" : "In natural language processing, uni-or bi-directional language modelling (Brown et al., 2020; Devlin et al., 2018) have been used to significantly increase performances on various tasks.",
+      "startOffset" : 73,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 4,
+      "context" : "In audio speech processing, contrastive predictive coding (Baevski et al., 2020) has been proven to be powerful in speech recognition.",
+      "startOffset" : 58,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 15,
+      "context" : "In the visual domain, Earlier works create self-supervised tasks through image processing based methods, such as distortion (Gidaris et al., 2018),colorization (Zhang et al.",
+      "startOffset" : 124,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2018),colorization (Zhang et al., 2016) and context prediction (Doersch et al.",
+      "startOffset" : 21,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 17,
+      "context" : "More recently, contrastive learning emerged as a paradigm of self-supervised learning, which results in a group of more expressive general visual representations, such as MoCo (He et al., 2019; Chen et al., 2020b), SimCLR (Chen et al.",
+      "startOffset" : 176,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 7,
+      "context" : "More recently, contrastive learning emerged as a paradigm of self-supervised learning, which results in a group of more expressive general visual representations, such as MoCo (He et al., 2019; Chen et al., 2020b), SimCLR (Chen et al.",
+      "startOffset" : 176,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2020b), SimCLR (Chen et al., 2020a), BYOL (Grill et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 7,
+      "context" : "still being able to utilize the pre-trained model, we truncate the first convolutional layer in MoCo v2 (Chen et al., 2020b), which is pre-trained on ImageNet (Deng et al.",
+      "startOffset" : 104,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2020b), which is pre-trained on ImageNet (Deng et al., 2009), and replace it by a layer of 3-D convolution.",
+      "startOffset" : 43,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 31,
+      "context" : "0 (Schneider et al., 2019) pre-trained on Libri-Light (Kahn et al.",
+      "startOffset" : 2,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2019) pre-trained on Libri-Light (Kahn et al., 2020), like it is normally used for ASR tasks, both the 1-D convolution layers and the stacked Transformer encoder layers are transferred into our audio front-end.",
+      "startOffset" : 35,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 3,
+      "context" : "We use LayerNorm (Ba et al., 2016) separately on each of the modalities before concatenating them on the feature dimension.",
+      "startOffset" : 17,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 35,
+      "context" : "In this work, we use a so called hybrid CTC/attention loss (Watanabe et al., 2017) for our training process.",
+      "startOffset" : 59,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 35,
+      "context" : "Decoding is performed using joint CTC/attention one-pass decoding (Watanabe et al., 2017) with beam search.",
+      "startOffset" : 66,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 9,
+      "context" : "We use the large-scale publicly AVSR dataset, the Lip Reading Sentences 2 (LRS2) (Chung et al., 2017) as our main testbed.",
+      "startOffset" : 81,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 10,
+      "context" : "During training, we also use the Lip Reading in the Wild (LRW) (Chung and Zisserman, 2016) as a word-level video classification task to pre-train our visual encoder.",
+      "startOffset" : 63,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 28,
+      "context" : "Our implementation is based on the Pytorch library (Paszke et al., 2019) and trained on four NVIDIA A100 GPUs with a total of 160GB memory.",
+      "startOffset" : 51,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 20,
+      "context" : "The network is trained using the Adam optimiser (Kingma and Ba, 2014) with β1 = 0.",
+      "startOffset" : 48,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 19,
+      "context" : "Preprocessing: We detected and tracked 68 facial landmarks using dlib (King, 2009) for each video.",
+      "startOffset" : 70,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 25,
+      "context" : "To remove differences related to face rotation and scale, the faces are aligned to a neural reference frame using a similarity transformation following (Martinez et al., 2020).",
+      "startOffset" : 152,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 4,
+      "context" : "Each raw audio waveform is normalized to zero mean and unit variance following (Baevski et al., 2020).",
+      "startOffset" : 79,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 24,
+      "context" : "Data Augmentation: Following (Ma et al., 2021), random cropping with a size of 112 × 112 and horizontal flipping with a probability of 0.",
+      "startOffset" : 29,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 0,
+      "context" : "For each audio waveform, additive noise is performed in the time domain following (Afouras et al., 2018a) during training audio-only and audio-visual models.",
+      "startOffset" : 82,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 35,
+      "context" : "Decoding is performed using joint CTC/attention one-pass decoding (Watanabe et al., 2017) with beam width 5 (the values were determined on the held-out validation set of LRS2).",
+      "startOffset" : 66,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 1,
+      "context" : "Note that many of the models listed here are also using extra training data in different stages of training pipeline, such as MVLRS (Chung and Zisserman, 2017), LRS3 (Afouras et al., 2018b), LibriSpeech (Panayotov et al.",
+      "startOffset" : 166,
+      "endOffset" : 189
+    }, {
+      "referenceID" : 24,
+      "context" : "1% over the current state-ofthe-art (Ma et al., 2021).",
+      "startOffset" : 36,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 18,
+      "context" : "Audio-only Setting: The training data used for training audio-only model consists of 224 hours labelled data from LRS2, as well as the 60K hours unlabelled data from LibriLight (Kahn et al., 2020) that are indirectly used through inheriting wav2vec 2.",
+      "startOffset" : 177,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 24,
+      "context" : "7%, which reduces the WER of the current stateof-the-art (Ma et al., 2021) by 1.",
+      "startOffset" : 57,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 24,
+      "context" : "5% difference compared with a normal RNN language model in their ablation study (Ma et al., 2021).",
+      "startOffset" : 80,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 33,
+      "context" : "We first train a model by replacing the ResNet-18 front-end in (Stafylakis and Tzimiropoulos, 2017) with a ResNet-50 frontend, matching the size of MoCo v2 but with fresh weights.",
+      "startOffset" : 63,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 0,
+      "context" : "Starting from (Afouras et al., 2018a), we first train a model by replacing the STFT audio feature with a wav2vec 2.",
+      "startOffset" : 14,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 0,
+      "context" : "Starting from (Afouras et al., 2018a), we first introduce end-to-end training by Method WER",
+      "startOffset" : 14,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 0,
+      "context" : "5% when the SNR level is 0dB, respectively, which reduce the reported result in (Afouras et al., 2018a) by 25.",
+      "startOffset" : 80,
+      "endOffset" : 103
+    } ],
+    "year" : 0,
+    "abstractText" : "Training Transformer-based models demands a large amount of data, while obtaining parallel aligned and labelled data in multimodality is rather cost-demanding, especially for audiovisual speech recognition (AVSR). Thus it makes a lot of sense to make use of unlabelled uni-modal data. On the other side, although the effectiveness of large-scale self-supervised learning is well established in both audio and visual modalities, how to integrate those pretrained models into a multimodal scenario remains underexplored. In this work, we successfully leverage uni-modal self-supervised learning to promote the multimodal AVSR. In particular, we first train audio and visual encoders on a large-scale uni-modal dataset, then we integrate components of both encoders into a larger multimodal framework which learns to recognize paired audio-visual data into characters through a combination of CTC and seq2seq decoding. We show that both components inherited from uni-modal selfsupervised learning cooperate well, resulting in that the multimodal framework yields competitive results through fine-tuning. Our model is experimentally validated on both word-level and sentence-level AVSR tasks. Especially, even without an external language model, our proposed model raises the state-of-the-art performances on the widely accepted Lip Reading Sentences 2 (LRS2) dataset by a large margin, with a relative improvement of 30%.",
+    "creator" : null
+  }
+}

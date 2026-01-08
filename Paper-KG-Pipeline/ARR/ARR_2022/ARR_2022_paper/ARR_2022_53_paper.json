@@ -1,0 +1,726 @@
+{
+  "name" : "ARR_2022_53_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "ED2LM: Encoder-Decoder to Language Model for Faster Document Re-ranking Inference",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Leveraging transformer architecture to model the concatenation of a query-document pair is a well-established approach for document ranking (Nogueira et al., 2020). Today, modern neural methods for re-ranking are based on the encoderonly (e.g., BERT (Devlin et al., 2019)) or encoderdecoder (e.g., T5 (Raffel et al., 2020)) paradigm where query-document interactions are modeled by the encoder’s attention mechanism. Unfortunately, these paradigms are computationally prohibitive given that the model has to be run on all document-query pairs during inference. To this end, it is commonplace to use less powerful but computationally lightweight dual encoder models\n(Nogueira et al., 2019a; Karpukhin et al., 2020; Xiong et al., 2020; Qu et al., 2021; Gao et al., 2021) for first-pass retrieval and to only run the more expensive re-ranker on a small subset of retrieved candidates. Even with this setup, cross-attention-based re-ranking can still be expensive, especially when larger pretrained Transformer models are used. As such, this paper is primarily concerned with improving inference-time re-ranking efficiency while maintaining comparable effectiveness to existing cross-attention models.\nThe novelty of this paper lies in a new paradigm for re-ranking that provides up to 6.8X speedup without any degradation in shallow-pool effectiveness. Concretely, we propose a new method for inference-time decomposition of encoder-decoder architectures into decoder-only language models. Given a pretrained sequence-to-sequence model, we finetune the encoder-decoder model using a document-to-query multi-task loss. At inference, we decompose the encoder-decoder architecture into a decoder-only language model (LM) that learns to interpret from a memory store of encoded document tokens representations using attention. The document-query pair score can be interpreted as the likelihood of generating the query given the encoded document term representations.\nThere are multiple efficiency benefits to our proposed design. First, significant inference-time cost savings are unlocked since the document term memory store can be pre-computed in advance and act as a read-only memory. Second, our redesign also exploits the fact that queries are generally much shorter than documents. During inference time, only query tokens have to be passed through the decoder stack when attending to the pre-computed document representations which allows us to also obtain an additional speed advantage over encoder-only BERT-like models. Third, computing the query likelihood is computationally simple and does not require the typical costs asso-\nciated with autoregressive generation models. The overall contributions of this work can be summarized as follows:\n• We propose a new re-ranking paradigm, ED2LM (Encoder-Decoder to Language Model) for fast and efficient inference-time re-ranking. Our method is based on inferencetime decomposition of an encoder-decoder model into a decoder-only language model.\n• The proposed method utilizes a new finetuning paradigm by incorporating a new objective function that combines the generative query likelihood and the discriminative crossentropy loss.\n• Via extensive experiments, we show that the proposed method performs competitively with T5-based cross-attention re-rankers (Nogueira et al., 2020) while being up to more than 6.8X faster during inference."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Neural text ranking. A number of so-called cross-attention models concatenate a query and a candidate document into a string and feed it into the model (Han et al., 2020; Nogueira et al., 2020), which allows the attention mechanism of the model to capture interactions across query and document terms. However, deploying such models to millions or billions of documents is usually intractable due to the exorbitant computational cost. To combat this cost, other studies have explored more efficient models, e.g., dual-encoder models (Karpukhin et al., 2020; Qu et al., 2021; Ren et al., 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al., 2019a; Dai and Callan, 2020; Gao et al., 2021).\nA few studies that are most closely related to this work focus on leveraging the generative nature of pretrained encoder-decoder language models. A natural practice is to directly use the likelihood of generating the query given a document to rank the documents (Zhuang and Zuccon, 2021; Zhuang et al., 2021b; Lesota et al., 2021). However, these methods mostly perform substantially worse than cross-attention ranking models. Another work (dos Santos et al., 2020) transforms the likelihood of generating the query into a discriminative loss,\nwhere an “unlikelihood” loss is introduced for negative query-document pairs. Despite relatively better performance than using vanilla maximum likelihood estimation (MLE), we found that their method still underperforms cross-attention ranking models. Our proposed method uses a combination of query generation loss and a cross-entropy loss on a specific token, which is capable of achieving comparable performance to cross-attention models.\nOther work (Ju et al., 2021) uses query generation as an auxiliary task during training and shows improved performance. However, the proposed model still takes both a query and a document as input in the main ranking task and hence would be as costly as cross-attention ranking models during inference.\nEfficient neural IR. Due to the excessive computational cost of inference in pretrained language models, there is a series of studies aiming to improve the efficiency.\nA major trend is to distill expensive models into cheaper ones (Hinton et al., 2015; Sanh et al., 2019). Some distillation approaches have specifically focused on text ranking applications (Zhang et al., 2020; Zhuang et al., 2021a; Chen et al., 2021a; Hofstätter et al., 2021).\nAnother trend is to improve model efficiency by modifying the model architecture. A typical approach used by ColBERT (Khattab and Zaharia, 2020) and PreTTR (MacAvaney et al., 2020) defer query-document interactions to upper layers so that part of the model can be pre-computed. Our model can be categorized into this class of models, except that the late interaction is naturally aligned with the decomposition of encoder-decoder models. This alignment allows us to better leverage knowledge learned by the model during pretraining, and can be the reason behind our stronger performance compared to ColBERT and PreTTR.\nThere are a couple of other efficient model structures, such as early exiting (Soldaini and Moschitti, 2020; Xin et al., 2020), Transformer-Kernel (TK) model (Hofstätter et al., 2020), and contextualized offline relevance weighting (Chen et al., 2021b). In terms of storage cost, Cohen et al. (2021) proposed the succinct document representation which reduces the dimension of token representation to compress document representations. These techniques are orthogonal to our study and can be combined with our work to further improve the time and storage efficiency."
+    }, {
+      "heading" : "3 The Proposed Method",
+      "text" : "This section describes the ED2LM model. See Fig. 1 for an overview of the approach."
+    }, {
+      "heading" : "3.1 Overview",
+      "text" : "The proposed ED2LM model is based on the T5 encoder-decoder architecture. It encodes the documents without looking at the queries and produces ranking scores by decoding the queries and attending to the document representations.\nIn particular, for a query-document pair, the document tokens are encoded with a stack of Transformer layers as in BERT (Devlin et al., 2019), where the tokens attend to one another before going through the position-wise feed-forward layer. The output of the encoder is in the form of dense representations for the document tokens. During decoding, the query tokens are decoded with a stack of decoder layers, where the query tokens first attend to other query tokens before going through a multi-head attention block to attend to the document tokens from the encoder.\nInspired by T5 (Nogueira et al., 2020) for ranking and the use of BART for discrimination (dos Santos et al., 2020; Lewis et al., 2020), a special true/false token is appended to the end of the query before the end of the query sequence (EOS). During training, inspired by (Ju et al., 2021), the model is trained to generate the query tokens and determine the relevance of the query-document pair. During inference, only the score for the true/false token is used for ranking."
+    }, {
+      "heading" : "3.2 ED2LM for Re-ranking",
+      "text" : "In this section, we describe the details of training and inference for ED2LM."
+    }, {
+      "heading" : "3.2.1 Fine-tuning",
+      "text" : "During fine-tuning, ED2LM involves an encoderdecoder architecture which maps RLD discrete symbols to RLQ discrete symbols. Here, LD refers to the length of the document and LQ refers to the query length.\nTask Formulation The input to the model is a sequence of document tokens and the output of the model is a sequence of query tokens. In order to imbue our model with discriminative capabilities, we append the class token (true/false) that represents the query-document pair at the end of the query. The ranking score of a query-document pair is the normalised probability of the true token at the end of the query. Given a query q and a document d, the ground-truth correctness of d relative to q is denoted as a binary label y.\nLoss function. The loss function optimized for fine-tuning has two components. The first component is the maximum likelihood estimation (MLE) loss of the individual question tokens, which is defined as:\nLossQL = − ∑\ni∈0···LQ−1 log(P (qi|q:i; d)) (1)\nSince we want the model to learn the correctness of the question using the trailing true/false tokens, we also compute the likelihood of those tokens as follows.\np+ = P (true,eos|q; d)\np− = P (false,eos|q; d)\nThe cross-entropy loss LossCE can then be written as:\nLossCE = −ylogp+ − (1− y)logp− (2)\nThe final training loss can the be written as:\nLoss = LossCE + yLossQL (3)\nThe cross-entropy loss is applied to all examples whereas the query likelihood loss only applies to the positive examples. Our fine-tuning loss is trained with teacher forcing.\nScoring. The normalised scores from the true and false tokens are combined as in (Nogueira et al., 2020)."
+    }, {
+      "heading" : "3.3 Efficient Re-ranker",
+      "text" : "This section discusses using ED2LM for more efficient inference, by decoupling the encoder-decoder into a decoder-only language model."
+    }, {
+      "heading" : "3.3.1 Decomposing Encoder-Decoder to Decoder-only LM",
+      "text" : "The key idea for fast inference is to only extract the decoder from the trained Encoder-Decoder model. Recall a decoder-stack is comprised of decoder-side causal self-attention and encoderdecoder cross-attention.\nX ′` = CausalSelfAttention(X`, X`) (4) Y` = MultiheadAttention(M`, X ′ `) (5)\nwhere X ∈ RLQ×dmodel is the input to the decoder stack at layer `. M refers to a sequence of memory tokens. In this case, we note that M here refers to computed encoder representations that pass through the encoder-stack. During finetuning, this encoder-stack is trained end-to-end. However, this paradigm generalizes these embeddings as “memory”, which can be extended to other use cases or applications. We can also interpret this memory as a form of soft prompt."
+    }, {
+      "heading" : "3.3.2 Reading from Memory",
+      "text" : "The decoder reads from M . In the standard setup, M are static representations that originate from the final output of the encoder in the Seq2Seq architecture and the MultiheadAttention is the encoderdecoder cross attention. Here, M can be compressed along the presentation dimension (dmodel) as in (MacAvaney et al., 2020; Gao et al., 2021; Cohen et al., 2021), which is orthogonal to our studies, or along the sequence dimension (LD), which is introduced below. We find that this generalization is a practically useful way to interpret the ED2LM architecture. We propose to explore not only standard M from encoder outputs but also compressed memory stores from Funnel Transformers (Dai et al., 2020). Herein, we employ the Funnel Transformer with b blocks in the encoder, leading to 2b storage compression, by reducing the RLD for 2b. Between each block, a mean-pooling layer is used to downsample the input sequence by two in the sequence length dimension."
+    }, {
+      "heading" : "4 Experiment Setup",
+      "text" : "This section describes our experimental setup.\nDataset and metrics. We employ the MS MARCO (Nguyen et al., 2016) passage re-ranking task, for which we report the official evaluation metric MRR@10 on the 6980 development queries using the binary labels from the dev dataset. We also use the 43 test queries from the TREC Deep Learning (DL) Track 2019 (Craswell et al., 2020) and the 54 test queries from 2020 (Craswell et al., 2021). The TREC data sets include graded relevance judgments. We report the official evaluation metrics NDCG@10 as well as mean average precision (MAP). When computing MAP, following the official TREC setup, we map passage judgments 2 and 3 to relevant and 0 and 1 to non-relevant. Statistical significance is reported using a paired two-tailed t-test. We use a maximum sequence length of 256 tokens for paragraphs and 32 tokens in our experiments, similar to (Hofstätter et al., 2020; Hofstätter et al., 2021).\nWe employ the training data from RocketQA (Qu et al., 2021), which is derived from the MS MARCO training dataset as dual-encoder models trained on it demonstrate strong performance. Specifically, we use the hard-question split (“RQAHard”), which only includes the hard-negative samples and positive samples from MS MARCO, and the merge split (“RQA-Merge”), which includes extra unlabeled questions from Yahoo! Answers1, ORCAS (Fisch et al., 2019), and Natural Questions (Kwiatkowski et al., 2019) on top of “RQAHard”. We also train all models on the original MS MARCO training dataset, where the positive and negative classes are balanced by up-sampling the positive training samples. For validation purposes, we use the 1500 dev2 validation queries with at least one relevance judgment from the TREC DL Track 20212. Given our focus on shallow-pool effectiveness, the model with highest MRR@10 on the validation dataset is selected. We employ Mesh Tensorflow (Shazeer et al., 2018) for training and evaluation. The T5 models have been trained and inferred as in (Nogueira et al., 2020), and ED2LM has been primarily trained using the loss defined in Eq. 3. We train models for ablation study by using Eq. 1 and Eq. 2 separately. During training, a constant learning rate of 1e-3 is used.\n1http://answers.yahhoo.com 2https://msmarco.blob.core.windows.\nnet/msmarcoranking/passv2_dev2_queries. tsv\nBaselines. ED2LM is compared to ranking models using four variants of T5 (T5-small, T5-base, T5-large, and T5-xl), BERT-base, BERT-large, and PreTTR (MacAvaney et al., 2020). The PreTTR (MacAvaney et al., 2020) model decouples the encoding of the query and the document on top of the BERT architecture and is directly comparable to the T5-based ED2LM. We finetune BERT-base and BERT-large models using TFranking (Pasumarthi et al., 2019) and achieve similar results with the results reported in (Nogueira et al., 2020). The BERT-base is included in our result table, and the comparisons relative to BERTlarge are available in the appendix (Table 4). We also re-implement the PreTTR model using TFranking (Pasumarthi et al., 2019). Therein, following the configurations in (MacAvaney et al., 2020), a query and a document are encoded independently in the first l-layers using the BERT-base configuration before interacting via cross-attention. The BERT-base pre-trained checkpoint is used for initialisation. We report the results by setting l = 6, which leads to similar FLOPs and latency as ED2LM-base (26.1T vs 20.6T). We also experiment with l = 3 and 9, whose results are included in the appendix (Table 4).\nVariants of ED2LM. We investigate the effectiveness and inference efficiency of ED2LM based on T5-small, T5-base, T5-large, and T5-xl architectures, leading to ED2LM-small, ED2LM-base, ED2LM-large, and ED2LM-xl, respectively. We experiment with two Funnel-Transformer variants, where two six-layers funnel blocks (b = 2) and three eight-layers funnel blocks (b = 3) are used in the encoder, respectively. They are named ED2LMF-6L×2 and ED2LM-F-8L×3, correspondingly. These configurations lead to a 4X (when b = 2) and a 8X (when b = 3) reduction in the sequence length. The Funnel-Transformer variants are pretrained using the same task as in T5 on top of the C4 corpus (Raffel et al., 2020).\nInitial rankings. Since we primarily focus on the re-ranking setting, we consider several retrieval models to generate initial ranking candidates. For the MS MARCO passage re-ranking task, we use BM25 (an implementation from Terrier (Macdonald et al., 2012)) to generate the top-1K passages per query. In addition, we implemented the docT5query model (Nogueira et al., 2019b,a) by training a T5 seq2seq model to generate 40\nquestions (i.e., expansions) per paragraph and use BM25 to retrieve top-1K passages. This serves as a high-recall initial ranking, wherein the recall@1K increases from 86.7 (MRR@10=19.3) in the base BM25 ranking to 93.76 (MRR@10=25.3) with document expansion. For the TREC DL Track, we use the official top-1k initial rankings from BM25 (Craswell et al., 2020, 2021).\nEfficiency metrics. To compare inference efficiency, we report FLOPs and latency as encouraged by Dehghani et al. (2021). To compute FLOPs we make use of a public repository 3. To compute latency, we do as follows: each model is exported in the Tensorflow Saved Model format before serving via the Tensorflow Model Server 4 on a Intel Xeon CPU desktop with 8 CPU cores, 16 CPU threads, and 132 GB RAM. We randomly select 500 queries and passages from the MS MARCO dataset. As for PreTTR (MacAvaney et al., 2020), to enable fair comparisons, we add an additional 500 queries, leading to a total of 1000 query-passages pairs, to fully utilise the shared computation of the query encoder. For each query-passage pair, we time the inference call to the model server 10 times and record the minimum. For each model, we report the 50 and 95-percentile of the 500 timing (1000 for PreTTR) as a two-number summary of latency. The time for tokenization is included for all models. For PreTTR and ED2LM, we assume the token representations of passages have already been loaded in the memory akin to (MacAvaney et al., 2020; Gao et al., 2021)."
+    }, {
+      "heading" : "5 Results",
+      "text" : "In this section, we examine the effectivenessefficiency trade-off of ED2LM on the passage reranking task. The results of T5, ED2LM, BERT, and PreTTR have been displayed in Table 1. In Table 2, we further summarise the comparisons (ED2LM vs. baseline models) from Table 1 and highlight the results that ED2LM provides a better trade-off. We also visualise the results from different models on the MS MARCO benchmark in Fig. 2 when using docT5query (Nogueira et al., 2019a) as the initial ranking.\nResults for the baseline models. We achieve comparable results as previous studies on all three\n3https://github.com/google-research/ electra/blob/master/flops_computation.py\n4https://www.tensorflow.org/tfx/ tutorials/serving/rest_simple\nbenchmarks. In particular, (Nogueira et al., 2020) reports MRR@10 = 37.2, 38.1, 39.3, and 39.8 when using BERT-large, T5-base, T5-large, and T5-xl to re-rank top-1K paragraphs from BM25 on MS MARCO passage re-ranking benchmark. Besides, we also include the re-ranking results from COIL (Gao et al., 2021) and ColBERT (Khattab and Zaharia, 2020). For the TREC DL Track, we select the submitted runs that are most comparable to ours, namely, the top re-ranking run (Yan et al., 2019) in 2019 (nDCG@10 = 72.5 and MAP = 45.3) and the 4th best re-ranking run (Cao et al., 2020)5 for 2020 (nDCG@10 = 73.7 and MAP = 48.8). It is worth mentioning that the former run employs customised pretraining methods for BERT-large, whereas the lat-\n5The 1st-3rd best runs (Qiao et al., 2021) in 2020 used TREC DL 2019 data for fine-tuning.\nter uses ensemble models, thus achieving slightly higher results than our T5-variants.\nEffectiveness-efficiency trade-off. ED2LM decouples the encoding of the document and query, thereby allowing for caching the document representation offline. After pre-computing the document presentation as in PreTTR (MacAvaney et al., 2020), ED2LM achieves a highly favorable tradeoff. From Table 1 and 2, we make the following observations. (1) ED2LM-small and ED2LM-base perform at least as good as T5-small and T5-base, respectively, while providing more than a 2X speed up. For ED2LM-base, its effectiveness is not significantly different from T5-large on both TREC DL Tracks and under-performs by 0.7 (38.7 vs 39.4) on MS MARCO, while providing a 6.2X speed up. When comparing with BERT-base and PreTTR,\nboth ED2LM-small and ED2LM-base perform at least as good (for MRR@10 and nDCG@10) and are up to 6.8X faster. (2) ED2LM-large performs on par with T5-large on the TREC DL Tracks, but under performs on MS MARCO by 1.4; whereas ED2LM-xl achieves similar MRR@10 on MS MARCO (39.4 vs 39.6), but performs worse in terms of nDCG@10 on TREC DL Track 2020. Furthermore, in Fig. 2 (MRR@10 on MS MARCO vs the latency (P95) by re-ranking the top-1K from docT5query) the leftmost ED2LM-small achieves better effectiveness than T5-small, PreTTR, and BERT-base. Likewise, ED2LM-base achieves similar latency as PreTTR and is 2.3X more efficient than BERT-base but achieves higher MRR@10. In the meantime, though more efficient, ED2LM-xl and ED2LM-large perform close to their counterparts, once again confirming the observations. We argue that, on the one hand, co-training of query likelihood and the discriminative cross-entropy leads to better ranking quality, which is especially true for the smaller variants (small and base); On the other hand, not attending to the query during document encoding leads to performance decreases, which dominates the outcomes in larger model variants (like large and xl).\nED2LM-F: Storage compression with Funnel Transformer. The results for the two variants\nof ED2LM with Funnel blocks are summarised in the bottom block of Table 1 and the rightmost columns in Table 2. In terms of storage, ED2LMF-6L×2 provides 4X compression and ED2LM-F8L×3 provides 8X compression by reducing the sequence length in the encoder. It can be seen that, ED2LM-F-6L×2 outperforms T5-small and performs as well as BERT-base and PreTTR. Furthermore, while ED2LM-F-8L×3 provides 8X compression, the effectiveness drops below that of T5small and BERT-base on the MS MARCO benchmark. However, it achieves on-par results relative to T5-small and BERT-base on the TREC DL Track in terms of both nDCG@10 and MAP. As for efficiency, ED2LM-F-8L×3 is similar to T5-small and PreTTR, but is 3.5X faster than BERT-base."
+    }, {
+      "heading" : "5.1 Analysis",
+      "text" : "The use of RocketQA-Merge dataset for training. In our experiments, we find that the ranking quality of the proposed ED2LM, as well as PreTTR model, benefit considerably from RocketQA-Merge. We demonstrate the training performance (upper part) in Table 3 on RocketQA and the MS MARCO training dataset. It can be seen that T5 achieves similar performance on both training data sets. In the meantime, ED2LM achieves MRR@10=37.5 when trained on the MS MARCO training dataset, and can\nachieve 38.7 when trained on the “RQA-Merge” dataset. This is also true for PreTTR, which sees an MRR@10 increase from 35.2 to 36.7. We conjecture that the decoupled encoding of query and documents, as in ED2LM and PreTTR, requires more queries for training whereas models that use full cross-attention benefit less from the extra training data. The training performance of ED2LMbase on RocketQA-Hard in Table 3 provides evidences for this, where ED2LM-base achieves an even lower MRR@10. RocketQA-Hard is a subset of RocketQA-Merge and includes hard negative samples but without the extra queries. Therefore, we conclude that more unique questions for training is one of the ED2LM’s key ingredients.\nAlternative loss functions for training. In (dos Santos et al., 2020), the unlikelihood loss (referred as LUL) was used to train a BART (Lewis et al., 2020) model for question answering. In this section, we train ED2LM using the LUL loss from (dos Santos et al., 2020) on both the MS MARCO and RQA-Merge training sets. We also use the negative log-likelihood loss in Eq. 1 (as in docT5query (Nogueira et al., 2019a)) and the crossentropy loss in Eq. 2 (as in (Nogueira et al., 2020)) to train ED2LM separately. From Table 3 (lower part), LUL leads to significantly worse MRR@10 than using the loss in Eq. 3 (33.6 vs 38.7), but outperforms the use of negative log-likelihood loss from Eq. 1 as in (Zhuang et al., 2021b). When only using the cross-entropy loss of the true/false token (Eq. 2), effectiveness is slightly worse than when using the loss in combination with query likelihood (38.2 vs 38.7), mirroring the findings from (Ju et al.,\n2021). Therefore, we conclude that the use of both true/false tokens and query likelihood for training (as in Eq. 3) is another key ingredient for ED2LM.\nManual inspection of the generated questions. We further investigate the reasons why ED2LM can significantly outperform deep query likelihood (MRR@10=38.7 vs 30.2 from Table 3) by a big margin. We compare the questions generated by ED2LM and T5 trained with query likelihood as in Eq. 1. We sample 66 documents from the MS MARCO passage corpus with at least one correct query in the MS MARCO development dataset, and collect 10 unique generated queries from both ED2LM and T5, ending up with 660 query-documents pairs for annotation. These pairs are labeled by eight annotators with a single binary question: “Is the generated query (question) answered by the given document (passage)?”. We avoid potential bias during annotation by not informing the annotators which system generated which questions. According to the annotated data, 70.6% of the queries generated by ED2LM are answerable by the source document, while 52.1% of the queries generated by T5 are answerable. We conjecture that the use of Eq. 3 for training makes the query generator stick to the document better, leading to fewer hallucinations, thus producing better ranking when the decoder is used as a ranker. Configuration details and more analyses for the question generation can be found in the Appendix (Section A.2)."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this work, we propose a novel re-ranking model named ED2LM, that works by finetuning an encoder-decoder model. ED2LM encodes documents and decodes the query using a trailing binary class token appended to the query for ranking. By training on a dataset with more unique questions (namely, “RocketQA-Merge” (Qu et al., 2021)) and optimizing both query likelihood and a discriminative loss over the true/false token, ED2LM achieves competitive results compared to corresponding T5 models. When used as a decoder-only language model during inference, ED2LM provides up to 6.8X speedup without sacrificing effectiveness. It was also shown that Funnel-Transformer (Dai et al., 2020), when used in conjunction with ED2LM, can compress the storage of the pre-computed memory, making ED2LM a good modeling choice when it comes to the efficiency and effectiveness tradeoff."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Full Results for Re-ranking\nThe full results of our re-ranking experiments using both MS MARCO and RocketQA-Merge dataset for training can be found in Table 4 with the test of statistical significance at a significance level of 0.05.\nA.2 Analysis of Question Generation\nFor the generation task, we train the generation models, namely, ED2LM-base and T5-base, on MS MARCO training dataset, following the same setting as in (Lu et al., 2021), to enable fair comparisons. Both models employ the top-k decoding with k = 10. During the decoding, we employ top-k random sampling decoding and set k = 10, where the top-k tokens with highest probability according to the decoder are sampled. To compare the quality of the generations from ED2LM and T5, we conduct manual annotations (as described in Section 5.1), calculate token overlaps, and employ the generated questions to train a dual-encoder based passage retrieval model following the configurations from (Lu et al., 2021).\nQuestion vs. paragraph overlap. Beside the manual annotation in the end of Section 5, we further measured the overlap between generated questions and their respective source passages using a set of 3k generated questions from each system. Intuitively, question generators that hallucinate less are more likely to stick to the text from the source paragraph. The overlap is computed as the macro-average of the question-paragraph wordlevel overlap, and is normalised using the length of the question. While T5-base has an overlap rate of 55.62% (i.e., 55.62% of question tokens also appear in the source paragraph), ED2LM-base has an overlap rate of 62.14%, which is more than 6% higher than T5 model. This result is further evidence that ED2LM sticks to the paragraph text more frequently. Although this can be seen as a problem if one wants a more diverse set of questions, it avoids hallucinations and allows for more accurate questions, as demonstrated in the manual inspection. In Table 5, we present some examples of typical questions generated by both T5 are ED2LM and the respective source paragraph. Although T5 questions are somewhat related to the paragraph, the paragraph is not a good answer for them. Notice that in the first question T5 halluci-\nnates the word English, which completely compromises the question quality.\nSynthetic Training Data for Retrieval Finally, we demonstrate the advantages of the generated questions from ED2LM by using them to train a dual-encoder based passage retrieval model, following the configurations in (Lu et al., 2021). Specifically, we train a BERTlarge dual encoder model using the synthetic question-passage pairs generated by ED2LM-base and T5-base respectively and report the results on MS MARCO dev set. For each passage, we generate three synthetic questions. We also extract hard negatives by randomly sample passages from the same document. During training, we use both in-batch negatives and hard negatives. During inference, we retrieve top1K passages for each question from the passage collection containing about 8.8 million passages and report MRR@10. The model using generated data from ED2LM achieves MRR@10=30.4, whereas the model using generated data from T5 gets MRR@10=26.5. We argue that the boost is due to that the synthetic training data from ED2LM is with less generation hallucination (18% according to the manual annotation), thus including few training noise.\nA.3 Configuration Details for Latency Computation\nTo compute latency, individual models are exported in the Tensorflow Saved Model format before being served via the Tensorflow Model Server 6 on a Intel Xeon CPU desktop with 8 CPU cores, 16 CPU threads, and 132 GB RAM. We randomly select 500 queries and passages from the MS Marco dataset. We observe the character length distribution for queries and passages from this sample. For queries, the [25, 50, 75, 90, 95, 99]-percentiles are [24.75, 31.5, 39.25, 49.0, 56.0, 80.04] characters, whereas the same percentiles for documents are [278.0, 318.0, 447.75, 572.1, 628.15, 838.05] characters. As for PreTTR (MacAvaney et al., 2020), to enable fair comparisons, we add an additional 500 passages per query, leading to a total of 1000 query-passages pairs, to fully utilise the shared computation of the query encoder. For each of these document/query pairs, we time the inference call to the model server 10 times and record the minimum time t across the 10 runs. Let L(`e, `d, s)\n6https://www.tensorflow.org/tfx/ tutorials/serving/rest_simple\nParagraph\nAn experience modifier is an adjustment factor assigned to an Employer’s FEIN by the rating bureau (NCCI or State Bureau). The factor compares your loss data to other employers with the same class codes, and is expressed as a credit or debit on your policy.\nrepresent the latency of a model with `e encoder and `d decoder layers, for any particular input with max sequence length s. For BERT-based models (which have no decoder layers) we set `d = 0. For PreTTR, we compute an amortized latency. Concretely, letting N = 1000 be the number of samples, the amortized latency is computed as:\nNL(6, 0, 256 + 32, 0) + L(6, 32, 0) +NL(6, 0, 256, 0)\nN .\nFor encoder-decoder models we estimate L(0, `d, s) as\nL(1, `d, s)− [L(2, `d, s)− L(1, `d, s)] 2\nHere, we estimate L(6, 0, s) as L(12, 0, s)/2, using Bert Base for the latter. For each model, we report the 50 and 95-percentile of L the inputs as a two-number summary of latency. For BERT, we use the official cased English Base and Large model checkpoints. The time for tokenization is included for all models, where the official vocabularies (SentencePiece for T5-based models and WordPiece for BERT-based ones) are used. We use a maximum sequence lengths of 256 tokens for paragraphs and 32 tokens for queries."
+    } ],
+    "references" : [ {
+      "title" : "A multiple models ensembling method in trec deep learning",
+      "author" : [ "Liyu Cao", "Yixuan Qiao", "Hao Chen", "Peng Gao", "Yuan Ni", "Guotong Xie." ],
+      "venue" : "TREC.",
+      "citeRegEx" : "Cao et al\\.,? 2020",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Simplified TinyBERT: Knowledge distillation for document retrieval",
+      "author" : [ "Xuanang Chen", "Ben He", "Kai Hui", "Le Sun", "Yingfei Sun." ],
+      "venue" : "Advances in Information Retrieval - Proceedings of the 43rd European Conference on IR Research, Part II, volume",
+      "citeRegEx" : "Chen et al\\.,? 2021a",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Contextualized offline relevance weighting for efficient and effective neural retrieval",
+      "author" : [ "Xuanang Chen", "Ben He", "Kai Hui", "Yiran Wang", "Le Sun", "Yingfei Sun." ],
+      "venue" : "Proceedings of the 44th International ACM SIGIR Conference on Research and Develop-",
+      "citeRegEx" : "Chen et al\\.,? 2021b",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "SDR: Efficient neural re-ranking using succinct document representation",
+      "author" : [ "Nachshon Cohen", "Amit Portnoy", "Besnik Fetahu", "Amir Ingber." ],
+      "venue" : "arXiv preprint arXiv:2110.02065.",
+      "citeRegEx" : "Cohen et al\\.,? 2021",
+      "shortCiteRegEx" : "Cohen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Overview of the trec 2020 deep learning track",
+      "author" : [ "Nick Craswell", "Bhaskar Mitra", "Emine Yilmaz", "Daniel Campos" ],
+      "venue" : null,
+      "citeRegEx" : "Craswell et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Craswell et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Overview of the trec 2019 deep learning track",
+      "author" : [ "Nick Craswell", "Bhaskar Mitra", "Emine Yilmaz", "Daniel Campos", "Ellen M Voorhees." ],
+      "venue" : "arXiv preprint arXiv:2003.07820.",
+      "citeRegEx" : "Craswell et al\\.,? 2020",
+      "shortCiteRegEx" : "Craswell et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Context-aware term weighting for first stage passage retrieval",
+      "author" : [ "Zhuyun Dai", "Jamie Callan." ],
+      "venue" : "Proceedings of the 43rd International ACM SIGIR Conference on Research and Development in Information Retrieval, pages 1533–1536.",
+      "citeRegEx" : "Dai and Callan.,? 2020",
+      "shortCiteRegEx" : "Dai and Callan.",
+      "year" : 2020
+    }, {
+      "title" : "Funnel-transformer: Filtering out sequential redundancy for efficient language processing",
+      "author" : [ "Zihang Dai", "Guokun Lai", "Yiming Yang", "Quoc Le." ],
+      "venue" : "NeurIPS.",
+      "citeRegEx" : "Dai et al\\.,? 2020",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The efficiency misnomer",
+      "author" : [ "Mostafa Dehghani", "Anurag Arnab", "Lucas Beyer", "Ashish Vaswani", "Yi Tay." ],
+      "venue" : "arXiv preprint arXiv:2110.12894.",
+      "citeRegEx" : "Dehghani et al\\.,? 2021",
+      "shortCiteRegEx" : "Dehghani et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "NAACL-HLT (1).",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Beyond [cls] through ranking by generation",
+      "author" : [ "Cicero dos Santos", "Xiaofei Ma", "Ramesh Nallapati", "Zhiheng Huang", "Bing Xiang." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 1722–",
+      "citeRegEx" : "Santos et al\\.,? 2020",
+      "shortCiteRegEx" : "Santos et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Mrqa 2019 shared task: Evaluating generalization in reading comprehension",
+      "author" : [ "Adam Fisch", "Alon Talmor", "Robin Jia", "Minjoon Seo", "Eunsol Choi", "Danqi Chen." ],
+      "venue" : "arXiv preprint arXiv:1910.09753.",
+      "citeRegEx" : "Fisch et al\\.,? 2019",
+      "shortCiteRegEx" : "Fisch et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Coil: Revisit exact lexical match in information retrieval with contextualized inverted list",
+      "author" : [ "Luyu Gao", "Zhuyun Dai", "Jamie Callan." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics:",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning-to-rank with BERT in tf-ranking",
+      "author" : [ "Shuguang Han", "Xuanhui Wang", "Mike Bendersky", "Marc Najork." ],
+      "venue" : "CoRR, abs/2004.08476.",
+      "citeRegEx" : "Han et al\\.,? 2020",
+      "shortCiteRegEx" : "Han et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Distilling the knowledge in a neural network",
+      "author" : [ "Geoffrey Hinton", "Oriol Vinyals", "Jeffrey Dean." ],
+      "venue" : "NIPS Deep Learning and Representation Learning Workshop.",
+      "citeRegEx" : "Hinton et al\\.,? 2015",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Interpretable & time-budgetconstrained contextualization for re-ranking",
+      "author" : [ "Sebastian Hofstätter", "Markus Zlabinger", "Allan Hanbury." ],
+      "venue" : "ECAI 2020, pages 513–520. IOS Press.",
+      "citeRegEx" : "Hofstätter et al\\.,? 2020",
+      "shortCiteRegEx" : "Hofstätter et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving efficient neural ranking models with cross-architecture knowledge distillation",
+      "author" : [ "Sebastian Hofstätter", "Sophia Althammer", "Michael Schröder", "Mete Sertkan", "Allan Hanbury" ],
+      "venue" : null,
+      "citeRegEx" : "Hofstätter et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Hofstätter et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Text-to-text multi-view learning for passage re-ranking",
+      "author" : [ "Jia-Huei Ju", "Jheng-Hong Yang", "Chuan-Ju Wang." ],
+      "venue" : "arXiv preprint arXiv:2104.14133.",
+      "citeRegEx" : "Ju et al\\.,? 2021",
+      "shortCiteRegEx" : "Ju et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Dense passage retrieval for open-domain question answering",
+      "author" : [ "Vladimir Karpukhin", "Barlas Oguz", "Sewon Min", "Patrick Lewis", "Ledell Wu", "Sergey Edunov", "Danqi Chen", "Wen-tau Yih." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Nat-",
+      "citeRegEx" : "Karpukhin et al\\.,? 2020",
+      "shortCiteRegEx" : "Karpukhin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Colbert: Efficient and effective passage search via contextualized late interaction over bert",
+      "author" : [ "Omar Khattab", "Matei Zaharia." ],
+      "venue" : "Proceedings of the 43rd International ACM SIGIR conference on research and development in Information Retrieval,",
+      "citeRegEx" : "Khattab and Zaharia.,? 2020",
+      "shortCiteRegEx" : "Khattab and Zaharia.",
+      "year" : 2020
+    }, {
+      "title" : "Natural questions: a benchmark for question answering research",
+      "author" : [ "Tom Kwiatkowski", "Jennimaria Palomaki", "Olivia Redfield", "Michael Collins", "Ankur Parikh", "Chris Alberti", "Danielle Epstein", "Illia Polosukhin", "Jacob Devlin", "Kenton Lee" ],
+      "venue" : null,
+      "citeRegEx" : "Kwiatkowski et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Kwiatkowski et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A modern perspective on query likelihood with deep generative retrieval models",
+      "author" : [ "Oleg Lesota", "Navid Rekabsaz", "Daniel Cohen", "Klaus Antonius Grasserbauer", "Carsten Eickhoff", "Markus Schedl." ],
+      "venue" : "Proceedings of the 2021 ACM SIGIR",
+      "citeRegEx" : "Lesota et al\\.,? 2021",
+      "shortCiteRegEx" : "Lesota et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bart: Denoising sequence-to-sequence pretraining for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multi-stage training with improved negative contrast for neural passage retrieval",
+      "author" : [ "Jing Lu", "Gustavo Hernandez Abrego", "Ji Ma", "Jianmo Ni", "Yinfei Yang." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing: Findings.",
+      "citeRegEx" : "Lu et al\\.,? 2021",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Efficient document re-ranking for transformers by precomputing term representations",
+      "author" : [ "Sean MacAvaney", "Franco Maria Nardini", "Raffaele Perego", "Nicola Tonellotto", "Nazli Goharian", "Ophir Frieder." ],
+      "venue" : "Proceedings of the 43rd International ACM",
+      "citeRegEx" : "MacAvaney et al\\.,? 2020",
+      "shortCiteRegEx" : "MacAvaney et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "From puppy to maturity: Experiences in developing terrier",
+      "author" : [ "Craig Macdonald", "Richard McCreadie", "Rodrygo L.T. Santos", "Iadh Ounis." ],
+      "venue" : "Proceedings of the SIGIR 2012 Workshop on Open Source Information Retrieval, pages 60–63. University of",
+      "citeRegEx" : "Macdonald et al\\.,? 2012",
+      "shortCiteRegEx" : "Macdonald et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Ms marco: A human generated machine reading comprehension dataset",
+      "author" : [ "Tri Nguyen", "Mir Rosenberg", "Xia Song", "Jianfeng Gao", "Saurabh Tiwary", "Rangan Majumder", "Li Deng." ],
+      "venue" : "CoCo@ NIPS.",
+      "citeRegEx" : "Nguyen et al\\.,? 2016",
+      "shortCiteRegEx" : "Nguyen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Document ranking with a pretrained sequence-to-sequence model",
+      "author" : [ "Rodrigo Nogueira", "Zhiying Jiang", "Ronak Pradeep", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: Findings, pages",
+      "citeRegEx" : "Nogueira et al\\.,? 2020",
+      "shortCiteRegEx" : "Nogueira et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "From doc2query to docTTTTTquery",
+      "author" : [ "Rodrigo Nogueira", "Jimmy Lin", "AI Epistemic." ],
+      "venue" : "Online preprint.",
+      "citeRegEx" : "Nogueira et al\\.,? 2019a",
+      "shortCiteRegEx" : "Nogueira et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Document expansion by query prediction",
+      "author" : [ "Rodrigo Nogueira", "Wei Yang", "Jimmy Lin", "Kyunghyun Cho." ],
+      "venue" : "arXiv preprint arXiv:1904.08375.",
+      "citeRegEx" : "Nogueira et al\\.,? 2019b",
+      "shortCiteRegEx" : "Nogueira et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Tf-ranking: Scalable tensorflow library for learning-to-rank",
+      "author" : [ "Rama Kumar Pasumarthi", "Sebastian Bruch", "Xuanhui Wang", "Cheng Li", "Michael Bendersky", "Marc Najork", "Jan Pfeifer", "Nadav Golbandi", "Rohan Anil", "Stephan Wolf." ],
+      "venue" : "Proceedings",
+      "citeRegEx" : "Pasumarthi et al\\.,? 2019",
+      "shortCiteRegEx" : "Pasumarthi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Pash at trec 2020 deep learning track: Dense matching for nested ranking",
+      "author" : [ "Yixuan Qiao", "Hao Chen", "Liyu Cao", "Liping Chen", "Pengyong Li", "Jun Wang", "Peng Gao", "Yuan Ni", "Guotong Xie" ],
+      "venue" : null,
+      "citeRegEx" : "Qiao et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Qiao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "RocketQA: An optimized training approach to dense passage retrieval for open-domain question answering",
+      "author" : [ "Yingqi Qu", "Yuchen Ding", "Jing Liu", "Kai Liu", "Ruiyang Ren", "Wayne Xin Zhao", "Daxiang Dong", "Hua Wu", "Haifeng Wang." ],
+      "venue" : "Proceed-",
+      "citeRegEx" : "Qu et al\\.,? 2021",
+      "shortCiteRegEx" : "Qu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "Journal of Machine Learning Research,",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "RocketQAv2: A joint training method for dense passage retrieval and passage re-ranking",
+      "author" : [ "Ruiyang Ren", "Yingqi Qu", "Jing Liu", "Wayne Xin Zhao", "Qiaoqiao She", "Hua Wu", "Haifeng Wang", "Ji-Rong Wen." ],
+      "venue" : "arXiv preprint arXiv:2110.07367.",
+      "citeRegEx" : "Ren et al\\.,? 2021",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "The probabilistic relevance framework: BM25 and beyond",
+      "author" : [ "Stephen Robertson", "Hugo Zaragoza." ],
+      "venue" : "Now Publishers Inc.",
+      "citeRegEx" : "Robertson and Zaragoza.,? 2009",
+      "shortCiteRegEx" : "Robertson and Zaragoza.",
+      "year" : 2009
+    }, {
+      "title" : "Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "arXiv preprint arXiv:1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Mesh-TensorFlow: Deep learning for supercomput",
+      "author" : [ "Noam Shazeer", "Youlong Cheng", "Niki Parmar", "Dustin Tran", "Ashish Vaswani", "Penporn Koanantakool", "Peter Hawkins", "HyoukJoong Lee", "Mingsheng Hong", "Cliff Young", "Ryan Sepassi", "Blake Hechtman" ],
+      "venue" : null,
+      "citeRegEx" : "Shazeer et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Shazeer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The cascade transformer: an application for efficient answer sentence selection",
+      "author" : [ "Luca Soldaini", "Alessandro Moschitti." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 5697–5708.",
+      "citeRegEx" : "Soldaini and Moschitti.,? 2020",
+      "shortCiteRegEx" : "Soldaini and Moschitti.",
+      "year" : 2020
+    }, {
+      "title" : "Early exiting bert for efficient document ranking",
+      "author" : [ "Ji Xin", "Rodrigo Nogueira", "Yaoliang Yu", "Jimmy Lin." ],
+      "venue" : "Proceedings of SustaiNLP: Workshop on Simple and Efficient Natural Language Processing, pages 83–88.",
+      "citeRegEx" : "Xin et al\\.,? 2020",
+      "shortCiteRegEx" : "Xin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Approximate nearest neighbor negative contrastive learning for dense text retrieval",
+      "author" : [ "Lee Xiong", "Chenyan Xiong", "Ye Li", "Kwok-Fung Tang", "Jialin Liu", "Paul N Bennett", "Junaid Ahmed", "Arnold Overwijk." ],
+      "venue" : "International Conference on Learning",
+      "citeRegEx" : "Xiong et al\\.,? 2020",
+      "shortCiteRegEx" : "Xiong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Idst at trec 2019 deep learning track: Deep cascade ranking with generation-based document expansion and pre-trained language modeling",
+      "author" : [ "Ming Yan", "Chenliang Li", "Chen Wu", "Bin Bi", "Wei Wang", "Jiangnan Xia", "Luo Si." ],
+      "venue" : "TREC.",
+      "citeRegEx" : "Yan et al\\.,? 2019",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Query distillation: Bert-based distillation for ensemble ranking",
+      "author" : [ "Wangshu Zhang", "Junhong Liu", "Zujie Wen", "Yafang Wang", "Gerard de Melo." ],
+      "venue" : "Proceedings of the 28th International Conference on Computational Linguistics: Industry Track, pages",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Ensemble distillation for bert-based ranking models",
+      "author" : [ "Honglei Zhuang", "Zhen Qin", "Shuguang Han", "Xuanhui Wang", "Mike Bendersky", "Marc Najork." ],
+      "venue" : "Proceedings of the 2021 ACM SIGIR International Conference on the Theory of Information",
+      "citeRegEx" : "Zhuang et al\\.,? 2021a",
+      "shortCiteRegEx" : "Zhuang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Deep query likelihood model for information retrieval",
+      "author" : [ "Shengyao Zhuang", "Hang Li", "Guido Zuccon." ],
+      "venue" : "The 43rd European Conference On Information Retrieval (ECIR).",
+      "citeRegEx" : "Zhuang et al\\.,? 2021b",
+      "shortCiteRegEx" : "Zhuang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "TILDE: Term independent likelihood moDEl for passage reranking",
+      "author" : [ "Shengyao Zhuang", "Guido Zuccon." ],
+      "venue" : "Proceedings of the 44th International ACM SIGIR Conference on Research and Development in Information Retrieval, SIGIR ’21, pages",
+      "citeRegEx" : "Zhuang and Zuccon.,? 2021",
+      "shortCiteRegEx" : "Zhuang and Zuccon.",
+      "year" : 2021
+    }, {
+      "title" : "2021), to enable fair comparisons. Both models employ the top-k decoding with k = 10. During the decoding, we employ top-k random sampling decoding and set k = 10, where the top-k tokens with highest probability",
+      "author" : [ "Lu" ],
+      "venue" : null,
+      "citeRegEx" : "Lu,? \\Q2021\\E",
+      "shortCiteRegEx" : "Lu",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 27,
+      "context" : "Leveraging transformer architecture to model the concatenation of a query-document pair is a well-established approach for document ranking (Nogueira et al., 2020).",
+      "startOffset" : 140,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 33,
+      "context" : ", T5 (Raffel et al., 2020)) paradigm where query-document interactions are modeled by the encoder’s attention mechanism.",
+      "startOffset" : 5,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 28,
+      "context" : "To this end, it is commonplace to use less powerful but computationally lightweight dual encoder models (Nogueira et al., 2019a; Karpukhin et al., 2020; Xiong et al., 2020; Qu et al., 2021; Gao et al., 2021) for first-pass retrieval and to only run the more expensive re-ranker on a small subset of retrieved candidates.",
+      "startOffset" : 104,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 18,
+      "context" : "To this end, it is commonplace to use less powerful but computationally lightweight dual encoder models (Nogueira et al., 2019a; Karpukhin et al., 2020; Xiong et al., 2020; Qu et al., 2021; Gao et al., 2021) for first-pass retrieval and to only run the more expensive re-ranker on a small subset of retrieved candidates.",
+      "startOffset" : 104,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 40,
+      "context" : "To this end, it is commonplace to use less powerful but computationally lightweight dual encoder models (Nogueira et al., 2019a; Karpukhin et al., 2020; Xiong et al., 2020; Qu et al., 2021; Gao et al., 2021) for first-pass retrieval and to only run the more expensive re-ranker on a small subset of retrieved candidates.",
+      "startOffset" : 104,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 32,
+      "context" : "To this end, it is commonplace to use less powerful but computationally lightweight dual encoder models (Nogueira et al., 2019a; Karpukhin et al., 2020; Xiong et al., 2020; Qu et al., 2021; Gao et al., 2021) for first-pass retrieval and to only run the more expensive re-ranker on a small subset of retrieved candidates.",
+      "startOffset" : 104,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 12,
+      "context" : "To this end, it is commonplace to use less powerful but computationally lightweight dual encoder models (Nogueira et al., 2019a; Karpukhin et al., 2020; Xiong et al., 2020; Qu et al., 2021; Gao et al., 2021) for first-pass retrieval and to only run the more expensive re-ranker on a small subset of retrieved candidates.",
+      "startOffset" : 104,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 27,
+      "context" : "• Via extensive experiments, we show that the proposed method performs competitively with T5-based cross-attention re-rankers (Nogueira et al., 2020) while being up to more than 6.",
+      "startOffset" : 126,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 13,
+      "context" : "into the model (Han et al., 2020; Nogueira et al., 2020), which allows the attention mechanism of the model to capture interactions across query and document terms.",
+      "startOffset" : 15,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 27,
+      "context" : "into the model (Han et al., 2020; Nogueira et al., 2020), which allows the attention mechanism of the model to capture interactions across query and document terms.",
+      "startOffset" : 15,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 18,
+      "context" : ", dual-encoder models (Karpukhin et al., 2020; Qu et al., 2021; Ren et al., 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al.",
+      "startOffset" : 22,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 32,
+      "context" : ", dual-encoder models (Karpukhin et al., 2020; Qu et al., 2021; Ren et al., 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al.",
+      "startOffset" : 22,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 34,
+      "context" : ", dual-encoder models (Karpukhin et al., 2020; Qu et al., 2021; Ren et al., 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al.",
+      "startOffset" : 22,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al.",
+      "startOffset" : 36,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al., 2019a; Dai and Callan, 2020; Gao et al., 2021).",
+      "startOffset" : 159,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al., 2019a; Dai and Callan, 2020; Gao et al., 2021).",
+      "startOffset" : 159,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2021), BERT with late interaction (Khattab and Zaharia, 2020), or using contextual language models to improve term weighting in traditional inverted indexes (Nogueira et al., 2019a; Dai and Callan, 2020; Gao et al., 2021).",
+      "startOffset" : 159,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 45,
+      "context" : "A natural practice is to directly use the likelihood of generating the query given a document to rank the documents (Zhuang and Zuccon, 2021; Zhuang et al., 2021b; Lesota et al., 2021).",
+      "startOffset" : 116,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 44,
+      "context" : "A natural practice is to directly use the likelihood of generating the query given a document to rank the documents (Zhuang and Zuccon, 2021; Zhuang et al., 2021b; Lesota et al., 2021).",
+      "startOffset" : 116,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 21,
+      "context" : "A natural practice is to directly use the likelihood of generating the query given a document to rank the documents (Zhuang and Zuccon, 2021; Zhuang et al., 2021b; Lesota et al., 2021).",
+      "startOffset" : 116,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 17,
+      "context" : "Other work (Ju et al., 2021) uses query generation as an auxiliary task during training and shows improved performance.",
+      "startOffset" : 11,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 14,
+      "context" : "A major trend is to distill expensive models into cheaper ones (Hinton et al., 2015; Sanh et al., 2019).",
+      "startOffset" : 63,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 36,
+      "context" : "A major trend is to distill expensive models into cheaper ones (Hinton et al., 2015; Sanh et al., 2019).",
+      "startOffset" : 63,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 24,
+      "context" : "2020) and PreTTR (MacAvaney et al., 2020) defer query-document interactions to upper layers so that part of the model can be pre-computed.",
+      "startOffset" : 17,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 38,
+      "context" : "There are a couple of other efficient model structures, such as early exiting (Soldaini and Moschitti, 2020; Xin et al., 2020), Transformer-Kernel (TK) model (Hofstätter et al.",
+      "startOffset" : 78,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 39,
+      "context" : "There are a couple of other efficient model structures, such as early exiting (Soldaini and Moschitti, 2020; Xin et al., 2020), Transformer-Kernel (TK) model (Hofstätter et al.",
+      "startOffset" : 78,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2020), Transformer-Kernel (TK) model (Hofstätter et al., 2020), and contextualized offline relevance weighting (Chen et al.",
+      "startOffset" : 39,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2020), and contextualized offline relevance weighting (Chen et al., 2021b).",
+      "startOffset" : 56,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 9,
+      "context" : "In particular, for a query-document pair, the document tokens are encoded with a stack of Transformer layers as in BERT (Devlin et al., 2019), where the tokens attend to one another before going through the position-wise feed-forward layer.",
+      "startOffset" : 120,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 27,
+      "context" : "Inspired by T5 (Nogueira et al., 2020) for ranking and the use of BART for discrimination (dos Santos et al.",
+      "startOffset" : 15,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2020) for ranking and the use of BART for discrimination (dos Santos et al., 2020; Lewis et al., 2020), a special true/false token is appended to the end of the query before the end of the query sequence (EOS).",
+      "startOffset" : 59,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 17,
+      "context" : "During training, inspired by (Ju et al., 2021), the model is trained to generate the query tokens and determine the relevance of the query-document pair.",
+      "startOffset" : 29,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 27,
+      "context" : "The normalised scores from the true and false tokens are combined as in (Nogueira et al., 2020).",
+      "startOffset" : 72,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 24,
+      "context" : "Here, M can be compressed along the presentation dimension (dmodel) as in (MacAvaney et al., 2020; Gao et al., 2021; Cohen et al., 2021), which is orthogonal to our studies, or along the sequence dimension (LD), which is introduced below.",
+      "startOffset" : 74,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 12,
+      "context" : "Here, M can be compressed along the presentation dimension (dmodel) as in (MacAvaney et al., 2020; Gao et al., 2021; Cohen et al., 2021), which is orthogonal to our studies, or along the sequence dimension (LD), which is introduced below.",
+      "startOffset" : 74,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 3,
+      "context" : "Here, M can be compressed along the presentation dimension (dmodel) as in (MacAvaney et al., 2020; Gao et al., 2021; Cohen et al., 2021), which is orthogonal to our studies, or along the sequence dimension (LD), which is introduced below.",
+      "startOffset" : 74,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 7,
+      "context" : "We propose to explore not only standard M from encoder outputs but also compressed memory stores from Funnel Transformers (Dai et al., 2020).",
+      "startOffset" : 122,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 26,
+      "context" : "We employ the MS MARCO (Nguyen et al., 2016) passage re-ranking task, for which we report the official evaluation metric MRR@10 on the 6980 development queries using the binary labels from the dev dataset.",
+      "startOffset" : 23,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 5,
+      "context" : "We also use the 43 test queries from the TREC Deep Learning (DL) Track 2019 (Craswell et al., 2020)",
+      "startOffset" : 76,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 4,
+      "context" : "and the 54 test queries from 2020 (Craswell et al., 2021).",
+      "startOffset" : 34,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 32,
+      "context" : "We employ the training data from RocketQA (Qu et al., 2021), which is derived from the MS MARCO training dataset as dual-encoder models trained on it demonstrate strong performance.",
+      "startOffset" : 42,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 11,
+      "context" : "ORCAS (Fisch et al., 2019), and Natural Questions (Kwiatkowski et al.",
+      "startOffset" : 6,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2019), and Natural Questions (Kwiatkowski et al., 2019) on top of “RQAHard”.",
+      "startOffset" : 31,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 37,
+      "context" : "We employ Mesh Tensorflow (Shazeer et al., 2018) for training and evaluation.",
+      "startOffset" : 26,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 27,
+      "context" : "The T5 models have been trained and inferred as in (Nogueira et al., 2020), and ED2LM has been primarily trained using the loss defined in Eq.",
+      "startOffset" : 51,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 24,
+      "context" : "ED2LM is compared to ranking models using four variants of T5 (T5-small, T5-base, T5-large, and T5-xl), BERT-base, BERT-large, and PreTTR (MacAvaney et al., 2020).",
+      "startOffset" : 138,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 24,
+      "context" : "The PreTTR (MacAvaney et al., 2020) model decouples the encoding of the query and the document on top of the BERT architecture and is directly",
+      "startOffset" : 11,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 30,
+      "context" : "We finetune BERT-base and BERT-large models using TFranking (Pasumarthi et al., 2019) and achieve similar results with the results reported in (Nogueira et al.",
+      "startOffset" : 60,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2019) and achieve similar results with the results reported in (Nogueira et al., 2020).",
+      "startOffset" : 65,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 30,
+      "context" : "We also re-implement the PreTTR model using TFranking (Pasumarthi et al., 2019).",
+      "startOffset" : 54,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 33,
+      "context" : "The Funnel-Transformer variants are pretrained using the same task as in T5 on top of the C4 corpus (Raffel et al., 2020).",
+      "startOffset" : 100,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 25,
+      "context" : "For the MS MARCO passage re-ranking task, we use BM25 (an implementation from Terrier (Macdonald et al., 2012)) to generate the top-1K passages per query.",
+      "startOffset" : 86,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 24,
+      "context" : "As for PreTTR (MacAvaney et al., 2020), to enable fair comparisons, we add an additional 500 queries, leading to a total of 1000 query-passages pairs, to",
+      "startOffset" : 14,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 28,
+      "context" : "2 when using docT5query (Nogueira et al., 2019a) as the initial ranking.",
+      "startOffset" : 24,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 28,
+      "context" : "Figure 2: MRR@10 on MS MARCO dev small (6980 test queries) after re-ranking top-1K documents from docT5query (Nogueira et al., 2019a) vs.",
+      "startOffset" : 109,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 27,
+      "context" : "In particular, (Nogueira et al., 2020) reports MRR@10 = 37.",
+      "startOffset" : 15,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 12,
+      "context" : "Besides, we also include the re-ranking results from COIL (Gao et al., 2021) and ColBERT (Khattab and Zaharia, 2020).",
+      "startOffset" : 58,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 41,
+      "context" : "For the TREC DL Track, we select the submitted runs that are most comparable to ours, namely, the top re-ranking run (Yan et al., 2019) in 2019 (nDCG@10 = 72.",
+      "startOffset" : 117,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 0,
+      "context" : "3) and the 4th best re-ranking run (Cao et al., 2020)5 for 2020 (nDCG@10 = 73.",
+      "startOffset" : 35,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 31,
+      "context" : "The 1st-3rd best runs (Qiao et al., 2021) in 2020 used TREC DL 2019 data for fine-tuning.",
+      "startOffset" : 22,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 24,
+      "context" : "After pre-computing the document presentation as in PreTTR (MacAvaney et al., 2020), ED2LM achieves a highly favorable tradeoff.",
+      "startOffset" : 59,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2020), negative log-likelihood loss on questions as in (Nogueira et al., 2019a), and the cross-entropy loss on true/false token as in (Nogueira et al.",
+      "startOffset" : 57,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2019a), and the cross-entropy loss on true/false token as in (Nogueira et al., 2020).",
+      "startOffset" : 63,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2020), the unlikelihood loss (referred as LUL) was used to train a BART (Lewis et al., 2020) model for question answering.",
+      "startOffset" : 74,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 28,
+      "context" : "1 (as in docT5query (Nogueira et al., 2019a)) and the crossentropy loss in Eq.",
+      "startOffset" : 20,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 27,
+      "context" : "2 (as in (Nogueira et al., 2020)) to train ED2LM separately.",
+      "startOffset" : 9,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 32,
+      "context" : "By training on a dataset with more unique questions (namely, “RocketQA-Merge” (Qu et al., 2021)) and optimizing both query likelihood and a discriminative loss over the true/false token, ED2LM achieves competitive results compared to corresponding T5 models.",
+      "startOffset" : 78,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 7,
+      "context" : "It was also shown that Funnel-Transformer (Dai et al., 2020), when used in conjunction with ED2LM, can compress the storage of the pre-computed memory, making ED2LM a good modeling choice when it comes to the efficiency and effectiveness tradeoff.",
+      "startOffset" : 42,
+      "endOffset" : 60
+    } ],
+    "year" : 0,
+    "abstractText" : "State-of-the-art neural models typically encode document-query pairs using crossattention for re-ranking. To this end, models generally utilize an encoder-only (like BERT) paradigm or an encoder-decoder (like T5) approach. These paradigms, however, are not without flaws, i.e., running the model on all query-document pairs at inference-time incurs a significant computational cost. This paper proposes a new training and inference paradigm for re-ranking. We propose to finetune a pretrained encoder-decoder model using in the form of document to query generation. Subsequently, we show that this encoder-decoder architecture can be decomposed into a decoder-only language model during inference. This results in significant inference time speedups since the decoder-only architecture only needs to learn to interpret static encoder embeddings during inference. Our experiments show that this new paradigm achieves results that are comparable to the more expensive cross-attention ranking approaches while being up to 6.8X faster. We believe this work paves the way for more efficient neural rankers that leverage large pretrained models.",
+    "creator" : null
+  }
+}

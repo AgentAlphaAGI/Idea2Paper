@@ -1,0 +1,723 @@
+{
+  "name" : "ARR_2022_276_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Neighbors Are Not Strangers: Improving Non-Autoregressive Translation under Low-Frequency Lexical Constraints",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Despite the success of neural machine translation (NMT) (Bahdanau et al., 2015; Vaswani et al., 2017; Barrault et al., 2020), real applications usually require the precise (if not exact) translation of specific terms. One popular solution is to incorporate dictionaries of pre-defined terminologies as lexical constraints to ensure the correct translation of terms, which has been demonstrated to be effective in many areas such as domain adaptation, interactive translation, etc.\nPrevious methods on lexically constrained translation are mainly built upon Autoregressive Translation (AT) models, imposing constraints at inference-time (Ture et al., 2012; Hokamp and Liu, 2017; Post and Vilar, 2018) or training-time (Luong et al., 2015; Ailem et al., 2021). However, such methods either are time-consuming in real-time applications or do not ensure the appearance of constraints in the output. To develop faster MT models for industrial applications, Non-Autoregressive\n1Code will be released upon publication.\nTranslation (NAT) has been put forth (Gu et al., 2018; Ghazvininejad et al., 2019; Gu et al., 2019; Qian et al., 2021), which aims to generate tokens in parallel, boosting inference efficiency compared with left-to-right autoregressive decoding.\nResearches on lexically constrained NAT are relatively under-explored. Recent studies (Susanto et al., 2020; Xu and Carpuat, 2021) impose lexical constraints at inference time upon editing-based iterative NAT models, where constraint tokens are set as the initial sequence for further editing. However, such methods are vulnerable when encountered with low-frequency words as constraints. As illustrated in Table 1, when translated with a rare constraint, the model is unable to generate the correct context of the term “geschrien” as if it does not understand the constraint at all. It is dangerous since terms in specific domains are usually lowfrequency words. We argue that the main reasons behind this problem are 1) the inconsistency between training and constrained inference and 2) the unawareness of the source-side context of the constraints.\nTo solve this problem, we build our algorithm based on the idea that the context of a rare constraint tends not to be rare as well, i.e., “a stranger’s neighbors are not necessarily strangers”, as demonstrated in Table 1. We believe that, when the constraint is aligned to the source text, the context of its source-side counterpart can be utilized to be translated into the context of the target-side constraint, even if the constraint itself is rare. Also, when enforced to learn to preserve designated constraints at training-time, a model should be better at coping with constraints during inference-time.\nDriven by these motivations, we propose a plugin algorithm to improve constrained NAT, namely Aligned Constrained Training (ACT). ACT extends the family of editing-based iterative NAT (Gu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the current paradigm of constrained NAT. Specifically, ACT is composed of two major components: Constrained Training and Alignment Prompting. The former extends regular training of iterative NAT with pseudo training-time constraints into the state transition of imitation learning. The latter incorporates source alignment information of constraints into training and inference, indicating the context of the potentially rare terms.\nIn summary, this work makes the following contributions: 1) We identify and analyse the problems w.r.t. rare lexical constraints in current constrained NAT methods; 2) We propose a plug-in algorithm for current constrained NAT models, i.e., aligned constrained training, to improve the translation under rare constraints; 3) Experiments show that our approach improves the backbone model w.r.t. constraint preservation and translation quality, especially for rare constraints."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Lexically Constrained Translation Existing translation methods impose lexical constraints during either inference or training. At training time, constrained MT models include code-switching data augmentation (Dinu et al., 2019; Song et al., 2019; Chen et al., 2020) and training with auxiliary tasks such as token or span-level mask-prediction (Ailem et al., 2021; Lee et al., 2021). At inference time, autoregressive constrained decoding algorithms include utilizing placeholder tag (Luong et al., 2015; Crego et al., 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al.,\n2018; Song et al., 2020; Chen et al., 2021). For the purpose of efficiency, recent studies also focus on non-autoregressive constrained translation. Susanto et al. (2020) proposes to modify the inference procedure of Levenshtein Transformer (Gu et al., 2019) where they disallow the deletion of constraint words during iterative editing. Xu and Carpuat (2021) further develops this idea and introduces a reposition operation that can reorder the constraint tokens. Our work absorbs the idea of both lines of work. Based on NAT methods, we brings alignment information by terminologies to help learn the contextual information for lexical constraints, especially the rare ones.\nNon-Autoregressive Translation Although enjoy the speed advantage, NAT models suffer from performance degradation due to the multi-modality problem, i.e., generating text when multiple translations are plausible. Gu et al. (2018) applies sequence-level knowledge distillation (KD) (Kim and Rush, 2016) that uses an AT’s output as an NAT’s new target, which reduces word diversity and reordering complexity in reference, resulting in fewer modes (Zhou et al., 2020; Xu et al., 2021). Various algorithms have also been proposed to alleviate this problem, including incorporating latent variables (Kaiser et al., 2018; Shu et al., 2020), iterative refinement (Ghazvininejad et al., 2019; Stern et al., 2019; Gu et al., 2019; Guo et al., 2020), advanced training objective (Wang et al., 2019; Du et al., 2021) and gradually learning targetside word inter-dependency by curriculum learning (Qian et al., 2021). Our work extends the family of editing-based iterative NAT models for its flexibility to impose lexical constraints (Susanto et al., 2020; Xu and Carpuat, 2021)."
+    }, {
+      "heading" : "3 Background",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Non-Autoregressive Translation",
+      "text" : "Given a source sentence as x and a target sentence as y = {y1, · · · , yn}, an AT model generates in a left-to-right order, i.e., generating yt by conditioning on x and y<t. An NAT model (Gu et al., 2018), however, discards the word inter-dependency in output tokens, with the conditional independent probability distribution modeled as:\nP (y|x) = n∏\nt=1\nP (yt|x). (1)\nSuch factorization is featured with high effi-\nciency at the cost of performance drop in translation tasks due to the multi-modality problem, i.e., translating in mixed modes and resulting in token repetition, missing, or incoherence."
+    }, {
+      "heading" : "3.2 Editing-based Iterative NAT",
+      "text" : "For NATs, iterative refinement by editing is an NAT paradigm that suits constrained translations due to its flexibility. It alleviates the multi-modality problem by being autoregressive in editing previously generated sequences while maintaining nonautoregressiveness within each iteration. Thus, it achieves better performance than fully NATs while is faster than ATs.\nLevenshtein Transformer To better illustrate our idea, we use Levenshtein Transformer (LevT, Gu et al., 2019) as the backbone model in this work, which is a representative model for constrained NAT based on iterative editing.\nLevT is based on the Transformer architecture (Vaswani et al., 2017), but more flexible and fast than autoregressive ones. It models the generation of sentences as Markov Decision Process (MDP) defined by a tuple (Y,A, E ,R,y0). At each decoding iteration, the agent E receives an input y ∈ Y , chooses an action a ∈ A and gets reward r. Y is a set of discrete sentences and R is the reward function. y0 ∈ A is the initial sentence to be edited.\nEach iteration consists of two basic operations, i.e., deletion and insertion, which is described in Table 2. For the k-th iteration of the sentence yk = (<s>, y1, ..., yn,</s>), the insertion consists of placeholder and token classifiers, and the deletion is achieved by a deletion classifier. LevT trains the model with imitation learning to insert and delete, which lets the agent imitate the behaviors drawn from the expert policy:\n• Learning to insert: edit to reference by inserting tokens from a fragmented sentence (e.g., random deletion of reference).\n• Learning to delete: delete from the insertion result of the current training status to the reference.\nThe key idea is to learn how to edit from a ground truth after adding noise or the output of an adversary policy to the reference. The ground truth of the editing process is derived from the Levenshtein distance (Levenshtein, 1965).\nLexically Constrained Inference Lexical constraints can be imposed upon a translation model in: 1) soft constraints: allowing the constraints not to appear in the translation; and 2) hard constraints: forcing the constraints to appear in the translation. In NAT, the constraints are generally incorporated at inference time. Susanto et al. (2020) injects constraints as the initial sequence for iterative editing in Levenshtein Transformer (LevT, Gu et al., 2019), achieving soft constrained translation. And hard constrained translation can be easily done by disallowing the deletion of the constraints. Xu and Carpuat (2021) alters the deletion action in LevT with the reposition operation, allowing the reordering of multiple constraints."
+    }, {
+      "heading" : "3.3 Motivating Study: Self-Constrained Translation",
+      "text" : "According to Table 1, constrained NAT models seem to suffer from the low-frequency of lexical constraints, which is dangerous as most terms in practice are rare. To further explore the impact of constraint frequency upon NATs, we conduct a preliminary analysis on constrained LevT (Susanto et al., 2020). We sort words in each reference text based on frequency, dividing them into six buckets by frequency order (as in Figure 1), and sample a word from each bucket as lexical constraints for\ntranslation. We denote these constraints as selfconstraints. In this way, we have six times the data, and the six samples derived from one raw sample only differ in the lexical constraints.\nAs shown in Figure 1, translation performance generally keeps improving as the self-constraint gets rarer. This is because setting low-frequency words in a sentence as constraints, which are often hard to translate, actually lightens the load of an NAT model. However, there are two noticeable performance drops around relative frequency ranges of 10%-30% and 90%-100%, denoted as Drop#1 (-0.3 BLEU) and Drop#2 (-0.6 BLEU). Drop#1 is probably because the constraint words within this range are mostly functional or less important. Such words are not as universal as ones at the leftmost that can fit in most contexts and do not have to appear in the target due to multiple modes in translation.\nHowever, we are more interested in the reasons for Drop#2 when constraints are low-frequency words. We assume a trade-off in self-constrained NAT: the model does not have to translate rare words as they are set as an initial sequence (constraints), but it will have a hard time understanding the context of the rare constraint due to 1) the rareness itself and 2) the lack of the alignment information between target-side constraint tokens and source tokens. Thus, the model does not know how many tokens should be inserted to the left and right of the constraint, which is consistent with the findings in Table 1."
+    }, {
+      "heading" : "4 Proposed Approach",
+      "text" : "The findings and assumptions discussed above motivate us to propose a plug-in algorithm for lexically constrained NAT models, i.e., Aligned Constrained Training (ACT). ACT is designed based on two major ideas: 1) Constrained Training: bridging the discrepancy between training and constrained inference; 2) Alignment Prompting: helping the model understand the context of the constraints."
+    }, {
+      "heading" : "4.1 Constrained Training",
+      "text" : "As introduced in §3.2, constraints are typically imposed during inference time in NAT (Susanto et al., 2020; Xu and Carpuat, 2021). Specifically, lexical constraints are imposed by setting the initial sequence y0 as (<S>, C1, C2, ..., Ck,</S>), where Ci = (c1, c2, ..., cl) is the i-th lexical constrained word, l is the number of tokens in the i-th con-\nstraint, and k is the number of constraints. However, such mandatory preservation of the constraints is not carried out during training. During imitation learning, random deletion is applied for ground-truth y∗ to get the incomplete sentences y′, producing the data samples for expert policies of how to insert from y′ to y∗. This leads to a situation where the model does not learn to preserve fixed tokens and organize the translation around the tokens. Such discrepancy could harm the applications of soft constrained translation.\nTo solve this problem, we propose a simple but effective Constrained Training (CT) algorithm. We first build pseudo terms from the target by sampling 0-3 words from reference as the pre-defined constraints for training.2 Afterward, we disallow the deletion of pseudo term tokens during building data samples for imitation learning. This encourages the model to edit incomplete sentences containing lexical constraints into complete ones, bridging the gap between training and inference."
+    }, {
+      "heading" : "4.2 Alignment Prompting",
+      "text" : "As stated in §3.3, we assume the rareness of constraints hinders the model to insert proper tokens of its contexts (i.e., a stranger’s neighbors are also strangers). To make the matter worse, previous research (Ding et al., 2021) has also shown that lexical choice errors on low-frequency words tend to be propagated from the teacher (an AT model) to the student (an NAT model) in knowledge distillation.\nHowever, terminologies, by nature, provide hard alignment information for source and target which the model can conveniently utilize. Thus, on top of constrained training, we propose an enhanced approach named Aligned Constrained Training (ACT). We propose to directly align the target-side constraints with the source words and prompt the alignment information to the model during both training and inference.\nBuilding Alignment for Constraints We first align the source words to the target-side constraints, which are either pseudo constraints during training or actual constraints during inference. For each translated sentence constraints Ctgt = (C1, C2, ..., Ck), we use an external alignment tool external aligner, such as GIZA++ (Brown\n2In the experiments, these pseudo constraints are sampled based on TF-IDF score to mimic the rare but important terminology constraints in practice.\net al., 1993; Och and Ney, 2003), to find the corresponding source words, denoted as Csrc = (C ′1, C ′ 2, ..., C ′ k).\nPrompting Alignment into LevT The encoder in LevT, besides token embedding and position embedding, is further added with a learnable alignment embedding that comes from Csrc and Ctgt. We set the alignment value for each token in C ′i to i and the others to 0, which are further encoded into embeddings. The prompting of alignment is not limited to training, as we also add such alignment embeddings to source tokens aligned to target-side constraints during inference."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Data and Evaluation",
+      "text" : "Parallel Data and Knowledge Distillation We consider the English→German (En→De) translation task and train all of the MT models on WMT14 En-De (3,961K sentence pairs), a benchmark translation dataset. All sentences are pre-processed via byte-pair encoding (BPE) (Sennrich et al., 2016) into sub-word units. Following the common practice of training an NAT model, we use the sentencelevel knowledge distillation data generated by a Transformer, (Vaswani et al., 2017) provided by Kasai et al. (2020).\nDatasets with Lexical Constraints Given models trained on the above-mentioned training sets, we evaluate them on the test sets of several lexically constrained translation datasets. These test sets are categorized into two types of standard lexically constrained translation datasets: 1) Type#1: tasks from WMT14 (Vaswani et al., 2017) and WMT17 (Bojar et al., 2017), which are of the same general domain (news) as training sets; 2) Type#2: tasks\nfrom OPUS (Tiedemann, 2012) that are of specific domains (medical and law). Particularly, the real application scenarios of lexically constrained MT models are usually domain-specific, and the constrained words in these domain datasets are relatively less frequent and more important.\nFollowing previous work (Dinu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the lexical constraints in Type#1 tasks are extracted from existing terminology databases such as Interactive Terminology for Europe (IATE)3 and Wiktionary (WIKT)4 accordingly. The OPUS-EMEA (medical domain) and OPUS-JRC (legal domain) in Type#2 tasks are datasets from OPUS. The constraints are extracted by randomly sampling 1 to 3 words from the reference (Post and Vilar, 2018). These constraints are then tokenized with BPE, yielding a larger number of tokens as constraints. The statistical report is shown in Table 3, indicating the frequencies of Type#2 datasets are generally much lower than Type#1 ones.\nEvaluation Metrics We use BLEU (Papineni et al., 2002) for estimating the general quality of translation. We also use Term Usage Rate (Term%, Dinu et al., 2019; Susanto et al., 2020; Lee et al., 2021) to evaluate lexically constrained translation, which is the ratio of term constraints appearing in the translated text."
+    }, {
+      "heading" : "5.2 Models",
+      "text" : "We use Levenshtein Transformer (LevT, Gu et al., 2019) as the backbone model to ACT algorithm for constrained NAT. We compare our approach with a series of previous MT models on applying lexical constraints:\n• Transformer (Vaswani et al., 2017), set as the AT baseline; • Dynamic Beam Allocation (DBA) (Post and Vilar, 2018) for constrained decoding with dynamic beam allocation over Transformer; • Train-by-sep (Dinu et al., 2019), trained on augmented code-switched data by replacing the source terms with target constraints or append on source terms during training; • Constrained LevT (Susanto et al., 2020), which develops LevT (Gu et al., 2019) by setting constraints as initial editing sequence;\n3https://iate.europa.eu 4https://www.wiktionary.org\nModels WMT17-IATE WMT17-WIKT WMT14-WIKT LatencyTerm% BLEU Term% BLEU Term% BLEU (ms) Reported results in previous work Transformer (Vaswani et al., 2017)† 79.65 29.58 79.75 30.80 76.77 31.75 244.5 DBA (Post and Vilar, 2018) 82.00 25.30 99.50 25.80 - - 434.4 Train-by-rep (Dinu et al., 2019) 94.50 26.00 93.40 26.30 - - - LevT (Gu et al., 2019)† 80.31 28.97 81.11 30.24 80.23 29.86 92.0\nw/ soft constraint (Susanto et al., 2020) 93.81 29.73 93.44 30.82 94.43 29.93 - w/ hard constraint (Susanto et al., 2020) 100.00 30.13 100.00 31.20 100.00 30.49 -\nEDITOR (Xu and Carpuat, 2021)† 83.00 27.90 83.50 28.80 - - 121.7 w/ soft constraint 97.10 28.80 96.80 29.30 - - - w/ hard constraint 100.00 28.90 99.80 29.30 - - 134.1 Our implementation LevT† 78.32 29.80 80.20 30.75 79.53 29.95 71.9\n+ constrained training (CT)† 78.76 29.46 80.77 30.82 79.13 30.24 78.6 + aligned constrained training (ACT)† 79.43 29.57 80.20 30.63 77.17 30.35 77.0 LevT w/ soft constraint 94.25 30.11 93.78 30.92 94.88 30.38 79.5 + constrained training (CT) 96.24 30.19 96.61 30.96 97.44 31.01 75.4 + aligned constrained training (ACT) 96.90 30.56 97.62 31.06 98.82 31.08 76.3 LevT w/ hard constraint 100.00 30.31 100.00 30.65 100.00 30.49 82.7 + constrained training (CT) 100.00 30.31 100.00 30.99 100.00 31.01 78.1 + aligned constrained training (ACT) 100.00 30.68 100.00 31.18 100.00 31.11 77.0\nTable 4: Translation results with lexical constraints. Term% is the constraint term usage rate. Method† translates without lexical constraints in input.\n• EDITOR (Xu and Carpuat, 2021), a variant of LevT, replacing the delete action with a reposition action.\nImplementation Details We use and extend the FairSeq framework (Ott et al., 2019) for training our models. We keep mostly the default parameters of FairSeq, such as setting dmodel = 512, dhidden = 2,048, nheads = 8, nlayers = 6 and pdropout = 0.3. The learning rate is set as 0.0005, the warmup step is set as 4,000 steps. All models are trained with a batch size of 16,000 tokens for maximum of 300,000 steps with Adam optimizer (Kingma and Ba, 2014) on 2 NVIDIA GeForce RTX 3090 GPUs with gradient accumulation of 4 batches. Checkpoints for testing are selected from the average weights of the last 5 checkpoints. For Transformer (Vaswani et al., 2017), we use the checkpoint released by Ott et al. (2018)."
+    }, {
+      "heading" : "5.3 Main Results",
+      "text" : "Table 4 reports the performance of LevT with ACT (as well as the CT ablation) on the type 1 tasks (WIKT and IATE as terminologies), compared with baselines. In general, the results indicate the proposed CT/ACT algorithms achieve a consistent gain in performance, term coverage, and speed over the backbone model mainly in the setting of constrained translation.\nWhen translating with soft constraints, i.e., the constraints need not appear in the output, adding\nACT to LevT helps preserve the terminology constraints (+∼5 Term%) and improves translation performance (+0.31-0.88 on BLEU). If we enforce hard constraints, the term usage rate doubtlessly reaches 100%, with reasonable improvements on BLEU. When translating without constraints, however, adding ACT does not bring consistent improvements as hard and soft constraints do, which could be attributed to the discrepancy between training and inference.\nAs for the ablation for CT and ACT, we have two observations: 1) term usage rate increases mainly because of CT, and can be further improved by ACT; 2) translation quality (BLEU) increases due to the additional hard alignment of ACT over CT. The former could be attributed to the behavior of not deleting the constraints in CT. The latter is because of the introduction of source-side information of constraints that familiarize the model with the constraint context.\nTable 3 also shows the efficiency advantage of non-autoregressive methods compared with autoregressive ones, which is widely reported in the NAT research literature. The proposed methods do not cause drops in translation speed against the backbone LevT. When translating with lexical constraints, LevT with CT or ACT is even faster than LevT. In contrast, constrained decoding methods for autoregressive models (i.e., DBA) nearly double the translation latency. Since the main purpose of non-autoregressive research is developing effi-\ncient algorithms, such findings could facilitate the industrial usage for constrained translation.\nTranslation Results on Domain Datasets For a generalized evaluation of our methods, we apply the models trained on the general domain dataset (WMT14 En-De) to medical (OPUS-EMEA) and legal domains (OPUS-JRC). As seen in Table 5, even greater performance boosts are witnessed. When trained with ACT, both term usage (+∼8- 10 Term%) and translation performance (up to 4 BLEU points) largely increase, which is more significant than the general domain.\nThe reason behind this observation is that the backbone LevT would have a hard time recognizing them as constraints since the lexical constraints in these datasets are much rarer. Therefore, forcing LevT to translate with these rare constraints would generate worse text, e.g., BLEU drops for 2.45 points on OPUS-JRC than with soft constraints. And when translating with soft constraints, LevT over-deletes these rare constraints. In contrast, the context information around constraints is effectively pin-pointed by ACT, so ACT would know the context (“neighbors”) of the rare constraint (“strangers”) and insert the translated context around the lexical constraints. In this way, more terms are preserved by ACT, and the translation achieves better results."
+    }, {
+      "heading" : "6 Analysis",
+      "text" : "6.1 Self-Constrained Translation Revisited\nAs a direct response to our motivation in this paper, we revisit the ablation study of self-constrained NAT in §3.3 with the proposed ACT algorithm. Same as before, we build self-constraints from each target sentence and sort them by frequency. As shown in Figure 2(a), different from constrained\nLevT that suffers from Drop#2 (§3.3), ACT managed to handle this scenario pretty well. Following the motivations given in §3.3, when constraints become rarer, ACT successfully breaks the trade-off with better understanding of the provided contextual information.\nWhat if the self-constraints are sorted based on TF-IDF? We also study the importance of different words in a sentence via TF-IDF by forcing them as constraints. As results in Figure 2(b) show, we have very similar observations from frequencybased self-constraints at Figure 2(a), and the gap between LevT and LevT + ACT is even higher as TF-IDF score reaches the highest."
+    }, {
+      "heading" : "6.2 How does ACT perform under different kinds of lexical constraints?",
+      "text" : "The experiments in §6.1 create pseudo lexical constraints by traversing the target-side reference for understanding the proposed ACT. In the following analyses, we study different properties of lexical constraints, e.g., frequency and numbers, and how they affect constrained translation.\nAre improvements by ACT robust against constraints of different frequencies? Given terminology constraints in the samples, we sort them by (averaged) frequency and evenly divide the corresponding data samples into high, medium and low categories.The results on translation quality of each category for the En→De translation tasks are presented in Table 6. We find that LevT benefits mostly from ACT in the scenarios of lowerfrequency terms for three datasets. Although, in some settings such as HIGH in WMT14-WIKT and MED in WMT17-WIKT, the introduction of ACT for constrained LevT seems to bring performance drops for those higher-frequency terms. Since terms from IATE are rarer than WIKT as in Table 3, the improvements brought by ACT are steady.\nAre improvements by ACT robust against constraints of different numbers? In more practical settings, the number of constraints is usually more than one. To simulate this, we randomly sample 1- 5 words from each reference as lexical constraints, and results are presented in Figure 3. We find that, as the number of constraints grows, the translation quality ostensibly becomes better for LevT with or without ACT. And ACT consistently brings extra improvements, indicating the help by ACT for constrained decoding in constrained NAT."
+    }, {
+      "heading" : "6.3 Limitations",
+      "text" : "Although the proposed ACT algorithm is effective to improve NAT models on constrained translation, we also find it does not bring much performance gain on translation quality (i.e., BLEU) over the backbone LevT for unconstrained translation. The results on the full set of WMT14 En→De test set further corroborate this finding, which is shown in Appendix A.\nAnother limitation of our work is that we do not propose a new paradigm for constrained NAT. The purpose of this work is to enhance existing methods for constrained NAT, i.e., editing-based iterative NAT methods, under rare lexical constraints. It would be interesting for future research to explore new ways to impose lexical constraints on NAT models, perhaps on non-iterative NAT.\nNote that, machine translation in real scenario still falls behind human performance. Moreover, since we primary focus on improving constrained NAT, real applications calls for refinement in various aspects that we do not consider in this work."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "In this work, we propose a plug-in algorithm (ACT) to improve lexically constrained nonautoregressive translation, especially under lowfrequency constraints. ACT bridges the gap between training and constrained inference and prompts the context information of the constraints to the constrained NAT model. Experiments show that ACT improves translation quality and term preservation over the backbone NAT model Levenshtein Transformer. Further analyses show that the findings are consistent over constraints varied from frequency, TF-IDF, and lengths. In the future, we will explore the application of this approach to more languages. We also encourage future research to explore a new paradigm of constrained NAT methods beyond editing-based iterative NAT."
+    }, {
+      "heading" : "B Case Study",
+      "text" : "The case study of LevT and LevT with ACT is presented in Table 8. In the case of unconstrained or soft constrained translation, LevT incorrectly translates low frequency constraint words (e.g., Hühnerfeiern in case 1). In the case of hard constrained translation, LevT tends to have more interfering words around the constraint words (e.g., sind in case 1). After incorporating ACT, we witness consistent improvements in the translation of the constraints for LevT, especially for soft constrained translation where it successfully translates given constraints. However, when the translation is not constrained on lexical terms (i.e., unconstrained translation), LevT with ACT still struggles at translating the term correctly (both case 1 and 2)."
+    } ],
+    "references" : [ {
+      "title" : "Encouraging neural machine translation to satisfy terminology constraints",
+      "author" : [ "Melissa Ailem", "Jingshu Liu", "Raheel Qader." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021, pages 1450–1455, Online. Association for Computa-",
+      "citeRegEx" : "Ailem et al\\.,? 2021",
+      "shortCiteRegEx" : "Ailem et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "On the alignment problem in multi-head attention-based neural machine translation",
+      "author" : [ "Tamer Alkhouli", "Gabriel Bretschner", "Hermann Ney." ],
+      "venue" : "Proceedings of the Third Conference on Machine Translation: Research Papers, pages 177–185, Brussels,",
+      "citeRegEx" : "Alkhouli et al\\.,? 2018",
+      "shortCiteRegEx" : "Alkhouli et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyung Hyun Cho", "Yoshua Bengio." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015 ; Conference date: 07-05-2015 Through 09-05-2015.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Findings of the 2020 conference on machine translation (WMT20)",
+      "author" : [ "Monz", "Makoto Morishita", "Masaaki Nagata", "Toshiaki Nakazawa", "Santanu Pal", "Matt Post", "Marcos Zampieri." ],
+      "venue" : "Proceedings of the Fifth Conference on Machine Translation, pages",
+      "citeRegEx" : "Monz et al\\.,? 2020",
+      "shortCiteRegEx" : "Monz et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The mathematics of statistical machine translation: Parameter estimation",
+      "author" : [ "Peter F. Brown", "Stephen A. Della Pietra", "Vincent J. Della Pietra", "Robert L. Mercer." ],
+      "venue" : "Computational Linguistics, 19(2):263– 311.",
+      "citeRegEx" : "Brown et al\\.,? 1993",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Lexically constrained neural machine translation with explicit alignment guidance",
+      "author" : [ "Guanhua Chen", "Yun Chen", "Victor O.K. Li." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 35(14):12630–12638.",
+      "citeRegEx" : "Chen et al\\.,? 2021",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Lexical-constraint-aware neural machine translation via data augmentation",
+      "author" : [ "Guanhua Chen", "Yun Chen", "Yong Wang", "Victor O.K. Li." ],
+      "venue" : "Proceedings of the Twenty-Ninth International Joint Conference on Artificial Intelligence, IJCAI-20, pages 3587–3593.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Systran’s pure neural machine translation",
+      "author" : [ "Kobus", "Jean Lorieux", "Leidiana Martins", "Dang-Chuan Nguyen", "Alexandra Priori", "Thomas Riccardi", "Natalia Segal", "Christophe Servan", "Cyril Tiquet", "Bo Wang", "Jin Yang", "Dakun Zhang", "Jing Zhou", "Peter Zoldan" ],
+      "venue" : null,
+      "citeRegEx" : "Kobus et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Kobus et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Understanding and improving lexical choice in nonautoregressive translation",
+      "author" : [ "Liang Ding", "Longyue Wang", "Xuebo Liu", "Derek F. Wong", "Dacheng Tao", "Zhaopeng Tu." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Ding et al\\.,? 2021",
+      "shortCiteRegEx" : "Ding et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Training neural machine translation to apply terminology constraints",
+      "author" : [ "Georgiana Dinu", "Prashant Mathur", "Marcello Federico", "Yaser Al-Onaizan." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 3063–",
+      "citeRegEx" : "Dinu et al\\.,? 2019",
+      "shortCiteRegEx" : "Dinu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Orderagnostic cross entropy for non-autoregressive machine translation",
+      "author" : [ "Cunxiao Du", "Zhaopeng Tu", "Jing Jiang." ],
+      "venue" : "Proc. of ICML.",
+      "citeRegEx" : "Du et al\\.,? 2021",
+      "shortCiteRegEx" : "Du et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Mask-predict: Parallel decoding of conditional masked language models",
+      "author" : [ "Marjan Ghazvininejad", "Omer Levy", "Yinhan Liu", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the",
+      "citeRegEx" : "Ghazvininejad et al\\.,? 2019",
+      "shortCiteRegEx" : "Ghazvininejad et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Non-autoregressive neural machine translation",
+      "author" : [ "Jiatao Gu", "James Bradbury", "Caiming Xiong", "Victor O.K. Li", "Richard Socher." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Gu et al\\.,? 2018",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Levenshtein transformer",
+      "author" : [ "Jiatao Gu", "Changhan Wang", "Junbo Zhao." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 32. Curran Associates, Inc.",
+      "citeRegEx" : "Gu et al\\.,? 2019",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Incorporating bert into parallel sequence decoding with adapters",
+      "author" : [ "Junliang Guo", "Zhirui Zhang", "Linli Xu", "Hao-Ran Wei", "Boxing Chen", "Enhong Chen." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 33, pages 10843–10854.",
+      "citeRegEx" : "Guo et al\\.,? 2020",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lexically constrained decoding for sequence generation using grid beam search",
+      "author" : [ "Chris Hokamp", "Qun Liu." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1535–1546,",
+      "citeRegEx" : "Hokamp and Liu.,? 2017",
+      "shortCiteRegEx" : "Hokamp and Liu.",
+      "year" : 2017
+    }, {
+      "title" : "Fast decoding in sequence models using discrete latent variables",
+      "author" : [ "Lukasz Kaiser", "Samy Bengio", "Aurko Roy", "Ashish Vaswani", "Niki Parmar", "Jakob Uszkoreit", "Noam Shazeer." ],
+      "venue" : "Proceedings of the 35th International Conference on Machine Learn-",
+      "citeRegEx" : "Kaiser et al\\.,? 2018",
+      "shortCiteRegEx" : "Kaiser et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Non-autoregressive machine translation with disentangled context transformer",
+      "author" : [ "Jungo Kasai", "James Cross", "Marjan Ghazvininejad", "Jiatao Gu." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings of Ma-",
+      "citeRegEx" : "Kasai et al\\.,? 2020",
+      "shortCiteRegEx" : "Kasai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sequencelevel knowledge distillation",
+      "author" : [ "Yoon Kim", "Alexander M. Rush." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 1317–1327, Austin, Texas. Association for Computational Linguistics.",
+      "citeRegEx" : "Kim and Rush.,? 2016",
+      "shortCiteRegEx" : "Kim and Rush.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "Cite arxiv:1412.6980Comment: Published as a conference paper at the 3rd International Conference for Learning Representations, San Diego, 2015.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Improving lexically constrained neural machine translation with source-conditioned masked span prediction",
+      "author" : [ "Gyubok Lee", "Seongjun Yang", "Edward Choi." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and",
+      "citeRegEx" : "Lee et al\\.,? 2021",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Binary codes capable of correcting deletions, insertions, and reversals",
+      "author" : [ "Vladimir I. Levenshtein." ],
+      "venue" : "Soviet physics. Doklady, 10:707–710.",
+      "citeRegEx" : "Levenshtein.,? 1965",
+      "shortCiteRegEx" : "Levenshtein.",
+      "year" : 1965
+    }, {
+      "title" : "Addressing the rare word problem in neural machine translation",
+      "author" : [ "Thang Luong", "Ilya Sutskever", "Quoc Le", "Oriol Vinyals", "Wojciech Zaremba." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th",
+      "citeRegEx" : "Luong et al\\.,? 2015",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A systematic comparison of various statistical alignment models",
+      "author" : [ "Franz Josef Och", "Hermann Ney." ],
+      "venue" : "Computational Linguistics, 29(1):19–51.",
+      "citeRegEx" : "Och and Ney.,? 2003",
+      "shortCiteRegEx" : "Och and Ney.",
+      "year" : 2003
+    }, {
+      "title" : "fairseq: A fast, extensible toolkit for sequence modeling",
+      "author" : [ "Myle Ott", "Sergey Edunov", "Alexei Baevski", "Angela Fan", "Sam Gross", "Nathan Ng", "David Grangier", "Michael Auli." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Associa-",
+      "citeRegEx" : "Ott et al\\.,? 2019",
+      "shortCiteRegEx" : "Ott et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Scaling neural machine translation",
+      "author" : [ "Myle Ott", "Sergey Edunov", "David Grangier", "Michael Auli." ],
+      "venue" : "Proceedings of the Third Conference on Machine Translation: Research Papers, pages 1–9, Brussels, Belgium. Association for Computational Linguistics.",
+      "citeRegEx" : "Ott et al\\.,? 2018",
+      "shortCiteRegEx" : "Ott et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Fast lexically constrained decoding with dynamic beam allocation for neural machine translation",
+      "author" : [ "Matt Post", "David Vilar." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Hu-",
+      "citeRegEx" : "Post and Vilar.,? 2018",
+      "shortCiteRegEx" : "Post and Vilar.",
+      "year" : 2018
+    }, {
+      "title" : "Glancing transformer for non-autoregressive neural machine translation",
+      "author" : [ "Lihua Qian", "Hao Zhou", "Yu Bao", "Mingxuan Wang", "Lin Qiu", "Weinan Zhang", "Yong Yu", "Lei Li." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Qian et al\\.,? 2021",
+      "shortCiteRegEx" : "Qian et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1715–1725,",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Latent-variable nonautoregressive neural machine translation with deterministic inference using a delta posterior",
+      "author" : [ "Raphael Shu", "Jason Lee", "Hideki Nakayama", "Kyunghyun Cho." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence,",
+      "citeRegEx" : "Shu et al\\.,? 2020",
+      "shortCiteRegEx" : "Shu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Alignment-enhanced transformer for constraining nmt with pre-specified translations",
+      "author" : [ "Kai Song", "Kun Wang", "Heng Yu", "Yue Zhang", "Zhongqiang Huang", "Weihua Luo", "Xiangyu Duan", "Min Zhang." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelli-",
+      "citeRegEx" : "Song et al\\.,? 2020",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Code-switching for enhancing NMT with pre-specified translation",
+      "author" : [ "Kai Song", "Yue Zhang", "Heng Yu", "Weihua Luo", "Kun Wang", "Min Zhang." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computa-",
+      "citeRegEx" : "Song et al\\.,? 2019",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Insertion transformer: Flexible sequence generation via insertion operations",
+      "author" : [ "Mitchell Stern", "William Chan", "Jamie Kiros", "Jakob Uszkoreit." ],
+      "venue" : "Proceedings of the 36th International Conference on Machine Learning, volume 97 of Proceedings of Ma-",
+      "citeRegEx" : "Stern et al\\.,? 2019",
+      "shortCiteRegEx" : "Stern et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Lexically constrained neural machine translation with Levenshtein transformer",
+      "author" : [ "Raymond Hendy Susanto", "Shamil Chollampatt", "Liling Tan." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 3536–3543, On-",
+      "citeRegEx" : "Susanto et al\\.,? 2020",
+      "shortCiteRegEx" : "Susanto et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Parallel data, tools and interfaces in OPUS",
+      "author" : [ "Jörg Tiedemann." ],
+      "venue" : "Proceedings of the Eighth International Conference on Language Resources and Evaluation (LREC’12), pages 2214–2218, Istanbul, Turkey. European Language Resources Association",
+      "citeRegEx" : "Tiedemann.,? 2012",
+      "shortCiteRegEx" : "Tiedemann.",
+      "year" : 2012
+    }, {
+      "title" : "Encouraging consistent translation choices",
+      "author" : [ "Ferhan Ture", "Douglas W. Oard", "Philip Resnik." ],
+      "venue" : "Proceedings of the 2012 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages",
+      "citeRegEx" : "Ture et al\\.,? 2012",
+      "shortCiteRegEx" : "Ture et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Ł ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Non-autoregressive machine translation with auxiliary regularization",
+      "author" : [ "Yiren Wang", "Fei Tian", "Di He", "Tao Qin", "ChengXiang Zhai", "Tie-Yan Liu." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 33(01):5377–5384.",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "EDITOR: An Edit-Based Transformer with Repositioning for Neural Machine Translation with Soft Lexical Constraints",
+      "author" : [ "Weijia Xu", "Marine Carpuat." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 9:311–328.",
+      "citeRegEx" : "Xu and Carpuat.,? 2021",
+      "shortCiteRegEx" : "Xu and Carpuat.",
+      "year" : 2021
+    }, {
+      "title" : "How does distilled data complexity impact the quality and confidence of nonautoregressive machine translation? In Findings of the Association for Computational Linguistics: ACL",
+      "author" : [ "Weijia Xu", "Shuming Ma", "Dongdong Zhang", "Marine Carpuat" ],
+      "venue" : null,
+      "citeRegEx" : "Xu et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Understanding knowledge distillation in nonautoregressive machine translation",
+      "author" : [ "Chunting Zhou", "Jiatao Gu", "Graham Neubig." ],
+      "venue" : "International Conference on Learning Representations. 11",
+      "citeRegEx" : "Zhou et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 2,
+      "context" : "Despite the success of neural machine translation (NMT) (Bahdanau et al., 2015; Vaswani et al., 2017; Barrault et al., 2020), real applications usually require the precise (if not exact) translation of specific terms.",
+      "startOffset" : 56,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 37,
+      "context" : "Despite the success of neural machine translation (NMT) (Bahdanau et al., 2015; Vaswani et al., 2017; Barrault et al., 2020), real applications usually require the precise (if not exact) translation of specific terms.",
+      "startOffset" : 56,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 36,
+      "context" : "Previous methods on lexically constrained translation are mainly built upon Autoregressive Translation (AT) models, imposing constraints at inference-time (Ture et al., 2012; Hokamp and Liu, 2017; Post and Vilar, 2018) or training-time (Luong et al.",
+      "startOffset" : 155,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 15,
+      "context" : "Previous methods on lexically constrained translation are mainly built upon Autoregressive Translation (AT) models, imposing constraints at inference-time (Ture et al., 2012; Hokamp and Liu, 2017; Post and Vilar, 2018) or training-time (Luong et al.",
+      "startOffset" : 155,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 27,
+      "context" : "Previous methods on lexically constrained translation are mainly built upon Autoregressive Translation (AT) models, imposing constraints at inference-time (Ture et al., 2012; Hokamp and Liu, 2017; Post and Vilar, 2018) or training-time (Luong et al.",
+      "startOffset" : 155,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2012; Hokamp and Liu, 2017; Post and Vilar, 2018) or training-time (Luong et al., 2015; Ailem et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2012; Hokamp and Liu, 2017; Post and Vilar, 2018) or training-time (Luong et al., 2015; Ailem et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 13,
+      "context" : "Table 1: Translation examples of a lexically constrained non-autoregressive translation (NAT) model (Gu et al., 2019) under a low-frequency word as constraint.",
+      "startOffset" : 100,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 37,
+      "context" : "The underbraced word frequencies (uncased) are calculated from the vast WMT14 English-German translation (EnDe) datasets (Vaswani et al., 2017).",
+      "startOffset" : 121,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 12,
+      "context" : "Translation (NAT) has been put forth (Gu et al., 2018; Ghazvininejad et al., 2019; Gu et al., 2019; Qian et al., 2021), which aims to generate tokens in parallel, boosting inference efficiency compared with left-to-right autoregressive decoding.",
+      "startOffset" : 37,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 11,
+      "context" : "Translation (NAT) has been put forth (Gu et al., 2018; Ghazvininejad et al., 2019; Gu et al., 2019; Qian et al., 2021), which aims to generate tokens in parallel, boosting inference efficiency compared with left-to-right autoregressive decoding.",
+      "startOffset" : 37,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 13,
+      "context" : "Translation (NAT) has been put forth (Gu et al., 2018; Ghazvininejad et al., 2019; Gu et al., 2019; Qian et al., 2021), which aims to generate tokens in parallel, boosting inference efficiency compared with left-to-right autoregressive decoding.",
+      "startOffset" : 37,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 28,
+      "context" : "Translation (NAT) has been put forth (Gu et al., 2018; Ghazvininejad et al., 2019; Gu et al., 2019; Qian et al., 2021), which aims to generate tokens in parallel, boosting inference efficiency compared with left-to-right autoregressive decoding.",
+      "startOffset" : 37,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 34,
+      "context" : "Recent studies (Susanto et al., 2020; Xu and Carpuat, 2021) impose lexical constraints at inference time upon editing-based iterative NAT models, where constraint tokens are set as the initial sequence for further editing.",
+      "startOffset" : 15,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 39,
+      "context" : "Recent studies (Susanto et al., 2020; Xu and Carpuat, 2021) impose lexical constraints at inference time upon editing-based iterative NAT models, where constraint tokens are set as the initial sequence for further editing.",
+      "startOffset" : 15,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 13,
+      "context" : "ACT extends the family of editing-based iterative NAT (Gu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the current paradigm of constrained NAT.",
+      "startOffset" : 54,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 34,
+      "context" : "ACT extends the family of editing-based iterative NAT (Gu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the current paradigm of constrained NAT.",
+      "startOffset" : 54,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 39,
+      "context" : "ACT extends the family of editing-based iterative NAT (Gu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the current paradigm of constrained NAT.",
+      "startOffset" : 54,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 9,
+      "context" : "At training time, constrained MT models include code-switching data augmentation (Dinu et al., 2019; Song et al., 2019; Chen et al., 2020) and training with auxiliary tasks such as token or span-level mask-prediction (Ailem et al.",
+      "startOffset" : 81,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 32,
+      "context" : "At training time, constrained MT models include code-switching data augmentation (Dinu et al., 2019; Song et al., 2019; Chen et al., 2020) and training with auxiliary tasks such as token or span-level mask-prediction (Ailem et al.",
+      "startOffset" : 81,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 6,
+      "context" : "At training time, constrained MT models include code-switching data augmentation (Dinu et al., 2019; Song et al., 2019; Chen et al., 2020) and training with auxiliary tasks such as token or span-level mask-prediction (Ailem et al.",
+      "startOffset" : 81,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2020) and training with auxiliary tasks such as token or span-level mask-prediction (Ailem et al., 2021; Lee et al., 2021).",
+      "startOffset" : 86,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2020) and training with auxiliary tasks such as token or span-level mask-prediction (Ailem et al., 2021; Lee et al., 2021).",
+      "startOffset" : 86,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 22,
+      "context" : "At inference time, autoregressive constrained decoding algorithms include utilizing placeholder tag (Luong et al., 2015; Crego et al., 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al.",
+      "startOffset" : 100,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al.",
+      "startOffset" : 26,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al.",
+      "startOffset" : 26,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al., 2018; Song et al., 2020; Chen et al., 2021).",
+      "startOffset" : 103,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al., 2018; Song et al., 2020; Chen et al., 2021).",
+      "startOffset" : 103,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2016), grid beam search (Hokamp and Liu, 2017; Post and Vilar, 2018) and alignment-enhanced decoding (Alkhouli et al., 2018; Song et al., 2020; Chen et al., 2021).",
+      "startOffset" : 103,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 13,
+      "context" : "(2020) proposes to modify the inference procedure of Levenshtein Transformer (Gu et al., 2019) where they disallow the deletion of constraint words during iterative editing.",
+      "startOffset" : 77,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 18,
+      "context" : "(2018) applies sequence-level knowledge distillation (KD) (Kim and Rush, 2016) that uses an AT’s output as an NAT’s new target, which reduces word diversity",
+      "startOffset" : 58,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 41,
+      "context" : "and reordering complexity in reference, resulting in fewer modes (Zhou et al., 2020; Xu et al., 2021).",
+      "startOffset" : 65,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 40,
+      "context" : "and reordering complexity in reference, resulting in fewer modes (Zhou et al., 2020; Xu et al., 2021).",
+      "startOffset" : 65,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 16,
+      "context" : "Various algorithms have also been proposed to alleviate this problem, including incorporating latent variables (Kaiser et al., 2018; Shu et al., 2020),",
+      "startOffset" : 111,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 30,
+      "context" : "Various algorithms have also been proposed to alleviate this problem, including incorporating latent variables (Kaiser et al., 2018; Shu et al., 2020),",
+      "startOffset" : 111,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 11,
+      "context" : "iterative refinement (Ghazvininejad et al., 2019; Stern et al., 2019; Gu et al., 2019; Guo et al., 2020), advanced training objective (Wang et al.",
+      "startOffset" : 21,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 33,
+      "context" : "iterative refinement (Ghazvininejad et al., 2019; Stern et al., 2019; Gu et al., 2019; Guo et al., 2020), advanced training objective (Wang et al.",
+      "startOffset" : 21,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 13,
+      "context" : "iterative refinement (Ghazvininejad et al., 2019; Stern et al., 2019; Gu et al., 2019; Guo et al., 2020), advanced training objective (Wang et al.",
+      "startOffset" : 21,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 14,
+      "context" : "iterative refinement (Ghazvininejad et al., 2019; Stern et al., 2019; Gu et al., 2019; Guo et al., 2020), advanced training objective (Wang et al.",
+      "startOffset" : 21,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2020), advanced training objective (Wang et al., 2019; Du et al., 2021) and gradually learning targetside word inter-dependency by curriculum learning",
+      "startOffset" : 37,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2020), advanced training objective (Wang et al., 2019; Du et al., 2021) and gradually learning targetside word inter-dependency by curriculum learning",
+      "startOffset" : 37,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 34,
+      "context" : "Our work extends the family of editing-based iterative NAT models for its flexibility to impose lexical constraints (Susanto et al., 2020; Xu and Carpuat, 2021).",
+      "startOffset" : 116,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 39,
+      "context" : "Our work extends the family of editing-based iterative NAT models for its flexibility to impose lexical constraints (Susanto et al., 2020; Xu and Carpuat, 2021).",
+      "startOffset" : 116,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 12,
+      "context" : "An NAT model (Gu et al., 2018), however, discards the word inter-dependency in output tokens, with the conditional independent probability distribution modeled as:",
+      "startOffset" : 13,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 37,
+      "context" : "(Vaswani et al., 2017), but more flexible and fast than autoregressive ones.",
+      "startOffset" : 0,
+      "endOffset" : 22
+    }, {
+      "referenceID" : 9,
+      "context" : "Figure 1: Ablation study of self-constrained translation on WMT14 En→De test set with Wiktionary terminology constraints (Dinu et al., 2019).",
+      "startOffset" : 121,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 21,
+      "context" : "the editing process is derived from the Levenshtein distance (Levenshtein, 1965).",
+      "startOffset" : 61,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 34,
+      "context" : "To further explore the impact of constraint frequency upon NATs, we conduct a preliminary analysis on constrained LevT (Susanto et al., 2020).",
+      "startOffset" : 119,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 34,
+      "context" : "2, constraints are typically imposed during inference time in NAT (Susanto et al., 2020; Xu and Carpuat, 2021).",
+      "startOffset" : 66,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 39,
+      "context" : "2, constraints are typically imposed during inference time in NAT (Susanto et al., 2020; Xu and Carpuat, 2021).",
+      "startOffset" : 66,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 8,
+      "context" : "To make the matter worse, previous research (Ding et al., 2021) has also shown that lexical choice errors on low-frequency words tend",
+      "startOffset" : 44,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 29,
+      "context" : "All sentences are pre-processed via byte-pair encoding (BPE) (Sennrich et al., 2016) into sub-word units.",
+      "startOffset" : 61,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 37,
+      "context" : "Following the common practice of training an NAT model, we use the sentencelevel knowledge distillation data generated by a Transformer, (Vaswani et al., 2017) provided by Kasai et al.",
+      "startOffset" : 137,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 37,
+      "context" : "These test sets are categorized into two types of standard lexically constrained translation datasets: 1) Type#1: tasks from WMT14 (Vaswani et al., 2017) and WMT17 (Bojar et al.",
+      "startOffset" : 131,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 35,
+      "context" : ", 2017), which are of the same general domain (news) as training sets; 2) Type#2: tasks from OPUS (Tiedemann, 2012) that are of specific domains (medical and law).",
+      "startOffset" : 98,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 9,
+      "context" : "Following previous work (Dinu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the lexical constraints in Type#1 tasks are extracted from existing terminology databases such as Interactive Terminology for Europe (IATE)3 and Wiktionary (WIKT)4 accordingly.",
+      "startOffset" : 24,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 34,
+      "context" : "Following previous work (Dinu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the lexical constraints in Type#1 tasks are extracted from existing terminology databases such as Interactive Terminology for Europe (IATE)3 and Wiktionary (WIKT)4 accordingly.",
+      "startOffset" : 24,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 39,
+      "context" : "Following previous work (Dinu et al., 2019; Susanto et al., 2020; Xu and Carpuat, 2021), the lexical constraints in Type#1 tasks are extracted from existing terminology databases such as Interactive Terminology for Europe (IATE)3 and Wiktionary (WIKT)4 accordingly.",
+      "startOffset" : 24,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 27,
+      "context" : "The constraints are extracted by randomly sampling 1 to 3 words from the reference (Post and Vilar, 2018).",
+      "startOffset" : 83,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 26,
+      "context" : "Evaluation Metrics We use BLEU (Papineni et al., 2002) for estimating the general quality of",
+      "startOffset" : 31,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 34,
+      "context" : "We also use Term Usage Rate (Term%, Dinu et al., 2019; Susanto et al., 2020; Lee et al., 2021) to evaluate lexically constrained translation, which is the ratio of term constraints appearing in the translated text.",
+      "startOffset" : 28,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 20,
+      "context" : "We also use Term Usage Rate (Term%, Dinu et al., 2019; Susanto et al., 2020; Lee et al., 2021) to evaluate lexically constrained translation, which is the ratio of term constraints appearing in the translated text.",
+      "startOffset" : 28,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 37,
+      "context" : "• Transformer (Vaswani et al., 2017), set as the AT baseline; • Dynamic Beam Allocation (DBA) (Post and Vilar, 2018) for constrained decoding with dynamic beam allocation over Transformer; • Train-by-sep (Dinu et al.",
+      "startOffset" : 14,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2017), set as the AT baseline; • Dynamic Beam Allocation (DBA) (Post and Vilar, 2018) for constrained decoding with dynamic beam allocation over Transformer; • Train-by-sep (Dinu et al.",
+      "startOffset" : 65,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2017), set as the AT baseline; • Dynamic Beam Allocation (DBA) (Post and Vilar, 2018) for constrained decoding with dynamic beam allocation over Transformer; • Train-by-sep (Dinu et al., 2019), trained on augmented code-switched data by replacing the source terms with target constraints or append on source terms during training; • Constrained LevT (Susanto et al.",
+      "startOffset" : 175,
+      "endOffset" : 194
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2019), trained on augmented code-switched data by replacing the source terms with target constraints or append on source terms during training; • Constrained LevT (Susanto et al., 2020), which develops LevT (Gu et al.",
+      "startOffset" : 165,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2020), which develops LevT (Gu et al., 2019) by setting constraints as initial editing sequence;",
+      "startOffset" : 29,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 37,
+      "context" : "Models WMT17-IATE WMT17-WIKT WMT14-WIKT Latency Term% BLEU Term% BLEU Term% BLEU (ms) Reported results in previous work Transformer (Vaswani et al., 2017)† 79.",
+      "startOffset" : 132,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 39,
+      "context" : "• EDITOR (Xu and Carpuat, 2021), a variant of LevT, replacing the delete action with a reposition action.",
+      "startOffset" : 9,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 24,
+      "context" : "Implementation Details We use and extend the FairSeq framework (Ott et al., 2019) for training our models.",
+      "startOffset" : 63,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 19,
+      "context" : "(Kingma and Ba, 2014) on 2 NVIDIA GeForce RTX 3090 GPUs with gradient accumulation of 4 batches.",
+      "startOffset" : 0,
+      "endOffset" : 21
+    }, {
+      "referenceID" : 37,
+      "context" : "For Transformer (Vaswani et al., 2017), we use the checkpoint released by Ott et al.",
+      "startOffset" : 16,
+      "endOffset" : 38
+    } ],
+    "year" : 0,
+    "abstractText" : "Lexically constrained neural machine translation (NMT) draws much industrial attention for its practical usage in specific domains. However, current autoregressive approaches suffer from high latency. In this paper, we focus on non-autoregressive translation (NAT) for this problem for its efficiency advantage. We identify that current constrained NAT models, which are based on iterative editing, do not handle low-frequency constraints well. To this end, we propose a plug-in algorithm for this line of work, i.e., Aligned Constrained Training (ACT), which alleviates this problem by familiarizing the model with the source-side context of the constraints. Experiments on the general and domain datasets show that our model improves over the backbone constrained NAT model in constraint preservation and translation quality, especially for rare constraints.1",
+    "creator" : null
+  }
+}

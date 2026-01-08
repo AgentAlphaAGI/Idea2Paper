@@ -1,0 +1,545 @@
+{
+  "name" : "ACL_2017_606_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Deep neural networks have achieved impressive performance in supervised classification and structured prediction tasks such as speech recognition (Hinton et al., 2012), machine translation (Bahdanau et al., 2014; Wu et al., 2016) and more. However, training neural networks for semantic parsing (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Liang et al., 2011) or program induction, where language is mapped to a symbolic representation that is executed by a com-\nputer, through weak supervision remains challenging. This is because the model must interact with a computer through non-differentiable operations at training time.\nIn semantic parsing, recent work handled this (Dong and Lapata, 2016; Jia and Liang, 2016) by training from manually annotated programs and avoiding program execution at training time. However, annotating programs is known to be expensive and scales poorly. In program induction, attempts to address this problem (Graves et al., 2014; Reed and de Freitas, 2016; Kaiser and Sutskever, 2015; Graves et al., 2016b; Andreas et al., 2016) either utilized low-level memory (Zaremba and Sutskever, 2015), or required memory to be differentiable (Neelakantan et al., 2015) so that the model can be trained with backpropagation. This makes it difficult to use the efficient discrete operations and memory of a traditional computer, and limited the application to synthetic or small knowledge bases.\nIn this paper, we propose to utilize the mem-\nory and discrete operations of a traditional computer in a novel Manager-Programmer-Computer (MPC) framework for neural program induction, which integrates three components:\n1. A “manager” that provides weak supervision (e.g., ‘NYC’ in Figure 1) through a reward indicating how well a task is accomplished. Unlike full supervision, weak supervision is easy to obtain at scale (Section 3.1). 2. A “programmer” that takes natural language as input and generates a program that is a sequence of tokens (Figure 2). The programmer learns from the reward and must overcome the hard search problem of finding correct programs (Section 2.2). 3. A “computer” that executes programs in a high level programming language. Its nondifferentiable memory enables abstract, scalable and precise operations, but makes training more challenging. It provides a friendly neural computer interface by detecting and eliminating invalid choices (Section 2.1).\nWithin this framework, we introduce the Neural Symbolic Machine (NSM) and apply it to semantic parsing. NSM contains a sequence-to-sequence (seq2seq) “programmer” (Sutskever et al., 2014) and a symbolic non-differentiable Lisp interpreter (“computer”) that executes programs against a large knowledge-base (KB).\nOur technical contribution in this work is threefold. First, to support language compositionality, we augment the standard seq2seq model with a key-variable memory to save and reuse intermediate execution results (Figure 1). This is a novel application of pointer networks (Vinyals et al., 2015) to compositional semantics.\nSecond, to alleviate the search problem of finding correct programs when training from questionanswer pairs (Figure 1), we use the computer to execute partial programs and prune the programmer’s search space by checking the syntax and semantics of generated programs. This generalized past work on training from weak supervision (Liang et al., 2011; Berant et al., 2013) by using the semantic denotations for structural search.\nThird, to train from weak supervision and directly maximize the expected reward we turn to the REINFORCE (Williams, 1992) algorithm. Since learning from scratch is difficult for REINFORCE, we combine it with an iterative maximum likelihood (ML) process, where beam search is\nused to find pseudo-gold programs, which are then used to augment the objective of REINFORCE.\nOn the WEBQUESTIONSSP dataset (Yih et al., 2016), NSM achieves new state-of-the-art results with weak supervision, significantly closing the gap between weak and full supervision for this task. Unlike prior work, it is trained end-toend, and does not require feature engineering or domain-specific knowledge."
+    }, {
+      "heading" : "2 Neural Symbolic Machines",
+      "text" : "We now introduce NSM by first describe the “computer”, a non-differentiable Lisp interpreter that executes programs against a large KB and provides code assistance (Section 2.1). We then propose a seq2seq model (“programmer”) that supports compositionality using a key-variable memory to save and reuse intermediate results (Section 2.2). Finally, we describe a training procedure that is based on REINFORCE, but is augmented with pseudo-gold programs found by an iterative ML training procedure (Section 2.3).\nBefore diving into details, we define the semantic parsing task: given a knowledge base K, and a question x = (w1, w2, ..., wm), produce a program or logical form z that when executed against K generates the right answer y. Let E denote a set of entities (e.g., ABELINCOLN),1 and let P denote a set of properties (e.g., PLACEOFBIRTH). A knowledge base K is a set of assertions or triples (e1, p, e2) ∈ E × P × E , such as (ABELINCOLN, PLACEOFBIRTH, HODGENVILLE)."
+    }, {
+      "heading" : "2.1 Computer: Lisp Interpreter with Code Assistance",
+      "text" : "Semantic parsing typically requires using a set of operations to query the knowledge base and process the results. Operations learned with neural networks such as addition and sorting do not perfectly generalize to inputs that are larger than the ones observed in the training data (Graves et al., 2014; Reed and de Freitas, 2016). In contrast, operations implemented in high level programming languages are abstract, scalable, and precise, thus generalizes perfectly to inputs of arbitrary size. Based on this observation, we implement operations necessary for semantic parsing with an ordinary programming language instead of trying to learn them with a neural network.\n1We also consider numbers (e.g., “1.33”) and date-times (e.g., “1999-1-1”) as entities.\nWe adopt a Lisp interpreter as the “computer”. A program C is a list of expressions (c1...cN ), where each expression is either a special token ”RETURN” indicating the end of the program, or a list of tokens enclosed by parentheses ”( F A0 ... AK )”. F is one of the functions in Table 1, which takes as input K arguments of specific types. Table 1 defines the semantics of each function and the types of arguments (either a property p or a variable v). When functions are executed, they return an entity list that is the expression’s denotation in K, and save it to a new variable.\nBy introducing variables that save the intermediate results of execution, the program naturally models language compositionality and describes from left to right a bottom-up derivation of the full meaning of the natural language input, which is convenient in a seq2seq model (Figure 1). This is reminiscent of the floating parser (Wang et al., 2015; Pasupat and Liang, 2015), where a derivation tree that is not grounded in the input is incrementally constructed.\nThe set of programs defined by our functions is equivalent to the subset of λ-calculus presented in (Yih et al., 2015). We did not use full Lisp programming language here, because constructs like control flow and loops are unnecessary for most current semantic parsing tasks, and it is simple to add more functions to the model when necessary.\nTo create a friendly neural computer interface, the interpreter provides code assistance to the programmer by producing a list of valid tokens at each step. First, a valid token should not cause a syntax error: e.g., if the previous token is “(”, the next token must be a function name, and if the previous token is “Hop”, the next token must be a variable. More importantly, a valid token should not cause a semantic (run-time) error: this is detected using the denotation saved in the variables. For example, if the previously generated tokens were “( Hop v”, the next available token is restricted to properties {p | ∃e, e′ : e ∈ v, (e, p, e′) ∈ K} that are reachable from entities in v in the KB graph. These checks are enabled by the variables and can\nbe derived from the definition of the functions in Table 1. With this code assistance, the interpreter prunes the “programmer”’s search space by orders of magnitude, and enables learning from weak supervision on a large KB."
+    }, {
+      "heading" : "2.2 Programmer: Seq2seq Model with Key-Variable Memory",
+      "text" : "Given the “computer”, the “programmer” needs to map natural language into a program, which is a sequence of tokens that references operations and values in the “computer”. We base our programmer on a standard seq2seq model with attention, but extend it with a key-variable memory that allows the model to learn to represent and refer to program variables (Figure 2).\nSequence-to-sequence models consist of two RNNs, an encoder and a decoder. We used a 1-layer GRU (Cho et al., 2014) for both the encoder and decoder. Given a sequence of words w1, w2...wm, each word wt is mapped to an embedding qt (embedding details are Section 3). Then, the encoder reads these embeddings and updates its hidden state step by step using ht+1 = GRU(ht, qt, θEncoder), where θEncoder are the GRU parameters. The decoder updates its hidden states ut by ut+1 = GRU(ut, ct−1, θDecoder), where ct−1 is the embedding of last step’s output token at−1, and θDecoder are the GRU parameters. The last hidden state of the encoder hT is used as the decoder’s initial state. We also adopt a dot-product attention similar to Dong and Lapata (2016). The tokens of the program a1, a2...an are generated one by one using a softmax over the vocabulary of valid tokens at each step, as provided by the “computer” (Section 2.1).\nTo achieve compositionality, the decoder must learn to represent and refer to intermediate variables whose value was saved in the “computer” after execution. Therefore, we augment the model with a key-variable memory, where each entry has two components: a continuous embedding key vi, and a corresponding variable token Ri referencing the value in the “computer” (see Figure 2).\nDuring encoding, we use an entity linker to link text spans (e.g., “US”) to KB entities. For each linked entity we add a memory entry where the key is the average of GRU hidden states over the entity span, and the variable token (R1) is the name of a variable in the computer holding the linked entity (m.USA) as its value. During decoding, when a full expression is generated (i.e., the decoder reads ”)”), it gets executed, and the result is stored as the value of a new variable in the “computer”. This variable is keyed by the GRU hidden state at that step. Every time a new variable is added to memory, the variable token is added to the output vocabulary of the decoder. The final answer returned by the “programmer” is the value of the last computed variable.\nNote that, similar to pointer networks (Vinyals et al., 2015), the key embeddings for variables are dynamically generated for each example. During training, the model learns to represent variables by backpropagating gradients from a time step where a variable is selected by the decoder, through the key-variable memory, to an earlier time step when the key embedding was computed. Thus, the encoder/decoder learns to generate representations for variables such that they can be used at the right time to construct the correct program.\nWhile the key embeddings are differentiable, the values referenced by the variables (lists of entities), stored in the “computer”, are symbolic and non-differentiable. This distinguishes the keyvariable memory from other memory-augmented neural networks that use continuous differentiable embeddings as the value of each memory entry (Weston et al., 2014; Graves et al., 2016a)."
+    }, {
+      "heading" : "2.3 Training NSM with Weak Supervision",
+      "text" : "NSM executes non-differentiable operations against a KB, and thus end-to-end backpropa-\ngation is not possible. Therefore, we base our training procedure on REINFORCE (Williams, 1992; Norouzi et al., 2016).\nWhen the reward signal is sparse and the search space is large, it is common to utilize some full supervision to pre-train REINFORCE (Silver et al., 2016). Since we assume only weak supervision, we suggest an iterative ML procedure for finding pseudo-gold programs that will bootstrap REINFORCE.\nREINFORCE We can formulate training as a reinforcement learning problem: given a question x, the state, action and reward at each time step t ∈ {0, 1, ..., T} are (st, at, rt). Since the environment is deterministic, the state is defined by the question x and the action sequence: st = (x, a0:t−1), where a0:t−1 = (a0, ..., at−1) is the history of actions at time t. A valid action at time t is at ∈ A(st), where A(st) is the set of valid tokens given by the “computer”. Since each action corresponds to a token, the full history a0:T corresponds to a program. The reward rt = I[t = T ] · F1(x, a0:T ) is non-zero at the last step of decoding, and is the F1 score computed comparing the gold answer and the answer generated by executing the program a0:T . Thus, the reward of a program or action sequence is\nR(x, a0:T ) = ∑ t rt = F1(x, a0:T ).\nThe agent’s decision making is characterized by a policy, πθ(s, a) = Pθ(at = a|x, a0:t−1), where θ are the model parameters. Since the environment is deterministic, the probability of an action sequence a0:T is\nPθ(a0:T |x) = ∏ t Pθ(at | x, a0:t−1).\nWe can define our objective to be the expected reward and use policy gradient methods such as\nREINFORCE for training. The objective and gradient are:\nJRL(θ) = ∑ x EPθ(a0:T |x)[R(x, a0:T )],\n∇θJRL(θ) = ∑ x ∑ a0:T Pθ(a0:T | x) · [R(x, a0:T )−\nB(x)] · ∇θ logPθ(a0:T | x), where B(x) = ∑\na0:T Pθ(a0:T | x)R(x, a0:T ) is a\nbaseline that reduces the variance of the gradient estimation without introducing bias.\nWhile REINFORCE assumes a stochastic policy, we rely on beam search for gradient estimation. Thus, in contrast with common practice of approximating the gradient by sampling from the model, we use the top-k action sequences (programs) in the beam with normalized probabilities. This allows training to focus on sequences with high probability, which are on the decision boundaries, and reduces the variance of the gradient.\nEmpirically (and in line with prior work), REINFORCE converged slowly and often got stuck in local optima (see Section 3). The difficulty of training resulted from the sparse reward signal in the large search space, which caused model probabilities for programs with non-zero reward to be very small at the beginning. If the beam size k is small, good programs fall off the beam, leading to zero gradients for all programs in the beam. If the beam size k is large, training is very slow, and the normalized probabilities of good programs when the model is untrained are still very small, leading to (1) near zero baselines, thus near zero gradients on ”bad” programs (2) near zero gradients on good programs due to the low probability Pθ(a0:T | x). To combat this, we present an alternative training strategy based on maximum-likelihood.\nIterative ML If we had gold programs, we could directly optimize their likelihood. Since we do not have gold programs, we can perform an iterative procedure (similar to hard EM), where we search for good programs given fixed parameters, and then optimize the probability of the best program found so far. We do decoding on an example with a large beam size and declare abest0:T (x) to be the pseudo-gold program that achieved highest reward with shortest length among the programs decoded on x in all previous iterations. Then, we can optimize the ML objective:\nJML(θ) = ∑ x logPθ(a best 0:T (x) | x) (1)\nA question x is not included if we did not find any program with positive reward.\nTraining with iterative ML is fast because there is at most one program per example and the gradient is not weighted by model probability. while decoding with a large beam size is slow, we could train for multiple epochs after each decoding. This iterative process has a bootstrapping effect that a better model leads to a better program abest0:T (x) through decoding, and a better program abest0:T (x) leads to a better model through training.\nEven with a large beam size, some programs are hard to find because of the large search space. A common solution to this problem is to use curriculum learning (Zaremba and Sutskever, 2015; Reed and de Freitas, 2016). The size of the search space is controlled by both the set of functions used in the program and the program length. We apply curriculum learning by gradually increasing both these quantities (see details in Section 3) when performing iterative ML.\nNevertheless, iterative ML uses only pseudogold programs and does not optimize the objective we truly care about. This has two adverse effects: (1) The best program abest0:T (x) could be a spurious program that accidentally produces the correct answer (e.g., using the property PLACEOFBIRTH instead of PLACEOFDEATH when the two places are the same), and thus does not generalize to other questions. (2) Because training does not observe full negative programs, the model often fails to distinguish between tokens that are related to one another. For example, differentiating PARENTSOF vs. SIBLINGSOF vs. CHILDRENOF can be challenging. We now present learning where we combine iterative ML with REINFORCE.\nAugmented REINFORCE To bootstrap REINFORCE, we can use iterative ML to find pseudogold programs, and then add these programs to the beam with a reasonably large probability. This is similar to methods from imitation learning (Ross et al., 2011; Jiang et al., 2012) that define a proposal distribution by linearly interpolating the model distribution and an oracle.\nAlgorithm 1 describes our overall training procedure. We first run iterative ML for NML iterations and record the best program found for every example xi. Then, we run REINFORCE, where we normalize the probabilities of the programs in beam to sum to (1 − α) and add α to the probability of the best found program C∗(xi).\nAlgorithm 1 IML-REINFORCE Input: question-answer pairs D = {(xi, yi)}, mix ratio α, reward function R(·), training iterations NML, NRL, and beam sizes BML, BRL. Procedure: Initialize C∗x = φ the best program so far for x Initialize model θ randomly . Iterative ML for n = 1 to NML do\nfor (x, y) in D do C← Decode BML programs given x for j in 1...|C| do if Rx,y(Cj) > Rx,y(C∗x) then C∗x ← Cj θ ←ML training with DML = {(x,C∗x)}\nInitialize model θ randomly . REINFORCE for n = 1 to NRL do\nDRL ← ∅ is the RL training set for (x, y) in D do\nC← Decode BRL programs from x for j in 1...|C| do\nif Rx,y(Cj) > Rx,y(C∗x) then C∗x ← Cj C← C ∪ {C∗x} for j in 1...|C| do\np̂j ← (1−α)· pj∑ j′ pj′\nwhere pj = Pθ(Cj | x) if Cj = C∗x then p̂j ← p̂j + α DRL ← DRL ∪ {(x,Cj , p̂j)}\nθ ← REINFORCE training with DRL\nConsequently, the model always puts a reasonable amount of probability on a program with high reward during training.\nOn top of imitation learning, our approach is related to the common practice in reinforcement learning (Schaul et al., 2016) to replay rare successful experiences to reduce the training variance and improve training efficiency. This is also similar to recent developments (Wu et al., 2016) in machine translation, where ML and RL objectives are linearly combined, because anchoring the model to some high-reward outputs stabilizes training."
+    }, {
+      "heading" : "3 Experiments and Analysis",
+      "text" : "We now empirically show that NSM can learn a semantic parser from weak supervision over a large KB. We evaluate on WEBQUESTIONSSP, a challenging semantic parsing dataset with strong baselines. Experiments show that NSM achieves new state-of-the-art performance on WEBQUESTIONSSP with weak supervision, and significantly closing the gap between weak and full supervisions for this task. Hyper-parameter settings are in the supplemental material due to page limits."
+    }, {
+      "heading" : "3.1 The WEBQUESTIONSSP dataset",
+      "text" : "Collecting semantic parse labels is a difficult, time consuming task, but can increase the accuracy of state-of-the-art question-answering systems by\nfull supervision. The WEBQUESTIONSSP dataset (Yih et al., 2016) contains semantic parses for the questions from WEBQUESTIONS (Berant et al., 2013) that are answerable using Freebase. It consists of 3,098 question-answer pairs for training and 1,639 for testing. These questions were collected using Google Suggest API and the answers were originally obtained using Amazon Mechanical Turk and updated by annotators who were familiar with the design of Freebase. We further separated out 620 questions from the training set as a validation set. For query pre-processing we used an in-house named entity linking system to find the entities in a question. The quality of the entity linker is similar to that of (Yih et al., 2015) at 94% of the gold root entities being included. Similar to Dong and Lapata (2016), we replaced named entity tokens with a special token ”ENT”. For example, the question ”who plays meg in family guy” is changed to ”who plays ENT in ENT ENT”.\nFollowing (Yih et al., 2015) we used the last publicly available snapshot of Freebase (Bollacker et al., 2008). Since NSM training requires random access to Freebase during decoding, we preprocessed Freebase by removing predicates that are not related to world knowledge (starting with ”/common/”, ”/type/”, ”/freebase/”),2 and removing all text valued predicates, which are rarely the answer. Out of all 23K relations, 434 relations are removed during preprocessing. This results in a graph that fits in memory with 23K relations, 82M nodes, and 417M edges."
+    }, {
+      "heading" : "3.2 Model And Training Details",
+      "text" : "For pre-trained word embeddings, we used the 300 dimension GloVe word embeddings trained on 840B tokens (Pennington et al., 2014). On the encoder side, we added a projection matrix to transform the embeddings into 50 dimensions. On the decoder side, we used the same GloVe embeddings to construct an embedding for each property using its Freebase id, and also added a projection matrix to transform this embedding to 50 dimension. A Freebase id contains three parts: domain, type, and property. For example, the Freebase id for PARENTSOF is “/people/person/parents”. “people” is the domain, “person” is the type and ”parents” is the property. The embedding is constructed by concatenating the average of word embeddings in the domain and type name\n2We kept “/common/topic/notable types”.\nto the average of word embeddings in the property name. For example, if the embedding dimension is 300, the embedding dimension for “/people/person/parents” will be 600. The first 300 dimensions will be the average of the embeddings for “people” and “person”, and the second 300 dimensions will be the embedding for “parents”.\nInspired by the staged generation process in Yih et al. (2015), curriculum learning includes two steps. We first run iterative ML for 10 iterations with programs constrained to only use the “Hop” function and the maximum number of expressions is 2. Then, we run iterative ML again, but use both “Hop” and “Filter”, and the maximum number of expressions is 3. However, the relations used by “Hop” are restricted to those that appeared in abest0:T (q) in the first step."
+    }, {
+      "heading" : "3.3 Results and discussion",
+      "text" : "We evaluate performance using the offical evaluation script for WEBQUESTIONSSP. Because the answer to a question may contain multiple entities or values, precision, recall and F1 are computed based on the output of each individual question, and average F1 is reported as the main evaluation metric. Accuracy measures the proportion of questions that are answered exactly.\nA comparison to STAGG, the prior state-of-theart model (Yih et al., 2016, 2015) is shown in Table 2. Our model beats STAGG with weak supervision by a significant margin on all metrics, while relying on no feature engineering or handcrafted rules. When STAGG is trained with strong supervision it obtains an F1 of 71.7, and thus NSM closes half the gap between training with weak and strong supervision.\nFour key ingredients lead to the final performance of NSM. The first one is the neural computer interface that provides code assistance by checking for syntax and semantic errors. We find that semantic checks are very effective for opendomain KBs with a large number of properties. For our task, the average number of choices is reduced from 23K per step (all properties) to less\nthan 100 (the average number of relations connected to an entity).\nThe second ingredient is augmented REINFORCE training. Table 3 compares augmented REINFORCE, REINFORCE, and iterative ML on the validation set. REINFORCE gets stuck in local maxima and performs poorly, while iterative ML training is not directly optimizing the F1 measure, and achieves sub-optimal results. In contrast, augmented REINFORCE is able to bootstrap using pseudo-gold programs found by iterative ML and achieves the best performance on both the training and validation set.\nThe third ingredient is curriculum learning during iterative ML. We compare the performance of the best programs found with and without curriculum learning in Table 4. We find that the best programs found with curriculum learning are substantially better than those found without curriculum learning by a large margin on every metric.\nThe last important ingredient is reducing overfitting. Given the small size of the dataset, overfitting is a major problem for training neural network models. We show the contributions of different techniques for controlling overfitting in Table 5. Note that after all the techniques have been applied, the model is still overfitting with training F1@1=83.0% and validation F1@1=67.2%.\nError analysis Two main sources of errors arise in manual error analysis\n1. Search failure: the correct program is not found during search for pseudo-gold programs, either because the beam size is not large enough, or because the set of functions implemented by the interpreter is insufficient.\nThe 89.5% F1 score in Table 4 indicates that at least 10% of the queries are of this kind. 2. Ranking failure: Pseudo-gold programs with high reward are found, but are not ranked at the top. Because training error is low, this is largely due to over-fitting. The 67.2% F1 score in Table 3 indicates that about 20% of examples are of this kind."
+    }, {
+      "heading" : "4 Related work",
+      "text" : "Among deep learning models for program induction, Reinforcement Learning Neural Turing Machines (RL-NTMs) (Zaremba and Sutskever, 2015) are the most similar to NSM, as a nondifferentiable machine is controlled by a sequence model. Therefore, both models rely on REINFORCE for training. The main difference between the two is the abstraction level of the programming language. RL-NTM uses lower level operations such as memory address manipulation and byte reading/writing, while NSM uses a high level programming language over a large knowledge base that includes operations such as following properties from entities, or sorting based on a property, which is more suitable for representing semantics. Earlier work such as OOPS (Schmidhuber, 2004) has desirable characteristics, such as the ability to define new functions and modify code storage. These remain to be future improvements for NSM.\nWe formulate NSM training as an instance of reinforcement learning (Sutton and Barto, 1998) in order to directly optimize the task reward of the structured prediction problem (Norouzi et al., 2016). Compared to imitation learning methods (Daume et al., 2009; Ross et al., 2011) that interpolate a model distribution with an oracle, NSM needs to solve a challenging search problem of training from weak supervisions in a large program space. Our solution employs two techniques (a) a symbolic “computer” helps find good programs by pruning the search space (b) an it-\nerative maximum likelihood (ML) process, where beam search is used to find pseudo-gold programs. Wiseman and Rush (Wiseman and Rush, 2016) proposed a max-margin approach to train a sequence-to-sequence scorer. However, their training procedure is more involved, and we did not implement it in this work.\nNSM is similar to Neural Programmer (Neelakantan et al., 2015) and Dynamic Neural Module Network (Andreas et al., 2016) in that they all solve the problem of semantic parsing from structured data, and generate programs using similar semantics. The main difference between these approaches is how an intermediate result (the memory) is represented. Neural Programmer and Dynamic-NMN chose to represent results as vectors of weights (row selectors and attention vectors), which enables backpropagation and search through all possible programs in parallel. However, their strategy is not applicable to a large KB such as Freebase, which contains about 100M entities, and more than 20k properties. Instead, NSM chooses a more scalable approach, where the “computer” saves intermediate results, and the neural net only refers to them with variable names (e.g., “R1” for all cities in the US)."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We propose the Manager-Programmer-Computer framework for neural program induction. It integrates neural networks with a symbolic nondifferentiable computer to support abstract, scalable and precise operations through a friendly neural computer interface. Within this framework, we introduce the Neural Symbolic Machine, which integrates a sequence-to-sequence neural “programmer” with key-variable memory, and a Lisp interpreter with code assistance. Because the interpreter is non-differentiable and to directly optimize the task reward, we apply reinforcement learning and use pseudo-gold programs found by an iterative ML training process to bootstrap training. NSM achieves new state-of-the-art results on a challenging semantic parsing dataset with weak supervision, and significantly closing the gap between weak and full supervision. It is trained endto-end, and does not require any feature engineering or domain-specific knowledge."
+    }, {
+      "heading" : "A Supplemental Material",
+      "text" : "A.1 More Model Details The dimension of encoder hidden state, decoder hidden state and key embeddings are all 50. The embeddings for the functions and special tokens (e.g., ”UNK”, ”GO”) are randomly initialized by a truncated normal distribution with mean=0.0 and stddev=0.1. All the weight matrices are initialized with a uniform distribution in [− √ 3 d , √ 3 d ] where d is the input dimension. Dropout rate is set to 0.5, and we see a clear tendency that larger dropout produces better performance, indicating overfitting is a major problem for learning.\nA.2 More Training Details In iterative maximum likelihood training, the decoding uses beam size k = 100 to update the approximate gold programs and the model is trained for 20 epochs after each decoding. We use Adam optimizer (Kingma and Ba, 2014) with initial learning rate 0.001 for optimization. In our experiment, this process usually converges after a few (5-8) iterations.\nFor REINFORCE training, the best hyperparameters are chosen using the validation set. We use beam size k = 5 for decoding, and α is set to 0.1. Because the dataset is small and some relations are only used once in the whole training set, we train the model on the entire training set for 200 iterations with the best hyperparameters. Then we train the model with learning rate decay until convergence. Learning rate is decayed as gt = g0×β max(0,t−ts) m , where g0 = 0.001, β = 0.5 m = 1000, and ts is the number of training steps at the end of iteration 200.\nSince decoding needs to query the knowledge graph constantly, the speed bottleneck for training is decoding. We address this problem in our implementation by partitioning the dataset, and using multiple decoders in parallel to handle each partition. We use 100 decoders, which queries 50\n11\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nKG servers, and one trainer. The neural network model is implemented in TensorFlow. Since the model is small, we didn’t see a significant speedup by using GPU, so all the decoders and the trainer are using CPU only.\nA.3 Extra Figures"
+    } ],
+    "references" : [ {
+      "title" : "Learning to compose neural networks for question answering",
+      "author" : [ "Jacob Andreas", "Marcus Rohrbach", "Trevor Darrell", "Dan Klein." ],
+      "venue" : "CoRR abs/1601.01705.",
+      "citeRegEx" : "Andreas et al\\.,? 2016",
+      "shortCiteRegEx" : "Andreas et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "CoRR abs/1409.0473. http://arxiv.org/abs/1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Semantic parsing on freebase from question-answer pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "EMNLP. volume 2, page 6.",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Freebase: a collaboratively created graph database for structuring human knowledge",
+      "author" : [ "K. Bollacker", "C. Evans", "P. Paritosh", "T. Sturge", "J. Taylor." ],
+      "venue" : "International Conference on Management of Data (SIGMOD). pages 1247–1250.",
+      "citeRegEx" : "Bollacker et al\\.,? 2008",
+      "shortCiteRegEx" : "Bollacker et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Learning phrase representations using rnn encoder–decoder for statistical machine translation",
+      "author" : [ "Kyunghyun Cho", "Bart van Merrienboer", "Caglar Gulcehre", "Dzmitry Bahdanau", "Fethi Bougares", "Holger Schwenk", "Yoshua Bengio." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Cho et al\\.,? 2014",
+      "shortCiteRegEx" : "Cho et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Searchbased structured prediction",
+      "author" : [ "H. Daume", "J. Langford", "D. Marcu." ],
+      "venue" : "Machine Learning 75:297–325.",
+      "citeRegEx" : "Daume et al\\.,? 2009",
+      "shortCiteRegEx" : "Daume et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Language to logical form with neural attention",
+      "author" : [ "Li Dong", "Mirella Lapata." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Dong and Lapata.,? 2016",
+      "shortCiteRegEx" : "Dong and Lapata.",
+      "year" : 2016
+    }, {
+      "title" : "Neural turing machines",
+      "author" : [ "Alex Graves", "Greg Wayne", "Ivo Danihelka." ],
+      "venue" : "arXiv preprint arXiv:1410.5401 .",
+      "citeRegEx" : "Graves et al\\.,? 2014",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Hybrid computing using a neural network with dynamic external memory",
+      "author" : [ "Ostrovski", "Adam Cain", "Helen King", "Christopher Summerfield", "Phil Blunsom", "Koray Kavukcuoglu", "Demis Hassabis." ],
+      "venue" : "Nature advance online publication.",
+      "citeRegEx" : "Ostrovski et al\\.,? 2016a",
+      "shortCiteRegEx" : "Ostrovski et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Hybrid computing using a neural network",
+      "author" : [ "Alex Graves", "Greg Wayne", "Malcolm Reynolds", "Tim Harley", "Ivo Danihelka", "Agnieszka GrabskaBarwińska", "Sergio Gómez Colmenarejo", "Edward Grefenstette", "Tiago Ramalho", "John Agapiou" ],
+      "venue" : null,
+      "citeRegEx" : "Graves et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Deep neural networks for acoustic modeling in speech recognition: The shared",
+      "author" : [ "Geoffrey Hinton", "Li Deng", "Dong Yu", "George E Dahl", "Abdel-rahman Mohamed", "Navdeep Jaitly", "Andrew Senior", "Vincent Vanhoucke", "Patrick Nguyen", "Tara N Sainath" ],
+      "venue" : null,
+      "citeRegEx" : "Hinton et al\\.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Data recombination for neural semantic parsing",
+      "author" : [ "Robin Jia", "Percy Liang." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Jia and Liang.,? 2016",
+      "shortCiteRegEx" : "Jia and Liang.",
+      "year" : 2016
+    }, {
+      "title" : "Learned prioritization for trading off accuracy and speed",
+      "author" : [ "J. Jiang", "A. Teichert", "J. Eisner", "H. Daume." ],
+      "venue" : "Advances in Neural Information Processing Systems (NIPS).",
+      "citeRegEx" : "Jiang et al\\.,? 2012",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Neural gpus learn algorithms",
+      "author" : [ "Łukasz Kaiser", "Ilya Sutskever." ],
+      "venue" : "arXiv preprint arXiv:1511.08228 .",
+      "citeRegEx" : "Kaiser and Sutskever.,? 2015",
+      "shortCiteRegEx" : "Kaiser and Sutskever.",
+      "year" : 2015
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "CoRR abs/1412.6980. http://arxiv.org/abs/1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Learning dependency-based compositional semantics",
+      "author" : [ "P. Liang", "M.I. Jordan", "D. Klein." ],
+      "venue" : "Association for Computational Linguistics (ACL). pages 590–599.",
+      "citeRegEx" : "Liang et al\\.,? 2011",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Neural programmer: Inducing latent programs with gradient descent",
+      "author" : [ "Arvind Neelakantan", "Quoc V. Le", "Ilya Sutskever." ],
+      "venue" : "CoRR abs/1511.04834.",
+      "citeRegEx" : "Neelakantan et al\\.,? 2015",
+      "shortCiteRegEx" : "Neelakantan et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Reward augmented maximum likelihood for neural structured prediction",
+      "author" : [ "Mohammad Norouzi", "Samy Bengio", "zhifeng Chen", "Navdeep Jaitly", "Mike Schuster", "Yonghui Wu", "Dale Schuurmans" ],
+      "venue" : "In Advances in Neural Information Processing Systems",
+      "citeRegEx" : "Norouzi et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Norouzi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Compositional semantic parsing on semi-structured tables",
+      "author" : [ "Panupong Pasupat", "Percy Liang." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Pasupat and Liang.,? 2015",
+      "shortCiteRegEx" : "Pasupat and Liang.",
+      "year" : 2015
+    }, {
+      "title" : "Glove: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher D. Manning." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Neural programmer-interpreters",
+      "author" : [ "Scott Reed", "Nando de Freitas." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Reed and Freitas.,? 2016",
+      "shortCiteRegEx" : "Reed and Freitas.",
+      "year" : 2016
+    }, {
+      "title" : "A reduction of imitation learning and structured prediction to noregret online learning",
+      "author" : [ "S. Ross", "G. Gordon", "A. Bagnell." ],
+      "venue" : "Artificial Intelligence and Statistics (AISTATS).",
+      "citeRegEx" : "Ross et al\\.,? 2011",
+      "shortCiteRegEx" : "Ross et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Prioritized experience replay",
+      "author" : [ "Tom Schaul", "John Quan", "Ioannis Antonoglou", "David Silver." ],
+      "venue" : "International Conference on Learning Representations. Puerto Rico.",
+      "citeRegEx" : "Schaul et al\\.,? 2016",
+      "shortCiteRegEx" : "Schaul et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Optimal ordered problem solver",
+      "author" : [ "Jürgen Schmidhuber." ],
+      "venue" : "Machine Learning 54(3):211–254.",
+      "citeRegEx" : "Schmidhuber.,? 2004",
+      "shortCiteRegEx" : "Schmidhuber.",
+      "year" : 2004
+    }, {
+      "title" : "Mastering the game of go with deep neural networks and tree",
+      "author" : [ "David Silver", "Aja Huang", "Chris J Maddison", "Arthur Guez", "Laurent Sifre", "George Van Den Driessche", "Julian Schrittwieser", "Ioannis Antonoglou", "Veda Panneershelvam", "Marc Lanctot" ],
+      "venue" : null,
+      "citeRegEx" : "Silver et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Silver et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V Le." ],
+      "venue" : "Advances in neural information processing systems. pages 3104–3112.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Reinforcement Learning: An Introduction",
+      "author" : [ "Richard S. Sutton", "Andrew G. Barto." ],
+      "venue" : "MIT Press, Cambridge, MA.",
+      "citeRegEx" : "Sutton and Barto.,? 1998",
+      "shortCiteRegEx" : "Sutton and Barto.",
+      "year" : 1998
+    }, {
+      "title" : "Pointer networks",
+      "author" : [ "Oriol Vinyals", "Meire Fortunato", "Navdeep Jaitly." ],
+      "venue" : "Advances in Neural Information Processing Systems (NIPS).",
+      "citeRegEx" : "Vinyals et al\\.,? 2015",
+      "shortCiteRegEx" : "Vinyals et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Building a semantic parser overnight",
+      "author" : [ "Yushi Wang", "Jonathan Berant", "Percy Liang." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Wang et al\\.,? 2015",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Memory networks",
+      "author" : [ "Jason Weston", "Sumit Chopra", "Antoine Bordes." ],
+      "venue" : "arXiv preprint arXiv:1410.3916 .",
+      "citeRegEx" : "Weston et al\\.,? 2014",
+      "shortCiteRegEx" : "Weston et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Simple statistical gradientfollowing algorithms for connectionist reinforcement learning",
+      "author" : [ "Ronald J. Williams." ],
+      "venue" : "Machine Learning. pages 229– 256.",
+      "citeRegEx" : "Williams.,? 1992",
+      "shortCiteRegEx" : "Williams.",
+      "year" : 1992
+    }, {
+      "title" : "Sequence-to-sequence learning as beamsearch optimization",
+      "author" : [ "Sam Wiseman", "Alexander M. Rush." ],
+      "venue" : "CoRR abs/1606.02960. http://arxiv.org/abs/1606.02960.",
+      "citeRegEx" : "Wiseman and Rush.,? 2016",
+      "shortCiteRegEx" : "Wiseman and Rush.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic parsing via staged query graph generation: Question answering with knowledge base",
+      "author" : [ "Wen-tau Yih", "Ming-Wei Chang", "Xiaodong He", "Jianfeng Gao." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Yih et al\\.,? 2015",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "The value of semantic parse labeling for knowledge base question answering",
+      "author" : [ "Wen-tau Yih", "Matthew Richardson", "Chris Meek", "MingWei Chang", "Jina Suh." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Yih et al\\.,? 2016",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Reinforcement learning neural turing machines",
+      "author" : [ "Wojciech Zaremba", "Ilya Sutskever." ],
+      "venue" : "arXiv preprint arXiv:1505.00521 .",
+      "citeRegEx" : "Zaremba and Sutskever.,? 2015",
+      "shortCiteRegEx" : "Zaremba and Sutskever.",
+      "year" : 2015
+    }, {
+      "title" : "Learning to parse database queries using inductive logic programming",
+      "author" : [ "M. Zelle", "R.J. Mooney." ],
+      "venue" : "Association for the Advancement of Artificial Intelligence (AAAI). pages 1050–1055.",
+      "citeRegEx" : "Zelle and Mooney.,? 1996",
+      "shortCiteRegEx" : "Zelle and Mooney.",
+      "year" : 1996
+    }, {
+      "title" : "Learning to map sentences to logical form: Structured classification with probabilistic categorial grammars",
+      "author" : [ "L.S. Zettlemoyer", "M. Collins." ],
+      "venue" : "Uncertainty in Artificial Intelligence (UAI). pages 658– 666.",
+      "citeRegEx" : "Zettlemoyer and Collins.,? 2005",
+      "shortCiteRegEx" : "Zettlemoyer and Collins.",
+      "year" : 2005
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 10,
+      "context" : "Deep neural networks have achieved impressive performance in supervised classification and structured prediction tasks such as speech recognition (Hinton et al., 2012), machine translation (Bahdanau et al.",
+      "startOffset" : 146,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2012), machine translation (Bahdanau et al., 2014; Wu et al., 2016) and more.",
+      "startOffset" : 29,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 35,
+      "context" : "However, training neural networks for semantic parsing (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Liang et al., 2011) or program induction, where language is mapped to a symbolic representation that is executed by a comx: Largest city in the US ⇒ y: NYC",
+      "startOffset" : 55,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 36,
+      "context" : "However, training neural networks for semantic parsing (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Liang et al., 2011) or program induction, where language is mapped to a symbolic representation that is executed by a comx: Largest city in the US ⇒ y: NYC",
+      "startOffset" : 55,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 15,
+      "context" : "However, training neural networks for semantic parsing (Zelle and Mooney, 1996; Zettlemoyer and Collins, 2005; Liang et al., 2011) or program induction, where language is mapped to a symbolic representation that is executed by a comx: Largest city in the US ⇒ y: NYC",
+      "startOffset" : 55,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 6,
+      "context" : "In semantic parsing, recent work handled this (Dong and Lapata, 2016; Jia and Liang, 2016) by training from manually annotated programs and avoiding program execution at training time.",
+      "startOffset" : 46,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 11,
+      "context" : "In semantic parsing, recent work handled this (Dong and Lapata, 2016; Jia and Liang, 2016) by training from manually annotated programs and avoiding program execution at training time.",
+      "startOffset" : 46,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 7,
+      "context" : "In program induction, attempts to address this problem (Graves et al., 2014; Reed and de Freitas, 2016; Kaiser and Sutskever, 2015; Graves et al., 2016b; Andreas et al., 2016) either utilized low-level memory (Zaremba and Sutskever, 2015), or required memory to be differentiable (Neelakantan et al.",
+      "startOffset" : 55,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 13,
+      "context" : "In program induction, attempts to address this problem (Graves et al., 2014; Reed and de Freitas, 2016; Kaiser and Sutskever, 2015; Graves et al., 2016b; Andreas et al., 2016) either utilized low-level memory (Zaremba and Sutskever, 2015), or required memory to be differentiable (Neelakantan et al.",
+      "startOffset" : 55,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 0,
+      "context" : "In program induction, attempts to address this problem (Graves et al., 2014; Reed and de Freitas, 2016; Kaiser and Sutskever, 2015; Graves et al., 2016b; Andreas et al., 2016) either utilized low-level memory (Zaremba and Sutskever, 2015), or required memory to be differentiable (Neelakantan et al.",
+      "startOffset" : 55,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2016) either utilized low-level memory (Zaremba and Sutskever, 2015), or required memory to be differentiable (Neelakantan et al.",
+      "startOffset" : 41,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2016) either utilized low-level memory (Zaremba and Sutskever, 2015), or required memory to be differentiable (Neelakantan et al., 2015) so that the model can be trained with backpropagation.",
+      "startOffset" : 112,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 25,
+      "context" : "NSM contains a sequence-to-sequence (seq2seq) “programmer” (Sutskever et al., 2014) and a symbolic non-differentiable Lisp interpreter (“computer”) that executes programs against a large knowledge-base (KB).",
+      "startOffset" : 59,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 27,
+      "context" : "This is a novel application of pointer networks (Vinyals et al., 2015) to compositional semantics.",
+      "startOffset" : 48,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 15,
+      "context" : "This generalized past work on training from weak supervision (Liang et al., 2011; Berant et al., 2013) by using the semantic denotations for structural search.",
+      "startOffset" : 61,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 2,
+      "context" : "This generalized past work on training from weak supervision (Liang et al., 2011; Berant et al., 2013) by using the semantic denotations for structural search.",
+      "startOffset" : 61,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 30,
+      "context" : "Third, to train from weak supervision and directly maximize the expected reward we turn to the REINFORCE (Williams, 1992) algorithm.",
+      "startOffset" : 105,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 33,
+      "context" : "On the WEBQUESTIONSSP dataset (Yih et al., 2016), NSM achieves new state-of-the-art results with weak supervision, significantly closing the gap between weak and full supervision for this task.",
+      "startOffset" : 30,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 7,
+      "context" : "Operations learned with neural networks such as addition and sorting do not perfectly generalize to inputs that are larger than the ones observed in the training data (Graves et al., 2014; Reed and de Freitas, 2016).",
+      "startOffset" : 167,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 28,
+      "context" : "This is reminiscent of the floating parser (Wang et al., 2015; Pasupat and Liang, 2015), where a derivation tree that is not grounded in the input is incrementally constructed.",
+      "startOffset" : 43,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 18,
+      "context" : "This is reminiscent of the floating parser (Wang et al., 2015; Pasupat and Liang, 2015), where a derivation tree that is not grounded in the input is incrementally constructed.",
+      "startOffset" : 43,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 32,
+      "context" : "The set of programs defined by our functions is equivalent to the subset of λ-calculus presented in (Yih et al., 2015).",
+      "startOffset" : 100,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 4,
+      "context" : "We used a 1-layer GRU (Cho et al., 2014) for both the encoder and decoder.",
+      "startOffset" : 22,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 27,
+      "context" : "Note that, similar to pointer networks (Vinyals et al., 2015), the key embeddings for variables are dynamically generated for each example.",
+      "startOffset" : 39,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 29,
+      "context" : "This distinguishes the keyvariable memory from other memory-augmented neural networks that use continuous differentiable embeddings as the value of each memory entry (Weston et al., 2014; Graves et al., 2016a).",
+      "startOffset" : 166,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 30,
+      "context" : "Therefore, we base our training procedure on REINFORCE (Williams, 1992; Norouzi et al., 2016).",
+      "startOffset" : 55,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 17,
+      "context" : "Therefore, we base our training procedure on REINFORCE (Williams, 1992; Norouzi et al., 2016).",
+      "startOffset" : 55,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 24,
+      "context" : "When the reward signal is sparse and the search space is large, it is common to utilize some full supervision to pre-train REINFORCE (Silver et al., 2016).",
+      "startOffset" : 133,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 34,
+      "context" : "A common solution to this problem is to use curriculum learning (Zaremba and Sutskever, 2015; Reed and de Freitas, 2016).",
+      "startOffset" : 64,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 21,
+      "context" : "This is similar to methods from imitation learning (Ross et al., 2011; Jiang et al., 2012) that define a proposal distribution by linearly interpolating the model distribution and an oracle.",
+      "startOffset" : 51,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 12,
+      "context" : "This is similar to methods from imitation learning (Ross et al., 2011; Jiang et al., 2012) that define a proposal distribution by linearly interpolating the model distribution and an oracle.",
+      "startOffset" : 51,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 22,
+      "context" : "On top of imitation learning, our approach is related to the common practice in reinforcement learning (Schaul et al., 2016) to replay rare successful experiences to reduce the training variance and improve training efficiency.",
+      "startOffset" : 103,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 33,
+      "context" : "The WEBQUESTIONSSP dataset (Yih et al., 2016) contains semantic parses for the questions from WEBQUESTIONS (Berant et al.",
+      "startOffset" : 27,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2016) contains semantic parses for the questions from WEBQUESTIONS (Berant et al., 2013) that are answerable using Freebase.",
+      "startOffset" : 69,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 32,
+      "context" : "The quality of the entity linker is similar to that of (Yih et al., 2015) at 94% of the gold root entities being included.",
+      "startOffset" : 55,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 32,
+      "context" : "Following (Yih et al., 2015) we used the last publicly available snapshot of Freebase (Bollacker et al.",
+      "startOffset" : 10,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2015) we used the last publicly available snapshot of Freebase (Bollacker et al., 2008).",
+      "startOffset" : 65,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 19,
+      "context" : "For pre-trained word embeddings, we used the 300 dimension GloVe word embeddings trained on 840B tokens (Pennington et al., 2014).",
+      "startOffset" : 104,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 34,
+      "context" : "Among deep learning models for program induction, Reinforcement Learning Neural Turing Machines (RL-NTMs) (Zaremba and Sutskever, 2015) are the most similar to NSM, as a nondifferentiable machine is controlled by a sequence model.",
+      "startOffset" : 106,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 23,
+      "context" : "Earlier work such as OOPS (Schmidhuber, 2004) has desirable characteristics, such as the ability to define new functions and modify code storage.",
+      "startOffset" : 26,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 26,
+      "context" : "We formulate NSM training as an instance of reinforcement learning (Sutton and Barto, 1998) in order to directly optimize the task reward of the structured prediction problem (Norouzi et al.",
+      "startOffset" : 67,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 17,
+      "context" : "We formulate NSM training as an instance of reinforcement learning (Sutton and Barto, 1998) in order to directly optimize the task reward of the structured prediction problem (Norouzi et al., 2016).",
+      "startOffset" : 175,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 5,
+      "context" : "Compared to imitation learning methods (Daume et al., 2009; Ross et al., 2011) that interpolate a model distribution with an oracle, NSM needs to solve a challenging search problem of training from weak supervisions in a large program space.",
+      "startOffset" : 39,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 21,
+      "context" : "Compared to imitation learning methods (Daume et al., 2009; Ross et al., 2011) that interpolate a model distribution with an oracle, NSM needs to solve a challenging search problem of training from weak supervisions in a large program space.",
+      "startOffset" : 39,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 31,
+      "context" : "Wiseman and Rush (Wiseman and Rush, 2016) proposed a max-margin approach to train a sequence-to-sequence scorer.",
+      "startOffset" : 17,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 16,
+      "context" : "NSM is similar to Neural Programmer (Neelakantan et al., 2015) and Dynamic Neural Module Network (Andreas et al.",
+      "startOffset" : 36,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2015) and Dynamic Neural Module Network (Andreas et al., 2016) in that they all solve the problem of semantic parsing from structured data, and generate programs using similar semantics.",
+      "startOffset" : 42,
+      "endOffset" : 64
+    } ],
+    "year" : 0,
+    "abstractText" : "Harnessing the statistical power of neural networks to perform language understanding and symbolic reasoning is difficult, when it requires executing efficient discrete operations against a large knowledge-base. In this work, we introduce a Neural Symbolic Machine, which contains (a) a neural “programmer”, i.e., a sequence-to-sequence model that maps language utterances to programs and utilizes a key-variable memory to handle compositionality (b) a symbolic “computer”, i.e., a Lisp interpreter that performs program execution, and helps find good programs by pruning the search space. We apply REINFORCE to directly optimize the task reward of this structured prediction problem. To train with weak supervision and improve the stability of REINFORCE we augment it with an iterative maximum-likelihood process. NSM outperforms state-of-the-art on the WEBQUESTIONSSP dataset when trained from question-answer pairs only, without requiring any feature engineering or domain-specific knowledge.",
+    "creator" : null
+  }
+}

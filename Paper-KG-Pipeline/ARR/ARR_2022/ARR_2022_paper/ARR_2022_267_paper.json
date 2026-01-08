@@ -1,0 +1,368 @@
+{
+  "name" : "ARR_2022_267_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Speeding Up Entmax",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "In this paper, we propose an alternative to αentmax, which keeps its virtuous characteristics, but is as fast as optimized softmax and achieves on par or better performance in machine translation task."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Sparseness of vector representations is a desirable trait in neural network models for natural language processing (NLP): words (subwords) are discrete objects by their nature, and, accordingly, are encoded by one-hot embeddings at the input and output of neural networks. However, to predict a categorical response in neural models, softmax is most often used, which produces a dense probability distribution, i.e. every category (word/subword) receives a non-zero probability.\nRecent studies suggest that it is this output density that poses problems when the trained NLP model is used for inference. For example, in the case of text generation, unconstrained sampling from a trained language model results in poor quality of the resulting text (Holtzman et al., 2020). In neural machine translation (NMT), exact decoding from a trained model often results in empty text (Stahlberg and Byrne, 2019).1 To get around these problems, constrained decoding techniques have been proposed, most of which artificially impose sparsity on softmax prediction. For example, Fan\n1The authors called this phenomenon the cat got your tongue problem.\net al. (2018) propose to sample from the top-k probable words, and Holtzman et al. (2020) propose to sample from the most probable words, which comprise the cumulative probability p. While these methods are effective, they are ad-hoc solutions that lead to a mismatch between how the model is trained and how it is used at inference.\nIn this regard, the works on sparse alternatives to softmax stand apart since they allow us to make inference from the model in the same way than it was trained. Some of the most successful and elegant solutions are sparsemax (Martins and Astudillo, 2016) and its generalization α-entmax (Peters et al., 2019). When coupled with suitable losses, these transformations are not inferior to softmax, and sometimes even surpass it as measured with final performance metrics on a number of tasks. A problem with these transformations however is that they are significantly slower than softmax when the number of categories (vocabulary size) is tens of thousands, as in the case of text generation. This is because α-entmax transformation—in its original formulation—requires sorting over the logits.2\nIn this work, we ask the question: is it possible to obtain a sparse output like that of α-entmax, but without its degradation in computational speed? Our answer is affirmative—we propose a sparse output transformation that\n• is on par or superior to softmax and α-entmax in the NMT tasks,\n• works as fast as softmax during training and at inference,\n• gives the same training dynamics as α-entmax (in training steps).\nThe most surprising thing is that such a transformation is simply a shifted ReLU raised to power 1α−1 , which we call α-ReLU.\n2We also compare against an approximate version which only performs sorting on the highest values of the logits.\nThe rest of the paper is organised as follows. In Sect. 2 we motivate the choice of α-ReLU as the output transformation, and also select an appropriate loss function. In Sect. 3 we experimentally confirm our claims about performance and output speed of α-ReLU in the NMT task. Sect. 4 is devoted to a comparative analysis of α-ReLU and α-entmax in terms of sparsity, ability to solve the empty translation problem, and training dynamics."
+    }, {
+      "heading" : "2 α-ReLU at Output",
+      "text" : "Our departure point is the α-entmax transformation of Peters et al. (2019) which can be defined for z ∈ Rd as\nα-entmaxi(z) = [(α− 1)zi − τ(z)] 1 α−1 + ,\nwhere [x]+ := max{x, 0}, and τ : Rd → R is the (unique) function that satisfies ∑ j [(α−1)zj− τ(z)] 1\nα−1 + = 1 for any z. It is this threshold τ that\nmakes the computation of α-entmax slow, because one needs to sort the components of z to find τ (Peters et al., 2019, Alg. 2).\nAs we can see, the threshold τ is only needed to ensure that α-entmax(z) is a probability distribution. We loosen this constraint, and only require non-negative weights, which is sufficient for most uses. Consider then a transformation\nα-ReLUi(z) := [(α− 1)zi − τ ] 1 α−1 + , (1)\nwhere τ is a constant that does not depend on z. In order to force α-ReLU(z)—applied to the logits z—to converge to the one-hot vector ey of the gold label y we need to adjust the corresponding loss. This can easily be done by feeding the logits z and the output α-ReLU(z) into the following loss, which we call α-ReLU loss.\n`(z, y) = (α-ReLU(z)− ey)> ( z− τα−11 ) + Hα[α-ReLU(z)], (2)\nwhere Hα[p] := 1α(α−1) ( 1− ∑ j p α j ) , α 6= 1, is the Tsallis α-entropy (Tsallis, 1988). The rationale for coupling α-ReLU with the loss (2) is the following\nLemma 1. For any τ ∈ R, the gradient of the α-ReLU loss (2) is given by\n∇z`(z, y) = α-ReLU(z)− ey.\nProof. The proof is in Appendix B.1.\nBy Lemma 1, gradient-based minimization of ` indeed forces α-ReLU(z) → ey. Notice that this is similar to what happens when the softmax normalization is coupled with the cross-entropy loss or when α-entmax is coupled with the entmax loss. In both cases differentiating the loss with respect to logits gives p−ey, where p is either softmax(z) or α-entmax(z) (Martins and Astudillo, 2016; Peters et al., 2019).\nRemark. Recall that α-entmax is a generalization of sparsemax. For example, 2-entmax is essentially sparsemax, and for α ∈ (1, 2) we get a smoothed version of sparsemax. Similarly, αReLU is a kind of generalization of ReLU. So, the standard ReLU is 2-ReLU (with τ = 0), and for α ∈ (1, 2) we get a smoothed ReLU (see Fig. 1)."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : "In theory, nothing prevents α-ReLU from learning what α-entmax is learning. However, in practice we can have a different picture, because training is conditioned by many factors—the size of the dataset, the architecture of the neural network, the optimization algorithm, etc. In this section, we compare α-ReLU empirically with α-entmax (as well as with sparsemax and softmax), assuming all other factors are fixed. The goal of these experiments is to evaluate the consequences of using α-ReLU as drop-in replacement for α-entmax.\nWe test α-ReLU at output in a neural machine translation task (Sutskever et al., 2014), which is essentially a conditional text generation task. Compared to open-ended text generation, there is a\nclearer metric of the quality of the generated text— the BLEU score (Papineni et al., 2002). As in open-ended text generation, at each prediction step, the NMT system needs to make a choice from all words (subwords) of the vocabulary, the size of which can reach several tens of thousands. Therefore, the sparsity of the output distribution becomes critical in such setups, since it can explicitly prevent the occurrence of most of the words that are inappropriate in the context."
+    }, {
+      "heading" : "3.1 Setup",
+      "text" : "Data. We conduct experiments on three datasets of varied sizes:\n• IWSLT’14 De→En (Cettolo et al.), 172K training examples,\n• WMT’14 En→De (Bojar et al., 2014), 4.5M training examples,\n• WMT’13 En→Ru (Bojar et al., 2013), 1.3M tranining examples.3\nWe preprocess all datasets using the byte pair encoding algorithm (Sennrich et al., 2016) with 10K merge operations on IWSLT, 40K merge operations on WMT En→De, and 60K merge operations on WMT En→Ru. We report detokenized casesensitive BLEU with SacreBLEU (Post, 2018).4\nHyperparameters α and τ . In all experiments we set α = 1.5, because this value was recommended by Peters et al. (2019); Peters and Martins (2021) as the middle ground between α = 1 (softmax) and α = 2 (sparsmax).\nThe value for τ is chosen as follows: we run the first batch through a non-trained neural network, which has 1.5-entmax at the output, in the forward\n3We did not use the Yandex 1M Parallel Corpus because of its license restrictions.\n4BLEU+case.mixed+lang.ende+numrefs.1+smooth.exp+tok.13a+version.1.5.1\ndirection and determine the average τ value across the batch. This value is then used to train the 1.5- ReLU network. Our preliminary experiments have shown that 1.5-ReLU convergence is sensitive to the τ value, and that having output close to the probability distribution early in the learning phase works well with the rest of hyperparameters which are set to their default values.\nTraining. We trained the Transformer Base (Vaswani et al., 2017) using the OpenNMT-py 2.0 toolkit (Klein et al., 2017). Optimization details are in Appendix A."
+    }, {
+      "heading" : "3.2 Results",
+      "text" : "The results are given in Table 1. Reported are test BLEU scores for best checkpoints which are selected based on validation BLEU. We observe that the 1.5-ReLU performs on par with 1.5-entmax or better, while sparsemax is inferior to all others.\nTraining Time. Fig. 2&3 show the training dynamics in training steps and in wall time on WMT’14 En→De. Despite the closeness of performance in intermediate steps and at the end of training, we see that on the larger datasets 1.5-entmax is slower in wall time than softmax and 1.5-ReLU.\nTo speed up the learning process, Peters et al. (2019) recommended limiting the number of sorted logits in the α-entmax to the k largest logits. We tried this on the WMT’14 En→De dataset using k = 100, which is the default value in the author’s implementation of α-entmax.5 The resulting training dynamics in absolute time is shown as a dashed curve in Fig. 3 (middle). As we can see, partial sorting indeed speeds up the learning process, and at the same time does not harm the quality of the translation. But in the end, learning is still slower than in the case of 1.5-ReLU. Of course, one can try to select such k that the speed of calculating\n5https://github.com/deep-spin/entmax\nthe 1.5-entmax will be as close as possible to the speed of 1.5-ReLU without losing quality, but this requires additional efforts on the part of the user, and this must be done for each case separately.\nIn this regard, 1.5-ReLU does not require additional fine-tuning, converges as fast as softmax in absolute time and performs on par or better. Thus 1.5-ReLU combines all three desired properties: computation speed, task performance, and sparsity of output.\nInference Time. We measured inference time of translating the WMT En→Ru test data with the different strategies and with different beam sizes. The results—normalized by the smallest value— are shown in Fig. 4. As can be seen the relative difference seems independent of the beam size: softmax is almost twice faster than 1.5-entmax (with full sorting over the logits). Even though the softmax version is optimized through the softmax CUDA kernel, it performs equivalent to the 1.5-ReLU model in terms of computation speed."
+    }, {
+      "heading" : "4 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Empty Translations",
+      "text" : "We remind the reader that the cat got your tongue problem (Stahlberg and Byrne, 2019) is one of the main motivations for using sparse transformations when generating text. As Peters and Martins (2021) have shown, 1.5-entmax successfully tackles this problem by significantly lowering the proportion of cases where an empty string is more likely than the beam search hypothesis. For 1.5-ReLU, we also calculated this proportion, and compared it with the proportions for softmax and sparsemax (Table 2). As we see, 1.5-ReLU also successfully tackles the cat got your tongue problem."
+    }, {
+      "heading" : "4.2 Sparsity",
+      "text" : "To compare the sparsity of 1.5-ReLU and 1.5- entmax we depict in Fig. 5 the distributions of the number of zero components after applying these transformations (recall that for softmax all components are always nonzero). Since we constructed the α-ReLU in such way that it mimics the αentmax (at least in the early stages of training), we expected that these two transformations would have similar properties, including sparsity. However, this is not the case: as we can see, the 1.5-ReLU is significantly less sparse than the 1.5-entmax. It is noteworthy that lower sparsity in this case correlates with a better performance in the translation task (see Table 1)."
+    }, {
+      "heading" : "4.3 Impact of τ",
+      "text" : "The selection of τ was described in Section 3.1. However, the question arises: does the described approach lead to the choice of the optimal τ? To find out, we trained the α-ReLU models for τ ∈ {0, 0.1, 0.2, ..., 0.9, 1, 2, 5, 10} on the IWSLT data. Note that all of these τ ’s have led to almost the same result at the end of the training (as predicted by Lemma 1). In Fig. 6, we present the dynamics of early training only for τ ∈ {0, 0.1, 0.2, 0.3, 5, 10}, since the curves for τ ∈ {0.4, ..., 0.9, 1, 2} practically coincided with the optimal curve corresponding to τ = 0.3. Note that our τ selection method gave a value of 0.33, thus we have no evidence against the adequacy of our method."
+    }, {
+      "heading" : "4.4 Estimation of τ without data",
+      "text" : "On closer inspection, we noticed that the preentmax logits in the untrained Transformer model are distributed according to the normal law, regardless of what data is supplied to the input, ShapiroWilk test, p-value > 0.15. This allows us, using asymptotic theory, to estimate τ as\nτ̂ =\n√ dmodel\n2(dmodel + dvocab) · Φ−1(1− p∗), (3)\nwhere dmodel is the size of hidden representations, dvocab is the vocabulary size for a target language, Φ−1(·) is the probit function and p∗ is the solution of a non-linear equation that involves functions related to the standard normal distribution (see Appendix B.2 for details). Table 3 compares the τ̃ calculated by running data through an untrained model with the estimate τ̂ obtained from (3). As we can see, τ̂ practically coincides with τ̃ with an\naccuracy of two decimal places. Unfortunately, the formula (3) is not universal: it is only true for the Transformer architecture."
+    }, {
+      "heading" : "4.5 Self-normalization",
+      "text" : "The attentive reader may have noticed that the output of α-ReLU is not normalized, i.e. the components of α-ReLU(z) do not have to sum up to 1. Accordingly, the question arises: how correct is it to compare translation scores at different steps of the beam-search decoding if the conditional probabilities are not normalized? However, the comparison is possible if the α-ReLU(z) components add up to approximately the same number, i.e. if the model is self-normalizing. To check this, we ran the trained α-ReLU model on the IWSLT and WMT’14 test sets, and looked at the distribution of∑\ni α-ReLUi(z) at each decoding step. The results are shown in Fig. 7. As we can see, the sum of the α-ReLU(z) components concentrates well around its mean ≈ 1.24 (IWSLT) and 1.09 (WMT’14), which might indicate that the model indeed has a self-normalization property."
+    }, {
+      "heading" : "4.6 Training Dynamics",
+      "text" : "As we noted in Sect. 3.2, the training dynamics are similar in all three cases (softmax, 1.5- entmax, 1.5-ReLU) when time is measured in training steps. Here we attempt to explain this phe-\nnomenon through the recently proposed Neural Tangent Kernel (NTK) approach of Jacot et al. (2018). Roughly speaking, the NTK theory suggests that a sufficiently wide neural network trains like a kernel regression. We use this theory to show (in Appendix B.3) that in all three cases the logits z(x, t) for a training instance x at a training step t evolve (approximately) according to the same differential equation\ndz dt = −E(x′,y′)[Kσ(x, x′) · (σ(z′)− ey′)], (4)\nwhere expectation is over training examples (x′, y′), σ(·) is one of the transformations considered (softmax, α-entmax, or α-ReLU), and Kσ(x, x\n′) ∈ Rd×d is a positive semi-definite matrix that depends on σ. The Equation (4) is a non-linear matrix differential equation which in general cannot be solved analytically. However, it has an equilibrium point z(x, t) such that E(x′,y′)[Kσ(x, x′) · (σ(z′)− ey′)] = 0, thus its solution converges to this point as t→∞. This similarity in the evolution of σ(z) implies the similarity in the evolution of the perfomance metric—such as BLEU—accross all three transformations."
+    }, {
+      "heading" : "4.7 Human Evaluation",
+      "text" : "Although the BLEU metric (Papineni et al., 2002) has stood the test of time, it is still an automated assessment of translation quality. To double-check the reliability of the results from Table 1, we decided to manually evaluate the translations from the WMT’13 En→Ru test split. To do this, we followed the human evaluation setup from (Berard et al., 2019). We formed two random samples of 135 instances each and gave them to two annotators. 45 instances were shared across two samples in order to calculate inter-annotator agreement. Each instance consists of an original sentence in English and 4 candidate translations into Russian (reference, softmax, entmax, α-ReLU). The annotators were to rate each translation on a 4-point scale. For annotation instructions, see Appendix C.\nThe order of candidate translations was shuffled for each instance, so the annotators did not know which sentence is from which model. Nevertheless, the annotator always had a good chance of guessing which translation was the reference one, due to the large difference in quality between human and machine translation.\nThe results of human evaluation are shown in Table 4. Cohen’s κ = 0.56, indicating moderate agreement between annotators. As we can see, all\nthree models give approximately the same translation quality, and all three are significantly inferior to the reference translation. This is generally consistent with the results of 1.5-ReLU and 1.5-entmax in Table 1, but at the same time casts doubt on the softmax lag behind 1.5-ReLU and 1.5-entmax as the BLEU metric suggests.\nIn Appendix D we give a few examples where 1.5-ReLU translates better than 1.5-entmax and vice versa."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Sparse seq2seq models. Our proposed α-ReLU transformation is based on the α-entmax transformation of Peters et al. (2019), which in turn is a generalization of the sparsemax transformation (Martins and Astudillo, 2016). In our work, we study sparseness at the output of a neural network. Nevertheless, there are a number of works aimed at sparsification within a neural network. For example, Malaviya et al. (2018); Peters et al. (2019); Correia et al. (2019) show that sparsemax and αentmax can replace softmax in the attention mechanism with some success. A recent work of Zhang et al. (2021) attempted to replace softmax with a component-wise ReLU in the attention mechanism. Unfortunately, in its pure form, this replacement leads to the inability of the model to learn at all, since its loss function does not decrease during optimization. The authors solve this problem by adding a normalizing layer on top of the attention layer.\nThese and other works (Zhang et al., 2019) state that sparsity in the weights of attention produces more interpretable patterns. However, Meister et al. (2021) questioned this claim and were unable to find clear evidence to support it. Therefore, in this work, we focused on the application of α-ReLU to the output of the transformer model, and not to the mechanism of attention, but at the same time we do not deny the possibility of studying the latter.\nSelf-normalization. Self-normalizing training aims to bypass the need of normalization during inference time. This is done by tweaking the learning mechanism so that the sum of all predictions sums (approximately) to a constant value. Theoretical work on why this works is poorly understood (Andreas et al., 2015) but early work in neural machine translation has shown its empirical value. Vaswani et al. (2013) achieves that by using noisecontrastive estimation (the neural model is used to\nre-rank the output of a hierarchical phrase-based machine translation system). Noise-contrastive estimation is also the standard training mechanism for word2vec (more popular than the alternative hierarchical softmax), which also eschews any expensive normalization. Differently, Devlin et al. (2014) changes the training loss to include a factor that encourages the normalizing factor to be 1. At inference time, this is just assumed and decoding time is reported to achieve a 15x speed-up."
+    }, {
+      "heading" : "6 Limitations and Risks",
+      "text" : "We believe that the main limitations of our work are as follows:\n• α-ReLU’s output is still not a probability distribution, as required by the classical formulation of a probabilistic classification model.\n• τ evaluation requires either running the data through an untrained model with α-entmax at the output, or deriving a formula similar to (3) for each individual architecture.\n• Our approach only works for the case when αReLU is used at the output of the model, but it is not clear how to use it as an alternative to softmax/α-entmax in the attention layer.\nThe last mentioned limitation leads to the potential risk of inability to learn if α-ReLU is misused in the intermediate layers of the neural network such as attention layers. The experiments of Zhang et al. (2021) using vanilla ReLU (2-ReLU with τ = 0 in our notation) instead of softmax to produce attention weights lead to a divergence of the loss function of the Transformer model. This translates into a waste of energy, especially when training large models on large datasets. Therefore, we believe that in the future, a preliminary mathematical analysis and/or experiments with small models on small datasets should be carried out as to why the unnormalized distribution of attention weights leads to the inability of the model to learn."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "It seems that the sparsity of the output is natural for (sub)word prediction models. Nevertheless, sparsity does not have to come with slowdown of computations, as our work shows. The proposed transformation, α-ReLU, gives a sparse output, shows competitive performance, and is as fast as softmax. The reduced dependency on the vocabulary size\nseems particularly important in translation, where neural models are moving more and more towards multi-lingual ones, which in general have a much higher vocabulary size in order to accommodate enough tokens for all languages.\nA natural extension of this work will be the evaluation of α-ReLU in the problem of open-ended text generation, as well as a replacement for softmax in the attention layers of Transformer models."
+    }, {
+      "heading" : "A Optimization",
+      "text" : "IWSLT’14 De→En\n• Architecture: Transformer, embedding size 512, 6 layers, 8 heads, hidden size 1024, shared vocabulary. • Batch size: 4096 tokens (with gradient accumulation for 8 steps). • Optimizer: ADAM, β1 = 0.9, β2 = 0.998, noam decay, learning rate 2.0, 4000 warmup steps. • Dropout: 0.3 • No label smoothing.\nWMT’14 En→De\n• Architecture: Transformer, embedding size 512, 6 layers, 8 heads, hidden size 2048, shared vocabulary of 40K tokens, shared embeddings and decoder embeddings. • Batch size: 4096 tokens (with gradient accumulation for 4 steps). • Optimizer: ADAM, β1 = 0.9, β2 = 0.998, noam decay, learning rate 2.0, 8000 warmup steps,\naverage decay 0.0005. • Dropout: 0.1. • Attention dropout: 0.1. • No label smoothing.\nWMT’13 En→Ru Same as in WMT’14 En→De, except that Dropout is 0.3.\nA.1 GPU Power Consumption\nWe do not report CO2 consumption, as experiments were run in different countries, making aggregate statistics difficult to compute. The largest experiment (on WMT’13), were run in [MASKED], which benefits from a very low CO2 emission intensity in its electrical mix."
+    }, {
+      "heading" : "B Proofs",
+      "text" : "Notation. We let R denote the real numbers. Bold-faced lowercase letters (x) denote vectors in Euclidean space, bold-faced uppercase letters (A) denote matrices, plain-faced lowercase letters (x) denote scalars, ‖ · ‖ denotes the Euclidean norm: ‖x‖ := √ x>x. The gradient of f : Rd → R is denoted by∇f . The Jacobian of z 7→ g(z) is denoted by Jg(z). Also, we denote ReLU(x) := [x]+ := max{x, 0}, [d] := {1, . . . , d}, ∆d−1 := {p ∈ Rd | ∑ i pi = 1, pi ≥ 0}, ey := (0, . . . , 0, 1, 0, . . . , 0) where 1 is at yth position.\nB.1 Proof of Lemma 1. First, let us calculate the Jacobian of the mapping z 7→ α-ReLU(z). Recall that\nα-ReLUi(z) := [(α− 1)zi − τ ] 1 α−1 + .\nTherefore, the partial derivatives are given by\n∂[α-ReLUi(z)]\n∂zi =\n1\nα− 1 · [(α− 1)zi − τ ]\n1 α−1−1 + · (α− 1) = [(α− 1)zi − τ ] 2−α α−1 + ,\n= [α-ReLUi(z)] 2−α\n∂[α-ReLUi(z)]\n∂zj = 0. i 6= j\nThus, the Jacobian can be written concisely as\nJα-ReLU(z) = diag{[α-ReLU(z)]2−α}, (5)\nwhere raising to power is done component-wise (i.e. xβ = [xβ1 , . . . , x β d ]), and diag[x] is a diagonal matrix with x on its diagonal. Recall the definition of the Tsallis α-entropy:\nHα[p] := 1\nα(α− 1) 1−∑ j pαj  . Its gradient w.r.t. p is\n∇p Hα[p] = − 1 α− 1 pα−1,\nCombining this with (5), and using the chain rule, we have ∇z Hα[α-ReLU(z)] = [Jα-ReLU(z)]> · ( − 1 α− 1 [α-ReLU(z)]α−1 )\n= [ diag{[α-ReLU(z)]2−α} ]> · (− 1 α− 1 [α-ReLU(z)]α−1 )\n= − 1 α− 1 [α-ReLU(z)]2−α [α-ReLU(z)]α−1 = − 1 α− 1 α-ReLU(z), (6)\nwhere is the Hadamard product (element-wise multiplication), and we used diag[x] ·y = x y. Taking into account (6), the gradient of the α-ReLU loss (2) w.r.t. z is\n∇z`(z, y) = ∇z [ (α-ReLU(z)− ey)> ( z− τ\nα− 1 1\n)] +∇z Hα[α-ReLU(z)]\n= (α-ReLU(z)− ey) + J>α-ReLU(z) ( z− τ\nα− 1 1 ) − 1 α− 1 α-ReLU(z)\n= (α-ReLU(z)− ey) + 1 α− 1 [ diag{[α-ReLU(z)]2−α} ]> [(α− 1)z− τ1]− 1 α− 1 α-ReLU(z) = (α-ReLU(z)− ey) + 1\nα− 1 [(α− 1)z− τ1] 2−α α−1 + [(α− 1)z− τ1]︸ ︷︷ ︸ α-ReLU(z) − 1 α− 1 α-ReLU(z)\n= α-ReLU(z)− ey,\nwhere in the fourth line we used [x]β+ x = [x] β + [x]+ = [x] β+1 + . This concludes the proof.\nB.2 Approximation of τ for 1.5-entmax We derive the formula (3) in two steps: first in Lemma 2, we approximate τ(z) of 1.5-entmax when z is an arbitrary random sample from the normal distribution with zero mean and variance σ2; next in Lemma 3, we compute σ2 for the case when z is the pre-softmax vector of logits in the Transformer model. Lemma 2. Let z1, . . . , zd be independent and identically distributed random variables from the normal distribution N (0, σ2). Then the thresholding function of 1.5-entmax(z) can be approximated as\nτ(z) ≈ σ 2 Φ−1(1− p∗),\nwhere Φ−1(·) is a probit function, and p∗ is the solution of Φ−1(1− p) = m(p)− √ 4\nσ2 · p − s(p)\nwith\nm(p) := 1 p− [ φ(Φ−1(x) ]x=p x=\n(7)\ns(p) := 1 p− [ −φ(Φ−1(x)) · Φ−1(x) + x ]x=p x= − [m(p)]2 (8)\nφ(t) := 1√ 2π e− t2 2\n:= 1\nd\nProof. Let z(1) ≥ . . . ≥ z(d) be a sorting of z1, . . . , zd in descending order. Peters et al. (2019) showed that\nτ(z) = M(k) 2 − √ 1 k − S(k) 4 , (9)\nwhere k ∈ [d] is any index that satisfies\nz(k) 2 ≥ M(k) 2 − √ 1 k − S(k) 4 ≥ z(k+1) 2 ⇔ z(k) ≥M(k)− √ 4 k − S(k) ≥ z(k+1) (10)\nwith\nM(k) := 1\nk k∑ i=1 z(i), S(k) := 1 k k∑ i=1 z2(i) − [M(k)] 2.\nApproximating z(i) by its asymptotic mean σΦ−1 ( 1− id ) (Arnold et al., 2008), and denoting := 1d , p := kd , we have\nM(k) ≈ 1 k k∑ i=1 σΦ−1 ( 1− i d ) ≈ σ p− ∫ p Φ−1(1− x)dx = σ p− ∫ p −Φ−1(x)dx\n= σ p− [ φ(Φ−1(x)) ]x=p x= = σm(p),\nwhere we approximated the average of finitely many numbers {Φ−1(1− i/d)}ki=1 by the mean value of the function Φ−1(1− x), and then we used the fact that −φ(Φ−1(x)) is an antiderivative for the probit function Φ−1(x); and m(p) is defined by (7).\nSimilarly, for the second empirical moment, we have\n1\nk k∑ i=1 z2i ≈ 1 k k∑ i=1 [ σΦ−1 ( 1− i d )]2 ≈ σ 2 p− ∫ p [Φ−1(1− x)]2dx = σ 2 p− ∫ p [Φ−1(x)]2dx\n= σ2 p− [ −φ(Φ−1(x)) · Φ−1(x) + x ]x=p x= ,\nand thus\nS(k) ≈ σ 2 p− [ −φ(Φ−1(x)) · Φ−1(x) + x ]x=p x= − [m(p)]2 = σ2s(p),\nwhere s(p) is defined by (8). Hence, finding k ∈ [d] that satisfies (10) is (approximately) equivalent to finding p ∈ (0, 1) that satisfies\nσΦ−1(1− p) = σm(p)− √\n4 · p − σ2s(p) ⇔ Φ−1(1− p) = m(p)−\n√ 4\nσ2 · p − s(p). (11)\nLet p∗ be the solution of (11). Then, taking into account (9), we have\nτ(z) ≈ σm(p ∗)\n2 −\n√\np∗ − σ\n2s(p∗)\n4 = σ 2\n( m(p∗)− √ 4\nσ2 · p∗ − s(p∗)\n) = σ\n2 Φ−1(1− p∗),\nwhich concludes the proof.\nLemma 3. Let z = Wx be a pre-softmax vector of logits in the OpenNMT-py (Klein et al., 2017) implementation of the Transformer model (Vaswani et al., 2017). Then for any input, in a non-trained model the logits z1, . . . , zd are distributed according to the normal distributionN ( 0, 2·dmodeldmodel+dvocab ) , where dmodel is the size of hidden representations, and dvocab is the vocabulary size for a target language.\nProof. The default Transformer configuration in OpenNMT-py implies that the elements wij of W are initialized from a uniform distribution U [−a, a], where a = √\n6 dmodel+dvocab , thus\nE[wij ] = 0, Var[wij ] = (2a)2 12 = a2 3 =\n2\ndmodel + dvocab (12)\nSince x is the result of a layer normalization (Ba et al., 2016), we have\n1\ndmodel dmodel∑ j=1 xj = 0, 1 dmodel dmodel∑ j=1 x2j = 1 (13)\nTherefore, from (12) and (13), we have\nE[zi] = E dmodel∑ j=1 wijxj  = dmodel∑ j=1 E[wij ] · xj = 0,\nVar[zi] = Var dmodel∑ j=1 wijxj  = 2 dmodel + dvocab dmodel∑ j=1 x2j = 2 · dmodel dmodel + dvocab .\nBeing a sum of independent random variables, by the Central Limit Theorem, each zi tends to normal distribution with the mean and variance above.\nB.3 Derivation of the Equation (4) We provide derivation for the case of α-ReLU. Extension to α-entmax and softmax is done analogously. Let x ∈ Rn0 be the input vector. We define a feedforward neural network with L − 1 hidden layers recursively:\nh(0) = x\nz(k) = 1\n√ nk−1\nW(k−1)h(k−1),\nh(k) = σ(z(k)), k = 1, . . . , L− 1\nwhere W(k−1) ∈ Rnk×nk−1 is the weight matrix in the kth hidden layer, and σ(·) is a nonlinear activation function applied element-wise. We consider the case of a multi-label classification, i.e. the output layer is a vector\nz := z(L) ∈ Rd,\nwhich is fed into the α-ReLU loss: `(z, y) = (α-ReLU(z)− ey)> ( z− τ\nα− 1 1\n) + Hα[α-ReLU(z)], (14)\nwhere Hα[p] := 1α(α−1) ∑\nj(pj − pαj ), α 6= 1, is the Tsallis α-entropy (Tsallis, 1988). Given a training sample S := {(x, y)} learning is performed by minimizing the training error\nL := E(x,y)∼S [`(z(x), y)] (15)\nwith respect to the network parameters θ := vec ( {W(k−1)}k∈[L−1] ) .\nLemma 4. Let the training error (15) be minimized by gradient descent with infinitesimally small learning rate. Let z(x, t) ∈ Rd be the network output on any training instance x at time t, and y be the desired output. Then, as the widths of hidden layers nk → ∞, ∀k ∈ [L − 1], the output z(x, t) follows the following evolution\ndz dt = − E (x′,y′)∼S [K(x, x′) · (α-ReLU(z′)− ey′)], (16)\nwhere K(x, x′) ∈ Rd×d is a positive semidefinite matrix, and z′ := z(x′, t).\nProof. From (15) and Lemma 1 we have\n∇zL = ∇z E(x′,y′)∼S [`(z′, y)] = ∇z`(z, y) = α-ReLU(z)− ey, (17)\nwhere we denoted z := z(x, t) and z′ := z(x′, t) for shorthand. Now, consider the gradient descent update\nθt+η = θt − η∇θL ⇔ θt+η − θt\nη = −∇θL, (18)\nwhere η is the learning rate. Taking the limit in (18) as η → 0, we have:\ndθ dt = −∇θL = −E(x′,y′)∼S [J>z′(θ) · ∇z′L],\nwhere the last equality is due to the chain rule. Combining this with (17), we get\ndθ dt = −E(x′,y′)∼S [J>z′(θ) · (α-ReLU(z′)− ey′)] (19)\nApplying the chain rule again, and using (19), we have\ndz dt = Jz(θ) · dθ dt = −E(x′,y′)∼S [Jz(θ)J>z′(θ)︸ ︷︷ ︸\nK(x,x′;θ)\n·(α-ReLU(z′)− ey′)].\nThe quantity K(x, x′;θ) was named the Neural Tangent Kernel by Jacot et al. (2018). They also showed (see their Theorem 1) that\nK(x, x′;θ)→ K(x, x′) as n1, . . . , nL−1 →∞,\nwhere K(x, x′) ∈ Rd×d is the deterministric kernel that does not depend on θ. This concludes the proof.\nC Instructions for Human Annotators\nYou are shown a reference sentence and several candidate translations. Please indicate, for each, on a 4-point scale, how much of the meaning is represented in the translation, ignoring the language quality.\nImagine you are a forgiving reader, ignoring any error that does not prevent you from getting the meaning of the text. So please ignore language oddities, typographic errors and the like. (This is difficult but key to us!)\nThe scale of meaning preservation is: 4 = Everything / 3 = Most / 2 = Little / 1 = None\nAs we are interested in comparing system’s output, you can refine your judgement using + or −, e.g. 3+.\nWhen you do not know, simply leave empty.\nFor instance, given the reference sentence\n“This restaurant is beautiful and the staff is very friendly”,\nvalid judgements for different translations are provided in Table 6.\nWe insist that evaluating by meaning differs from a natural intuitive evaluation. Provided the meaning is not impacted, we want to ignore the language quality, the punctuation, the casing."
+    }, {
+      "heading" : "D Translation Examples",
+      "text" : ""
+    } ],
+    "references" : [ {
+      "title" : "On the accuracy of selfnormalized log-linear models",
+      "author" : [ "Jacob Andreas", "Maxim Rabinovich", "Michael I Jordan", "Dan Klein." ],
+      "venue" : "Proceedings of the 28th International Conference on Neural Information Processing Systems-Volume 1, pages 1783–",
+      "citeRegEx" : "Andreas et al\\.,? 2015",
+      "shortCiteRegEx" : "Andreas et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A First Course in Order Statistics (Classics in Applied Mathematics)",
+      "author" : [ "Barry C. Arnold", "N. Balakrishnan", "H.N. Nagaraja." ],
+      "venue" : "Society for Industrial and Applied Mathematics, USA.",
+      "citeRegEx" : "Arnold et al\\.,? 2008",
+      "shortCiteRegEx" : "Arnold et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Layer normalization",
+      "author" : [ "Jimmy Lei Ba", "Jamie Ryan Kiros", "Geoffrey E Hinton." ],
+      "venue" : "arXiv preprint arXiv:1607.06450.",
+      "citeRegEx" : "Ba et al\\.,? 2016",
+      "shortCiteRegEx" : "Ba et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Machine translation of restaurant reviews: New corpus for domain adaptation and robustness",
+      "author" : [ "Alexandre Berard", "Ioan Calapodescu", "Marc Dymetman", "Claude Roux", "Jean-Luc Meunier", "Vassilina Nikoulina." ],
+      "venue" : "Proceedings of the 3rd Workshop on",
+      "citeRegEx" : "Berard et al\\.,? 2019",
+      "shortCiteRegEx" : "Berard et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Findings of the 2013 Workshop on Statistical Machine Translation",
+      "author" : [ "Ondřej Bojar", "Christian Buck", "Chris Callison-Burch", "Christian Federmann", "Barry Haddow", "Philipp Koehn", "Christof Monz", "Matt Post", "Radu Soricut", "Lucia Specia." ],
+      "venue" : "Proceed-",
+      "citeRegEx" : "Bojar et al\\.,? 2013",
+      "shortCiteRegEx" : "Bojar et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Findings of the 2014 workshop",
+      "author" : [ "Ondrej Bojar", "Christian Buck", "Christian Federmann", "Barry Haddow", "Philipp Koehn", "Johannes Leveling", "Christof Monz", "Pavel Pecina", "Matt Post", "Herve Saint-Amand", "Radu Soricut", "Lucia Specia", "Ales Tamchyna" ],
+      "venue" : null,
+      "citeRegEx" : "Bojar et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Bojar et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Report on the 11th iwslt evaluation campaign, iwslt",
+      "author" : [ "Mauro Cettolo", "Jan Niehues", "Sebastian Stüker", "Luisa Bentivogli", "Marcello Federico" ],
+      "venue" : null,
+      "citeRegEx" : "Cettolo et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Cettolo et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Adaptively sparse transformers",
+      "author" : [ "Gonçalo M. Correia", "Vlad Niculae", "André F.T. Martins." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Lan-",
+      "citeRegEx" : "Correia et al\\.,? 2019",
+      "shortCiteRegEx" : "Correia et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Fast and robust neural network joint models for statistical machine translation",
+      "author" : [ "Jacob Devlin", "Rabih Zbib", "Zhongqiang Huang", "Thomas Lamar", "Richard Schwartz", "John Makhoul." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Compu-",
+      "citeRegEx" : "Devlin et al\\.,? 2014",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Hierarchical neural story generation",
+      "author" : [ "Angela Fan", "Mike Lewis", "Yann N. Dauphin." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics, ACL 2018, Melbourne, Australia, July 15-20, 2018, Volume 1: Long",
+      "citeRegEx" : "Fan et al\\.,? 2018",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The curious case of neural text degeneration",
+      "author" : [ "Ari Holtzman", "Jan Buys", "Li Du", "Maxwell Forbes", "Yejin Choi." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net.",
+      "citeRegEx" : "Holtzman et al\\.,? 2020",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural tangent kernel: Convergence and generalization in neural networks",
+      "author" : [ "Arthur Jacot", "Clément Hongler", "Franck Gabriel." ],
+      "venue" : "Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems",
+      "citeRegEx" : "Jacot et al\\.,? 2018",
+      "shortCiteRegEx" : "Jacot et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "OpenNMT: Opensource toolkit for neural machine translation",
+      "author" : [ "Guillaume Klein", "Yoon Kim", "Yuntian Deng", "Jean Senellart", "Alexander Rush." ],
+      "venue" : "Proceedings of ACL 2017, System Demonstrations, pages 67–72, Vancouver, Canada. Association for",
+      "citeRegEx" : "Klein et al\\.,? 2017",
+      "shortCiteRegEx" : "Klein et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Sparse and constrained attention for neural machine translation",
+      "author" : [ "Chaitanya Malaviya", "Pedro Ferreira", "André F.T. Martins." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics, ACL 2018, Melbourne, Aus-",
+      "citeRegEx" : "Malaviya et al\\.,? 2018",
+      "shortCiteRegEx" : "Malaviya et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "From softmax to sparsemax: A sparse model of attention and multi-label classification",
+      "author" : [ "André F.T. Martins", "Ramón Fernandez Astudillo." ],
+      "venue" : "Proceedings of the 33nd International Conference on Machine Learning, ICML 2016, New York City,",
+      "citeRegEx" : "Martins and Astudillo.,? 2016",
+      "shortCiteRegEx" : "Martins and Astudillo.",
+      "year" : 2016
+    }, {
+      "title" : "Is sparse attention more interpretable? In Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on",
+      "author" : [ "Clara Meister", "Stefan Lazov", "Isabelle Augenstein", "Ryan Cotterell" ],
+      "venue" : null,
+      "citeRegEx" : "Meister et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Meister et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, July 6-12, 2002, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Smoothing and shrinking the sparse seq2seq search space",
+      "author" : [ "Ben Peters", "André F.T. Martins." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,",
+      "citeRegEx" : "Peters and Martins.,? 2021",
+      "shortCiteRegEx" : "Peters and Martins.",
+      "year" : 2021
+    }, {
+      "title" : "Sparse sequence-to-sequence models",
+      "author" : [ "Ben Peters", "Vlad Niculae", "André F.T. Martins." ],
+      "venue" : "Proceedings of the 57th Conference of the Association for Computational Linguistics, ACL 2019, Florence, Italy, July 28- August 2, 2019, Volume 1: Long Pa-",
+      "citeRegEx" : "Peters et al\\.,? 2019",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A call for clarity in reporting bleu scores",
+      "author" : [ "Matt Post." ],
+      "venue" : "arXiv preprint arXiv:1804.08771.",
+      "citeRegEx" : "Post.,? 2018",
+      "shortCiteRegEx" : "Post.",
+      "year" : 2018
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Ger-",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "On NMT search errors and model errors: Cat got your tongue",
+      "author" : [ "Felix Stahlberg", "Bill Byrne" ],
+      "venue" : "In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Lan-",
+      "citeRegEx" : "Stahlberg and Byrne.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Stahlberg and Byrne.",
+      "year" : 2019
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V. Le." ],
+      "venue" : "Advances in Neural Information Processing Systems 27: Annual Conference on Neural Information Processing Systems 2014, December 8-13 2014,",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Possible generalization of boltzmann-gibbs statistics",
+      "author" : [ "Constantino Tsallis." ],
+      "venue" : "Journal of statistical physics, 52(1):479–487.",
+      "citeRegEx" : "Tsallis.,? 1988",
+      "shortCiteRegEx" : "Tsallis.",
+      "year" : 1988
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Decoding with large-scale neural language models improves translation",
+      "author" : [ "Ashish Vaswani", "Yinggong Zhao", "Victoria Fossum", "David Chiang." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 1387–",
+      "citeRegEx" : "Vaswani et al\\.,? 2013",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Sparse attention with linear units",
+      "author" : [ "Biao Zhang", "Ivan Titov", "Rico Sennrich." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, EMNLP 2021, Virtual Event / Punta Cana, Dominican Republic, 7-11",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Attention with sparsity regularization for neural machine translation and summarization",
+      "author" : [ "Jiajun Zhang", "Yang Zhao", "Haoran Li", "Chengqing Zong." ],
+      "venue" : "IEEE ACM Trans. Audio Speech Lang. Process., 27(3):507–518.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "z(d) be a sorting",
+      "author" : [ "Peters" ],
+      "venue" : null,
+      "citeRegEx" : "Peters,? \\Q2019\\E",
+      "shortCiteRegEx" : "Peters",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 10,
+      "context" : "For example, in the case of text generation, unconstrained sampling from a trained language model results in poor quality of the resulting text (Holtzman et al., 2020).",
+      "startOffset" : 144,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 21,
+      "context" : "In neural machine translation (NMT), exact decoding from a trained model often results in empty text (Stahlberg and Byrne, 2019).",
+      "startOffset" : 101,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 14,
+      "context" : "Some of the most successful and elegant solutions are sparsemax (Martins and Astudillo, 2016) and its generalization α-entmax (Peters et al.",
+      "startOffset" : 64,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 18,
+      "context" : "Some of the most successful and elegant solutions are sparsemax (Martins and Astudillo, 2016) and its generalization α-entmax (Peters et al., 2019).",
+      "startOffset" : 126,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 23,
+      "context" : "where Hα[p] := 1 α(α−1) ( 1− ∑ j p α j ) , α 6= 1, is the Tsallis α-entropy (Tsallis, 1988).",
+      "startOffset" : 76,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 14,
+      "context" : "In both cases differentiating the loss with respect to logits gives p−ey, where p is either softmax(z) or α-entmax(z) (Martins and Astudillo, 2016; Peters et al., 2019).",
+      "startOffset" : 118,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 18,
+      "context" : "In both cases differentiating the loss with respect to logits gives p−ey, where p is either softmax(z) or α-entmax(z) (Martins and Astudillo, 2016; Peters et al., 2019).",
+      "startOffset" : 118,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 22,
+      "context" : "We test α-ReLU at output in a neural machine translation task (Sutskever et al., 2014), which is essentially a conditional text generation task.",
+      "startOffset" : 62,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 16,
+      "context" : "clearer metric of the quality of the generated text— the BLEU score (Papineni et al., 2002).",
+      "startOffset" : 68,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 20,
+      "context" : "We preprocess all datasets using the byte pair encoding algorithm (Sennrich et al., 2016) with 10K merge operations on IWSLT, 40K merge operations on WMT En→De, and 60K merge operations on WMT En→Ru.",
+      "startOffset" : 66,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 19,
+      "context" : "We report detokenized casesensitive BLEU with SacreBLEU (Post, 2018).",
+      "startOffset" : 56,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 24,
+      "context" : "We trained the Transformer Base (Vaswani et al., 2017) using the OpenNMT-py 2.",
+      "startOffset" : 32,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 21,
+      "context" : "We remind the reader that the cat got your tongue problem (Stahlberg and Byrne, 2019) is one of the main motivations for using sparse transformations when generating text.",
+      "startOffset" : 58,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 16,
+      "context" : "Although the BLEU metric (Papineni et al., 2002) has stood the test of time, it is still an automated assessment of translation quality.",
+      "startOffset" : 25,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 3,
+      "context" : "To do this, we followed the human evaluation setup from (Berard et al., 2019).",
+      "startOffset" : 56,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 14,
+      "context" : "(2019), which in turn is a generalization of the sparsemax transformation (Martins and Astudillo, 2016).",
+      "startOffset" : 74,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 27,
+      "context" : "These and other works (Zhang et al., 2019) state that sparsity in the weights of attention produces more interpretable patterns.",
+      "startOffset" : 22,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 0,
+      "context" : "Theoretical work on why this works is poorly understood (Andreas et al., 2015) but early work in neural machine translation has shown its empirical value.",
+      "startOffset" : 56,
+      "endOffset" : 78
+    } ],
+    "year" : 0,
+    "abstractText" : "Softmax is the de facto standard for normalizing logits in modern neural networks for language processing. However, by producing a dense probability distribution each token in the vocabulary has a nonzero chance of being selected at each generation step, leading to a variety of reported problems in text generation. αentmax of Peters et al. (2019) solves this problem, but is unfortunately slower than softmax. In this paper, we propose an alternative to αentmax, which keeps its virtuous characteristics, but is as fast as optimized softmax and achieves on par or better performance in machine translation task.",
+    "creator" : null
+  }
+}

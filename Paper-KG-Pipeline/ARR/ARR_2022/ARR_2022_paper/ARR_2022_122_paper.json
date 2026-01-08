@@ -1,0 +1,522 @@
+{
+  "name" : "ARR_2022_122_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Locally Aggregated Feature Attribution on Natural Language Understanding",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "With the growing popularity of deep-learning models, model understanding becomes more and more critical in many folds. In one aspect, model understanding helps us understand what the model is doing by identifying important features among unstructured raw data. For example, Shrikumar et al., 2017 utilized the model explainability technique to discover motifs in regulatory DNA elements from distinct molecular signatures in the field of Genomics . In another aspect, model understanding helps people audit or debug the deep models. An interesting example is that Ribeiro et al. (Ribeiro et al., 2016) found that their image classification model sometimes misclassifies a husky as a wolf,\nmodel explainability tool reveals that their model relies on the snow in the background rather than the appearance when distinguishing the two animals. More importantly, model understanding helps gain trust when making important decisions based on the model. In the NLP domain, deep language models are quickly evolving and show superior performance in various benchmark tasks. However, even experts struggle to understand the mechanism of complex language models.\nMuch effort has been devoted to demystifying the “black box” of deep models. A natural idea is through feature attribution, explaining the model by attributing the prediction to each input feature according to how much it affects the model output, of which two main directions emerge. One is model agnostic approaches including Shapley regression values (Shapley, 1953) and LIME (Ribeiro et al., 2016). We can apply these methods regardless of the model structure, however, they could suffer from computational inefficiency in the scenario of high dimensional input space and complex deep models when making inference across all possible permutations or with small perturbations in the local neighborhood.\nAnother direction is model-specific approaches which look into the internal model mechanism to understand specific models. Gradient-based feature attribution models are often adopted to explain neural networks since gradients can be easily accessed through back-propagation, which gives a great computational advantage over model-agnostic methods. Since the gradient map itself is often noisy and challenging to interpret, most gradient-based methods aim to stabilize the feature attribution score by smoothing the gradients or learning from the reference data (Sundararajan et al., 2017; Smilkov et al., 2017; Lundberg and Lee, 2017). However, direct application of these gradient-based methods to NLP problems is not trivial, due to the fact that the input consists of discrete tokens and the \"refer-\nence\" tokens are not explicitly defined. In this paper, we propose Locally Aggregated Feature Attribution (LAFA), a novel gradientbased approach that leverages sentence-level embedding as a smoothing space for the gradients, motivated by the observation that the feature attribution is often shared by similar text inputs. For example, key features in product descriptions on an online marketplace are often shared by similar products. We implement a neighbor-searching method to ensure the quality of neighboring sentences.\nFurthermore, to evaluate feature attribution methods in NLP, we consider two situations. For datasets with golden labels of feature score, we use the Area Under Curve (AUC) or Pearson correlation as the performance metric. As for datasets without golden labels, we conduct a similar evaluation task following prior works (Shrikumar et al., 2017; Lundberg and Lee, 2017) by masking tokens with high importance scores and then find the change in the predicted log-odds.\nIn summary, our contributions are in three folds: First, we build a novel context-level smooth gradient approach for feature attribution in NLP. The key ingredients of our method are appropriately constructing an aggregation function over the smoothing space. Second, to the best of our knowledge, this is the first proposal to conduct numerical studies on multiple NLP tasks, including Entity Recognition and Sentiment Analysis, for feature attribution. Third, our method achieves superior performance compared with the state-of-the-art feature attribution methods.\nThe paper is organized as follows. Section 2 elaborates the current challenges of feature attribution in NLP and recaps the preliminaries about gradient-based feature attribution approaches. The proposed feature attribution method is described in section 3, followed by a review of other existing approaches in Section 4. The evaluation tasks and the experiment results on the NLP application are presented in Section 5."
+    }, {
+      "heading" : "2 Feature Attribution in NLP",
+      "text" : "Challenge Direct application of gradient-based methods to NLP problems is not trivia. There are three main challenges. First, NLP models consist of discrete input tokens, which are encoded into numeric values in an embedding space. Since the embedding step is non-differentiable, the derivatives of the outcome with respect to input tokens\nare infeasible to obtain, so gradient-based feature attribution methods are not directly applicable to word tokens.\nSecond, the reference data in NLP are difficult to define. It is studied by Sundararajan. et al (Sundararajan et al., 2017) that using the gradient as the feature attribution may suffer from the problems of model saturation or thresholding. Model saturation means the perturbation of some elements in the input cannot change the output, and the thresholding problem indicates discontinuous gradients can produce misleading importance scores. Such problems can be addressed by comparing the difference between the gradient of input and reference data. The guiding principle to select reference data is to ask ourselves that \"what am I interested in measuring differences against?\" For example, in the tasks of binary classification on DNA sequence inputs, the reference data are chosen as the expected frequencies of DNA sequence or randomly shuffling the original sequence. However, in NLP tasks, randomly shuffling texts as reference may not be sensible.\nLastly, we note that the evaluation of the language model is much more challenging than the explanations of the images. In the image application, the important features of an image obtained from feature attribution methods can be visually validated by checking the composition of objects. However, the detected important features in language may require more domain knowledge to validate.\nProblem Definition Feature attribution task can be formally formulated as follows. A deep model F is provided to be explained, which is fine-tuned on dataset X . The input sentence is denoted as X0 = (w1, w2, .., wT )\nT where wi represents i-th word. The goal for feature attribution is to determine function M(·) by quantifying the importance score of each word M(x) = (m1,m2, ..,mT )T , where mi denotes the importance score for wi.\nSimple Gradient as Feature Attribution As illustrated in the first challenge above, in NLP models, directly taking derivative on each word is infeasible due to the non-differentiable embedding layer. We can resolve the challenge as follows.\nThe first layer of the NLP model is usually taken as embedding the discrete tokens:\nh0,i = emb(wi), i = 1, 2, .., T, (1)\nwhere h0,i ∈ Rd represents the word embedding for wi. This step is non-derivative. But we can obtain the derivative of output with respect to the word embedding:\nS(H0) = ∂F/∂H0 ∈ RT×d, (2)\nwhere H0 = (h0,1, h0,2, .., h0,T )T ∈ RT×d. Then, we consider the feature attribution score of a token M(X) ∈ RT as the sum of squares of the gradients with regard to each word embedding dimension:\nM(X)i = d∑\nj=1\nS(H0)2i,j , i = 1, 2, .., T. (3)\nHowever, simply using the gradients of one token as feature attribution would lead to noisy results (Sundararajan et al., 2017). The next section describes a novel feature attribution approach that smoothes the gradients by leveraging similar input texts."
+    }, {
+      "heading" : "3 The Proposed Framework: LAFA",
+      "text" : "The proposed method contains three steps: (1) find the appropriate neighbors of the input text for gradient smoothing; (2) calculate the gradients of texts as well as neighbors; (3) aggregation of the gradients. The proposed framework is summarized in the upper panel of Figure 1. One motivating example is shown in the lower panel of Figure 1. In this motivating example, the input text is a\ndescription of computer. The key features of the computer should include “Brand”, “CPU type” and “RAM size”. The simple gradient method may miss certain feature, such as “RAM size” in the example, while the gradients on similar texts can provide more contexts. The proposed method is constructed to aggregate the information from similar texts.\nStep I: Context-level Localization Given the input text X0 ∈ X , where X denotes the input datasets, the goal is to find similar texts Xsim = {X1, X2, .., XM} ⊂ X such that the feature attributions of X0 and Xj ∈ Xsim are similar under a defined similarity metric.\nTo obtain similar texts Xsim, we first define an encoder that maps the text with discrete word tokens as a continuous embedding vector; then, in the embedding space, similar texts are found in the neighbor of X0. To be specific, let Hencoder denote the mapping from input to one of the hidden layers in deep model F . Xsim can be obtained by choosing closest texts in the datasets as follows:\nX ∈ X s.t. ||Hencoder(X)−Hencoder(X0)||2 < ϵ (4)\nwhere || · ||2 represents L2 norm. ϵ is a threshold score to guarantee the neighbors are similar to the center text X0 so that the faithfulness of aggregation is considered. In our application, a fixed quantile served as the cut-off rate of L2 distance\nfor all possible pairs is chosen as the threshold score to filter the nearest-neighbor result. During inference time, we apply the hidden layer encoder Hencoder to all the input datasets and index, then using FAISS 1 (Johnson et al., 2017) offline. FAISS is an efficient, open-source library for similarity search and clustering of dense vectors, which can be applied to billion-scale vectors.\nThe output of this step, Xsim can be viewed as the reference data to smooth the feature attribution of X0, which addresses the second challenge listed in Section 2.\nStep II: Taking Gradients According to Equation (3), the gradient of Xi can be denoted as M(Xi) := (mi,0,mi,1, ..,mi,Ti)T for i = 0, 1, .., ,M where Ti represent the token length of Xi. To be noticed that our proposed method can be easily extended to variants of simple gradient including smooth gradient or integrated gradient methods (Smilkov et al., 2017; Sundararajan et al., 2017) in Step II.\nStep III: Aggregation over Multiple Feature Attribution Our goal is to smooth the gradient M(X0) by aggregating the gradients of similar text inputs:\nMLAFA(X0) =AGGREGATE(M(X0); M(X1), ..,M(XM )) (5)\nSince the lengths of X0, X1,..,XM may vary, the lengths of gradients M(X0), M(X1),..,M(XM ) are different as well. Consequently, aggregation by simply taking the average is infeasible. Following the intuition that, the tokens with high gradients in Xsim should be important in X0, we propose the following aggregation function:\nMLAFA(X0) = M(X0) + λ(E(w0,1;Xsim), .., E(w0,T ;Xsim))T ,\n(6)\nwhere λ is a hyper-parameter for leveraging the feature attribution from similar inputs. E(w;Xsim) is a scalar representing the importance of token w obtained from the neighbor inputs Xsim. Formally, it can be defined as\nE(w;Xsim) = 1\n|Xsim| |Xsim|∑ i=1 Ti∑ k=1 mj,k × k(h, hi,k) Ti ,\n(7) 1https://github.com/facebookresearch/\nfaiss (MIT license)\nwhere h, hi,k are the word embedding of w and wi,k as in Equation (1) respectively, and k(·, ·) is a kernel function (Hofmann et al., 2008) (examples of kernel function are listed in the Appendix E. ). According to Equation (7), if word w and wi,k have a high similarity, then inner product between the embeddings h and hi,k in the kernel space would be large, which would assign a large weight to the corresponding importance score mj,k. On the contrary, dissimilar word wi,k in Xsim has little effect to the word w in E(w;Xsim). The whole process is summarized in Algorithm 1.\nDiscussion of Faithfulness One important criteria for model explainability method is \"faithfulness\", which refers to how accurately it reflects the true reasoning process of the model (Jacovi and Goldberg, 2020). In our proposed method, the original input X0 is infused with similar texts in the input dataset X for better interpretation. Since the deep model F is also trained on X , using similar texts Xsim ⊂ X to facilitate explanation will not violate the faithfulness.\nIn the localization step (Step I), out of the consideration about faithfulness, we do not use popular bi-encoder frameworks, such as S-BERT (Reimers and Gurevych, 2019) or DenseRetrival (Karpukhin et al., 2020), to obtain similar neighbors. Because it will involve an extra black box model when explaining deep model F .\nAlgorithm 1 Feature attribution method with smoothing over similar inputs.\n1: Input: Text of interest X0, input datasets X , and fine-tuned deep model F . 2: Output: Feature attribution of X0 3: Step I: Localization 4: Construct encoder H which maps from input\nspace to the space of hidden layer in F . 5: Obtain the similar texts set Xsim =\n{X1, X2, .., XM} of X0 according to Equation (4).\n6: Step II: Taking Gradient 7: Calculate the gradient of texts X0, X1, .., XM\naccording to Equation (3). 8: Step III: Aggregation 9: Smooth the gradient of text of interest over the\ngradient of similar texts according to Equation (6). 10: Output the aggregated gradient MLAFA(X0) as the feature attribution."
+    }, {
+      "heading" : "4 Related Work",
+      "text" : "In NLP, transformer-based models yield great successfulness and some works focus on explaining the attention mechanism. For example, Serrano and Smith, 2019 and Jain and Wallace, 2019 inspected a single attention layer and found out that attention weights only weakly and inconsistently correspond to feature importance; Wiegreffe and Pinter, 2019 argued that we cannot separate the attention layer and should view the entire model as a whole. In this section, We mainly review the gradient-based methods for feature attribution.\nFeature Attribution on Single Input Simonyan et al (Simonyan et al., 2013) computed the \"saliency map\" denoted as Simple Gradient from the derivative of the output with respect to the input in an image classification task. In the NLP application, \"saliency map\" is obtained as the derivative of the output with respect to the word embedding as in Equation (2). However, \"saliency map\" can be visually noisy. Several methods are proposed to improve the gradient method from different perspectives. Gradient*Input method (Shrikumar et al., 2017) improves the visual sharpness of the \"saliency map\" by multiplying gradient with the input itself. In NLP, we can write it as:\nSGrad∗Input(H0) = H0 × S(H0)\nMGrad∗Input(X)i = d∑\nj=1\nSGrad∗Input(H0)2i,j .\nLayerwise Relevance Propagation method (Bach et al., 2015) is shown to be equivalent to the Gradient*Input method up to a scaling factor. Smooth Gradient method (Smilkov et al., 2017) smoothes the feature attribution score by adding random noises to the input and taking average of the gradients from noisy inputs, formally:\nSSmoothGrad(H0) ≈ 1\nN N∑ k=1 S(H0 + ϵk),\nϵk ∼ N(0, σ2),\nMSmoothGrad(X)i = d∑\nj=1\nSSmoothGrad(H0)2i,j .\nGuided Backpropagation method (Springenberg et al., 2014) modifies the back-propagation to preserve negative gradients in the ReLU activation\nlayer which also sharpens the \"saliency map\" visually. Other methods, such as Grad-CAM or GuidedCAM (Selvaraju et al., 2017), are applicable to specific architecture of neural networks in the field of computer vision.\nSince language models like BERT do not contain specific architecture utilized in Guided Backpropagation or Grad-CAM method, we ignore the mathematical formulation here.\nFeature Attribution on Input with Reference Data Integrated Gradient method computes the feature score by integrating the gradients from single pre-determined reference input to the target input (Sundararajan et al., 2017). In computer vision problems, black image is usually considered as the reference data, and integrating gradients from the black image to the input image represents the feature attribution of the input image. In NLP problems, we can define the i-the element of feature attribution as:\nSInteGrad(H0)ij\n≈ H0,ij −H ′ij\nN\nN∑ k=1 S(H ′ + kH0 −H ′ N )ij ,\nMInteGrad(X)i = d∑\nj=1\nSInteGrad(H0)2i,j .\nwhere H ′ denotes the embedding of reference text. SHAP-Gradient method which combines ideas from Integrated Gradient and Smooth Gradient into a single expected value equation (Lundberg and Lee, 2017) . To be specific, the feature attribution is defined from:\nSShapGrad(H0) ≈ 1\nN N∑ k=1 S(αkH0 + (1− αk)Hk),\nMShapGrad(X)i = d∑\nj=1\nSShapGrad(H0)2i,j .\nwhere αk ∼ U(0, 1) denotes uniform distribution from zero to one, Hk ∈ Href denotes the embedding of reference text.\nDeepLIFT (Shrikumar et al., 2017) assigns the feature score by comparing the difference of contribution between input and some reference inputs via gradient. As discussed in (Lundberg and Lee, 2017), DeepLIFT can be considered as an approximation of Shapley Value estimation. Specifically,\nas in the application of SHAP 2, the feature attribution of SHAP-Deep as a variant of DeepLIFT is defined as:\nSShapDeep(H0) ≈ 1\nN N∑ k=1 S(Hk)× (H0 −Hk).\nMShapDeep(X)i = d∑\nj=1\nSShapDeep(H0)2i,j ."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : "In this section, we compare the proposed method to the state-of-the-art feature attribution methods under different use cases."
+    }, {
+      "heading" : "5.1 Case I: Feature Attribution on Relation Classification Model",
+      "text" : "Motivation Relation Classification is is beneficial to downstream problems, including question answering and knowledge graph (KG) construction tasks (Wen et al., 2016; Dhingra et al., 2016; Dong et al., 2020). With the development of deep language model, existing relation extraction methods have achieved significant performance in relation classification task (Soares et al., 2019; Wei et al., 2019). We hope to better understand the features in the text that help deep language model to classify the relations. In this use case, we fine-tune a deep language model with relation as labels. With the fine-tuned model, the feature attribution technique is applied to identify the entities in the text as important features.\nData We use the public available datasets NYT10 (Riedel et al., 2010) and Webnlg (Gardent et al., 2017) for numerical study. Zeng et al., 2018 adapted the original dataset for relation extraction task. We follow the same setting as in Zeng et al., 2018, i.e. NYT10 dataset contains 56,196/5,000/5,000 plain texts in train/val/test set, 24 relation type, averaged 2.01 relational triples in each text. Webnlg dataset contains 5,019/500/703\n2https://github.com/slundberg/shap (MIT License)\nplain texts in train/val/test set, 211 relation type, averaged 2.78 relation triples in each text.\nLanguage Model We fine-tuned BERT-base models to classify the relations for NYT10 and Webnlg datasets, respectively. We use the plain text as input X , and relations as multi-class label Y in the model fine-tuning. Since multiple relations may exist in single text, we use the Sigmoid activation in the output layer. Mean Square Error (MSE) is used as loss objective and Adam (Kingma and Ba, 2014) is adopted as the optimizer. The micro Precision, Recall and F1 results are reported in Table 1 with 0.5 threshold of output score. From the result, the F1 scores are high for both NYT10 and Webnlg dataset, hence we can apply feature attribution methods to the fine-tuned models and identify the important features in the text which help to classify the relations.\nEvaluation Metric In datasets, NYT10 and Webnlg, the positions of entities in triples are provided. Therefore, we can constructed the golden feature attribution label as follow. For text X = (w1, w2, .., wT )\nT and triple (s, r, o), where subject s = (wi, .., wj) and object o = (wk, .., ws) are words shown in the text from positions i to j and k to s, respectively. The gold labels of feature attribution for relation r is constructed as\nMgold(X) = (0, .., 0, 1, .., 1, 0, ..., 0, 1, .., 1, ..0)T\nwhere we set 1 from positions i to j as well as k to s and set 0 on other positions.\nWe use the evaluation metric Area under Curve (AUC) to compare the feature attribution M·(X) and Mgold(X) for the test dataset. AUC ranges from 0 to 1, higher AUC represents the the fea-\nture attribution result is closer to the gold feature attribution.\nMain Results The results of AUC under different methods are summarized in Table 2. The popular feature attribution methods are listed and compared. More introduction about the competitors can be found in Section 4. “SHAP + Zero” means zero reference is used in SHAP and “SHAP + Ref.” means Xsim is used as reference in SHAP. From the result, our method LAFA achieves a superior performance in Webnlg dataset and comparable performance in NYT dataset, which indicates that our feature attribution method can identify entities well."
+    }, {
+      "heading" : "5.2 Case II: Feature Attribution on Sentiment Analysis",
+      "text" : "Motivation The goal of the sentiment classification task is to classify a text into a sentiment categories such as positive or negative sentiment (Aghajanyan et al., 2021; Raffel et al., 2019; Jiang et al., 2020). In this use case, we hope to explain the deep sentiment classification model and obtain sentiment factors that drive the model to identify the sentiment.\nData The Stanford Sentiment Treebank (SST) (Socher et al., 2013) is a sentiment analysis dataset collected from English movie reviews (Pang and Lee, 2005). For all 9, 645 sentences in SST, Amazon Mechanical Turk labeled the sentiment for words/phrases/sentences yielded from the Stanford Parser (Manning et al., 2014) on a scale between 1 and 25. SST-2 is first introduced by GLUE (Wang et al., 2018), a famous multi-task benchmark and analysis platform for natrual language understanding, which took a subset from the SST and applied a two-way split (positive or negative)\non sentence-level labels. Owing to the fact that the train/validation/test split are aligned between SST and SST-2, we can run gradient-based methods on the either one of them. Note that we are only working with the test split for both data sets, which contains 2210 and 1821 sentences respectively.\nLanguage Model We use a popular and publicly available Distill-BERT (Sanh et al., 2019) model which is fine-tuned on SST-2 3. The accuracy of the Distill-BERT model on SST and SST-2 is 86.6% and 92.4% respectively.\nEvaluation Metric We extract word-level sentiments from the phrase structure tree (PTB) in SST dataset. We take an absolute value after centralization to yield the golden label Mgold(X). Pearson correlation coefficient, ρ , is the evaluation metric for feature attribution Mgold(X) and M·(X). The correlation ρ takes value from the range from −1 to 1, and a higher ρ means better feature attribution result.\nMain Results The main results of the correlation are summarized in Table 3. Popular feature attribution methods are listed and compared as in the case study I. To leverage the problem that some words can have opposite meaning when their sentiment are different, we only limited the sentences neighbor for same category. Based on the preliminary experiment, we choose the second layer with 10 neighbors and 0.39 cut-off rate, more details about preliminary experiment can be found in Appendix D that using all layers of DistilBERT as the encoder will improve the performance.\nFrom the result Table 3, our method LAFA achieves a superior performance in both SST-2 and SST data sets. It is interesting to point out that the DistilBERT model fine-tuned on SST-2 does not perform equally well on the remaining sentences in SST, so the explanation we yield also has lower correlation for all methods compared with the SST-2. Some example and analysis when LAFA works and fails in this dataset by showing neighbor sentences can be found in Appendix B."
+    }, {
+      "heading" : "5.3 Case III: Feature Attribution on Regression Model",
+      "text" : "Motivation Amazon’s online stores contain rich information about millions of products in product\n3https://huggingface.co/ distilbert-base-uncased-finetuned-sst-2-english (Apache License 2.0)\ntitle, brand and description. We hope to better understand the trendy features that affecting price directly from such unstructured raw data, without the need for human labelers / data cleaning. In this application, we fine-tuned a deep language model with price as labels and aim to understand important factors from product descriptions with the given language model.\nData We collected the product catalog data of about one million products in personal computer category on Amazon’s online store. We concatenate product’s title, brand, bullet points and description as the input X , and use product price as the label Y .\nLanguage Model We use BERT-base model and fine-tuned on collected catalog data for price regression.\nEvaluation Metric To evaluate the performance of feature attribution methods without golden labels, we follow a similar idea as in work (Shrikumar et al., 2017; Lundberg and Lee, 2017) where the difference of prediction log-odds are measured by deleting pixels with highest importance scores. In our application, we first randomly select 200 input texts within a threshold of 1% prediction error as evaluation set. For each input text, we then mask p% of the tokens with highest feature attribution scores according to different feature attribution methods. Then we obtain new prediction result from the masked text denoted as ŷmasked and calculate the new mean absolute percentage error (MAPE). Higher value of MAPE means that the corresponding method excels in picking important features.\nMain Results The results are shown in Figure 2 where x-axis is the mask proportion p, and y-axis\nis MAPE. We observe that the random method has very low MAPE, because randomly masking the input texts will not affect the predicted result as much as the other feature attribution methods. ShapDeep and ShapGrad also have low MAPE values, because they aggregate the gradients of input and reference inputs by simply taking average which may not be meaningful in NLP applications. The proposed LAFA method outperforms other methods by significant margin with masking proportion from 5% to 50%, which demonstrates that smoothing over context-level neighbors helps to highlight the important features in similar type of products."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "This paper presents a novel locally aggregated feature attribution method in NLP, which efficiently captures the important features by leveraging similar input texts in the embedding space. We focused on feature attribution of single input based on a fine-tuned model instead of training a language model, henceforth the computation time is of less concern.\nOne limitation of the LAFA model is that it requires informative neighbor sentences that carry similar information. Otherwise, aggregating information from other sentences could be misleading. Experiments in our datasets show that our method is effective, but the improvements gained from the LAFA varies among different datasets based on the information that neighbor carries.\nThere are several future directions worthy of study. Firstly, labeling feature attribution result in the NLP requires massive human labor, and few datasets are available with golden feature attribution label. Developing new evaluation techniques to further measure model performance is interesting to investigate. Also, readable feature attribution results could help human beings to develop more business applications. For example, developing a key-value pair like processor-i5 as important feature can provide a more plausible feature attribution result to customers."
+    }, {
+      "heading" : "A Model Implementation Detail",
+      "text" : "All experiments are conducted with 8-cores NVIDIA Tesla V100 GPUs with 2.5 GHz (base) and 3.1 GHz (sustained all-core turbo) Intel Xeon 8175M processors.\nCase I For LAFA, we adopt the cosine function as the kernel function and hyper-parameter with λ = 1 and SimGrad is used as M(x) in Equation (5).\nCase II For LAFA, we adopt the Polynomial function as the kernel function k(·, ·) = I(·, ·) and hyper-parameter with λ = 0.44 and SmoothGrad is used as M(x) in Equation (5).\nFor gradient-based model with hyperparameters, we tuned them on the first 100 sentences in the test set. From the grid [10, 25, 50], we choose 25 as the integral iteration and the smooth candidates.\nCase III For LAFA, we adopt the indicator function as the kernel function k(·, ·) = I(·, ·) and hyper-parameter with λ = 1 and SimGrad is used as M(x) in Equation (5)."
+    }, {
+      "heading" : "B Example of Neighbor Sentences found by Case Studies",
+      "text" : "B.1 Relation Extraction\nIn Figure 3, we show the case examples in NYT and Webnlg with their neighbors. We can observe that the neighbors are similar in meaning which can be utilized as a reference to help extract the important features.\nB.2 Sentiment Analysis\nIn SST-2, we can not find informative neighbors for every sentences and we should choose them carefully. In figure 4 we can find two examples from the data set, one with “informative\" good neighbors but another without them. Here for the “informative\" we use a quote because we judge them based on our human understanding. However, the L2 distance in the embedding space is still a good metric here, and the experiment in D shows that such an cut-off rate is valid for the SST data set."
+    }, {
+      "heading" : "C Examples of Different Feature Attribution Methods under Multiple Cases",
+      "text" : "Here we provide an example in Case I and II. In Figure 5, we can find LAFA can identify locations and “lived” well. In Figure 6, we can find that the smooth gradient failed to find out that the word \"efficient\" one of the most important sentiment factor. However, by the aggregating some information from its neighbor, LAFA successfully detects the \"efficient\" out."
+    }, {
+      "heading" : "D Experiment on Different Layer as Neighbor Encoder",
+      "text" : "Denote the size of Xsim as M , the choice of which can be a critical and challenging task. Intuitively, an overly small M would lead to under-smoothing because the target text cannot incorporate enough information from the neighbors. On the contrary, an overly large M would cause over-smoothing by introducing too much noise.\nTo clarify the neighbor searching process and\nthe difference in result using different layers, we show some experiment below.\nAdmittedly, we can directly use the Glove embedding as the encoder, which is the input of BERTbased models and enable us to find neighbor in sense of \"word similarity\". However, since the same word can have different meaning, thus different importance in yielded gradients, we might need to use another layer in the BERT model as the encoder.\nWe separate the layer search process into two cases depending on the availability of a set of label that categorizes similar contents into the same group. Generally speaking, both cases recommend middle layer as the encoder based on our experience.\nD.1 When extra label is not available\nIn the case of SST data, we do not have anything to group similar sentences, so we need to try for different possible layers and find the one that perform the best.\nHere we fixed the max number of neighbors as 10 and uses 0.05 quantile as the cut-off rate to filter those neighbors that are not \"actually close\". We use the Simple Gradient and the Smooth Gradient as the baseline for comparison on the first 100 sentences in the test set.\nMethod SST_first100 Method SST_first100 SimpleGrad 0.457(0.074) SmoothGrad 0.481(0.064) SpG + LAFA + L1 0.457(0.073) SmG + LAFA + L1 0.488(0.063) SpG + LAFA + L2 0.458(0.072) SmG + LAFA + L2 0.490(0.063) SpG + LAFA + L3 0.456(0.072) SmG + LAFA + L3 0.489(0.065) SpG + LAFA + L4 0.456(0.072) SmG + LAFA + L4 0.478(0.064) SpG + LAFA + L5 0.454(0.072) SmG + LAFA + L5 0.479(0.063) SpG + LAFA + L6 0.454(0.073) SmG + LAFA + L6 0.483(0.065) SpG + LAFA + L7 0.456(0.074) SmG + LAFA + L7 0.481(0.059)\nTable A1: Feature Attribution Result on first 100 test cases in SST, using simple and smooth gradient as baselines\nFrom table A1 we can find out that LAFA is a generally good method that always beats the baseline when we use the smooth gradient as the basement method. Layer 2 perform the best among candidates and the combination of Smooth Gradient and Layer w is the final choice and we showed the results on entire SST in the main result part. From here we can find out that for all the layers information from faithful neighbors can bring some useful information to an existing sentence.\nD.2 When we have extra label The performance of encoders can be evaluated by the similarity between text X0 and similar texts Xsim obtained from Equation (4). In this application, we use the product category/subcategory which is an additional source of labels produced by Amazon to construct a proxy metric to evaluate the similarity. Define the metric of precision as:\nPrecision = 1\nM M∑ j=1 I(c(Xj) = c(X0)), (8)\nwhere c(·) denotes the category or subcategory of the corresponding product, I(·) is the indicator function. A high precision represents that the found texts Xsim are similar to the text of interest X0.\nIn the numerical study, we randomly sample 10,000 inputs texts and obtain their corresponding neighbor texts from Equation (4) with M = 10 using each of the 12 hidden layers in BERT as the encoder Hencoder under L2 norm. Figure 7b shows the precisions from different encoders, where we observe that the fifth hidden layer has the highest precision in terms of both category and subcategory, which is consistent with the intuition that the middle layer is a trade-off of token-alike and output-alike inputs. In the following experiment, we adopt the fifth layer as the encoder. In general, when no external labels are provided, we may choose a different encoder depending on the use case."
+    }, {
+      "heading" : "E Ablation Study on Kernel Function",
+      "text" : "E.1 Kernel Choices The kernel function k(·, ·) in Equation (7) plays an important role in aggregation step. We conduct ab-\nlation study on different choices of kernel functions listed below:\n1. Radial basis function kernel (RBF) :\nkRBF (a, b) = exp(−||a− b||2/l2),\nwhere larger hyper-parameter l indicates lower impact from neighbors and vice versa. In the numerical study, we choose l = 2 based on the range of embedding a and b.\n2. Cubic kernel (Cubic):\nkCubic(a, b) = (γa T b+ c0) d,\nwhere γ = 7, c0 = 0 and d = 3, smaller γ means lower impact from neighbors.\n3. Cosine kernel (Cosine):\nkCos(a, b) = a T b/||a|||b|||\n4. Laplacian kernel (Laplacian):\nkLaplacian(a, b) = exp(−||a− b||1/l2),\nin the numerical study, we choose l = 2.\n5. L2 norm based similarity (L2):\nkL2(a, b) = 1/clip(||a− b||2, λleft, λright),\nwhere clip(·, λleft, λright) denotes clip function with λleft = 0.3 and λright = 3 as clip boundary in numerical study.\n6. Indicator function based similarity (Indicator):\nkIndicator(a, b) = I(a, b),\nwhere I(·, ·) denotes indicator function.\nThe results of the study on case study III are shown in Figure 8. From the result, we observe that no single kernel function outperforms all other kernel functions under different mask ratios. Indicator function shows a good performance when the masked ratio is greater than 10%, while RBF kernel shows a good performance when the masked ratio is smaller than 5%."
+    } ],
+    "references" : [ {
+      "title" : "Muppet: Massive multi-task representations with pre-finetuning",
+      "author" : [ "Armen Aghajanyan", "Anchit Gupta", "Akshat Shrivastava", "Xilun Chen", "Luke Zettlemoyer", "Sonal Gupta." ],
+      "venue" : "arXiv preprint arXiv:2101.11038.",
+      "citeRegEx" : "Aghajanyan et al\\.,? 2021",
+      "shortCiteRegEx" : "Aghajanyan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "On pixel-wise explanations for non-linear classifier decisions by layer-wise relevance propagation",
+      "author" : [ "Frederick Klauschen", "Klaus-Robert Müller", "Wojciech Samek." ],
+      "venue" : "PloS one, 10(7):e0130140.",
+      "citeRegEx" : "Klauschen et al\\.,? 2015",
+      "shortCiteRegEx" : "Klauschen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Towards end-to-end reinforcement learning of dialogue agents for information access",
+      "author" : [ "Bhuwan Dhingra", "Lihong Li", "Xiujun Li", "Jianfeng Gao", "Yun-Nung Chen", "Faisal Ahmed", "Li Deng." ],
+      "venue" : "arXiv preprint arXiv:1609.00777.",
+      "citeRegEx" : "Dhingra et al\\.,? 2016",
+      "shortCiteRegEx" : "Dhingra et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Autoknow: Self-driving knowledge collection for products of thousands of types",
+      "author" : [ "Xin Luna Dong", "Xiang He", "Andrey Kan", "Xian Li", "Yan Liang", "Jun Ma", "Yifan Ethan Xu", "Chenwei Zhang", "Tong Zhao", "Gabriel Blanco Saldana" ],
+      "venue" : null,
+      "citeRegEx" : "Dong et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Creating training corpora for nlg micro-planning",
+      "author" : [ "Claire Gardent", "Anastasia Shimorina", "Shashi Narayan", "Laura Perez-Beltrachini." ],
+      "venue" : "55th annual meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Gardent et al\\.,? 2017",
+      "shortCiteRegEx" : "Gardent et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Kernel methods in machine learning",
+      "author" : [ "Thomas Hofmann", "Bernhard Schölkopf", "Alexander J Smola." ],
+      "venue" : "The annals of statistics, pages 1171–1220.",
+      "citeRegEx" : "Hofmann et al\\.,? 2008",
+      "shortCiteRegEx" : "Hofmann et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Towards faithfully interpretable nlp systems: How should we define and evaluate faithfulness? arXiv preprint arXiv:2004.03685",
+      "author" : [ "Alon Jacovi", "Yoav Goldberg" ],
+      "venue" : null,
+      "citeRegEx" : "Jacovi and Goldberg.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Jacovi and Goldberg.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is not explanation",
+      "author" : [ "Sarthak Jain", "Byron C Wallace." ],
+      "venue" : "arXiv preprint arXiv:1902.10186.",
+      "citeRegEx" : "Jain and Wallace.,? 2019",
+      "shortCiteRegEx" : "Jain and Wallace.",
+      "year" : 2019
+    }, {
+      "title" : "SMART: Robust and efficient fine-tuning for pretrained natural language models through principled regularized optimization",
+      "author" : [ "Haoming Jiang", "Pengcheng He", "Weizhu Chen", "Xiaodong Liu", "Jianfeng Gao", "Tuo Zhao." ],
+      "venue" : "Proceedings of the 58th",
+      "citeRegEx" : "Jiang et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Billion-scale similarity search with gpus",
+      "author" : [ "Jeff Johnson", "Matthijs Douze", "Hervé Jégou." ],
+      "venue" : "arXiv preprint arXiv:1702.08734.",
+      "citeRegEx" : "Johnson et al\\.,? 2017",
+      "shortCiteRegEx" : "Johnson et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Dense passage retrieval for open-domain question answering",
+      "author" : [ "Vladimir Karpukhin", "Barlas Oğuz", "Sewon Min", "Patrick Lewis", "Ledell Wu", "Sergey Edunov", "Danqi Chen", "Wen-tau Yih." ],
+      "venue" : "arXiv preprint arXiv:2004.04906.",
+      "citeRegEx" : "Karpukhin et al\\.,? 2020",
+      "shortCiteRegEx" : "Karpukhin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "A unified approach to interpreting model predictions",
+      "author" : [ "Scott Lundberg", "Su-In Lee." ],
+      "venue" : "arXiv preprint arXiv:1705.07874.",
+      "citeRegEx" : "Lundberg and Lee.,? 2017",
+      "shortCiteRegEx" : "Lundberg and Lee.",
+      "year" : 2017
+    }, {
+      "title" : "The stanford corenlp natural language processing toolkit",
+      "author" : [ "Christopher D Manning", "Mihai Surdeanu", "John Bauer", "Jenny Rose Finkel", "Steven Bethard", "David McClosky." ],
+      "venue" : "Proceedings of 52nd annual meeting of the association for computational linguis-",
+      "citeRegEx" : "Manning et al\\.,? 2014",
+      "shortCiteRegEx" : "Manning et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Seeing stars: Exploiting class relationships for sentiment categorization with respect to rating scales",
+      "author" : [ "Bo Pang", "Lillian Lee." ],
+      "venue" : "arXiv preprint cs/0506075.",
+      "citeRegEx" : "Pang and Lee.,? 2005",
+      "shortCiteRegEx" : "Pang and Lee.",
+      "year" : 2005
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "arXiv preprint arXiv:1910.10683.",
+      "citeRegEx" : "Raffel et al\\.,? 2019",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Sentence-bert: Sentence embeddings using siamese bert-networks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "arXiv preprint arXiv:1908.10084.",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : " why should i trust you?\" explaining the predictions of any classifier",
+      "author" : [ "Marco Tulio Ribeiro", "Sameer Singh", "Carlos Guestrin." ],
+      "venue" : "Proceedings of the 22nd ACM SIGKDD international conference on knowledge discovery and data mining, pages 1135–",
+      "citeRegEx" : "Ribeiro et al\\.,? 2016",
+      "shortCiteRegEx" : "Ribeiro et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Modeling relations and their mentions without labeled text",
+      "author" : [ "Sebastian Riedel", "Limin Yao", "Andrew McCallum." ],
+      "venue" : "Joint European Conference on Machine Learning and Knowledge Discovery in Databases, pages 148–163. Springer.",
+      "citeRegEx" : "Riedel et al\\.,? 2010",
+      "shortCiteRegEx" : "Riedel et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "arXiv preprint arXiv:1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Grad-cam: Visual explanations from deep networks via gradient-based localization",
+      "author" : [ "Ramprasaath R Selvaraju", "Michael Cogswell", "Abhishek Das", "Ramakrishna Vedantam", "Devi Parikh", "Dhruv Batra." ],
+      "venue" : "Proceedings of the IEEE international conference",
+      "citeRegEx" : "Selvaraju et al\\.,? 2017",
+      "shortCiteRegEx" : "Selvaraju et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Is attention interpretable? arXiv preprint arXiv:1906.03731",
+      "author" : [ "Sofia Serrano", "Noah A Smith" ],
+      "venue" : null,
+      "citeRegEx" : "Serrano and Smith.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Serrano and Smith.",
+      "year" : 2019
+    }, {
+      "title" : "A value for n-person games",
+      "author" : [ "Lloyd S Shapley." ],
+      "venue" : "Contributions to the Theory of Games, 2(28):307– 317.",
+      "citeRegEx" : "Shapley.,? 1953",
+      "shortCiteRegEx" : "Shapley.",
+      "year" : 1953
+    }, {
+      "title" : "Learning important features through propagating activation differences",
+      "author" : [ "Avanti Shrikumar", "Peyton Greenside", "Anshul Kundaje." ],
+      "venue" : "International Conference on Machine Learning, pages 3145–3153. PMLR.",
+      "citeRegEx" : "Shrikumar et al\\.,? 2017",
+      "shortCiteRegEx" : "Shrikumar et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep inside convolutional networks: Visualising image classification models and saliency maps",
+      "author" : [ "Karen Simonyan", "Andrea Vedaldi", "Andrew Zisserman." ],
+      "venue" : "arXiv preprint arXiv:1312.6034.",
+      "citeRegEx" : "Simonyan et al\\.,? 2013",
+      "shortCiteRegEx" : "Simonyan et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Smoothgrad: removing noise by adding noise",
+      "author" : [ "Daniel Smilkov", "Nikhil Thorat", "Been Kim", "Fernanda Viégas", "Martin Wattenberg." ],
+      "venue" : "arXiv preprint arXiv:1706.03825.",
+      "citeRegEx" : "Smilkov et al\\.,? 2017",
+      "shortCiteRegEx" : "Smilkov et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Matching the blanks: Distributional similarity for relation learning",
+      "author" : [ "Livio Baldini Soares", "Nicholas FitzGerald", "Jeffrey Ling", "Tom Kwiatkowski." ],
+      "venue" : "arXiv preprint arXiv:1906.03158.",
+      "citeRegEx" : "Soares et al\\.,? 2019",
+      "shortCiteRegEx" : "Soares et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D Manning", "Andrew Y Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 2013 conference on empiri-",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Striving for simplicity: The all convolutional net",
+      "author" : [ "Jost Tobias Springenberg", "Alexey Dosovitskiy", "Thomas Brox", "Martin Riedmiller." ],
+      "venue" : "arXiv preprint arXiv:1412.6806.",
+      "citeRegEx" : "Springenberg et al\\.,? 2014",
+      "shortCiteRegEx" : "Springenberg et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Axiomatic attribution for deep networks",
+      "author" : [ "Mukund Sundararajan", "Ankur Taly", "Qiqi Yan" ],
+      "venue" : null,
+      "citeRegEx" : "Sundararajan et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Sundararajan et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Glue: A multi-task benchmark and analysis platform for natural language understanding",
+      "author" : [ "Alex Wang", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel R Bowman." ],
+      "venue" : "arXiv preprint arXiv:1804.07461.",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A novel cascade binary tagging framework for relational triple extraction",
+      "author" : [ "Zhepei Wei", "Jianlin Su", "Yue Wang", "Yuan Tian", "Yi Chang." ],
+      "venue" : "arXiv preprint arXiv:1909.03227.",
+      "citeRegEx" : "Wei et al\\.,? 2019",
+      "shortCiteRegEx" : "Wei et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A network-based end-to-end trainable task-oriented dialogue system",
+      "author" : [ "Tsung-Hsien Wen", "David Vandyke", "Nikola Mrksic", "Milica Gasic", "Lina M Rojas-Barahona", "Pei-Hao Su", "Stefan Ultes", "Steve Young." ],
+      "venue" : "arXiv preprint arXiv:1604.04562.",
+      "citeRegEx" : "Wen et al\\.,? 2016",
+      "shortCiteRegEx" : "Wen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention is not not explanation",
+      "author" : [ "Sarah Wiegreffe", "Yuval Pinter." ],
+      "venue" : "arXiv preprint arXiv:1908.04626.",
+      "citeRegEx" : "Wiegreffe and Pinter.,? 2019",
+      "shortCiteRegEx" : "Wiegreffe and Pinter.",
+      "year" : 2019
+    }, {
+      "title" : "Extracting relational facts by an end-to-end neural model with copy mechanism",
+      "author" : [ "Xiangrong Zeng", "Daojian Zeng", "Shizhu He", "Kang Liu", "Jun Zhao." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume",
+      "citeRegEx" : "Zeng et al\\.,? 2018",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "(Ribeiro et al., 2016) found that their image classification model sometimes misclassifies a husky as a wolf, model explainability tool reveals that their model relies on the snow in the background rather than the appearance when distinguishing the two animals.",
+      "startOffset" : 0,
+      "endOffset" : 22
+    }, {
+      "referenceID" : 22,
+      "context" : "One is model agnostic approaches including Shapley regression values (Shapley, 1953) and LIME (Ribeiro et al.",
+      "startOffset" : 69,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 17,
+      "context" : "One is model agnostic approaches including Shapley regression values (Shapley, 1953) and LIME (Ribeiro et al., 2016).",
+      "startOffset" : 94,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 29,
+      "context" : "Since the gradient map itself is often noisy and challenging to interpret, most gradient-based methods aim to stabilize the feature attribution score by smoothing the gradients or learning from the reference data (Sundararajan et al., 2017; Smilkov et al., 2017; Lundberg and Lee, 2017).",
+      "startOffset" : 213,
+      "endOffset" : 286
+    }, {
+      "referenceID" : 25,
+      "context" : "Since the gradient map itself is often noisy and challenging to interpret, most gradient-based methods aim to stabilize the feature attribution score by smoothing the gradients or learning from the reference data (Sundararajan et al., 2017; Smilkov et al., 2017; Lundberg and Lee, 2017).",
+      "startOffset" : 213,
+      "endOffset" : 286
+    }, {
+      "referenceID" : 12,
+      "context" : "Since the gradient map itself is often noisy and challenging to interpret, most gradient-based methods aim to stabilize the feature attribution score by smoothing the gradients or learning from the reference data (Sundararajan et al., 2017; Smilkov et al., 2017; Lundberg and Lee, 2017).",
+      "startOffset" : 213,
+      "endOffset" : 286
+    }, {
+      "referenceID" : 23,
+      "context" : "As for datasets without golden labels, we conduct a similar evaluation task following prior works (Shrikumar et al., 2017; Lundberg and Lee, 2017) by masking tokens with high importance scores and then find the change in the predicted log-odds.",
+      "startOffset" : 98,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 12,
+      "context" : "As for datasets without golden labels, we conduct a similar evaluation task following prior works (Shrikumar et al., 2017; Lundberg and Lee, 2017) by masking tokens with high importance scores and then find the change in the predicted log-odds.",
+      "startOffset" : 98,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 29,
+      "context" : "et al (Sundararajan et al., 2017) that using the gradient as the feature attribution may suffer from the problems of model saturation or thresholding.",
+      "startOffset" : 6,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 29,
+      "context" : "However, simply using the gradients of one token as feature attribution would lead to noisy results (Sundararajan et al., 2017).",
+      "startOffset" : 100,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 9,
+      "context" : "During inference time, we apply the hidden layer encoder Hencoder to all the input datasets and index, then using FAISS 1 (Johnson et al., 2017) offline.",
+      "startOffset" : 122,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 25,
+      "context" : "To be noticed that our proposed method can be easily extended to variants of simple gradient including smooth gradient or integrated gradient methods (Smilkov et al., 2017; Sundararajan et al., 2017) in Step II.",
+      "startOffset" : 150,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 29,
+      "context" : "To be noticed that our proposed method can be easily extended to variants of simple gradient including smooth gradient or integrated gradient methods (Smilkov et al., 2017; Sundararajan et al., 2017) in Step II.",
+      "startOffset" : 150,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 5,
+      "context" : "com/facebookresearch/ faiss (MIT license) where h, hi,k are the word embedding of w and wi,k as in Equation (1) respectively, and k(·, ·) is a kernel function (Hofmann et al., 2008) (examples of kernel function are listed in the Appendix E.",
+      "startOffset" : 159,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 6,
+      "context" : "Discussion of Faithfulness One important criteria for model explainability method is \"faithfulness\", which refers to how accurately it reflects the true reasoning process of the model (Jacovi and Goldberg, 2020).",
+      "startOffset" : 184,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 16,
+      "context" : "In the localization step (Step I), out of the consideration about faithfulness, we do not use popular bi-encoder frameworks, such as S-BERT (Reimers and Gurevych, 2019) or DenseRetrival (Karpukhin et al.",
+      "startOffset" : 140,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 10,
+      "context" : "In the localization step (Step I), out of the consideration about faithfulness, we do not use popular bi-encoder frameworks, such as S-BERT (Reimers and Gurevych, 2019) or DenseRetrival (Karpukhin et al., 2020), to obtain similar neighbors.",
+      "startOffset" : 186,
+      "endOffset" : 210
+    }, {
+      "referenceID" : 24,
+      "context" : "Feature Attribution on Single Input Simonyan et al (Simonyan et al., 2013) computed the \"saliency map\" denoted as Simple Gradient from the derivative of the output with respect to the input in an image classification task.",
+      "startOffset" : 51,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 23,
+      "context" : "Gradient*Input method (Shrikumar et al., 2017) improves the visual sharpness of the \"saliency map\" by multiplying gradient with the input itself.",
+      "startOffset" : 22,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 25,
+      "context" : "Smooth Gradient method (Smilkov et al., 2017) smoothes the feature attribution score by adding random noises to the input and taking average of the gradients from noisy inputs, formally:",
+      "startOffset" : 23,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 28,
+      "context" : "Guided Backpropagation method (Springenberg et al., 2014) modifies the back-propagation to preserve negative gradients in the ReLU activation layer which also sharpens the \"saliency map\" visually.",
+      "startOffset" : 30,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 20,
+      "context" : "Other methods, such as Grad-CAM or GuidedCAM (Selvaraju et al., 2017), are applicable to specific architecture of neural networks in the field of computer vision.",
+      "startOffset" : 45,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 29,
+      "context" : "Feature Attribution on Input with Reference Data Integrated Gradient method computes the feature score by integrating the gradients from single pre-determined reference input to the target input (Sundararajan et al., 2017).",
+      "startOffset" : 195,
+      "endOffset" : 222
+    }, {
+      "referenceID" : 12,
+      "context" : "SHAP-Gradient method which combines ideas from Integrated Gradient and Smooth Gradient into a single expected value equation (Lundberg and Lee, 2017) .",
+      "startOffset" : 125,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 23,
+      "context" : "DeepLIFT (Shrikumar et al., 2017) assigns the feature score by comparing the difference of contribution between input and some reference inputs via gradient.",
+      "startOffset" : 9,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 12,
+      "context" : "As discussed in (Lundberg and Lee, 2017), DeepLIFT can be considered as an approximation of Shapley Value estimation.",
+      "startOffset" : 16,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 32,
+      "context" : "Motivation Relation Classification is is beneficial to downstream problems, including question answering and knowledge graph (KG) construction tasks (Wen et al., 2016; Dhingra et al., 2016; Dong et al., 2020).",
+      "startOffset" : 149,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 2,
+      "context" : "Motivation Relation Classification is is beneficial to downstream problems, including question answering and knowledge graph (KG) construction tasks (Wen et al., 2016; Dhingra et al., 2016; Dong et al., 2020).",
+      "startOffset" : 149,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 3,
+      "context" : "Motivation Relation Classification is is beneficial to downstream problems, including question answering and knowledge graph (KG) construction tasks (Wen et al., 2016; Dhingra et al., 2016; Dong et al., 2020).",
+      "startOffset" : 149,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 26,
+      "context" : "With the development of deep language model, existing relation extraction methods have achieved significant performance in relation classification task (Soares et al., 2019; Wei et al., 2019).",
+      "startOffset" : 152,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 31,
+      "context" : "With the development of deep language model, existing relation extraction methods have achieved significant performance in relation classification task (Soares et al., 2019; Wei et al., 2019).",
+      "startOffset" : 152,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 18,
+      "context" : "Data We use the public available datasets NYT10 (Riedel et al., 2010) and Webnlg (Gardent et al.",
+      "startOffset" : 48,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2010) and Webnlg (Gardent et al., 2017) for numerical study.",
+      "startOffset" : 19,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 11,
+      "context" : "Mean Square Error (MSE) is used as loss objective and Adam (Kingma and Ba, 2014) is adopted as the optimizer.",
+      "startOffset" : 59,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 0,
+      "context" : "Motivation The goal of the sentiment classification task is to classify a text into a sentiment categories such as positive or negative sentiment (Aghajanyan et al., 2021; Raffel et al., 2019; Jiang et al., 2020).",
+      "startOffset" : 146,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 15,
+      "context" : "Motivation The goal of the sentiment classification task is to classify a text into a sentiment categories such as positive or negative sentiment (Aghajanyan et al., 2021; Raffel et al., 2019; Jiang et al., 2020).",
+      "startOffset" : 146,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 8,
+      "context" : "Motivation The goal of the sentiment classification task is to classify a text into a sentiment categories such as positive or negative sentiment (Aghajanyan et al., 2021; Raffel et al., 2019; Jiang et al., 2020).",
+      "startOffset" : 146,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 27,
+      "context" : "Data The Stanford Sentiment Treebank (SST) (Socher et al., 2013) is a sentiment analysis dataset collected from English movie reviews (Pang and Lee, 2005).",
+      "startOffset" : 43,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2013) is a sentiment analysis dataset collected from English movie reviews (Pang and Lee, 2005).",
+      "startOffset" : 77,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 13,
+      "context" : "For all 9, 645 sentences in SST, Amazon Mechanical Turk labeled the sentiment for words/phrases/sentences yielded from the Stanford Parser (Manning et al., 2014) on a scale between 1 and 25.",
+      "startOffset" : 139,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 30,
+      "context" : "SST-2 is first introduced by GLUE (Wang et al., 2018), a famous multi-task benchmark and analysis platform for natrual language understanding, which took a subset from the SST and applied a two-way split (positive or negative) on sentence-level labels.",
+      "startOffset" : 34,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 19,
+      "context" : "Language Model We use a popular and publicly available Distill-BERT (Sanh et al., 2019) model which is fine-tuned on SST-2 3.",
+      "startOffset" : 68,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 23,
+      "context" : "Evaluation Metric To evaluate the performance of feature attribution methods without golden labels, we follow a similar idea as in work (Shrikumar et al., 2017; Lundberg and Lee, 2017) where the difference of prediction log-odds are measured by deleting pixels with highest importance scores.",
+      "startOffset" : 136,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 12,
+      "context" : "Evaluation Metric To evaluate the performance of feature attribution methods without golden labels, we follow a similar idea as in work (Shrikumar et al., 2017; Lundberg and Lee, 2017) where the difference of prediction log-odds are measured by deleting pixels with highest importance scores.",
+      "startOffset" : 136,
+      "endOffset" : 184
+    } ],
+    "year" : 0,
+    "abstractText" : "With the growing popularity of deep-learning models, model understanding becomes more important. Much effort has been devoted to demystify deep neural networks for better explainability. Some feature attribution methods have shown promising results in computer vision, especially the gradient-based methods where effectively smoothing the gradients with reference data is the key to a robust and faithful result. However, direct application of these gradient-based methods to NLP tasks is not trivial due to the fact that the input consists of discrete tokens and the “reference” tokens are not explicitly defined. In this work, we propose Locally Aggregated Feature Attribution (LAFA), a novel gradient-based feature attribution method for NLP models. Instead of relying on obscure reference tokens, it smooths gradients by aggregating similar reference texts derived from language model embeddings. For evaluation purpose, we also design experiments on different NLP tasks including Entity Recognition and Sentiment Analysis on public datasets and key feature detection on constructed Amazon catalogue dataset. The superior performance of the proposed method is demonstrated through experiments.",
+    "creator" : null
+  }
+}

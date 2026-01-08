@@ -1,0 +1,791 @@
+{
+  "name" : "ARR_2022_1_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Prix-LM: Pretraining for Multilingual Knowledge Base Construction",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Multilingual knowledge bases (KBs), such as DBPedia (Lehmann et al., 2015), Wikidata (Vrandečić and Krötzsch, 2014), and YAGO (Suchanek et al., 2007), provide structured knowledge expressed in multiple languages. Those KBs are modeled as knowledge graphs (KGs) that possess two types\nof knowledge: monolingual triples which describe relations of entities, and cross-lingual links which match entities across languages. The knowledge stored in such KGs facilitates various downstream applications such as question answering (Dai et al., 2016; Bauer et al., 2018; Wang et al., 2021b), recommendation (Zhang et al., 2016; Wang et al., 2018, 2021c), and dialogue systems (Madotto et al., 2018; Liu et al., 2019; Yang et al., 2020).\nManually constructing large-scale knowledge bases has been labor-intensive and expensive (Paulheim, 2018), leading to a surge of interest in automatic knowledge base construction (Ji et al., 2021). Recent research (Bosselut et al., 2019; Yao et al., 2019; Wang et al., 2020, inter alia) proposes to generate structured knowledge using pretrained language models (PLMs; Devlin et al. 2019), where missing elements in KB facts (i.e., triples) can be completed (i.e., filled in) by the PLM.\nWhile these methods arguably perform well for\nEnglish, such automatic KB construction has not yet been tried for multilingual KBs – improving the knowledge in multilingual KBs would have a positive impact on applications in other languages beyond English. Moreover, KBs in multiple languages may possess complementary knowledge, and knowledge bases in low-resource languages often suffer severely from missing entities and facts. This issue could be mitigated by propagating knowledge from multiple well-populated highresource languages’ KBs (e.g., English and French KBs) to the KBs of low-resource languages, this way ‘collectively’ improving the content stored in the full multilingual KB.1\nHowever, training LMs to capture structural knowledge independently for each language will fall short of utilizing complementary and transferable knowledge available in other languages. Therefore, a unified representation model is required, which can capture, propagate and enrich knowledge in multilingual KBs. In this work, we thus propose to train a language model for constructing multilingual KBs. Starting from XLMR (Conneau et al., 2020) as our base model, we then pretrain it on the multilingual DBpedia, which stores both monolingual triples and cross-lingual links (see Figure 1). We transform both types of knowledge into sequences of tokens and pretrain the language model with a causal LM objective on such transformed sequences. The monolingual triples infuse structured knowledge into the language model, while the cross-lingual links help align knowledge between different languages. This way, the proposed model Prix-LM (Pre-trained Knowledge-incorporated Cross-lingual Language Model) is capable of mapping knowledge of different languages into a unified/shared space.\nWe evaluate our model on four different tasks essential for automatic KB construction, covering both high-resource and low-resource languages: link prediction, cross-lingual entity linking, bilingual lexicon induction, and prompt-based LM knowledge probing. The main results across all tasks indicate that Prix-LM brings consistent and substantial gains over various state-of-the-art methods, demonstrating its effectiveness.\n1This intuition is illustrated by the example in Figure 1. Consider the prediction of facts (e.g., genre) about the oldest Japanese novel The Tale of Genji. English DBpedia records its genre only as Monogatari (story), whereas complementary knowledge can be propagated from the Japanese KB, which provides finer-grained genre information, including Love Story, Royal Family Related Story, and Monogatari."
+    }, {
+      "heading" : "2 Prix-LM",
+      "text" : "We now describe Prix-LM, first outlining the data structure and pretraining task, and then describing its pretraining procedure in full (§2.1), and efficient inference approaches with Prix-LM (§2.2).\nPretraining Task. We rely on multilingual DBpedia, but note that Prix-LM is also applicable to other KBs. DBpedia contains two types of structured knowledge: monolingual knowledge triples, and cross-lingual links between entities. The monolingual triples represent (relational) facts expressed in a structured manner. Each triple is denoted as {e1, r, e2}: the elements of a triple are identified as the subject entity e1, relation (or predicate) r, and object entity e2, respectively (see also Figure 1 for examples). For instance, the fact “The capital of England is London” can be represented as {England, capital,London}. The cross-lingual links, denoted as {ea, eb}, represent the correspondence of ‘meaning-identical’ entities ea and eb in two different languages: e.g., the English entity London is mapped to Londres in Spanish.\nWe treat both types of knowledge using the same input format {s, p, o}, where s = e1, p = r, o = e2 for monolingual knowledge triples, and s = ea, p = null, o = eb for cross-lingual entity links. The pretraining task is then generating o given s and p. This objective is consistent with the link prediction task and also benefits other entity-related downstream tasks, as empirically validated later."
+    }, {
+      "heading" : "2.1 Pretraining Language Models",
+      "text" : "Prix-LM is initialized by a multilingual PLM such as XLM-R (Conneau et al., 2020): starting from XLM-R’s pretrained weights, we train on the structured knowledge from a multilingual KB.\nInput Representation. We represent knowledge from the KB as sequences of tokens. In particular, given some knowledge fact {s, p, o}, where each element is the surface name of an entity or a relation, we tokenize2 the elements to sequences of subtokens Xs, Xp, and Xo. We treat each element in the knowledge fact as a different text segment and concatenate them to form a single sequence. We further introduce special tokens to represent different types of knowledge: (1) Monolingual Triples. We use special tokens to indicate the role of each element in the triple, which\n2XLM-R’s dedicated multilingual tokenizer is used to processes entity and relation names in each language.\nconverts the sequence to the following format:\n<s> [S]Xs </s> </s> [P]Xp </s> </s> [O]Xo [EOS]</s>.\n<s> is the special token denoting beginning of sequence; </s> is the separator token, both adopted from XLM-R. Additional special tokens [S], [P] and [O] denote the respective roles of subject, predicate, and object of the input knowledge fact. [EOS] is the end-of-sequence token. (2) Cross-Lingual Links. As the same surface form of an entity can be associated with more than language, we use special language tokens to indicate the actual language of each entity. These extra tokens can also be interpreted as the relation between entities. The processed sequence obtains the following format:\n<s> [S]Xs </s> </s> [P][S-LAN][O-LAN] </s> </s> [O]Xo [EOS]</s>.\n<s> and </s> are the same as for monolingual triples. [S-LAN] and [O-LAN] denote two placeholders for language tokens, where they get replaced by the two-character ISO 639-1 codes of the source and target language, respectively. For example, if the cross-lingual connects an English entity London to a Spanish entity Londres, the two language tokens [EN][ES]will be appended to the token [P]. The new special tokens are randomly initialized, and optimized during training. The original special tokens are are kept and also optimized.\nTraining Objective. The main training objective of Prix-LM is to perform completion of both monolingual knowledge triples and cross-lingual entity links (see §2). In particular, given Xs and Xp, the model must predict 1) Xo from monolingual triples (i.e., Xp is a proper relation), or Xo as the crosslingual counterpart of Xs for cross-lingual pairs (i.e., Xp is a pair of language tokens). This task can be formulated into an autoregressive language modeling training objective:\nLLM = − ∑\nxt∈Xo∪{[EOS]} log P (xt | x<t) ,\nwhere P (xt | x<t) is the conditional probability of generating xt given previous subtokens. The probability of generating token xt is calculated from the hidden state of its previous token ht−1 in the final layer of Transformer as follows:\nP (xt | x<t) = softmax(Wht−1),\nwhere W is a trainable parameter initialized from PLMs for subtoken prediction. Note that this train-\ning objective is applied to both monolingual knowledge triples and cross-lingual links as they can both be encoded in the same {s, p, o} format.\nSince models like mBERT or XLM-R rely on masked language modeling which also looks ‘into the future’, subtokens can be leaked by attention. Therefore, we create adaptations to support causal autoregressive training using attention masks (Yang et al., 2019), so that the Xo subtokens can only access their previous subtokens. In particular, in the Transformer blocks, given the query Q, key K, and value V , we adapt them to a causal LM:\natt (Q,K,V ) = softmax ( QKᵀ √\nd + M\n) V ,\nwhere Q,K,V ∈ Rl×d; l is the length of the input sequence, d is the hidden size, M ∈ Rl×l is an attention mask, which is set as follows:\nMi j =  0 xi < Xo ∪ {[EOS]} 0 xi ∈ Xo ∪ {[EOS]}, j ≤ i −∞ xi ∈ Xo ∪ {[EOS]}, j > i"
+    }, {
+      "heading" : "2.2 Inference",
+      "text" : "Different downstream tasks might require different types of inference: e.g., while link prediction tasks should rely on autoregressive inference, similaritybased tasks such as cross-lingual entity linking rely on similarity-based inference, that is, finding nearest neighbors in the multilingual space. In what follows, we outline both inference types.\nAutoregressive Inference. For link prediction tasks test input is in the format of {s, p, ?}, where the model is supposed to generate the missing o given s and p. For such tasks, o comes from a known set of candidate entities O. A simple way to perform inference is to construct candidate tuples {s, p, o′} using each o′ ∈ O and return the one with the minimum LM loss. This straightforward approach requires encoding |O| sequences. However, as |O| can be large for high-resource languages (e.g., 2M items for English), this might yield a prohibitively expensive inference procedure. We thus propose to speed up inference by applying and adapting the constrained beam search (Anderson et al., 2017). In a nutshell, instead of calculating loss on the whole sequence, we generate one subtoken at a time and only keep several most promising sequences in the expansion set for beam search. The generation process ends when we exceed the maximum length of entities.\nMore precisely, given s and p (or only s when dealing with cross-lingual links), we concatenate\nthem as the initial sequence X0 and initialize the sequence loss to 0. We then extend the sequence using subtokens from the PLM’s vocabularyV. For each subtoken w1 ∈ V, we create a new sequence {X0,w1} and add − log P (w1|X0) to the sequence loss. For the next round, we only keep the sequences that can be expanded to an entity in the expansion set, and retain at most K sequences with the smallest sequence loss, where K is a hyperparameter. This process is repeated until there are no more candidate sequences to be added to the expansion set. Finally, for any candidate entity o ∈ O, if it has been generated from a corresponding candidate sequence, we set its loss to the total LM loss (sum of sequence losses), otherwise we set its loss to∞. Finally, we return the entity with the smallest loss. A more formal description of this procedure is summarized in Alg. 1 in the Appendix.\nThis inference variant only requires encoding at most L · K sequences, where L is the maximum number of subtokens in an entity. It is much more efficient when L · K |O|, which generally holds for tasks such as link prediction.\nSimilarity-Based Inference. For some tasks it is crucial to retrieve nearest neighbors (NN) via embedding similarity in the multilingual space. Based on prior findings concerning multilingual PLMs (Liu et al., 2021b) and our own preliminary experiments, out-of-the-box Prix-LM produces entity embeddings of insufficient quality. However, we can transform them into entity encoders via a simple and efficient unsupervised Mirror-BERT procedure (Liu et al., 2021a). In short, MirrorBERT is a contrastive learning method that calibrates PLMs and converts them into strong universal lexical or sentence encoders. The NN search is then performed with the transformed “MirrorBERT” Prix-LM variant.3"
+    }, {
+      "heading" : "3 Experiments and Results",
+      "text" : "In this section, we evaluate Prix-LM in both highresource and low-resource languages. The focus is on four tasks that are directly or indirectly related to KB construction. 1) Link prediction (LP) is the core task for automatic KB construction since it discovers missing links given incomplete KBs. 2) Knowledge probing from LMs (LM-KP) can also be seen as a type of KB completion task as it performs entity retrieval given a subject entity and\n3For a fair comparison, we also apply the same transformation on baseline PLMs.\na relation. 3) Cross-lingual entity linking (XEL) and 4) Bilingual lexicon induction (BLI) can be very useful for multilingual KB construction as they help to find cross-lingual entity links."
+    }, {
+      "heading" : "3.1 Experimental Setup",
+      "text" : "Training Configuration. We train our model on knowledge facts for 87 languages which are represented both in DBpedia and in XLM-R (Base). The training set comprises 52M monolingual knowledge triples and 142M cross-lingual links.\nWe implement our model using Huggingface’s Transformers library (Wolf et al., 2020), and primarily follow the optimization hyperparameters of XLM-R.4 For LP we use the final checkpoint; for LM-LP, results are reported using the checkpoint at 20k steps; for BLI and XEL, the checkpoint at 150k steps is used. We discuss the rationales of checkpoint selection in §3.6.\nInference Configuration. For similarity-based inference, as in previous work (Liu et al., 2021a) the Mirror-BERT procedure relies on the 10k most frequent English words for contrastive learning.5 For constrained beam search, used with the LP task, we set the hyperparameter K to 50."
+    }, {
+      "heading" : "3.2 Link Prediction",
+      "text" : "(Short) Task Description. Following relevant prior work (Bosselut et al., 2019; Yao et al., 2019), given a subject entity e1 and relation r, the aim of the LP task is to determine the object entity e2.\nTask Setup. We evaluate all models on DBpedia. We randomly sample 10% of the monolingual triples as the test set for 9 languages and use remaining data to train the model.6 The data statistics\n4In summary: The model is trained for 5 epochs with the Adam optimizer (Kingma and Ba, 2015) using β1 = 0.9, β2 = 0.98 and a batch size of 1,024. The learning rate is 5e−5, with a warmup for the first 6% steps followed by a linear learning rate decay to 0. We use dropout (Srivastava et al., 2014) with a rate of 0.1 on all layers and attention weights. For efficiency, we drop all triples with sequence lengths ≥ 30, which only constitutes less than 1.3% of all triples. The full training takes about 5 days with one Nvidia RTX 8000 GPU.\n5We use English words only for simplicity and direct comparisons. According to Liu et al. (2021a), Mirror-BERT tuning which uses words from the actual test language pair might yield even better performance. Our training config is identical to the original Mirror-BERT work, except the use of a smaller batch size (128 instead of 200) due to hardware constraints.\n6Following Bordes et al. (2013), we use the filtered setting, removing corrupted triples appearing in the training or test set. Moreover, following existing LP tasks (Toutanova et al., 2015; Dettmers et al., 2018) we remove redundant triples (e1, r1, e2) from the test set if (e2, r2, e1) appears in the training set.\nare reported in Tab. 1. The evaluation metrics are standard Hits@1, Hits@3, and Hits@10.7\nModels in Comparison. We refer to our model as Prix-LM (All) and compare it to the following groups of baselines. First, we compare to three representative and widely used KG embedding models8: 1) TransE (Bordes et al., 2013) interprets relations as translations from source to target entities, 2) ComplEx (Trouillon et al., 2016) uses complexvalued embedding to handle binary relations, while 3) RotatE (Sun et al., 2019) interprets relations as rotations from source to target entities in the complex space. In fact, RotatE additionally uses a self-adversarial sampling strategy in training, and offers state-of-the-art performance on several KG completion benchmarks (Rossi et al., 2021). Second, Prix-LM (Single) is the ablated monolingual version of Prix-LM, which uses an identical model structure to Prix-LM (All), but is trained only on monolingual knowledge triples of the test language. Training adopts the same strategy from prior work on pretraining monolingual LMs for KG completion (Bosselut et al., 2019; Yao et al., 2019). We train the Prix-LM (Single) for the same number\n7We do not calculate mean rank and mean reciprocal rank as constrained beam search does not yield full ranked lists.\n8The KG embedding baselines are implemented based on OpenKE (Han et al., 2018) and trained using the default hyper-parameters in the library.\nof epochs as Prix-LM (All): this means that the embeddings of subtokens in the test language are updated for the same number of times.\nResults and Discussion. The results in Tab. 1 show that the Prix-LM (All) achieves the best Hits@1 on average, outperforming TransE, ComplEx, and RotatE by 21.5%, 11.8%, and 5.6%, respectively. It also outperforms the baselines on Hits@3 and Hits@10. Moreover, Prix-LM (All) outperforms in almost all languages its monolingual counterpart Prix-LM (Single): the average improvements are > 3% across all metrics, demonstrating that the model can effectively leverage complementary knowledge captured and transferred through massive pretraining on multiple languages. Interestingly, the advantages of Prix-LM (both Single and All models) over baselines are not restricted to low resource languages but are observed across the board. This hints that, beyond integrating multilingual knowledge, Prix-LM is essentially a wellsuited framework for KB completion in general."
+    }, {
+      "heading" : "3.3 Cross-lingual Entity Linking",
+      "text" : "(Short) Task Description. In XEL9, a model is asked to link an entity mention in any language to a corresponding entity in an English KB or in a language-agnostic KB.10 XEL can contribute to multilingual KB construction in two ways. First, since XEL links mentions extracted from free text to KBs, it can be leveraged to enrich KBs with textual attributes. Second, it also provides a way\n9XEL in our work refers only to entity mention disambiguation; it does not cover the mention detection subtask.\n10A language-agnostic KB has universal interlingual concepts without being restricted to a specific language.\nto disambiguate knowledge with similar surface forms but different grounded contexts.\nTask Setup. We evaluate Prix-LM on two XEL benchmarks: (i) the Low-resource XEL benchmark (LR-XEL; Zhou et al. 2020) and (ii) crosslingual biomedical entity linking (XL-BEL; Liu et al. 2021b). LR-XEL covers three low-resource languages te, lo, and mr11 where the model needs to associate mentions in those languages to the English Wikipedia pages. XL-BEL covers ten typologically diverse languages (see Tab. 3 for the full list). It requires the model to link an entity mention to entries in UMLS (Bodenreider, 2004), a language-agnostic medical knowledge base.\nModels in Comparison. For XEL and all following tasks, we use multilingual MLMs (i.e. mBERT and XLM-R) as our baselines as they are the canonical models frequently used in prior work and have shown promising results in cross-lingual entitycentric tasks (Vulić et al., 2020; Liu et al., 2021b; Kassner et al., 2021). We remind the reader that the ‘Mirror-BERT’ fine-tuning step is always applied, yielding an increase in performance.\nResults and Discussion. On LR-XEL, Prix-LM achieves gains for all three languages over its base model XLM-R. Especially on mr, where XLM-R and mBERT are almost fully ineffective, Prix-LM leads to over 20% of absolute accuracy gain, again showing the effectiveness of incorporating multilingual structural knowledge. On lo, mBERT is slightly better than Prix-LM, but Prix-LM again yields gains over its base model: XLM-R. On XL-\n11Marathi (mr, an Indo-Aryan language spoken in Western India, written in Devanagari script), Lao (lo, a Kra-Dai language written in Lao script) and Telugu (te, a Dravidian language spoken in southeastern India written in Telugu script).\nBEL, a large increase is again observed for almost all target languages (see Prix-LM (All) + Mirror). The only exception is English, where the model performance drops by 3.5%. This is likely to be a consequence of trading-off some of the extensive English knowledge when learning on multilingual triples. Beyond English, substantial improvements are obtained in other Indo-European languages including Spanish, German and Russian (+10-20%), stressing the necessity of knowledge injection even for high-resource languages. Like LP, we also experimented with Prix-LM trained with only monolingual data (see Prix-LM (Single) + Mirror). Except for English, very large boosts are obtained on all other languages when comparing All and Single models, confirming that multilingual training has provided substantial complementary knowledge."
+    }, {
+      "heading" : "3.4 Bilingual Lexicon Induction",
+      "text" : "(Short) Task Description. BLI aims to find a counterpart word or phrase in a target language. Similar to XEL, BLI can also evaluate how well a model can align a cross-lingual (entity) space.\nTask Setup. We adopt the standard supervised embedding alignment setting (Glavaš et al., 2019) of VecMap (Artetxe et al., 2018) with 5k translation pairs reserved for training (i.e., for learning linear alignment maps) and additional 2k pairs for testing. The similarity metric is the standard crossdomain similarity local scaling (CSLS; Lample et al. 2018).12 We experiment with six language pairs and report accuracy (i.e., Hits@1) and mean reciprocal rank (MRR).\nResults and Discussion. The results are provided in Tab. 4. There are accuracy gains observed on 4/6 language pairs, while MRR improves for all pairs. These findings further confirm that Prix-LM\n12Note that the models are not fine-tuned but only their embeddings are used. Further, note that the word translation pairs in the BLI test sets have < 0.001% overlap with the cross-lingual links used in Prix-LM training.\nin general learns better entity representations and improved cross-lingual entity space alignments."
+    }, {
+      "heading" : "3.5 Prompt-based Knowledge Probing",
+      "text" : "(Short) Task Description. LM-KP (Petroni et al., 2019) queries a PLM with (typically humandesigned) prompts/templates such as Dante was born in . (the answer should be Florence). It can be viewed as a type of KB completion since the queries and answers are converted from/into KB triples: in this case, {Dante, born-in, Florence}.\nTask Setup. We probe how much knowledge a PLM contains in multiple languages relying on the multilingual LAnguage Model Analysis (mLAMA) benchmark (Kassner et al., 2021). To ensure a strictly fair comparison, we only compare XLM-R and Prix-LM.13 For both Prix-LM and XLM-R, we take the word with highest probability at the [Mask] token as the model’s prediction. Punctuation, stop words, and incomplete WordPieces are filtered out from the vocabulary during prediction.\nResults and Discussion. Tab. 5 indicates that Prix-LM achieves better performance than XLM-R on mLAMA across all languages. We suspect that the benefits of Prix-LM training are twofold. First, multilingual knowledge is captured in the unified LM representation, which improves LM-KP as a knowledge-intensive task. The effect of this is particularly pronounced on low-resource languages such as fi, et and hu, showing that transferring knowledge from other languages is effective. Second, the Prix-LM training on knowledge triples is essentially an adaptive fine-tuning step (Ruder, 2021) that exposes knowledge from the existing PLMs’ weights. We will discuss this conjecture, among other analyses, in what follows."
+    }, {
+      "heading" : "3.6 Additional Analysis",
+      "text" : "Inconsistency of the Optimal Checkpoint across Tasks (Fig. 2). How many steps should we pretrain Prix-LM on knowledge triples? The plots in Fig. 2 reveal that the trend is different on tasks that require language understanding (mLAMA) versus tasks that require only entity representations (LP and XL-BEL). On mLAMA, Prix-LM’s performance increases initially and outperforms the base model (XLM-R, at step 0). However, after around\n13This is a fair comparison as XLM-R and Prix-LM share the same tokenizer and their prediction candidate spaces are thus the same. We exclude multi-token answers as they require multi-token decoding modules, which will be different for causal LMs like Prix-LM versus MLMs such as XLM-R.\n20k steps it starts to deteriorate. We speculate that this might occur due to catastrophic forgetting, as mLAMA requires NLU capability to process queries formatted as natural language. Training on knowledge triples may expose the PLMs’ capability of generating knowledge at the earlier training stages: this explains the steep increase from 0-20k iterations. However, training on knowledge triples for (too) long degrades the model’s language understanding capability. On the other hand, longer training seems almost always beneficial for LP and XL-BEL: these tasks require only high-quality entity embeddings instead of understanding complete sentences. A nuanced difference between LP and XL-BEL is that Prix-LM’s performance on XLBEL saturates after 100k-150k steps, while on LP the Hits@1 score still increases at 200k steps.\nLink Prediction on Unseen Entities (Tab. 6). KG embedding models such as RotatE require that entities in inference must be seen in training. However, the Prix-LM is able to derive (non-random) representations also for unseen entities. We evaluate this ability of Prix-LM on triples (s, r, o) where the subject entity s or object entity o is unseen during training. The results indicate that Prix-LM can generalize well also to unseen entities."
+    }, {
+      "heading" : "4 Related Work",
+      "text" : "Injecting Structured Knowledge into LMs. Conceptually, our work is most related to recent\nwork on knowledge injection into PLMs. KnowBERT (Peters et al., 2019) connects entities in text and KGs via an entity linker and then recontextualizes BERT representations conditioned on the KG embeddings. KG-BERT (Yao et al., 2019) trains BERT directly on knowledge triples by linearizing their entities and relations into a sequence and predicting plausibility of the sequence. Wang et al. (2021a) improve KG-BERT by splitting a subject-relation-object knowledge triple into a subject-relation pair representation and an object entity representation, then modeling their similarities with a dual/Siamese neural network.14 While prior studies have focused on incorporating monolingual (English) structured knowledge into PLMs, our work focuses on connecting knowledge in many languages, allowing knowledge in each language to be transferred and collectively enriched.\nMultilingual LMs pretrained via MLM, such as mBERT (Devlin et al., 2019) and XLM-R (Conneau et al., 2020), cover 100+languages and are the starting point (i.e. initialization) of Prix-LM.15 With the notable exception of Calixto et al. (2021) who rely on the prediction of Wikipedia hyperlinks as an auxiliary/intermediate task to improve XLMR’s multilingual representation space for crosslingual transfer, there has not been any work on augmenting multilingual PLMs with structured knowledge. Previous work has indicated that off-the-shelf mBERT and XLM-R fail on knowledge-intensive multilingual NLP tasks such as entity linking and KG completion, and especially so for low-resource languages (Liu et al., 2021b). These are the crucial challenges addressed in this work.\nKB Completion and Construction. Before PLMs, rule-based systems and multi-staged information extraction pipelines were typically used for automatic KB construction (Auer et al., 2007; Fabian et al., 2007; Hoffart et al., 2013; Dong et al., 2014). However, such methods require expensive human effort for rule or feature creation (Carlson et al., 2010; Vrandečić and Krötzsch, 2014), or they rely on (semi-)structured corpora with easy-to-\n14Other work on knowledge injection such as K-BERT (Liu et al., 2020a) and ERNIE (Zhang et al., 2019) mainly aims to leverage external knowledge to improve on downstream NLU tasks instead of performing KG completion.\n15We will explore autoregressive multilingual PLMs such as mBART (Liu et al., 2020b) and mT5 (Xue et al., 2021) in the future. While they adopt autoregressive training objectives at pretraining, it is non-trivial to extract high-quality embeddings from such encoder-decoder architectures, which is crucial for some tasks in automatic KB completion (e.g. XEL and BLI).\nconsume formats (Lehmann et al., 2015). Petroni et al. (2019) showed that modern PLMs such as BERT could also be used as KBs: querying PLMs with fill-in-the-blank-style queries, a substantial amount of factual knowledge can be extracted. This in turn provides an efficient way to address the challenges of traditional KB methods. Jiang et al. (2020) and Kassner et al. (2021) extended the idea to extracting knowledge from multilingual PLMs.\nWork in monolingual settings closest to ours is COMET (Bosselut et al., 2019): Prix-LM can be seen as an extension of this idea to multilingual and cross-lingual setups. Prix-LM’s crucial property is that it enables knowledge population by transferring complementary structured knowledge across languages. This can substantially enrich (limited) prior knowledge also in monolingual KBs.\nIn another line of work, multilingual KG embeddings (Chen et al., 2017, 2021; Sun et al., 2020a, 2021) were developed to support cross-KG knowledge alignment and link prediction. Such methods produce a unified embedding space that allows link prediction in a target KG based on the aligned prior knowledge in other KGs (Chen et al., 2020). Research on multilingual KG embeddings has made rapid progress recently, e.g., see the survey of Sun et al. (2020b). However, these methods focus on a closed-world scenario and are unable to leverage open-world knowledge from natural language texts. Prix-LM combines the best of both worlds and is able to capture and combine knowledge from (multilingual) KGs and multilingual texts."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We have proposed Prix-LM, a unified multilingual representation model that can capture, propagate and enrich knowledge in and from multilingual KBs. Prix-LM is trained via a casual LM objective, utilizing monolingual knowledge triples and cross-lingual links. It embeds knowledge from the KB in different languages into a shared representation space, which benefits transferring complementary knowledge between languages. We have run comprehensive experiments on 4 tasks relevant to KB construction, and 17 diverse languages, with performance gains that demonstrate the effectiveness and robustness of Prix-LM for automatic KB construction in multilingual setups. The code and the pretrained models will be available online at: [URL_PLACEHOLDER]."
+    }, {
+      "heading" : "B Constrained Beam Search Algorithm",
+      "text" : "The detailed algorithm of constrained beam search is described in Alg. 1."
+    } ],
+    "references" : [ {
+      "title" : "Guided open vocabulary image captioning with constrained beam search",
+      "author" : [ "Peter Anderson", "Basura Fernando", "Mark Johnson", "Stephen Gould." ],
+      "venue" : "EMNLP 2017.",
+      "citeRegEx" : "Anderson et al\\.,? 2017",
+      "shortCiteRegEx" : "Anderson et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A robust self-learning method for fully unsupervised cross-lingual mappings of word embeddings",
+      "author" : [ "Mikel Artetxe", "Gorka Labaka", "Eneko Agirre." ],
+      "venue" : "Proceedings of ACL 2018, pages 789–798.",
+      "citeRegEx" : "Artetxe et al\\.,? 2018",
+      "shortCiteRegEx" : "Artetxe et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dbpedia: A nucleus for a web of open data",
+      "author" : [ "Sören Auer", "Christian Bizer", "Georgi Kobilarov", "Jens Lehmann", "Richard Cyganiak", "Zachary Ives." ],
+      "venue" : "The semantic web, pages 722–735. Springer.",
+      "citeRegEx" : "Auer et al\\.,? 2007",
+      "shortCiteRegEx" : "Auer et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Commonsense for generative multi-hop question answering tasks",
+      "author" : [ "Lisa Bauer", "Yicheng Wang", "Mohit Bansal." ],
+      "venue" : "EMNLP 2021.",
+      "citeRegEx" : "Bauer et al\\.,? 2018",
+      "shortCiteRegEx" : "Bauer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The unified medical language system (umls): integrating biomedical terminology",
+      "author" : [ "Olivier Bodenreider." ],
+      "venue" : "Nucleic acids research, 32(suppl_1):D267– D270.",
+      "citeRegEx" : "Bodenreider.,? 2004",
+      "shortCiteRegEx" : "Bodenreider.",
+      "year" : 2004
+    }, {
+      "title" : "Translating embeddings for modeling multirelational data",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Alberto GarciaDuran", "Jason Weston", "Oksana Yakhnenko." ],
+      "venue" : "NeurIPS 2013.",
+      "citeRegEx" : "Bordes et al\\.,? 2013",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "COMET: Commonsense transformers for automatic knowledge graph construction",
+      "author" : [ "Antoine Bosselut", "Hannah Rashkin", "Maarten Sap", "Chaitanya Malaviya", "Asli Celikyilmaz", "Yejin Choi." ],
+      "venue" : "ACL 2019.",
+      "citeRegEx" : "Bosselut et al\\.,? 2019",
+      "shortCiteRegEx" : "Bosselut et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Wikipedia entities as rendezvous across languages: Grounding multilingual language models by predicting Wikipedia hyperlinks",
+      "author" : [ "Iacer Calixto", "Alessandro Raganato", "Tommaso Pasini." ],
+      "venue" : "NAACL 2021.",
+      "citeRegEx" : "Calixto et al\\.,? 2021",
+      "shortCiteRegEx" : "Calixto et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Toward an architecture for never-ending language learning",
+      "author" : [ "Andrew Carlson", "Justin Betteridge", "Bryan Kisiel", "Burr Settles", "Estevam R Hruschka", "Tom M Mitchell." ],
+      "venue" : "AAAI 2010.",
+      "citeRegEx" : "Carlson et al\\.,? 2010",
+      "shortCiteRegEx" : "Carlson et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Cross-lingual entity alignment with incidental supervision",
+      "author" : [ "Muhao Chen", "Weijia Shi", "Ben Zhou", "Dan Roth." ],
+      "venue" : "EACL 2021.",
+      "citeRegEx" : "Chen et al\\.,? 2021",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Multilingual knowledge graph embeddings for cross-lingual knowledge alignment",
+      "author" : [ "Muhao Chen", "Yingtao Tian", "Mohan Yang", "Carlo Zaniolo." ],
+      "venue" : "IJCAI 2017.",
+      "citeRegEx" : "Chen et al\\.,? 2017",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multilingual knowledge graph completion via ensemble knowledge transfer",
+      "author" : [ "Xuelu Chen", "Muhao Chen", "Changjun Fan", "Ankith Uppunda", "Yizhou Sun", "Carlo Zaniolo." ],
+      "venue" : "EMNLP 2020 (Findings).",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Linguistic distance: A quantitative measure of the distance between english and other languages",
+      "author" : [ "Barry R Chiswick", "Paul W Miller." ],
+      "venue" : "Journal of Multilingual and Multicultural Development, 26(1):1–11.",
+      "citeRegEx" : "Chiswick and Miller.,? 2005",
+      "shortCiteRegEx" : "Chiswick and Miller.",
+      "year" : 2005
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "In",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "CFO: Conditional focused neural question answering with largescale knowledge bases",
+      "author" : [ "Zihang Dai", "Lei Li", "Wei Xu." ],
+      "venue" : "ACL 2016.",
+      "citeRegEx" : "Dai et al\\.,? 2016",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Convolutional 2d knowledge graph embeddings",
+      "author" : [ "Tim Dettmers", "Pasquale Minervini", "Pontus Stenetorp", "Sebastian Riedel." ],
+      "venue" : "AAAI 2018.",
+      "citeRegEx" : "Dettmers et al\\.,? 2018",
+      "shortCiteRegEx" : "Dettmers et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "NAACL 2019.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Knowledge vault: A web-scale approach to probabilistic knowledge fusion",
+      "author" : [ "Xin Dong", "Evgeniy Gabrilovich", "Geremy Heitz", "Wilko Horn", "Ni Lao", "Kevin Murphy", "Thomas Strohmann", "Shaohua Sun", "Wei Zhang." ],
+      "venue" : "KDD 2014.",
+      "citeRegEx" : "Dong et al\\.,? 2014",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Yago: A core of semantic knowledge unifying wordnet and wikipedia",
+      "author" : [ "MS Fabian", "Kasneci Gjergji", "WEIKUM Gerhard" ],
+      "venue" : null,
+      "citeRegEx" : "Fabian et al\\.,? \\Q2007\\E",
+      "shortCiteRegEx" : "Fabian et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "How to (properly) evaluate crosslingual word embeddings: On strong baselines, comparative analyses, and some misconceptions",
+      "author" : [ "Goran Glavaš", "Robert Litschko", "Sebastian Ruder", "Ivan Vulić." ],
+      "venue" : "ACL 2019.",
+      "citeRegEx" : "Glavaš et al\\.,? 2019",
+      "shortCiteRegEx" : "Glavaš et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "OpenKE: An open toolkit for knowledge embedding",
+      "author" : [ "Xu Han", "Shulin Cao", "Lv Xin", "Yankai Lin", "Zhiyuan Liu", "Maosong Sun", "Juanzi Li." ],
+      "venue" : "EMNLP 2018.",
+      "citeRegEx" : "Han et al\\.,? 2018",
+      "shortCiteRegEx" : "Han et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Yago2: A spatially and temporally enhanced knowledge base from wikipedia",
+      "author" : [ "Johannes Hoffart", "Fabian M Suchanek", "Klaus Berberich", "Gerhard Weikum." ],
+      "venue" : "Artificial Intelligence, 194:28–61.",
+      "citeRegEx" : "Hoffart et al\\.,? 2013",
+      "shortCiteRegEx" : "Hoffart et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "A survey on knowledge graphs: Representation, acquisition, and applications",
+      "author" : [ "Shaoxiong Ji", "Shirui Pan", "Erik Cambria", "Pekka Marttinen", "S Yu Philip." ],
+      "venue" : "IEEE Transactions on Neural Networks and Learning Systems.",
+      "citeRegEx" : "Ji et al\\.,? 2021",
+      "shortCiteRegEx" : "Ji et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "X-FACTR: Multilingual factual knowledge retrieval from pretrained language models",
+      "author" : [ "Zhengbao Jiang", "Antonios Anastasopoulos", "Jun Araki", "Haibo Ding", "Graham Neubig." ],
+      "venue" : "EMNLP 2020.",
+      "citeRegEx" : "Jiang et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multilingual LAMA: Investigating knowledge in multilingual pretrained language models",
+      "author" : [ "Nora Kassner", "Philipp Dufter", "Hinrich Schütze." ],
+      "venue" : "EACL 2021.",
+      "citeRegEx" : "Kassner et al\\.,? 2021",
+      "shortCiteRegEx" : "Kassner et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "ICLR 2015.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Word translation without parallel data",
+      "author" : [ "Guillaume Lample", "Alexis Conneau", "Marc’Aurelio Ranzato", "Ludovic Denoyer", "Hervé Jégou" ],
+      "venue" : null,
+      "citeRegEx" : "Lample et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dbpedia–a large-scale, multilingual knowledge base extracted from wikipedia",
+      "author" : [ "Jens Lehmann", "Robert Isele", "Max Jakob", "Anja Jentzsch", "Dimitris Kontokostas", "Pablo N Mendes", "Sebastian Hellmann", "Mohamed Morsey", "Patrick Van Kleef", "Sören Auer" ],
+      "venue" : null,
+      "citeRegEx" : "Lehmann et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Lehmann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Fast, effective, and self-supervised: Transforming masked language models into universal lexical and sentence encoders",
+      "author" : [ "Fangyu Liu", "Ivan Vulić", "Anna Korhonen", "Nigel Collier." ],
+      "venue" : "EMNLP 2021.",
+      "citeRegEx" : "Liu et al\\.,? 2021a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning domain-specialised representations for cross-lingual biomedical entity linking",
+      "author" : [ "Fangyu Liu", "Ivan Vulić", "Anna Korhonen", "Nigel Collier." ],
+      "venue" : "ACL-IJCNLP 2021.",
+      "citeRegEx" : "Liu et al\\.,? 2021b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "K-bert: Enabling language representation with knowledge graph",
+      "author" : [ "Weijie Liu", "Peng Zhou", "Zhe Zhao", "Zhiruo Wang", "Qi Ju", "Haotang Deng", "Ping Wang." ],
+      "venue" : "AAAI 2020.",
+      "citeRegEx" : "Liu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "TACL, 8:726–742.",
+      "citeRegEx" : "Liu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Knowledge aware conversation generation with explainable reasoning over augmented graphs",
+      "author" : [ "Zhibin Liu", "Zheng-Yu Niu", "Hua Wu", "Haifeng Wang." ],
+      "venue" : "EMNLP-IJCNLP 2019.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Mem2Seq: Effectively incorporating knowledge bases into end-to-end task-oriented dialog systems",
+      "author" : [ "Andrea Madotto", "Chien-Sheng Wu", "Pascale Fung." ],
+      "venue" : "ACL 2018.",
+      "citeRegEx" : "Madotto et al\\.,? 2018",
+      "shortCiteRegEx" : "Madotto et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "How much is a triple? estimating the cost of knowledge graph creation",
+      "author" : [ "Heiko Paulheim." ],
+      "venue" : "ISWC 2018.",
+      "citeRegEx" : "Paulheim.,? 2018",
+      "shortCiteRegEx" : "Paulheim.",
+      "year" : 2018
+    }, {
+      "title" : "Knowledge enhanced contextual word representations",
+      "author" : [ "Matthew E Peters", "Mark Neumann", "Robert Logan", "Roy Schwartz", "Vidur Joshi", "Sameer Singh", "Noah A Smith." ],
+      "venue" : "EMNLP-IJCNLP 2019.",
+      "citeRegEx" : "Peters et al\\.,? 2019",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "EMNLP-IJCNLP",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Knowledge graph embedding for link prediction: A comparative analysis",
+      "author" : [ "Andrea Rossi", "Denilson Barbosa", "Donatella Firmani", "Antonio Matinata", "Paolo Merialdo." ],
+      "venue" : "ACM Transactions on Knowledge Discovery from Data (TKDD), 15(2):1–49.",
+      "citeRegEx" : "Rossi et al\\.,? 2021",
+      "shortCiteRegEx" : "Rossi et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Recent Advances in Language Model Fine-tuning",
+      "author" : [ "Sebastian Ruder." ],
+      "venue" : "http://ruder.io/ recent-advances-lm-fine-tuning.",
+      "citeRegEx" : "Ruder.,? 2021",
+      "shortCiteRegEx" : "Ruder.",
+      "year" : 2021
+    }, {
+      "title" : "Dropout: a simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "JMLR, 15(1):1929–1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Yago: A core of semantic knowledge",
+      "author" : [ "Fabian M. Suchanek", "Gjergji Kasneci", "Gerhard Weikum." ],
+      "venue" : "WWW 2007.",
+      "citeRegEx" : "Suchanek et al\\.,? 2007",
+      "shortCiteRegEx" : "Suchanek et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Knowing the no-match: Entity alignment with dangling cases",
+      "author" : [ "Zequn Sun", "Muhao Chen", "Wei Hu." ],
+      "venue" : "ACL-IJCNLP 2021.",
+      "citeRegEx" : "Sun et al\\.,? 2021",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Knowledge graph alignment network with gated multi-hop neighborhood aggregation",
+      "author" : [ "Zequn Sun", "Chengming Wang", "Wei Hu", "Muhao Chen", "Jian Dai", "Wei Zhang", "Yuzhong Qu." ],
+      "venue" : "AAAI 2020.",
+      "citeRegEx" : "Sun et al\\.,? 2020a",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A benchmarking study of embedding-based entity alignment for knowledge graphs",
+      "author" : [ "Zequn Sun", "Qingheng Zhang", "Wei Hu", "Chengming Wang", "Muhao Chen", "Farahnaz Akrami", "Chengkai Li." ],
+      "venue" : "Proceedings of the VLDB Endowment,",
+      "citeRegEx" : "Sun et al\\.,? 2020b",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "RotatE: Knowledge graph embedding by relational rotation in complex space",
+      "author" : [ "Zhiqing Sun", "Zhi-Hong Deng", "Jian-Yun Nie", "Jian Tang." ],
+      "venue" : "ICLR 2019.",
+      "citeRegEx" : "Sun et al\\.,? 2019",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Representing text for joint embedding of text and knowledge bases",
+      "author" : [ "Kristina Toutanova", "Danqi Chen", "Patrick Pantel", "Hoifung Poon", "Pallavi Choudhury", "Michael Gamon." ],
+      "venue" : "EMNLP 2015.",
+      "citeRegEx" : "Toutanova et al\\.,? 2015",
+      "shortCiteRegEx" : "Toutanova et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Complex embeddings for simple link prediction",
+      "author" : [ "Théo Trouillon", "Johannes Welbl", "Sebastian Riedel", "Éric Gaussier", "Guillaume Bouchard." ],
+      "venue" : "International conference on machine learning, pages 2071– 2080. PMLR.",
+      "citeRegEx" : "Trouillon et al\\.,? 2016",
+      "shortCiteRegEx" : "Trouillon et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Wikidata: A free collaborative knowledgebase",
+      "author" : [ "Denny Vrandečić", "Markus Krötzsch." ],
+      "venue" : "Commun. ACM, 57(10):78–85.",
+      "citeRegEx" : "Vrandečić and Krötzsch.,? 2014",
+      "shortCiteRegEx" : "Vrandečić and Krötzsch.",
+      "year" : 2014
+    }, {
+      "title" : "Probing pretrained language models for lexical semantics",
+      "author" : [ "Ivan Vulić", "Edoardo Maria Ponti", "Robert Litschko", "Goran Glavaš", "Anna Korhonen." ],
+      "venue" : "EMNLP 2020.",
+      "citeRegEx" : "Vulić et al\\.,? 2020",
+      "shortCiteRegEx" : "Vulić et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Structureaugmented text representation learning for efficient knowledge graph completion",
+      "author" : [ "Bo Wang", "Tao Shen", "Guodong Long", "Tianyi Zhou", "Ying Wang", "Yi Chang." ],
+      "venue" : "WWW 2021.",
+      "citeRegEx" : "Wang et al\\.,? 2021a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models are open knowledge graphs",
+      "author" : [ "Chenguang Wang", "Xiao Liu", "Dawn Song." ],
+      "venue" : "arXiv preprint arXiv:2010.11967.",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Dkn: Deep knowledge-aware network for news recommendation",
+      "author" : [ "Hongwei Wang", "Fuzheng Zhang", "Xing Xie", "Minyi Guo." ],
+      "venue" : "WWW 2018.",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "K-Adapter: Infusing Knowledge into Pre-Trained Models with Adapters",
+      "author" : [ "Ruize Wang", "Duyu Tang", "Nan Duan", "Zhongyu Wei", "Xuanjing Huang", "Jianshu Ji", "Guihong Cao", "Daxin Jiang", "Ming Zhou." ],
+      "venue" : "ACL-IJCNLP 2021 (findings).",
+      "citeRegEx" : "Wang et al\\.,? 2021b",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning intents behind interactions with knowledge graph for recommendation",
+      "author" : [ "Xiang Wang", "Tinglin Huang", "Dingxian Wang", "Yancheng Yuan", "Zhenguang Liu", "Xiangnan He", "Tat-Seng Chua." ],
+      "venue" : "WWW 2021.",
+      "citeRegEx" : "Wang et al\\.,? 2021c",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "EMNLP 2020: System Demonstrations.",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "mt5: A massively multilingual pre-trained text-to-text transformer",
+      "author" : [ "Linting Xue", "Noah Constant", "Adam Roberts", "Mihir Kale", "Rami Al-Rfou", "Aditya Siddhant", "Aditya Barua", "Colin Raffel." ],
+      "venue" : "NAACL 2021.",
+      "citeRegEx" : "Xue et al\\.,? 2021",
+      "shortCiteRegEx" : "Xue et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "GraphDialog: Integrating graph knowledge into endto-end task-oriented dialogue systems",
+      "author" : [ "Shiquan Yang", "Rui Zhang", "Sarah Erfani." ],
+      "venue" : "EMNLP 2020.",
+      "citeRegEx" : "Yang et al\\.,? 2020",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Xlnet: Generalized autoregressive pretraining for language understanding",
+      "author" : [ "Zhilin Yang", "Zihang Dai", "Yiming Yang", "Jaime Carbonell", "Russ R Salakhutdinov", "Quoc V Le." ],
+      "venue" : "Advances in neural information processing systems, 32.",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Kgbert: Bert for knowledge graph completion",
+      "author" : [ "Liang Yao", "Chengsheng Mao", "Yuan Luo." ],
+      "venue" : "ArXiv, abs/1909.03193.",
+      "citeRegEx" : "Yao et al\\.,? 2019",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Collaborative knowledge base embedding for recommender systems",
+      "author" : [ "Fuzheng Zhang", "Nicholas Jing Yuan", "Defu Lian", "Xing Xie", "Wei-Ying Ma." ],
+      "venue" : "KDD 2016.",
+      "citeRegEx" : "Zhang et al\\.,? 2016",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "ERNIE: Enhanced language representation with informative entities",
+      "author" : [ "Zhengyan Zhang", "Xu Han", "Zhiyuan Liu", "Xin Jiang", "Maosong Sun", "Qun Liu." ],
+      "venue" : "ACL 2019.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving candidate generation for low-resource cross-lingual entity linking",
+      "author" : [ "Shuyan Zhou", "Shruti Rijhwani", "John Wieting", "Jaime Carbonell", "Graham Neubig." ],
+      "venue" : "TACL, 8:109–124.",
+      "citeRegEx" : "Zhou et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 27,
+      "context" : "Multilingual knowledge bases (KBs), such as DBPedia (Lehmann et al., 2015), Wikidata (Vrandečić and Krötzsch, 2014), and YAGO (Suchanek et al.",
+      "startOffset" : 52,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 47,
+      "context" : ", 2015), Wikidata (Vrandečić and Krötzsch, 2014), and YAGO (Suchanek et al.",
+      "startOffset" : 18,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2015), Wikidata (Vrandečić and Krötzsch, 2014), and YAGO (Suchanek et al., 2007), provide structured knowledge expressed in multiple languages.",
+      "startOffset" : 59,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 14,
+      "context" : "The knowledge stored in such KGs facilitates various downstream applications such as question answering (Dai et al., 2016; Bauer et al., 2018; Wang et al., 2021b), recommendation (Zhang et al.",
+      "startOffset" : 104,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 3,
+      "context" : "The knowledge stored in such KGs facilitates various downstream applications such as question answering (Dai et al., 2016; Bauer et al., 2018; Wang et al., 2021b), recommendation (Zhang et al.",
+      "startOffset" : 104,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 52,
+      "context" : "The knowledge stored in such KGs facilitates various downstream applications such as question answering (Dai et al., 2016; Bauer et al., 2018; Wang et al., 2021b), recommendation (Zhang et al.",
+      "startOffset" : 104,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 59,
+      "context" : ", 2021b), recommendation (Zhang et al., 2016; Wang et al., 2018, 2021c), and dialogue systems (Madotto et al.",
+      "startOffset" : 25,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2018, 2021c), and dialogue systems (Madotto et al., 2018; Liu et al., 2019; Yang et al., 2020).",
+      "startOffset" : 37,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2018, 2021c), and dialogue systems (Madotto et al., 2018; Liu et al., 2019; Yang et al., 2020).",
+      "startOffset" : 37,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 56,
+      "context" : ", 2018, 2021c), and dialogue systems (Madotto et al., 2018; Liu et al., 2019; Yang et al., 2020).",
+      "startOffset" : 37,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 34,
+      "context" : "Manually constructing large-scale knowledge bases has been labor-intensive and expensive (Paulheim, 2018), leading to a surge of interest in automatic knowledge base construction (Ji et al.",
+      "startOffset" : 89,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 22,
+      "context" : "Manually constructing large-scale knowledge bases has been labor-intensive and expensive (Paulheim, 2018), leading to a surge of interest in automatic knowledge base construction (Ji et al., 2021).",
+      "startOffset" : 179,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2020, inter alia) proposes to generate structured knowledge using pretrained language models (PLMs; Devlin et al. 2019), where missing elements in KB facts (i.",
+      "startOffset" : 95,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 13,
+      "context" : "Starting from XLMR (Conneau et al., 2020) as our base model, we then pretrain it on the multilingual DBpedia, which stores both monolingual triples and cross-lingual links (see Figure 1).",
+      "startOffset" : 19,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 13,
+      "context" : "Prix-LM is initialized by a multilingual PLM such as XLM-R (Conneau et al., 2020): starting from XLM-R’s pretrained weights, we train on the structured knowledge from a multilingual KB.",
+      "startOffset" : 59,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 57,
+      "context" : "autoregressive training using attention masks (Yang et al., 2019), so that the Xo subtokens can only access their previous subtokens.",
+      "startOffset" : 46,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 0,
+      "context" : "We thus propose to speed up inference by applying and adapting the constrained beam search (Anderson et al., 2017).",
+      "startOffset" : 91,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 29,
+      "context" : "Based on prior findings concerning multilingual PLMs (Liu et al., 2021b) and our own preliminary experiments, out-of-the-box Prix-LM produces entity embeddings of insufficient quality.",
+      "startOffset" : 53,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 28,
+      "context" : "However, we can transform them into entity encoders via a simple and efficient unsupervised Mirror-BERT procedure (Liu et al., 2021a).",
+      "startOffset" : 114,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 28,
+      "context" : "For similarity-based inference, as in previous work (Liu et al., 2021a) the Mirror-BERT procedure relies on the 10k most frequent English words for contrastive learning.",
+      "startOffset" : 52,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 6,
+      "context" : "Following relevant prior work (Bosselut et al., 2019; Yao et al., 2019), given a subject entity e1 and relation r, the aim of the LP task is to determine the object entity e2.",
+      "startOffset" : 30,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 58,
+      "context" : "Following relevant prior work (Bosselut et al., 2019; Yao et al., 2019), given a subject entity e1 and relation r, the aim of the LP task is to determine the object entity e2.",
+      "startOffset" : 30,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 25,
+      "context" : "4In summary: The model is trained for 5 epochs with the Adam optimizer (Kingma and Ba, 2015) using β1 = 0.",
+      "startOffset" : 71,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 45,
+      "context" : "Moreover, following existing LP tasks (Toutanova et al., 2015; Dettmers et al., 2018) we remove redundant triples (e1, r1, e2) from the test set if (e2, r2, e1) appears in the training set.",
+      "startOffset" : 38,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 15,
+      "context" : "Moreover, following existing LP tasks (Toutanova et al., 2015; Dettmers et al., 2018) we remove redundant triples (e1, r1, e2) from the test set if (e2, r2, e1) appears in the training set.",
+      "startOffset" : 38,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 5,
+      "context" : "First, we compare to three representative and widely used KG embedding models8: 1) TransE (Bordes et al., 2013) interprets relations as translations from source to target entities, 2) ComplEx (Trouillon et al.",
+      "startOffset" : 90,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2013) interprets relations as translations from source to target entities, 2) ComplEx (Trouillon et al., 2016) uses complexvalued embedding to handle binary relations, while 3) RotatE (Sun et al.",
+      "startOffset" : 88,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 44,
+      "context" : ", 2016) uses complexvalued embedding to handle binary relations, while 3) RotatE (Sun et al., 2019) interprets relations as rotations from source to target entities in the complex space.",
+      "startOffset" : 81,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 37,
+      "context" : "In fact, RotatE additionally uses a self-adversarial sampling strategy in training, and offers state-of-the-art performance on several KG completion benchmarks (Rossi et al., 2021).",
+      "startOffset" : 160,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 6,
+      "context" : "Training adopts the same strategy from prior work on pretraining monolingual LMs for KG completion (Bosselut et al., 2019; Yao et al., 2019).",
+      "startOffset" : 99,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 58,
+      "context" : "Training adopts the same strategy from prior work on pretraining monolingual LMs for KG completion (Bosselut et al., 2019; Yao et al., 2019).",
+      "startOffset" : 99,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 20,
+      "context" : "8The KG embedding baselines are implemented based on OpenKE (Han et al., 2018) and trained using the default hyper-parameters in the library.",
+      "startOffset" : 60,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 61,
+      "context" : "We evaluate Prix-LM on two XEL benchmarks: (i) the Low-resource XEL benchmark (LR-XEL; Zhou et al. 2020) and (ii) crosslingual biomedical entity linking (XL-BEL; Liu et al.",
+      "startOffset" : 78,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 29,
+      "context" : "2020) and (ii) crosslingual biomedical entity linking (XL-BEL; Liu et al. 2021b).",
+      "startOffset" : 54,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 4,
+      "context" : "It requires the model to link an entity mention to entries in UMLS (Bodenreider, 2004), a language-agnostic medical knowledge base.",
+      "startOffset" : 67,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 48,
+      "context" : "mBERT and XLM-R) as our baselines as they are the canonical models frequently used in prior work and have shown promising results in cross-lingual entitycentric tasks (Vulić et al., 2020; Liu et al., 2021b; Kassner et al., 2021).",
+      "startOffset" : 167,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 29,
+      "context" : "mBERT and XLM-R) as our baselines as they are the canonical models frequently used in prior work and have shown promising results in cross-lingual entitycentric tasks (Vulić et al., 2020; Liu et al., 2021b; Kassner et al., 2021).",
+      "startOffset" : 167,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 24,
+      "context" : "mBERT and XLM-R) as our baselines as they are the canonical models frequently used in prior work and have shown promising results in cross-lingual entitycentric tasks (Vulić et al., 2020; Liu et al., 2021b; Kassner et al., 2021).",
+      "startOffset" : 167,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 19,
+      "context" : "We adopt the standard supervised embedding alignment setting (Glavaš et al., 2019) of VecMap (Artetxe et al.",
+      "startOffset" : 61,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2019) of VecMap (Artetxe et al., 2018) with 5k translation pairs reserved for training (i.",
+      "startOffset" : 18,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 26,
+      "context" : "The similarity metric is the standard crossdomain similarity local scaling (CSLS; Lample et al. 2018).",
+      "startOffset" : 75,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 36,
+      "context" : "LM-KP (Petroni et al., 2019) queries a PLM with (typically humandesigned) prompts/templates such as Dante was born in .",
+      "startOffset" : 6,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 24,
+      "context" : "We probe how much knowledge a PLM contains in multiple languages relying on the multilingual LAnguage Model Analysis (mLAMA) benchmark (Kassner et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 38,
+      "context" : "Second, the Prix-LM training on knowledge triples is essentially an adaptive fine-tuning step (Ruder, 2021) that exposes knowledge from the existing PLMs’ weights.",
+      "startOffset" : 94,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 35,
+      "context" : "KnowBERT (Peters et al., 2019) connects entities in text and KGs via an entity linker and then recontextualizes BERT representations conditioned on the KG embeddings.",
+      "startOffset" : 9,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 58,
+      "context" : "KG-BERT (Yao et al., 2019) trains BERT directly on knowledge triples by linearizing their entities and relations into a se-",
+      "startOffset" : 8,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 16,
+      "context" : "Multilingual LMs pretrained via MLM, such as mBERT (Devlin et al., 2019) and XLM-R (Conneau et al.",
+      "startOffset" : 51,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2019) and XLM-R (Conneau et al., 2020), cover 100+languages and are the starting point (i.",
+      "startOffset" : 18,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 29,
+      "context" : "Previous work has indicated that off-the-shelf mBERT and XLM-R fail on knowledge-intensive multilingual NLP tasks such as entity linking and KG completion, and especially so for low-resource languages (Liu et al., 2021b).",
+      "startOffset" : 201,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 2,
+      "context" : "Before PLMs, rule-based systems and multi-staged information extraction pipelines were typically used for automatic KB construction (Auer et al., 2007; Fabian et al., 2007; Hoffart et al., 2013; Dong et al., 2014).",
+      "startOffset" : 132,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 18,
+      "context" : "Before PLMs, rule-based systems and multi-staged information extraction pipelines were typically used for automatic KB construction (Auer et al., 2007; Fabian et al., 2007; Hoffart et al., 2013; Dong et al., 2014).",
+      "startOffset" : 132,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 21,
+      "context" : "Before PLMs, rule-based systems and multi-staged information extraction pipelines were typically used for automatic KB construction (Auer et al., 2007; Fabian et al., 2007; Hoffart et al., 2013; Dong et al., 2014).",
+      "startOffset" : 132,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 17,
+      "context" : "Before PLMs, rule-based systems and multi-staged information extraction pipelines were typically used for automatic KB construction (Auer et al., 2007; Fabian et al., 2007; Hoffart et al., 2013; Dong et al., 2014).",
+      "startOffset" : 132,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 8,
+      "context" : "However, such methods require expensive human effort for rule or feature creation (Carlson et al., 2010; Vrandečić and Krötzsch, 2014), or they rely on (semi-)structured corpora with easy-to-",
+      "startOffset" : 82,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 47,
+      "context" : "However, such methods require expensive human effort for rule or feature creation (Carlson et al., 2010; Vrandečić and Krötzsch, 2014), or they rely on (semi-)structured corpora with easy-to-",
+      "startOffset" : 82,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 30,
+      "context" : "14Other work on knowledge injection such as K-BERT (Liu et al., 2020a) and ERNIE (Zhang et al.",
+      "startOffset" : 51,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 60,
+      "context" : ", 2020a) and ERNIE (Zhang et al., 2019) mainly aims to leverage external knowledge to improve on downstream NLU tasks instead of performing KG completion.",
+      "startOffset" : 19,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 31,
+      "context" : "15We will explore autoregressive multilingual PLMs such as mBART (Liu et al., 2020b) and mT5 (Xue et al.",
+      "startOffset" : 65,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 6,
+      "context" : "Work in monolingual settings closest to ours is COMET (Bosselut et al., 2019): Prix-LM can be seen as an extension of this idea to multilingual and cross-lingual setups.",
+      "startOffset" : 54,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 11,
+      "context" : "prediction in a target KG based on the aligned prior knowledge in other KGs (Chen et al., 2020).",
+      "startOffset" : 76,
+      "endOffset" : 95
+    } ],
+    "year" : 0,
+    "abstractText" : "Knowledge bases (KBs) contain plenty of structured world and commonsense knowledge. As such, they often complement distributional text-based information and facilitate various downstream tasks. Since their manual construction is resourceand timeintensive, recent efforts have tried leveraging large pretrained language models (PLMs) to generate additional monolingual knowledge facts for KBs. However, such methods have not been attempted for building and enriching multilingual KBs. Besides wider application, such multilingual KBs can provide richer combined knowledge than monolingual (e.g., English) KBs. Knowledge expressed in different languages may be complementary and unequally distributed: this implies that the knowledge available in high-resource languages can be transferred to low-resource ones. To achieve this, it is crucial to represent multilingual knowledge in a shared/unified space. To this end, we propose a unified representation model, Prix-LM , for multilingual KB construction and completion. We leverage two types of knowledge, monolingual triples and cross-lingual links, extracted from existing multilingual KBs, and tune a multilingual language encoder XLM-R via a causal language modeling objective. Prix-LM integrates useful multilingual and KB-based factual knowledge into a single model. Experiments on standard entity-related tasks, such as link prediction in multiple languages, cross-lingual entity linking and bilingual lexicon induction, demonstrate its effectiveness, with gains reported over strong task-specialised baselines.",
+    "creator" : null
+  }
+}

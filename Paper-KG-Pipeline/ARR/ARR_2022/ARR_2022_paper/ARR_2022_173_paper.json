@@ -1,0 +1,382 @@
+{
+  "name" : "ARR_2022_173_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Conditional Bilingual Mutual Information Based Adaptive Training for Neural Machine Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Neural machine translation (NMT) (Bahdanau et al., 2014; Gehring et al., 2017; Vaswani et al., 2017) has made remarkable achievements in recent years. Generally, NMT models are trained to maximize the likelihood of the next target token\n1Codes will be publicly available once accepted.\ngiven ground-truth tokens as inputs (Johansen and Juselius, 1990; Goodfellow et al., 2016). Due to the token imbalance phenomenon in natural language (Zipf, 1949), for an NMT model, the learning difficulties of different target tokens may be various. However, the vanilla NMT model equally weights the training losses of different target tokens, irrespective of their difficulties.\nRecently, various adaptive training approaches (Gu et al., 2020; Xu et al., 2021) have been proposed to alleviate the above problem for NMT. Generally, these approaches re-weight the losses of different target tokens based on specific statistical metrics. For example, Gu et al. (2020) take the token frequency as an indicator and encourage the NMT model to focus more on low-frequency tokens. Xu et al. (2021) further propose the bilingual mutual information (BMI) to measure the word mapping diversity between bilinguals, and down-weight the tokens with relatively lower BMI values.\nDespite their achievements, there are still limitations in these adaptive training approaches. Given that the standard translation model autoregressively makes predictions on the condition of previous tar-\nget contexts, we argue that the statistical metrics used in the above approaches ignore target context information and may assign inaccurate weights for target tokens. Specifically, although existing statistical metrics can reflect complex characteristics of target tokens (e.g., mapping diversity), they fail to model how these properties vary across different target contexts. Secondly, for the identical target tokens in different positions of a target sentence (e.g., two ‘traffic’ tokens in the Figure 1), they may be mapped from different source-side tokens, but such target-context-free metrics cannot distinguish the above different mappings. In summary, it is necessary to incorporate target context information into the above statistical metrics. One possible solution is to directly take target context information into account and conduct target-context-aware statistical calculations. But in this way, the calculation cost and storage overhead will become huge and unrealistic2. Therefore, it is non-trivial to design a suitable target-context-aware statistical metric for adaptive training in the field of NMT.\nIn this paper, we aim to address the above issues in adaptive training methods. Firstly, we propose a novel target-context-aware metric, named Conditional Bilingual Mutual Information (CBMI), to measure the importance of different target tokens by their dependence on the source sentence. Specifically, we calculate CBMI by the mutual information between a target token and its source sentence on the condition of its target contexts. With the aid of target-context-aware calculations, CBMI can easily model the various characteristics of target tokens under different target contexts, and of course can distinguish identical target tokens with different source mappings. Regarding the computational efficiency, through decomposing the conditional joint distribution in the aforementioned mutual information, our CBMI can be formalized as the log quotient of the translation model probability and language model probability3. Therefore, CBMI can be efficiently calculated during model training without any pre-specific statistical calculations and huge storage overhead, which makes it feasible to supplement target context in-\n2Take the vanilla BMI (Xu et al., 2021) as an example, to process the raw WMT14 En-De training data (about 1.5GB), it takes about 12 CPU hours and 2GB disk storage to save the BMI values. To make matters worse, the cost will increase dozens of times in target-context-aware statistical calculations.\n3The detailed derivation process is shown in Equation (7). Please note that the language model is only used during training and thus does not affect the inference speed.\nformation for statistical metrics. Subsequently, we design an adaptive training approach based on both the token- and sentence-level CBMI, which dynamically re-weights the training losses of the corresponding target tokens.\nWe evaluate our approach on the WMT14 English-German and WMT19 Chinese-English translation tasks. Experimental results on both datasets demonstrate that our approach can significantly outperform the Transformer baseline and other adaptive training methods. Further analyses reveal that CBMI can also reflect the adequacy of translation, and our CBMI-based adaptive training can improve translation adequacy meanwhile maintain fluency. The main contributions of this paper can be summarized as follows:\n• We propose a novel target-context-aware metric, named CBMI, which can reflect the importance of target tokens for NMT models. Theoretical analysis and experimental results show that CBMI is computationally efficient, which makes it feasible to complement target context information in statistical metrics.\n• We further propose an adaptive training approach based on both the token- and sentencelevel CMBI, which dynamically re-weights the training losses of target tokens.\n• Further analyses show that CBMI can also reflect the adequacy of translation, and CBMIbased adaptive training can improve translation adequacy meanwhile maintain fluency."
+    }, {
+      "heading" : "2 Background",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Neural Machine Translation",
+      "text" : "An NMT model is designed to translate a source sentence with M tokens x = {x1, x2, . . . , xM} into a target sentence with N tokens y = {y1, y2, . . . , yN} by predicting the probability of each target token:\nP (y|x; θ) = N∏ j=1 p(yj |y<j ,x; θ) (1)\nwhere j is the index of each time step, y<j is the target-side previous context for yj , and θ is the model parameter.\nDuring training, NMT models are generally optimized with the cross-entropy (CE) loss:\nLCE(θ) = − N∑ j=1 log p(yj |y<j ,x; θ) (2)\nDuring inference, NMT models predict the probabilities of target tokens in an auto-regressive mode and generate hypotheses using heuristic search algorithms like beam search (Reddy, 1977)."
+    }, {
+      "heading" : "2.2 Token-level Adaptive Training for NMT",
+      "text" : "Token-level adaptive training aims to alleviate the token imbalance problem for NMT models by reweighting the training losses of target tokens. How to design a suitable weight adjustment strategy matters, which is we aim to improve in this paper. Formally, for the j-th target token and its adaptive weight wj , the standard cross-entropy loss in Equation (2) is expanded to the following formula:\nLada(θ) = − N∑ j=1 wj log p(yj |y<j ,x; θ) (3)"
+    }, {
+      "heading" : "2.3 Mutual Information for NMT",
+      "text" : "Mutual information (MI) is a general metric in information theory (Shannon, 1948), which measures the mutual dependence between two random variables a and b as follows4:\nMI(a; b) = log\n( p(a, b)\np(a) · p(b)\n) (4)\nXu et al. (2021) propose token-level bilingual mutual information (BMI) to measure the word mapping diversity between bilinguals and further conduct BMI-based adaptive training for NMT. The BMI is formulated as:\nBMI(x; yj) = |x|∑ i=1 log ( f(xi, yj) f(xi) · f(yj) ) (5)\nwhere f(·) is an word frequency counter. Although BMI can reflect the bilingual mapping properties to some extent, it cannot correspondingly vary with the target context. However, simply introducing target-context-aware calculations into BMI would make the above statistical calculations unrealistic."
+    }, {
+      "heading" : "3 Approaches",
+      "text" : "In this section, we first introduce the definition of CBMI (Section 3.1). Then, we illustrate how to adjust the weights for the training losses of target tokens based on the token- and the sentence-level CBMI (Section 3.2). Figure 2 shows the overall training process of our approach."
+    }, {
+      "heading" : "3.1 Definition of CBMI",
+      "text" : "As mentioned above, it is necessary to incorporate target context information into the statistical metrics (e.g., BMI) for adaptive training. However, it is impractical to directly conduct target-contextaware statistical computations due to the expensive computational costs and storage overhead. In this paper, we propose a new target-context-aware metric, named conditional bilingual mutual information (CBMI), to solve the above issues. Specifically, CBMI is calculated by the mutual information between each target token and its source sentence under the condition of previous target context. Formally, the CBMI of a target token yj and its source sentence x is calculated as follow:\nCBMI(x; yj) = MI (x; yj |y<j)\n= log\n( p(yj ,x|y<j)\np(yj |y<j) · p(x|y<j) ) (6) The original CBMI definition presented in the above equation still struggles in computation, thus we further simplify it by decomposing the conditional joint distribution:\nCBMI(x; yj) = log\n( p(yj ,x|y<j)\np(yj |y<j) · p(x|y<j) ) = log\n( p(yj |x,y<j) · p(x|y<j) p(yj |y<j) · p(x|y<j) ) = log\n( p(yj |x,y<j) p(yj |y<j) ) = log ( pNMT(yj)\npLM(yj)\n) (7)\nwhere pNMT(yj) is the probability output by the NMT model, and pLM(yj) is the probability out-\n4We use the point-wise MI here instead of the original expectation form, since we aim to calculate the mutual information between individual samples in this paper.\nput by an additional target-side language model (LM). In this way, we formalize the complex targetcontext-aware calculation in Equation (6) as the log quotient of the NMT probability and LM probability. Based on the simplified Equation (7), CBMI can be computed in real time during the model training, thus enabling both target-context-aware and efficient computations. Considering the massive computation required by existing methods to perform the target-context-aware calculation, the LM in our CBMI only brings a modest computational cost in training and finally leads to better performance. We will give a detailed comparison of the calculation cost and storage overhead between our CBMI and existing approaches in Section 5.2."
+    }, {
+      "heading" : "3.2 CBMI-based Weight Adjustment",
+      "text" : "According to the definition, CBMI measures the mutual dependence between a target token and its corresponding source sentence on the condition of its context. Namely, target tokens with larger CBMI value rely more on the source-side information and less on the target historical translations, which is exactly in line with the goal of the adequacy translation model. Given that current NMT models tend to generate fluent but inadequate translations (Weng et al., 2020; Miao et al., 2021), we speculate that making the NMT models pay more attention to target tokens with larger CBMI values can improve translation adequacy and thus improve translation performance. Furthermore, we observe a phenomenon that if target sentences contain many words with small CBMI values, they generally do not match well with the corresponding source sentences. To alleviate the negative effect of these poorly matched sentence pairs, we average all the token-level CBMI values in a target sentence into a sentence-level CBMI and incorporate it into our approach. Consequently, we propose to dynamically adjust the training weight of each target token based on both the token- and sentence-level CBMI. For clarity, we use t to mark the ‘token-level’ intermediate variables and s to mark the ‘sentence-level’ ones in the following formulas.\nToken-Level CBMI. The token-level CBMI can reflect the importance of target tokens for improving translation adequacy (i.e., dependency of the source side information). Thus we amplify the weights of target tokens with larger token-level CBMI to make the NMT model pay more attention to them. Particularly, to reduce the variances and\nstabilize the distribution of the token-level CBMI in each target sentence, we firstly conduct intrasentence normalization for the token-level CBMI CBMIt(x; yj):\nCBMItnorm(x; yj) = (CBMI t(x; yj)− µt)/σt (8)\nwhere µt, σt represent the mean values and the standard deviations of CBMIt(x; yj) in each target sentence.\nThen we scale the normalized CBMI value CBMItnorm(x; yj) to obtain the token-level training weight for yj :\nwtj = max{0, scalet·CBMItnorm(x; yj)+1} (9)\nwhere scalet is a hyperparameter that controls the effect of CBMItnorm(x; yj).\nSentence-level CBMI. We average all the tokenlevel CBMI values in a target sentence to form the sentence-level CBMI, which can further reflect the matching degree between the bilingual sentences in a sentence pair. To alleviate the negative effect of poorly matched sentence pairs and encourage the NMT model focus on well-matched sentences pairs, we up-weight the sentence pairs with larger sentence-level CBMI values and downweight those sentence pairs with smaller sentencelevel CBMI values. Specifically, the sentence-level CBMI between the source sentence x and the target sentence y can be derived from Equation (4) and represented as the arithmetic average of token-level CBMI values5:\nCBMIs(x;y) = 1\n|y| log\n( p(x,y)\np(x) · p(y) ) = 1\n|y| log ( p(y|x) p(y) ) = 1\n|y| log (∏ j p(yj |x,y<j)∏ j p(yj |y<j) )\n= 1 |y| ∑ j log ( p(yj |x,y<j) p(yj |y<j) ) = 1\n|y| ∑ j CBMIt(x; yj)\n(10)\nSimilarly, we conduct inter-sentence normalization for CBMIs(x;y):\nCBMIsnorm(x;y) = (CBMI s(x;y)− µs)/σs (11)\n5We divide the original sentence CBMI with its corresponding sentence length to reduce its variance.\nwhere µs, σs represent the mean values and the standard deviations of CBMIs(x;y) in each minibatch during training.\nSubsequently, we also scale CBMIsnorm(x;y) in Equation (11) with another hyperparameter scales to obtain the sentence-level training weight:\nws = max{0, scales · CBMIsnorm(x;y) + 1} (12)\nFinal Loss Weight. In our adaptive training approach, for the target token yj , its final loss weight wj in Equation (3) is the multiplication of the above two weights in Equation (9) and (12):\nwj = w t j · ws (13)"
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "We conduct experiments on two large-scale WMT tasks, i.e., the WMT14 English to German (EnDe) and WMT19 Chinese to English (Zh-En). For the En-De task, the training set contains 4.5M sentence pairs. The validation set and test set are newstest2013 and newstest2014, respectively. For the Zh-En task, the training set totally contains 20M sentence pairs and the validation set and test set are newstest2018 and newstest2019, respectively. Following previous work, we share the vocabulary for the En-De task and segment words into subwords using byte pair encoding (BPE) (Sennrich et al., 2016) with 32k merge operations for both datasets."
+    }, {
+      "heading" : "4.2 Implementation Details",
+      "text" : "Training. We implement baselines and our approach under Transformerbase and Transformerbig settings based on the open-source toolkit THUMT (Zhang et al., 2017; Tan et al., 2020). We train all the translation models with the cross-entropy loss for 100k steps, and further finetune them with different adaptive training objectives for 100k steps on En-De and 200k steps on Zh-En, respectively. The target-side language model is a Transformer decoder without the cross-attention modules, which is trained with 100k steps and then keeps the parameters fixed. The training data for the language model is the target-side monolingual data from the NMT training set. All the experiments are conducted on 8 NVIDIA Tesla V100 GPUs, and each batch on each GPU contains approximately 4096 tokens. We use Adam optimizer (Kingma and Ba, 2014) with 4000 warmup steps to optimize models.\nIn our experiments, we have not been able to bring further improvement to our approach through simply enhancing the language model. Our conjecture is that stronger language models will generate sharper distribution, and will increase the variances of CBMI values when used as the denominator, resulting in detriment for NMT model training. We will leave this for the future work.\nEvaluation. During inference, we set beam size to 4 and length penalty to 0.6 for both tasks. We use multibleu.perl to calculate case-sensitive BLEU for WMT14 En-De and SacreBLEU to calculate case-sensitive BLEU for WMT19 Zh-En. We use the paired bootstrap resampling methods (Koehn, 2004) for the statistical significance test."
+    }, {
+      "heading" : "4.3 Hyperparameter Experiments.",
+      "text" : "In this section, we introduce the hyperparameter settings of our approach according to the performance on the validation set of the WMT14 En-De dataset, and we share the same hyperparameter settings with the WMT19 Zh-En dataset.\nScale Setting. The two hyperparameter scalet and scales in Equation (9) and Equation (12) determine the effects of token-level and sentence-level CBMI. To investigate the effects of the two CBMI in different granularities, we firstly fix scalet to a moderate value, i.e., 0.1, and tune scales from 0.0 to 0.3 with the step of 0.05. The detailed results are shown in Figure 3. We observe that models perform better with larger scales, which conforms with our conjecture in Section 3.2 that well-matched sentence pairs contribute more to NMT models. Then we fix scales to 0.3 and tune scalet in a similar way. We find it better to keep scalet in a small range and too large value is harmful for models. We conjecture that over-focus on the high-CBMI tokens brings another imbalance for training and may hurt the models. Thus we set scalet to 0.1 in our following experiments."
+    }, {
+      "heading" : "4.4 Baseline Systems",
+      "text" : "We implement our approach based on the Transformer (Vaswani et al., 2017) and compare it with some mainstream adaptive training methods (detailed settings are provided in Appendix B).\nTransformer. We follow the standard base/big model configurations (Vaswani et al., 2017) to implement our baseline systems.\nFreq-Exponential. Gu et al. (2020) use monolingual token frequency to design an exponential weight function for token-level adaptive training:\nwj = A · e−T ·Count(yj) + 1\nwhere A and T are two hyperparameters to adjusting the distribution of weights.\nFreq-Chi-Square. Gu et al. (2020) use the chisquare distribution to filter out extremely low frequency target tokens:\nwj = A · Count(yj)2e−T ·Count(yj) + 1\nwhere A and T play the same roles as above.\nBMI-adaptive. Xu et al. (2021) calculate BMI (in Equation (5)) during the data pre-processing stage and scale it for adaptive loss weights.\nwj = S · BMI(x, yj) +B (14)\nwhere S and B arehyperparameters to scale BMI to an appropriate range.\nFocal Loss. Lin et al. (2017) propose the focal loss for objective detection tasks to solve the class imbalance problem. Here we introduce it into NMT.\nLfl = −(1− αp)γ log p (15) where α and γ are hyperparameters to adjust the loss weight and p is the NMT predicted probability.\nAnti-Focal Loss. Raunak et al. (2020) design an anti-focal loss function to solve the long-tailed problem in NMT by incorporating the inductive bias of inference into training.\nLafl = −(1 + αp)γ log p (16)\nwhere α and γ are similarly as the above focal loss.\nSelf-Paced Learning. Wan et al. (2020) utilize model confidence to measure the token difficulty and guide the adaptive training process for NMT."
+    }, {
+      "heading" : "4.5 Results",
+      "text" : "The overall results on two WMT tasks based on the Transformerbase and Transformerbig configurations are shown in Table 1. Under the Transformerbase setting, CBMI-based adaptive training can respectively improve +0.88 and +0.65 BLEU scores on En-De and Zh-En tasks compared to the Transformer baseline. Compared to the most related yet target-context-free strategy ‘BMI-adaptive’, our CBMI-based adaptive training strategy can respectively yield significant improvements up to +0.44 and +0.35 BLEU scores on En-De and Zh-En, which demonstrate the significance of the target context for token assessment in token-level adaptive training. Compared with the best performing baseline ‘Self-Paced Learning’, our approach still outperforms it by +0.25 and +0.29 BLEU scores on the two tasks. Our conjecture is that CBMI not only reflects the model competence used in ‘SelfPaced Learning’ but also further incorporates the linguistic statistical information from the targetside LM, thus reflects more explicit translation property (i.e., adequacy). Under the Transformerbig setting, where the performances of existing methods are limited, our method can still bring the improvement of +0.59 and +0.57 BLEU scores on the En-De and Zh-En, which demonstrates the superiority of CBMI under stronger baselines."
+    }, {
+      "heading" : "5 Analysis",
+      "text" : "In this section, we provide in-depth analyses on the effectiveness of our CBMI and conduct experiments on the validation set of WMT14 EN-DE with the Transformerbase model."
+    }, {
+      "heading" : "5.1 Effects of Different Levels of CBMI",
+      "text" : "We take the Transformerbase as baseline, and then apply adaptive training based on the token-level CBMI, the sentence-level CBMI, and both of them, respectively. Results are listed in Table 2. We observe certain improvements (+0.29 and +0.44 BLEU scores) when separately applying the tokenand sentence-level CBMI based approaches. It suggests that our CBMI can measure the token importance from different granularities, and up-weight the important tokens or sentence pairs can improve translation quality. Furthermore, the combination of both the token- and sentence-level CBMI brings further improvement (+0.55 BLEU scores), which illustrates that the CBMI in different granularities are complementary and have cumulative gains."
+    }, {
+      "heading" : "5.2 Costs of Computing and Storage",
+      "text" : "In this section, we compare our CBMI-based approach with the BMI-based adaptive training in terms of the number of trainable parameters, the CPU computational costs of pre-processing, the GPU computational costs of training, and disk cost for storing intermediate variables. As shown in Table 3, the vanilla BMI-based approach requires additional 12 CPU hours to obtain the BMI values during the pre-processing stage, and about 2.0 GB of disk space to store these BMI values. To make matters worse, the costs of CPU calculation and disk storage will increase dozens of times (approximately equal to the average length of target sentences) when conducting the target-context-aware calculations for BMI. In contrast, our CBMI-based approach gets rid of the CPU computational costs, and thus has no additional storage overhead. Although we introduce an additional LM to calculate the CBMI values, it only brings a slight increase of model parameters and GPU calculation cost during model training. Particularly, the LM is deprecated during the inference stage, and thus has no effect on the inference speed. In short, our CBMI can be efficiently calculated during model training without any pre-specific statistical calculations and storage overhead, which makes it feasible to supplement target context information for statistical metrics."
+    }, {
+      "heading" : "5.3 Human Evaluation",
+      "text" : "To verify whether our CBMI measurement is indeed highly related to the translation adequacy of NMT models, as we conjectured in Section 3.2, we conduct the human evaluation in terms of adequacy\nand fluency. We randomly sample 100 sentences from the test set of WMT19 Zh-En and invite three annotators to evaluate the translation adequacy and fluency. Scores for both indexes are limited in [1,5]. For adequacy, ‘1’ represents irrelevant to the source sentence and ‘5’ represents semantically equal. For fluency, ‘1’ means unintelligible and ‘5’ means fluent and native. We finally average the scores from three annotators and list the results in Table 4. We observe that our approach significantly promotes the translation adequacy of the Transformerbase baseline, and meanwhile slightly promotes the translation fluency. It indicates that the CBMI measurement is highly related to the adequacy of NMT models, and focusing more on the tokens with high CBMI can improve translation adequacy, and thus improve translation performance."
+    }, {
+      "heading" : "5.4 Prior Selection based on CBMI",
+      "text" : "Given that CBMI reflects the dependency between a target token and its source sentence on the condition of its target context, in this section, we explore whether CBMI can serve as an indicator for selecting an appropriate prior to improve the NMT model. Prior distributions have been proved for their ability to provide additional knowledge for models (Baziotis et al., 2020; Li et al., 2020). Thus we try three generated distributions as prior distributions for NMT models, i.e., the translation model distribution (TM prior), the language model distribution (LM prior), and the softmax normalized CBMI distribution (CBMI prior).\nTo verify the correctness of these prior distributions, we firstly calculate the top-1 accuracies of these distributions and surprisingly observe that the accuracies are highly related to the CBMI values of tokens. As shown in Figure 4, the most accurate prior for target tokens with different CBMI values is not consistent. Based on this observation, we further conduct a CBMI-based prior selection strategy to choose the best prior for each token. The details of the selection strategy are seen in Appendix C.\nAs shown in Table 5, all these prior distributions\ncan provide helpful guidance and enhance the baseline model. More importantly, the CBMI-based prior selection strategy can achieve a better performance compared with the single prior, demonstrating that CBMI also serves as an appropriate indicator for the translation prior selection."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we propose a target-context-aware metric for target tokens, named conditional bilingual mutual information (CBMI). Compared with previous statistical metrics, our CBMI only increases limited computational costs to incorporate the target context and provides a more suitable assessment for tokens. Furthermore, based on the token- and sentence-level CBMI, we design a CBMI-based adaptive training strategy to amply the contributions of the important tokens. Experimental results on two large-scale datasets demonstrate the effectiveness of our proposed approach. Further analyses show that CBMI can improve translation adequacy and serve as an appropriate indicator for the translation prior selection."
+    }, {
+      "heading" : "A Complete Results",
+      "text" : "Due to the space limitation, we provide the complete results on two translation tasks which contain mean values and standard deviations in Table 6."
+    }, {
+      "heading" : "B Details of Hyperparameters in Baseline Systems",
+      "text" : "To make our experimental comparison more convincing, we present the details of hyperparameters involved in the baseline systems described in Section 4.4.\nFreq-Exponential. Following the best hyperparameter setting in (Gu et al., 2020), we set A to 1.0 and T to 1.75 for the En-De task, and A to 1.0 and T to 0.35 for the Zh-En task.\nFreq-Chi-Square. Similarly, we set A to 1.0 and T to 2.50 for the En-De task, and A to 1.0 and T to 1.75 for the Zh-En task according to (Gu et al., 2020).\nBMI-adaptive. According to the settings in (Xu et al., 2021), we set S to 0.15 and B to 0.8 for the En-De task and S to 0.1 and B to 1.0 for the Zh-En task.\nFocal Loss. As suggested in (Lin et al., 2017), we fix γ to 1.0 and search a α among [0.1, 0.5] which performs best on the validation sets of two tasks. Finally, we set α to 0.1 for both tasks.\nAnti-Focal Loss. Similar with the settings in focal loss, we also fix γ to 1.0 and tune α for two tasks. Lastly, we also set α to 0.1 for both tasks."
+    }, {
+      "heading" : "C Details of Prior Selection",
+      "text" : "In our prior selection strategy, we firstly divide the target tokens in each mini-batch into three intervals according to their CBMI values. Corresponding to the observation in Figure 4, we respectively apply the LM prior, the TM prior and the CBMI prior on the tokens in the three intervals. Formally, the prior distribution q(yj) for target token yj can be represented as follows:\nq(yj) =  qLM, CBMI(x; yj) ∈ [−∞, th1] qTM, CBMI(x; yj) ∈ [th1, th2] qCBMI, CBMI(x; yj) ∈ [th2,∞] (17)\nwhere th1 and th2 are two hyperparameters and empirically set to 0 and 6 according to performances on the validation set of WMT14 En-De. qLM, qTM,\nqCBMI represent the aforementioned three prior distributions.\nSubsequently, we calculate the cross-entropy loss between the selected prior distribution and the model predicted distribution as an additional term and incorporate it with the original cross-entropy loss in Equation (2) to make up the new training objective:\nL(θ) =LCE(θ)\n+ λ · |y|∑ y=1 −q(yj) log p(yj |y<j ,x; θ)\n(18)\nwhere λ is a hyperparameter that controls the effect of prior distribution. In our experiments, we set λ to 0.1 according to the performances on the validation set.\nTo verify the reasonablility of the prior selection strategy, we compare the effects of the three priors on each single CBMI intervals in Figure 5. As we expected, the BLEU results also conform with the accuracy results in Figure 4, indicating that the most helpful prior distribution can be highly related to the CBMI values of tokens."
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Language model prior for low-resource neural machine translation",
+      "author" : [ "Christos Baziotis", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 7622–7634, On-",
+      "citeRegEx" : "Baziotis et al\\.,? 2020",
+      "shortCiteRegEx" : "Baziotis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A coefficient of agreement for nominal scales",
+      "author" : [ "Jacob Cohen." ],
+      "venue" : "Educational and psychological measurement, 20(1):37–46.",
+      "citeRegEx" : "Cohen.,? 1960",
+      "shortCiteRegEx" : "Cohen.",
+      "year" : 1960
+    }, {
+      "title" : "Convolutional sequence to sequence learning",
+      "author" : [ "Jonas Gehring", "Michael Auli", "David Grangier", "Denis Yarats", "Yann N. Dauphin." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning - Volume 70, ICML’17, page 1243–1252.",
+      "citeRegEx" : "Gehring et al\\.,? 2017",
+      "shortCiteRegEx" : "Gehring et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep Learning",
+      "author" : [ "Ian Goodfellow", "Yoshua Bengio", "Aaron Courville." ],
+      "venue" : "MIT Press. http://www. deeplearningbook.org.",
+      "citeRegEx" : "Goodfellow et al\\.,? 2016",
+      "shortCiteRegEx" : "Goodfellow et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Token-level adaptive training for neural machine translation",
+      "author" : [ "Shuhao Gu", "Jinchao Zhang", "Fandong Meng", "Yang Feng", "Wanying Xie", "Jie Zhou", "Dong Yu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Process-",
+      "citeRegEx" : "Gu et al\\.,? 2020",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Maximum likelihood estimation and inference on cointegration—with appucations to the demand for money",
+      "author" : [ "Soren Johansen", "Katarina Juselius." ],
+      "venue" : "Oxford Bulletin of Economics and statistics, 52(2):169–210.",
+      "citeRegEx" : "Johansen and Juselius.,? 1990",
+      "shortCiteRegEx" : "Johansen and Juselius.",
+      "year" : 1990
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Statistical significance tests for machine translation evaluation",
+      "author" : [ "Philipp Koehn." ],
+      "venue" : "Proceedings of the 2004 Conference on Empirical Methods in Natural Language Processing, pages 388– 395, Barcelona, Spain. Association for Computa-",
+      "citeRegEx" : "Koehn.,? 2004",
+      "shortCiteRegEx" : "Koehn.",
+      "year" : 2004
+    }, {
+      "title" : "The measurement of observer agreement for categorical data",
+      "author" : [ "J Richard Landis", "Gary G Koch." ],
+      "venue" : "biometrics, pages 159–174.",
+      "citeRegEx" : "Landis and Koch.,? 1977",
+      "shortCiteRegEx" : "Landis and Koch.",
+      "year" : 1977
+    }, {
+      "title" : "Data-dependent gaussian prior objective for language generation",
+      "author" : [ "Zuchao Li", "Rui Wang", "Kehai Chen", "Masso Utiyama", "Eiichiro Sumita", "Zhuosheng Zhang", "Hai Zhao." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Focal loss for dense object detection",
+      "author" : [ "Tsung-Yi Lin", "Priya Goyal", "Ross Girshick", "Kaiming He", "Piotr Dollár." ],
+      "venue" : "2017 IEEE International Conference on Computer Vision (ICCV), pages 2999–3007.",
+      "citeRegEx" : "Lin et al\\.,? 2017",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Prevent the language model from being overconfident in neural machine translation",
+      "author" : [ "Mengqi Miao", "Fandong Meng", "Yijin Liu", "Xiao-Hua Zhou", "Jie Zhou." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Miao et al\\.,? 2021",
+      "shortCiteRegEx" : "Miao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "On long-tailed phenomena in neural machine translation",
+      "author" : [ "Vikas Raunak", "Siddharth Dalmia", "Vivek Gupta", "Florian Metze." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP 2020, pages 3088–3095, Online. Association for",
+      "citeRegEx" : "Raunak et al\\.,? 2020",
+      "shortCiteRegEx" : "Raunak et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Speech understanding systems: summary of results of the five-year research effort at carnegie-mellon university",
+      "author" : [ "Raj Reddy." ],
+      "venue" : "Pittsburgh, Pa.",
+      "citeRegEx" : "Reddy.,? 1977",
+      "shortCiteRegEx" : "Reddy.",
+      "year" : 1977
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1715–",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A mathematical theory of communication",
+      "author" : [ "C.E. Shannon." ],
+      "venue" : "The Bell System Technical Journal, 27(3):379–423.",
+      "citeRegEx" : "Shannon.,? 1948",
+      "shortCiteRegEx" : "Shannon.",
+      "year" : 1948
+    }, {
+      "title" : "THUMT: An opensource toolkit for neural machine translation",
+      "author" : [ "Zhixing Tan", "Jiacheng Zhang", "Xuancheng Huang", "Gang Chen", "Shuo Wang", "Maosong Sun", "Huanbo Luan", "Yang Liu." ],
+      "venue" : "Proceedings of the 14th Conference of the Association",
+      "citeRegEx" : "Tan et al\\.,? 2020",
+      "shortCiteRegEx" : "Tan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Proceedings of the 31st International Conference on Neural Information Processing Sys-",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Self-paced learning for neural machine translation",
+      "author" : [ "Yu Wan", "Baosong Yang", "Derek F. Wong", "Yikai Zhou", "Lidia S. Chao", "Haibo Zhang", "Boxing Chen." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Process-",
+      "citeRegEx" : "Wan et al\\.,? 2020",
+      "shortCiteRegEx" : "Wan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards enhancing faithfulness",
+      "author" : [ "Rongxiang Weng", "Heng Yu", "Xiangpeng Wei", "Weihua Luo" ],
+      "venue" : null,
+      "citeRegEx" : "Weng et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Weng et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bilingual mutual information based adaptive training for neural machine translation",
+      "author" : [ "Yangyifan Xu", "Yijin Liu", "Fandong Meng", "Jiajun Zhang", "Jinan Xu", "Jie Zhou." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Xu et al\\.,? 2021",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Thumt: An open source toolkit for neural machine translation",
+      "author" : [ "Jiacheng Zhang", "Yanzhuo Ding", "Shiqi Shen", "Yong Cheng", "Maosong Sun", "Huanbo Luan", "Yang Liu" ],
+      "venue" : null,
+      "citeRegEx" : "Zhang et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Human behavior and the principle of least effort",
+      "author" : [ "George Kingsley Zipf" ],
+      "venue" : null,
+      "citeRegEx" : "Zipf.,? \\Q1949\\E",
+      "shortCiteRegEx" : "Zipf.",
+      "year" : 1949
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 0,
+      "context" : "Neural machine translation (NMT) (Bahdanau et al., 2014; Gehring et al., 2017; Vaswani et al., 2017) has made remarkable achievements in recent years.",
+      "startOffset" : 33,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 3,
+      "context" : "Neural machine translation (NMT) (Bahdanau et al., 2014; Gehring et al., 2017; Vaswani et al., 2017) has made remarkable achievements in recent years.",
+      "startOffset" : 33,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 18,
+      "context" : "Neural machine translation (NMT) (Bahdanau et al., 2014; Gehring et al., 2017; Vaswani et al., 2017) has made remarkable achievements in recent years.",
+      "startOffset" : 33,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 6,
+      "context" : "given ground-truth tokens as inputs (Johansen and Juselius, 1990; Goodfellow et al., 2016).",
+      "startOffset" : 36,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 4,
+      "context" : "given ground-truth tokens as inputs (Johansen and Juselius, 1990; Goodfellow et al., 2016).",
+      "startOffset" : 36,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 23,
+      "context" : "Due to the token imbalance phenomenon in natural language (Zipf, 1949), for an NMT model, the learning difficulties of different target tokens may be various.",
+      "startOffset" : 58,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 5,
+      "context" : "Recently, various adaptive training approaches (Gu et al., 2020; Xu et al., 2021) have been proposed to alleviate the above problem for NMT.",
+      "startOffset" : 47,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 21,
+      "context" : "Recently, various adaptive training approaches (Gu et al., 2020; Xu et al., 2021) have been proposed to alleviate the above problem for NMT.",
+      "startOffset" : 47,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 21,
+      "context" : "Take the vanilla BMI (Xu et al., 2021) as an example, to process the raw WMT14 En-De training data (about 1.",
+      "startOffset" : 21,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 14,
+      "context" : "During inference, NMT models predict the probabilities of target tokens in an auto-regressive mode and generate hypotheses using heuristic search algorithms like beam search (Reddy, 1977).",
+      "startOffset" : 174,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 16,
+      "context" : "Mutual information (MI) is a general metric in information theory (Shannon, 1948), which measures the mutual dependence between two random variables a and b as follows4:",
+      "startOffset" : 66,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 20,
+      "context" : "Given that current NMT models tend to generate fluent but inadequate translations (Weng et al., 2020; Miao et al., 2021), we speculate that making the NMT models pay more attention to target tokens with larger CBMI values can improve translation adequacy and thus improve translation performance.",
+      "startOffset" : 82,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 12,
+      "context" : "Given that current NMT models tend to generate fluent but inadequate translations (Weng et al., 2020; Miao et al., 2021), we speculate that making the NMT models pay more attention to target tokens with larger CBMI values can improve translation adequacy and thus improve translation performance.",
+      "startOffset" : 82,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 15,
+      "context" : "Following previous work, we share the vocabulary for the En-De task and segment words into subwords using byte pair encoding (BPE) (Sennrich et al., 2016) with 32k merge operations for both datasets.",
+      "startOffset" : 131,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 22,
+      "context" : "We implement baselines and our approach under Transformerbase and Transformerbig settings based on the open-source toolkit THUMT (Zhang et al., 2017; Tan et al., 2020).",
+      "startOffset" : 129,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 17,
+      "context" : "We implement baselines and our approach under Transformerbase and Transformerbig settings based on the open-source toolkit THUMT (Zhang et al., 2017; Tan et al., 2020).",
+      "startOffset" : 129,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 7,
+      "context" : "We use Adam optimizer (Kingma and Ba, 2014) with 4000 warmup steps to optimize models.",
+      "startOffset" : 22,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 8,
+      "context" : "We use the paired bootstrap resampling methods (Koehn, 2004) for the statistical significance test.",
+      "startOffset" : 47,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 18,
+      "context" : "We implement our approach based on the Transformer (Vaswani et al., 2017) and compare it with some mainstream adaptive training methods (detailed settings are provided in Appendix B).",
+      "startOffset" : 51,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 18,
+      "context" : "We follow the standard base/big model configurations (Vaswani et al., 2017) to implement our baseline systems.",
+      "startOffset" : 53,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 18,
+      "context" : "Model WMT14 En→De WMT19 Zh→En Transformerbase (Vaswani et al., 2017) † 27.",
+      "startOffset" : 46,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 8,
+      "context" : "Results with mark ∗/∗∗ are statistically (Koehn, 2004) better than the most related method ‘BMI-Adaptive’ with p < 0.",
+      "startOffset" : 41,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 2,
+      "context" : "∗ means the average Cohen’s Kappa (Cohen, 1960) is higher than 0.",
+      "startOffset" : 34,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 9,
+      "context" : "6, which indicates substantial agreement between three annotators (Landis and Koch, 1977).",
+      "startOffset" : 66,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 1,
+      "context" : "Prior distributions have been proved for their ability to provide additional knowledge for models (Baziotis et al., 2020; Li et al., 2020).",
+      "startOffset" : 98,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 10,
+      "context" : "Prior distributions have been proved for their ability to provide additional knowledge for models (Baziotis et al., 2020; Li et al., 2020).",
+      "startOffset" : 98,
+      "endOffset" : 138
+    } ],
+    "year" : 0,
+    "abstractText" : "Token-level adaptive training approaches can alleviate the token imbalance problem and thus improve neural machine translation, through re-weighting the losses of different target tokens based on specific statistical metrics (e.g., token frequency or mutual information). Given that standard translation models make predictions on the condition of previous target contexts, we argue that the above statistical metrics ignore target context information and may assign inappropriate weights to target tokens. While one possible solution is to directly take target contexts into these statistical metrics, the target-context-aware statistical computing is extremely expensive, and the corresponding storage overhead is unrealistic. To solve the above issues, we propose a target-context-aware metric, named conditional bilingual mutual information (CBMI), which makes it feasible to supplement target context information for statistical metrics. Particularly, our CBMI can be formalized as the log quotient of the translation model probability and language model probability by decomposing the conditional joint distribution. Thus CBMI can be efficiently calculated during model training without any pre-specific statistical calculations and large storage overhead. Furthermore, we propose an effective adaptive training approach based on both the tokenand sentence-level CBMI. Experimental results on WMT14 English-German and WMT19 Chinese-English tasks show our approach can significantly outperform the Transformer baseline and other related methods.1",
+    "creator" : null
+  }
+}

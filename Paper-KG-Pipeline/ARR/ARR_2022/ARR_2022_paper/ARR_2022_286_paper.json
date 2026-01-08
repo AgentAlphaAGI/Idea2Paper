@@ -1,0 +1,500 @@
+{
+  "name" : "ARR_2022_286_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Low rank softmax can have unargmaxable classes in theory but rarely in practice",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Probabilistic classifiers with a large number of output classes are commonplace in NLP. For example, the vocabulary size of contemporary LMs and MT models varies from tens to hundreds of thousands (Liu et al., 2020). Recent advances in modelling such large vocabularies have mostly been made by improving neural network feature encoders (Devlin et al., 2019; Liu et al., 2019; Conneau et al., 2020). But irrespective of the encoder’s usefulness, projecting lower dimensional features to higher dimensional outputs constrains expressivity, with consequences that are not well understood.\nIn this work we elaborate on the consequences that arise when the number of output classes |C| is greater than the dimensionality d of the classification layer inputs. For example, MT models often\n1Code available at REDACTED\nhave subword vocabularies of size |C| ≈ 30000, but have d ≈ 1024. These models are low rank and thus less expressive (Yang et al., 2018; Ganea et al., 2019); more importantly, they cannot represent some outputs. Demeter et al. (2020) recently highlighted that this weakness2 occurs in softmax LMs, showing that, in theory, some tokens can never be assigned the highest probability for any input, a phenomenon they call Stolen Probability. Figure 1 illustrates how it occurs.\nWhile Demeter et al. (2020) highlighted the theoretical problem and showed that it occurs in small LMs, they were unable to test larger LMs. In this paper we ask: Does Stolen Probability arise in large models used in practice? To answer this question, we develop algorithms to identify unargmaxable tokens. We tested 7 LMs and 143 MT models. Out of those, only 13 of the MT models exhibit Stolen Probability, and even for those cases the tokens are all noisy and infrequent. We conclude that most practictioners do not need to worry about Stolen Probability, and we provide new tools so\n2This problem was highlighted by Cover (1967) and has an interesting history of independent discovery (Smith, 2014).\nthat they can confirm this on their own models. Our contributions are the following:\n• We explain how Stolen Probability can arise as a consequence of a rank constrained softmax layer.\n• We extend the work in (Demeter et al., 2020) with algorithms that provide an exact answer rather than an approximate one while also including the softmax bias term in the analysis.\n• We verify a large number of commonly used publicly available language and translation models for Stolen Probability.\n• We release our algorithm so that others can inspect their models."
+    }, {
+      "heading" : "2 The Softmax Bottleneck and Stolen Probability",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Softmax Bottleneck",
+      "text" : "Neural network layers with more outputs than inputs impose low rank constraints.3 Such constraints commonly exist as bottlenecks in hidden neural network layers, e.g. eutoencoders (Hinton and Zemel, 1994) and projection heads in multi-head transformers (Vaswani et al., 2017) among others. While bottlenecks make a model less expressive by restricting the functions it can represent, they are desirable both computationally and as a form of regularisation that can improve modelling.\nIn contrast, herein we focus on the undesirable properties of a softmax output layer with a low rank parametrisation, also known as a Softmax Bottleneck (Yang et al., 2018). The crucial difference is that a Softmax Bottleneck is usually not followed by a non-linear transformation, and as such the rank constraint limits expressivity in a very rigid way by restricting outputs to a subspace.4 This constraint was shown to hurt LM perplexity (Yang et al., 2018) and non-linear augmentations have been proposed as improvements (Yang et al., 2018; Kanai et al., 2018; Ganea et al., 2019). Ganea et al. (2019, Theorem 2) further elaborated on the loss of expressivity due to the Softmax Bottleneck by showing that the minimum cross entropy loss that can be achieved by a rank constrained softmax is greater or equal to that obtained by a softmax with increased rank. In\n3A layer can also be made low rank if any weight vectors are made collinear, but we do not consider this case here.\n4A linear subspace if no bias term is present and an affine subspace otherwise.\nthis work we discretise the output space of softmax and quantify the loss in expressivity more tangibly by thinking in terms of unrealisable class rankings. From this interpretable perspective we will see that a fixed number of rankings is not realisable and Stolen Probability can arise as a consequence."
+    }, {
+      "heading" : "2.2 Stolen Probability",
+      "text" : "Demeter et al. (2020) analyse what happens if a class weight vector of a softmax layer is interior to the convex hull of all other class weight vectors. They show that the interior class probability is bounded above by the probability of at least one class on the convex hull, making it unargmaxable (see Figure 2 and Cover, 1967, Figure 1). However, in their analysis they did not address softmax layers that include a bias term. We address this limitation in Section 3, thus enabling us to search for Stolen Probability in any released model.\nTo detect whether Stolen Probability arises in models without a bias term, the authors introduce an approximate algorithm that asserts whether a weight vector is internal to the convex hull. It is approximate since their method had a precision approaching 100% but 68% recall when compared to an exact algorithm (Qhull Barber et al., 1996) on the first 10 dimensions of a softmax LM. In Section 3.3 we introduce an exact algorithm to detect unargmaxable tokens with certainty.\nThe authors use their approximate algorithm to show that AWD-LSTM LMs (Merity et al., 2018) “steal” probability from candidate bounded words when contrasted to the probabilities assigned by a smoothed n-gram LM. However, they find that as they increase the dimensionality d of the softmax weights to 200, the effect of Stolen Probability begins to dissipate. This raises the question of whether Stolen Probability is of importance for\nneural models used in practice which also have larger softmax weight dimensionality. In this paper we address this question for MT models of dimensionality d ∈ [256, 512, 1024]. We choose MT models since they have more practical use cases than (generative) LMs: if Stolen Probability exists in an MT model, then the affected tokens can never be produced when using greedy decoding. In our experiments we find that Stolen Probability arises in limited cases, which however are not of grave importance."
+    }, {
+      "heading" : "3 Detecting Stolen Probability",
+      "text" : "In order to quantify whether Stolen Probability arises in released LMs and MT models, we first need to introduce tractable algorithms for detecting it. In this section we explain how Stolen Probability can arise when we have a Softmax Bottleneck. Then, we introduce a fast approximate algorithm and a slow exact algorithm which we combine to detect vocabulary tokens that cannot be predicted."
+    }, {
+      "heading" : "3.1 Definitions",
+      "text" : ""
+    }, {
+      "heading" : "3.1.1 Softmax",
+      "text" : "A softmax layer gives us the probability assigned to a target class ct for an input feature vector x ∈ Rd as follows:\nP (C = ct | x) = ew > ct x+bct∑\ni e w>cix+bci\n= softmax(Wx+ b)ct\nwhere W ∈ R|C|×d are the class weight vectors stacked row by row, and b ∈ R|C| is the bias term. The above are used to compute the logits y = Wx + b. In what follows, we will refer to the feature activations x in Rd as the input space and the logits y in R|C| as the output space of the softmax layer."
+    }, {
+      "heading" : "3.1.2 Discretising the output space into Permutations",
+      "text" : "As we saw in Figure 1, there are certain arrangements of softmax weights for which a target class ct cannot be surfaced as the argmax. To understand this phenomenon, it will be helpful to discretise the outputs to a finer granularity: rankings. In order for a classifier to predict a class ct it must rank ct above all other classes by assigning it the largest probability. From this perspective, a classifier assigns each input x a permutation π that ranks the\nclass indices in increasing order of probability.\nπ : P (cπ[1] | x) < P (cπ[2] | x) < . . . < P (cπ[|C|] | x)\nAs an example, if we have 4 classes and obtain probabilities P (C | x) = [ .2 .4 .1 .3 ]> we assign x the permutation π3142 , since P (c3 | x) < P (c1 | x) < P (c4 | x) < P (c2 | x). We can readily obtain the coarser argmax decision (c2) by reading off the last index of the permutation."
+    }, {
+      "heading" : "3.2 How can Stolen Probability arise?",
+      "text" : "Stolen probability arises for class ct when all permutations that rank ct above the rest cannot be realised due to rank constraints. We explain how by combining the following two observations.\nObservation 1. We can discretise R|C| into regions corresponding to permutations by segmenting the space with hyperplanes.\nThe hyperplanes that partition space into regionsRπ corresponding to permutations are a well known structure in Combinatorics, the Braid Hyperplane Arrangement 5 (Stanley, 2004). The Braid Arrangement for 3 and 4 classes is illustrated in rows 1 and 2 of Figure 3 respectively.\nIn order to be able to rank the classes according to permutation Rπ , our network needs to be able to map an input x to regionRπ in the output space. However, this is not always possible when we have a Softmax Bottleneck as we elaborate below.\nObservation 2. When we have rank constraints only a subspace of R|C| is feasible.\nCase i) softmax(Wx). By calculating y = Wx, the class logits y are a linear combination of d columns of W. Therefore, when d < |C| we can only represent a d-dimensional subspace of R|C| at best. This feasible subspace is illustrated as a grey plane in the middle column of Figure 3.\nCase ii) softmax(Wx + b). If we also have a bias term b the model can choose how to offset the subspace. When the bias term b is not in the column space of W the zero vector 0 is no longer a feasible y and instead of a linear subspace we have an affine subspace. See Figure 7 in the Appendix for an illustration comparing the two cases.\nCorollary 1. A softmax classifier parametrised by W and b can rank classes in the order of permutation π iff the affine subspace spanned by W\n5See Appendix B for more details on hyperplane arrangements and the Braid Arrangement specifically.\nand b intersects region Rπ of the Braid Arrangement 6. When d < |C| − 1 there are regions that cannot be intersected 7. The feasible permutations in our example correspond to the sections formed on the grey plane illustrated in the rightmost column of Figure 3. Note that for |C| = 4 only 12 out of 24 regions can be intersected.\nAs we make the Softmax Bottleneck narrower by reducing the dimension d of the softmax inputs, more permutations become infeasible (Good and Tideman, 1977; Kamiya and Takemura, 2005). Importantly, if we choose |C| and d and whether to use a bias term, changing the values of the softmax weights changes the set of feasible permutations but not the cardinality of the set (Cover, 1967; Smith, 2014). See Appendix C for more details.\nCorollary 2. Stolen Probability occurs for class 6This insight of slicing the Braid Arrangement was introduced in Kamiya et al. (2011). 7When d = C−1 we can still intersect all regions, because the Braid Arrangement always has rank |C|−1 (all its normal vectors are perpendicular to the 1 vector).\nct when any permutation that would rank class ct above all other classes is infeasible."
+    }, {
+      "heading" : "3.2.1 Effect of softmax bias term",
+      "text" : "Without a bias term the regions corresponding to permutations are unbounded (see the rightmost column of Figure 3). As such, imposing any range restrictions on the softmax layer inputs x does not change the feasible regions as long as the restriction includes the origin. However, when we introduce a bias term we also get bounded regions (see Figure 7 in the Appendix that contrasts the two situations). Therefore, in this case the scale of the inputs to the softmax layer also matters. If the inputs do not have a large enough range, there will be regions that exist but cannot be reached by the feature encoder."
+    }, {
+      "heading" : "3.3 Exact algorithm",
+      "text" : "Given a softmax layer parametrised by W and b, is there a class ct that has Stolen Probability? First we describe a slow but exact algorithm.\nAn exact algorithm will either prove class ct has\nno Stolen Probability by returning a feasible point x : argmax (Wx+ b) = ct or it will prove ct is bounded by verifying no such point exists.\nTo check if a region exists that ranks ct above all others, we need to find an input x ∈ Rd that satisfies the following constraints:\nP (ci | x) < P (ct | x), ∀i : 1 ≤ i ≤ |C|, i 6= t\nEach of the above constraints is equivalent to restricting x to a halfspace (see Appendix A). Hence, to enforce all above inequalities x is restricted to an intersection of halfspaces.\n(wci −wct)>x+ (bci − bct) < 0 ∀i : 1 ≤ i ≤ |C|, i 6= t\n(1)\nIf the intersection of halfspaces is empty, there is no x for which class ct can be ranked above all others - and hence Stolen Probability occurs. Finding a point in an intersection of halfspaces can be solved via linear programming, albeit we found the algorithm to be slow in practice for d > 100."
+    }, {
+      "heading" : "3.3.1 Chebyshev Center linear programme",
+      "text" : "The Chebyshev center of a polytope (Boyd et al., 2004, p. 417) is the center of the largest ball of radius r that can be embedded within the polytope. We can find the Chebyshev center xc and the radius r with the following linear programme.\nmaximise r\nsubject to w>i xc + r‖wi‖2 ≤ bi, 1≤i≤|C|−1 xc ≤ 100 xc ≥ −100 r > 0\nWhere wi = wci − wct and bi = bci − bct , ∀i : ci 6= ct. We further constrain xc to guarantee the feasible set is bounded, since the Chebyshev center is not defined otherwise. This constraint also captures the fact that neural network activations cannot be arbitrarily large.\nIf the above linear programme is feasible, we know that class ct is unbounded and we also get a lower bound on the volume of the region for which it is solvable by inspecting r. On the other hand, if the linear programme is infeasible, ct is bounded in probability."
+    }, {
+      "heading" : "3.4 Approximate algorithm",
+      "text" : "The exact algorithm was too slow to run for the whole vocabulary. In order to avoid running the exact algorithm for every single vocabulary item, we\ndeveloped an incomplete algorithm (Kautz et al., 2009) with a one-sided error, which can quickly rule out most tokens, leaving only a small number to be checked by the exact algorithm. It proves that ct is unbounded by finding an input x for which ct has the largest activation. Unlike the exact algorithm, if no solution exists it cannot prove that the token is bounded. Hence we terminate our search after a predetermined number of steps. However, not finding a solution does not necessarily mean that this token is bounded. We denote any tokens not found to be bounded by the approximate algorithm as approx bounded and we run the exact algorithm on them. An illustration of the way we combine the exact and approximate algorithms to decide whether class ct is bounded in probability can be found in Figure 4."
+    }, {
+      "heading" : "3.4.1 Braid Reflect",
+      "text" : "The idea behind this approximate algorithm is to use the Braid Hyperplane Arrangement as a map to guide us towards a point x for which ct has the largest activation. To show that class ct is not bounded, it suffices to find an input x for which the largest probability is assigned to ct. Empirically we found this to be easy for most classes.\nWe begin by interpreting the actual weight vector as the candidate input x = W>ct:. We do so since the dot product of two vectors is larger when\nthe two vectors point in the same direction8. While the magnitude of the vectors affects the dot product, we found the above initialisation worked well empirically. When ct is not the argmax for x and ci is instead, Relation 1 for ci and ct will have the wrong sign. The sign of this relation defines which side of the Braid hyperplane for ci and ct we are on. To correct the sign, we construct the normal vector and offset (Lines 2, 3 in Figure 5) of the Braid hyperplane, compute the distance of x from it (Line 5), and reflect x across it (Line 6). We repeat the above operation until we get ct to be the argmax or we give up after N steps."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "Do publicly released LMs and MT models have classes that are bounded in probability? In this section we use the combined algorithm introduced in Figure 4 to search models for Stolen Probability.\nWe test 7 LMs and 143 MT models. We find that Stolen Probability only occurs in 13 MT models, but this mostly affects infrequent and noisy vocabulary tokens. We therefore do not expect Stolen Probability to affect translation quality per se.\nWe also find that nearly all vocabulary tokens of LMs and student MT models can be verified with less than 10 steps of the approximate algorithm. In contrast, other MT models need thousands of steps and also rely on the exact algorithm. In this sense, models that need few steps of the approximate algorithm are easy to verify: the search problem for their arrangement of softmax weights is easier.\nThroughout the following experiments we assumed the softmax inputs were bounded in magnitude for all dimensions −100 ≤ xi ≤ 100. As we mentioned in Subsection 3.2.1, if we have a soft-\n8a>b = ‖a‖2 ‖b‖2 cos θ is maximised for θ = 0\nmax bias term, there are bounded regions. If the bounded regions are large, even though the outputs are not theoretically bounded, they are practically bounded since neural network feature encoders cannot produce arbitrarily large activations and some regions may be unreachable9. For the approximate algorithm, we search for a solution with a patience of N = 2500 steps and resort to the exact algorithm if the approximate method fails or returns a point outside the aforementioned bounds. We use Gurobi (Gurobi Optimization, 2021) as the linear programme solver. The experiments took 3 days to run on an AMD 3900X 12-core CPU using 10 threads and 64Gb of RAM."
+    }, {
+      "heading" : "4.1 Language Models (0/7 bounded)",
+      "text" : "We checked 7 widely used Language Models for Stolen Probability. While some of these models such as BERT (Devlin et al., 2019) are not directly used for generation, a recent trend is to use these large LMs as prompt models (Liu et al., 2021) for few shot learning. A prompt model obviates the need for a separate classifier by rephrasing a classification task as slot filling given a task specific template. Prompt approaches commonly choose the answer for the slot by argmaxing the softmax distribution obtained by a LM. Hence we verify that there are no answers that are unargmaxable.\nBERT, RoBERTa (Liu et al., 2019), XLMRoBERTa (Conneau et al., 2020) and GPT2 (Radford et al., 2019) did not exhibit any bounded tokens and can be assessed without resorting to the exact algorithm (see Table 4 in the Appendix). Moreover, the LMs were very easy to verify with the approximate algorithm requiring less than 1.2 steps per token on average."
+    }, {
+      "heading" : "4.2 Machine Translation (13/143 bounded)",
+      "text" : "We first focus on models which we found to have Stolen Probability (bounded) and then briefly de-\n9The validity of our assumption is only relevant for models we find to be bounded. We therefore verified that −100 ≤ x ≤ 100 holds for two of them, see Appendix G.\n10https://github.com/browsermt/students\nscribe models that were not. A summary of the results and characteristics of the models we checked can be seen in Table 1. More detailed results can be found in Tables 5, 6, 7 and 8 in the Appendix.\nHelsinki NLP OPUS (13/32 bounded). The 32 models we use for this subset of experiments are MT models released through Hugging Face (Wolf et al., 2020). We use models introduced in Tiedemann and Thottingal (2020). These models are trained on subsets of OPUS. All models are transformer models trained using Marian (JunczysDowmunt et al., 2018). They include a bias term and have tied encoder, decoder and output embeddings of dimensionality 512.\nStolen Probability, if present, will affect generation in the target language. We therefore restrict our analysis to the target language vocabulary. To facilitate this, we inspect translation models for which the source and target languages have different scripts. We explore 32 models with source and target pairs amongst Arabic (ar), Hebrew (he), English (en), German (de), French(fr), Spanish (es), Finnish (fi), Polish (pl), Greek (el), Russian (ru), Bulgarian (bg), Korean (ko) and Japanese (ja). We rely on the script to disambiguate between source and target language and discard irrelevant tokens from other languages. We also ignore vocabulary tokens containing digits and punctuation.\nIn Figure 6 we can see the number of Byte Pair Encoding (BPE) (Sennrich et al., 2016) tokens that were bounded for these models, sorted in decreasing order. As can be seen, Stolen Probability does not occur for any tokens for 19/32 language pairs. For the remaining 13 languages, while there can be quite a few bounded tokens, most would not be expected to affect translation quality.\nOut of the set of 427 unique bounded BPE tokens, 307/476 are single character subword tokens and only 2 are word stem BPE segments: erecti (bgen) and Предварительны (en-ru) which means “preliminary” in Russian. The rest include the <unk> token and what seem to be noisy subword unicode tokens such as ќЌЌќ, ὶῖῖ and ἀὐῇ.\nOn closer inspection of the SentencePiece tokeniser we found that both Предварительны and erecti come up as tokenisation alternatives that make them rare and irregular. We found that the Предварительны token was rare since it is capitalised and only occurs once, while another occurrence was caused by a BPE segmentation corner case due to Unicode token variation\nof Предварительны-e. Other mentions having Предварительны as a substring were split differently. In a similar vein, we found that the erecti token occurred due to BPE corner cases for erecti-0n, erecti-lis-), erecti-l, erecti-. and erecti-cle many of which are misspellings or rare word forms from clinical text. As such, the impact of these tokens being bounded is small since there are alternative ones the MT model can prefer over them which could even correct spelling mistakes.\nFAIR WMT’19 (0/4 bounded). We checked 4 FAIR models (en-ru, ru-en, en-de, de-en) submitted to WMT’19 (Ng et al., 2019). These transformer models have softmax weights of dimensionality 1024 and no softmax bias term.\nNone of the FAIR models were found to have Stolen Probability, but for some tokens we had to rely on the exact algorithm to show this.\nEdinburgh WMT’17 (0/82 bounded). These WMT’17 submissions (Sennrich et al., 2017) were ensembles of left-to-right trained models (l2r) and right-to-left trained models (r2l). These were LSTMs trained with Nematus using softmax weight dimensionality 500 or 512 and softmax weights tied with the decoder input embeddings. The models include a bias term.\nNone of the models have Stolen Probability. However, we found that models that comprise an ensemble varied a lot in how easy it was to show that the vocabulary was unbounded, despite them differing solely in the random seed used for weight initialisation. As an example, zh-en.l2r(1) had 8 tokens that needed to be verified with the exact algorithm, zh-en.l2r(2) had 3 and zh-en.l2r(3) had 366. This highlights that random initialisation alone is enough to lead to very different arrangements of softmax weights.\nBergamot (0/25 bounded). The Bergamot project11 model repository contains both large\n11https://browser.mt\ntransformer-base and transformer-big teacher models, as well as small knowledge distilled (Kim and Rush, 2016) student models. Student models have d = 256 (tiny) or d = 512 (base), while teacher models have d = 1024. Interestingly, we find that it is easier to show that student models are unbounded when compared to teacher models, despite student models having softmax weights 1/2 or 1/4 the dimensions of the teacher model."
+    }, {
+      "heading" : "5 Discussion",
+      "text" : "We conclude from our experiments that Stolen Probability is possible, but it rarely occurs in practice for tokens that would lead to irrecoverable errors in the MT models we checked. It is challenging to make exact claims about why Stolen Probability occurs because the models we tested varied in so many ways. However, we observed some general trends which we outline below."
+    }, {
+      "heading" : "5.1 Infrequent tokens are the victims",
+      "text" : "The most general observation is that the tokens that are more likely to be bounded or are hard to prove to be unbounded are the infrequent ones. This can be seen in Figures 12 and 13 in the Appendix, where the x-axis contains the vocabulary of the models sorted left to right by increasing frequency. Each dot represents the number of steps needed to check whether a token is bounded or not, and as can be seen the values to the right are generally much higher than those to the left."
+    }, {
+      "heading" : "5.2 Some models are easier to verify",
+      "text" : "We found that the LMs and student MT model vocabularies can be shown to be unbounded with one step of the approximate algorithm on average. On the other hand, for Helsinki NLP and FAIR MT models more than 10 steps were needed.\nTo put the above observations into context, we also check the behaviour of our algorithms on randomly initialised parameters. If we initialise a softmax layer of |C| = 10000 classes using a uniform distribution U(−1, 1) we do not expect Stolen Probability to occur after d = 30 (see Figure 11 in the Appendix). Moreover, any randomly initialised parameters can be checked using the approximate algorithm with fewer steps as we increase d.\nFrom this perspective it is therefore surprising that student models were easier to show to be unbounded than the teacher models, despite the softmax weight dimensionality of the student models\nbeing much lower (256 for tiny, versus 1024 for teacher). This shows that effective neural MT models do not need to be hard to check, but nevertheless neural models trained on the original data can sometimes converge to such an arrangement of weights."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Other works have observed limitations of the softmax layer when modelling infrequent classes for image classification (Kang et al., 2020) and rare words for MT (Nguyen and Chiang, 2018; Raunak et al., 2020). They show that normalising the magnitude of the softmax weight vectors improves predictions for infrequent classes. However, the motivation for weight normalisation is guided empirically. From the perspective of this work, weight normalisation provably prevents Stolen Probability from arising when a softmax layer has no bias term. For more details, see Section D in the Appendix."
+    }, {
+      "heading" : "7 Conclusions and Future Work",
+      "text" : "In this work we discretised the outputs of softmax and showed how dimensionality constraints shrink the set of feasible class rankings and can lead to some classes being impossible to predict using argmax. In our experiments we demonstrated that while neural MT models can have vocabulary tokens that are bounded in probability, this does not occur often in our experiments. Moreover, for the models we tested we would not expect discernible differences in translation quality because the bounded tokens are noisy and infrequent. We release an algorithm for detecting whether some classes are bounded in probability with the hope that this will be helpful to the wider community working on a plethora of different models where the observed phenomena may vary.\nIn future work we aim to investigate any learnability consequences more closely. As we saw, when using an approximate search algorithm, some models are much harder to show to be bounded than others. Since gradient descent algorithms are also iterative search algorithms seeking optimal parameters, we hypothesise that it will be challenging to train neural network encoders to map activations to regions of the input space that a search algorithm cannot find easily. Hence, while Stolen Probability may not be present because of constraints imposed by the softmax parameters of the last layer, it may practically be present because of difficulties encountered by the encoder."
+    }, {
+      "heading" : "A Halfspace interpretation",
+      "text" : "As promised, here is the derivation showing that if P (ci | x) < P (cj | x) then x is constrained to a halfspace.\nWe have:\nP (ci | x) < P (cj | x) ⇐⇒\new > ci x+bci∑\ni′ e w>ci′\nx+bci′ < e w>cjx+bcj∑ i′ e w>ci′ x+bci′ ⇐⇒\new > ci x+bci < e w>cjx+bcj ⇐⇒\new > ci x+bci e w>cjx+bcj < 1 ⇐⇒\ne(wci−wcj ) >x+(bci−bcj ) < e0 ⇐⇒\n(wci −wcj )>x+ (bci − bcj ) < 0\nx is therefore constrained to a halfspace defined by normal vector wci − wcj and offset by bci − bcj . This linear form defined by the normal vector and offset is the “shadow” in the input dimension of our friend, the Braid Arrangement, as we will make clear in the next section (see Derivation 2)."
+    }, {
+      "heading" : "B Hyperplane Arrangements",
+      "text" : "Excellent resources to learn more about hyperplane arrangements are Stanley (2004) and Federico Ardila’s lectures on polytopes (see Lecture 34 onwards). We give a brief introduction below.\nA hyperplane in a vector space Rd is an affine subspace of dimension d − 1. The hyperplane H\nhas one degree of freedom removed by specifying a constraint: a normal vector w ∈ Rd to which it is perpendicular. The hyperplane may also be offset by b in that directionH = {x ∈ Rd : w>x = b}.\nA real hyperplane arrangementA is defined as a set of n hyperplanes in Rd, A = {H1,H2 . . .Hn}. The regions R defined by a hyperplane arrangement A are the connected components X of Euclidean space Rd left when we remove the hyperplanes A, namely X = Rd − ⋃ H∈AH. As an example, subfigure (a) in Figure 7 has 12 regions while subfigure (c) has 18 regions.\nB.1 Braid Arrangement\nThe Braid Arrangement Bn is a hyperplane arrangement that partitions space into n! regions corresponding to permutations. It can be constructed in Rn from the standard basis, the columns of the identity matrix (e1, e2 . . . en), ei ∈ Rn, by taking all ( n 2 ) pairs of differences between them, each difference defining the normal vector of a hyperplane Hi,j of the Braid Arrangement.\nBn = {Hi,j ∀i, j : 1 ≤ i < j ≤ n},\nHi,j = {x ∈ Rn : (ei − ej)>x = 0}\nThe Braid Arrangement for n = 3 and n = 4 can be seen in Figure 3. It has ( n 2 ) hyperplanes, one per pair of dimensions in Rn. Hence there are 3 hyperplanes for |C| = 3 and 6 hyperplanes for |C| = 4. As an example, when we have 4 classes the normal vector for H1,3 is w1,3 = [ 1 0 −1 0\n]>. As can be verified by taking the dot product w>i,jx, the result is positive if xi > xj and negative if vice versa. Therefore, each hyperplane bisects space\ninto two regions one for each possible ranking of the pair of coordinates.\nTo see how the hyperplanes intersect to give us a regionRπ , we express a permutation (total order) over |C| classes, such as that in Relation 3.1.2, using a chain of |C| − 1 pairwise inequalities.\nP (cπi | x) < P (cπi+1 | x), 1 ≤ i ≤ |C| − 1\nEach above constraint is equivalent to choosing a side of a braid hyperplane. By imposing all constraints, we obtain a regionRπ as the intersection of |C| − 1 halfspaces. There is therefore bijection between permutations and regions of the Braid Arrangement π ↔ Rπ .\nB.2 Restricting the Braid Arrangement to lower dimensions\nIn the softmax classification layer of a neural network we often compute the output space activations y ∈ Rn by applying a final affine layer to the softmax input space x ∈ Rd.\ny = Wx+ b, W ∈ Rn×d,b ∈ Rn\nWhat do the Braid Arrangement hyperplanes look like in the input dimension d? Let us start from the output space Rn and work backwards towards the input space Rd.\nyi < yj =⇒ (ei − ej)>y < 0 e>i y − e>j y < 0 e>i (Wx+ b)− e>j (Wx+ b) < 0 w>i x+ bi −w>j x− bj < 0 (wi −wj)>x+ (bi − bj) < 0\n(2)\nWe therefore see that if d < n we can think of how the Braid Arrangement classifies outputs into permutations from two equivalent perspectives:\n• In the output space Rn not all y are feasible, we can only classify an input x as a permutation π if the affine layer can map x to Rπ . This can be seen in subfigures b and d of Figure 7 where the feasible outputs are a plane that intersects the Braid Arrangement.\n• In the input space Rd all x are feasible but we only see the projection of the Braid Arrangement in this lower dimension. This can be seen in subfigures a and c of Figure 7.\nThe above gives us a recipe for building the Braid Arrangement in the input space when the outputs are an affine function of the inputs. This construction is illustrated in Figure 8, albeit without the bias term."
+    }, {
+      "heading" : "C Number of Regions (Feasible Permutations) of the restricted Braid Arrangement",
+      "text" : "The number of feasible permutations is invariant to specific choices of W and b (Cover, 1967; Smith, 2014) and only depends on the dimensionality of the softmax inputs d, the number of classes |C| and whether we specify a bias term b not in the columnspace of W. Namely, the cardinality of the set of feasible permutations does not change, but the members of the set do - they depend on the specific values in W and b. There exists a recurrence formula to obtain the number of feasible permutations for a particular |C| and d (Good and Tideman, 1977; Kamiya and Takemura, 2005). See our code and the relations in (Smith, 2014) for more details.\nC.1 Softmax with no bias term\nThe number of feasible permutations as a function of |C| and d when we have a softmax with no bias term can be seen in Table 2. When d ≥ |C| − 1 all permutations corresponding to ways of ranking |C| classes are feasible (table cells with d = |C| − 1 are highlighted in bold). However, as we make the Softmax Bottleneck narrower, we can represent less permutations, as can be seen from the numbers reported below the diagonal.\nC.2 Softmax with bias term The number of feasible permutations as a function of |C| and d when we have a softmax with a bias term is larger as can be seen in Table 3. As we saw in Figure 7, this is because a bias term can offset the representible linear subspace to an affine subspace which can intersect more regions of the Braid Arrangement.\nBOTTLENECK DIMENSIONALITY d 1 2 3 4 5 6 7 8 9 10\nBOTTLENECK DIMENSIONALITY d 1 2 3 4 5 6 7 8 9 10"
+    }, {
+      "heading" : "D Preventing Stolen Probability",
+      "text" : "While Stolen Probability does not seem to occur in practice for MT models, there are solutions if we want to guarantee it cannot occur: we can force the decision boundaries of the softmax layer to create a Voronoi Tesselation in the output space.\nA Voronoi Tesselation formed for a set of |C| generating points partitions space into |C| convex regions, one per point. A region created from a generating point contains any point in space for which the Euclidean distance to the generating point is smaller than the distance to all other generating points. Since all generating points form a region, this guarantees that all classes can be predicted.\nThe decision boundaries of softmax always form a Voronoi Tesselation when W is full rank (Hess et al., 2020, Theorem 1), as was shown by identifying the centroids of the tesselation as the softmax weights offset by a vector u. When W is low rank, however, we will need to constrain the parameters of softmax in order to obtain a Voronoi Tesselation.\nA summary of constraints we will show are needed are:\n• If Softmax has no bias term, normalise the weight vectors 12\n‖wi‖2 = const 1 ≤ i ≤ C\n• If Softmax has a bias term, then set the bias terms to:\nbi = − ‖wi‖22\n2 1 ≤ i ≤ C\nDerivation: For any pair (i, j) of classes, we can construct an auxiliary pairwise classifier using the corresponding softmax weights (wi,wj). This auxiliary binary classifier w′ = wi −wj decides for each input x whether the activation for class i is greater than that for class j or not.\nThe decision boundary for this binary classifier will be the points x for which:\n(wi −wj)>x = 0\nThe region of x for which a multi-class classifier assigns class i as the argmax (a cone if no bias term) can be found using a combination of such binary classifiers:\nFor class i to be the argmax, require: 12This is also clear from Hess et al. (2020, Theorem 1)\n(wi −wj)>x > 0\n(wi −wk)>x > 0\n. . .\n(wi −wn)>x > 0\nTo obtain a Voronoi Tesselation, we want all the auxiliary classifier decision boundaries to be the perpendicular bisectors of the line segments joining their corresponding weight vectors wi and wj . If we require this for all possible pairs of classes, the hyperplanes that define the boundaries of the softmax regions will also satisfy this property and classification will be equivalent to assigning an input to the class weight having the smallest Euclidean distance with it.\nTherefore, let us force a point x of the decision boundary to be a point on the perpendicular bisector of the line segments connecting all pairs of class weights and see where this leads us. In the plot below, the orange line is both the perpendicular bisector of the line segment having wi and wj as endpoints, as well as the decision boundary for the auxiliary classifier since w′ = wi −wj is the normal vector.\nD.1 Softmax without a bias term\nLet us start with the scenario where we have a softmax layer with no bias vector. We pick x to be the midpoint of the line segment joining wi and wj . This way x will be both on the decision boundary as well as on the perpendicular bisector.\n(wi −wj)>x = 0 =⇒ (wi −wj)> ( wi +wj\n2\n) = 0 =⇒\nw>i wi +w > i wj −w>j wi −w>j wj\n2 = 0 =⇒\n‖wi‖22 − ‖wj‖ 2 2\n2 = 0 =⇒\n‖wi‖2 = ‖wj‖2\nThe above would need to be true for all pairs (i, j). Therefore, we see that if the weight vectors for all classes are equal (or normalised to 1) we get a Voronoi tesselation with the weight vectors as centroids. Such a normalisation step has been carried out in the literature (Nguyen and Chiang, 2018; Raunak et al., 2020), but not justified from this point of view, to our knowledge.\nD.2 Softmax with a bias term Alternatively, if we had a softmax layer with a bias term, we would have the following changes:\nThe auxiliary pairwise classifier decision boundaries would be:\n(wi −wj)>x+ bi − bj = 0\nFollowing the same steps as above we would arrive at:\n(wi −wj)>x+ bi − bj = 0 =⇒\nbi − bj = ‖wj‖22 − ‖wi‖ 2 2\n2\nWe can obtain the above condition for all auxiliary classifier pairs by setting the bias term of each weight vector depending on the norm of the weight vector:\nbi = − ‖wi‖22\n2"
+    }, {
+      "heading" : "F Stolen probability search results",
+      "text" : ""
+    }, {
+      "heading" : "E Braid Reflect Approximate Algorithm",
+      "text" : "(a) The approximate algorithm needs more iterations to show that teacher models are unbounded despite the dimensionality of the softmax weights being larger than the student models."
+    }, {
+      "heading" : "G Activation range of softmax layer inputs",
+      "text" : "Neural network activations are bounded in magnitude in practice, since larger activations can lead to larger gradients and instability during training. In this work, we made the assumption that the softmax layer inputs x are bounded within a range for all dimensions: −100 ≤ x ≤ 100. Below we provide some supporting empirical evidence that this assumption is reasonable.\nWe checked this assumption on 2 Helsinki NLP OPUS models for en-ru and bg-en, which were found to have tokens bounded in probability. We took 10 million sentence pairs from OPUS as released in Tiedemann (2020) for the corresponding language pairs and input them to the corresponding models, decoding using the gold translations. We then recorded the range of the minimum and maximum activation for the softmax layer inputs.\nSince our assumption is that all 512 dimensions are bounded between −100 and 100, we focus on the range of the minimum and maximum activation for each output token across all dimensions. We therefore calculate a 99 percentile for the min and max activation per token across all dimensions as well as the overall min and max activations overall. The results can be seen in Table 9, from which we can see that for these two models our assumption holds for all activations produces for 10 million sentences and the percentiles show that more than 99% of the extreme values fall within the [−50, 50] range."
+    } ],
+    "references" : [ {
+      "title" : "The quickhull algorithm for convex hulls",
+      "author" : [ "C. Barber", "D. Dobkin", "Hannu Huhdanpaa." ],
+      "venue" : "ACM Trans. Math. Softw., 22:469–483.",
+      "citeRegEx" : "Barber et al\\.,? 1996",
+      "shortCiteRegEx" : "Barber et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "Convex optimization",
+      "author" : [ "Stephen Boyd", "Stephen P Boyd", "Lieven Vandenberghe." ],
+      "venue" : "Cambridge university press.",
+      "citeRegEx" : "Boyd et al\\.,? 2004",
+      "shortCiteRegEx" : "Boyd et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "In",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The number of linearly inducible orderings of points in d-space",
+      "author" : [ "Thomas M. Cover." ],
+      "venue" : "Siam Journal on Applied Mathematics, 15:434–439.",
+      "citeRegEx" : "Cover.,? 1967",
+      "shortCiteRegEx" : "Cover.",
+      "year" : 1967
+    }, {
+      "title" : "Stolen probability: A structural weakness of neural language models",
+      "author" : [ "David Demeter", "Gregory Kimmel", "Doug Downey." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 2191–2197, Online. As-",
+      "citeRegEx" : "Demeter et al\\.,? 2020",
+      "shortCiteRegEx" : "Demeter et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Breaking the softmax bottleneck via learnable monotonic pointwise nonlinearities",
+      "author" : [ "Octavian Ganea", "Sylvain Gelly", "Gary Bécigneul", "Aliaksei Severyn." ],
+      "venue" : "ICML, pages 2073–2082.",
+      "citeRegEx" : "Ganea et al\\.,? 2019",
+      "shortCiteRegEx" : "Ganea et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Stirling numbers and a geometric ,structure from voting theory",
+      "author" : [ "I.J Good", "T.N Tideman." ],
+      "venue" : "Journal of Combinatorial Theory, Series A, 23(1):34–45.",
+      "citeRegEx" : "Good and Tideman.,? 1977",
+      "shortCiteRegEx" : "Good and Tideman.",
+      "year" : 1977
+    }, {
+      "title" : "Softmax-based classification is k-means clustering: Formal proof, consequences for adversarial attacks, and improvement through centroid based tailoring",
+      "author" : [ "Sibylle Hess", "Wouter Duivesteijn", "Decebal Constantin Mocanu." ],
+      "venue" : "ArXiv, abs/2001.01987.",
+      "citeRegEx" : "Hess et al\\.,? 2020",
+      "shortCiteRegEx" : "Hess et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Autoencoders, minimum description length and helmholtz free energy",
+      "author" : [ "Geoffrey E Hinton", "Richard Zemel." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 6. Morgan-Kaufmann.",
+      "citeRegEx" : "Hinton and Zemel.,? 1994",
+      "shortCiteRegEx" : "Hinton and Zemel.",
+      "year" : 1994
+    }, {
+      "title" : "Marian: Fast neural machine translation in C++",
+      "author" : [ "Tom Neckermann", "Frank Seide", "Ulrich Germann", "Alham Fikri Aji", "Nikolay Bogoychev", "André F.T. Martins", "Alexandra Birch." ],
+      "venue" : "Proceedings of ACL 2018, System Demonstrations, pages 116–",
+      "citeRegEx" : "Neckermann et al\\.,? 2018",
+      "shortCiteRegEx" : "Neckermann et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Characterization of rankings generated by linear discriminant analysis",
+      "author" : [ "Hidehiko Kamiya", "Akimichi Takemura." ],
+      "venue" : "Journal of multivariate analysis, 92(2):343–358.",
+      "citeRegEx" : "Kamiya and Takemura.,? 2005",
+      "shortCiteRegEx" : "Kamiya and Takemura.",
+      "year" : 2005
+    }, {
+      "title" : "Ranking patterns of unfolding models of codimension one",
+      "author" : [ "Hidehiko Kamiya", "Akimichi Takemura", "Hiroaki Terao." ],
+      "venue" : "Advances in Applied Mathematics, 47(2):379–400.",
+      "citeRegEx" : "Kamiya et al\\.,? 2011",
+      "shortCiteRegEx" : "Kamiya et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Sigsoftmax: Reanalysis of the softmax bottleneck",
+      "author" : [ "Sekitoshi Kanai", "Yasuhiro Fujiwara", "Yuki Yamanaka", "Shuichi Adachi." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 31. Curran Associates, Inc.",
+      "citeRegEx" : "Kanai et al\\.,? 2018",
+      "shortCiteRegEx" : "Kanai et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Decoupling representation and classifier for long-tailed recognition",
+      "author" : [ "Bingyi Kang", "Saining Xie", "Marcus Rohrbach", "Zhicheng Yan", "Albert Gordo", "Jiashi Feng", "Yannis Kalantidis." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Kang et al\\.,? 2020",
+      "shortCiteRegEx" : "Kang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Incomplete algorithms",
+      "author" : [ "Henry A. Kautz", "Ashish Sabharwal", "Bart Selman." ],
+      "venue" : "Handbook of Satisfiability.",
+      "citeRegEx" : "Kautz et al\\.,? 2009",
+      "shortCiteRegEx" : "Kautz et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Sequencelevel knowledge distillation",
+      "author" : [ "Yoon Kim", "Alexander M. Rush." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 1317–1327, Austin, Texas. Association for Computational Linguistics.",
+      "citeRegEx" : "Kim and Rush.,? 2016",
+      "shortCiteRegEx" : "Kim and Rush.",
+      "year" : 2016
+    }, {
+      "title" : "Pretrain, prompt, and predict: A systematic survey of prompting methods in natural language processing",
+      "author" : [ "Pengfei Liu", "Weizhe Yuan", "Jinlan Fu", "Zhengbao Jiang", "Hiroaki Hayashi", "Graham Neubig." ],
+      "venue" : "ArXiv, abs/2107.13586.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Y. Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "M. Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "ArXiv, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Transactions of the Association for Computational Linguis-",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Regularizing and optimizing LSTM language models",
+      "author" : [ "Stephen Merity", "Nitish Shirish Keskar", "Richard Socher." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Merity et al\\.,? 2018",
+      "shortCiteRegEx" : "Merity et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Facebook FAIR’s WMT19 news translation task submission",
+      "author" : [ "Nathan Ng", "Kyra Yee", "Alexei Baevski", "Myle Ott", "Michael Auli", "Sergey Edunov." ],
+      "venue" : "Proceedings of the Fourth Conference on Machine Translation (Volume 2: Shared Task Papers,",
+      "citeRegEx" : "Ng et al\\.,? 2019",
+      "shortCiteRegEx" : "Ng et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving lexical choice in neural machine translation",
+      "author" : [ "Toan Nguyen", "David Chiang." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Vol-",
+      "citeRegEx" : "Nguyen and Chiang.,? 2018",
+      "shortCiteRegEx" : "Nguyen and Chiang.",
+      "year" : 2018
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeff Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "On long-tailed phenomena in neural machine translation",
+      "author" : [ "Vikas Raunak", "Siddharth Dalmia", "Vivek Gupta", "Florian Metze." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP 2020, pages 3088–3095, Online. Association for",
+      "citeRegEx" : "Raunak et al\\.,? 2020",
+      "shortCiteRegEx" : "Raunak et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The University of Edinburgh’s neural MT systems for WMT17",
+      "author" : [ "Rico Sennrich", "Alexandra Birch", "Anna Currey", "Ulrich Germann", "Barry Haddow", "Kenneth Heafield", "Antonio Valerio Miceli Barone", "Philip Williams." ],
+      "venue" : "Proceedings of the Sec-",
+      "citeRegEx" : "Sennrich et al\\.,? 2017",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1715–",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "D-dimensional orderings and stirling numbers",
+      "author" : [ "Warren D. Smith." ],
+      "venue" : "[Online; accessed 05-November2021].",
+      "citeRegEx" : "Smith.,? 2014",
+      "shortCiteRegEx" : "Smith.",
+      "year" : 2014
+    }, {
+      "title" : "An introduction to hyperplane arrangements",
+      "author" : [ "Richard P. Stanley." ],
+      "venue" : "Lecture notes, IAS/Park City Mathematics Institute.",
+      "citeRegEx" : "Stanley.,? 2004",
+      "shortCiteRegEx" : "Stanley.",
+      "year" : 2004
+    }, {
+      "title" : "The Tatoeba Translation Challenge – Realistic data sets for low resource and multilingual MT",
+      "author" : [ "Jörg Tiedemann." ],
+      "venue" : "Proceedings of the Fifth Conference on Machine Translation, pages 1174–1182, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Tiedemann.,? 2020",
+      "shortCiteRegEx" : "Tiedemann.",
+      "year" : 2020
+    }, {
+      "title" : "OPUS-MT – building open translation services for the world",
+      "author" : [ "Jörg Tiedemann", "Santhosh Thottingal." ],
+      "venue" : "Proceedings of the 22nd Annual Conference of the European Association for Machine Translation, pages 479–480, Lisboa, Portugal. Euro-",
+      "citeRegEx" : "Tiedemann and Thottingal.,? 2020",
+      "shortCiteRegEx" : "Tiedemann and Thottingal.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Ł ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander M. Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing:",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Breaking the softmax bottleneck: A high-rank RNN language model",
+      "author" : [ "Zhilin Yang", "Zihang Dai", "Ruslan Salakhutdinov", "William W. Cohen." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Yang et al\\.,? 2018",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 4,
+      "context" : "In theory, the result is some words may be impossible to predict via argmax, irrespective of input features, and empirically, this has been shown to happen in small language models (Demeter et al., 2020).",
+      "startOffset" : 181,
+      "endOffset" : 203
+    }, {
+      "referenceID" : 19,
+      "context" : "For example, the vocabulary size of contemporary LMs and MT models varies from tens to hundreds of thousands (Liu et al., 2020).",
+      "startOffset" : 109,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 5,
+      "context" : "Recent advances in modelling such large vocabularies have mostly been made by improving neural network feature encoders (Devlin et al., 2019; Liu et al., 2019; Conneau et al., 2020).",
+      "startOffset" : 120,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 18,
+      "context" : "Recent advances in modelling such large vocabularies have mostly been made by improving neural network feature encoders (Devlin et al., 2019; Liu et al., 2019; Conneau et al., 2020).",
+      "startOffset" : 120,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 2,
+      "context" : "Recent advances in modelling such large vocabularies have mostly been made by improving neural network feature encoders (Devlin et al., 2019; Liu et al., 2019; Conneau et al., 2020).",
+      "startOffset" : 120,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 33,
+      "context" : "These models are low rank and thus less expressive (Yang et al., 2018; Ganea et al., 2019); more importantly, they cannot represent some outputs.",
+      "startOffset" : 51,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 6,
+      "context" : "These models are low rank and thus less expressive (Yang et al., 2018; Ganea et al., 2019); more importantly, they cannot represent some outputs.",
+      "startOffset" : 51,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 27,
+      "context" : "This problem was highlighted by Cover (1967) and has an interesting history of independent discovery (Smith, 2014).",
+      "startOffset" : 101,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 4,
+      "context" : "• We extend the work in (Demeter et al., 2020) with algorithms that provide an exact answer rather than an approximate one while also including the softmax bias term in the analysis.",
+      "startOffset" : 24,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 9,
+      "context" : "eutoencoders (Hinton and Zemel, 1994) and projection heads in multi-head transformers (Vaswani et al.",
+      "startOffset" : 13,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 31,
+      "context" : "eutoencoders (Hinton and Zemel, 1994) and projection heads in multi-head transformers (Vaswani et al., 2017) among others.",
+      "startOffset" : 86,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 33,
+      "context" : "In contrast, herein we focus on the undesirable properties of a softmax output layer with a low rank parametrisation, also known as a Softmax Bottleneck (Yang et al., 2018).",
+      "startOffset" : 153,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 33,
+      "context" : "4 This constraint was shown to hurt LM perplexity (Yang et al., 2018) and non-linear augmentations have been proposed as improvements (Yang et al.",
+      "startOffset" : 50,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2018) and non-linear augmentations have been proposed as improvements (Yang et al., 2018; Kanai et al., 2018; Ganea et al., 2019).",
+      "startOffset" : 72,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2018) and non-linear augmentations have been proposed as improvements (Yang et al., 2018; Kanai et al., 2018; Ganea et al., 2019).",
+      "startOffset" : 72,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2018) and non-linear augmentations have been proposed as improvements (Yang et al., 2018; Kanai et al., 2018; Ganea et al., 2019).",
+      "startOffset" : 72,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 20,
+      "context" : "The authors use their approximate algorithm to show that AWD-LSTM LMs (Merity et al., 2018) “steal” probability from candidate bounded words when contrasted to the probabilities assigned by a smoothed n-gram LM.",
+      "startOffset" : 70,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 28,
+      "context" : "The hyperplanes that partition space into regionsRπ corresponding to permutations are a well known structure in Combinatorics, the Braid Hyperplane Arrangement 5 (Stanley, 2004).",
+      "startOffset" : 162,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 7,
+      "context" : "As we make the Softmax Bottleneck narrower by reducing the dimension d of the softmax inputs, more permutations become infeasible (Good and Tideman, 1977; Kamiya and Takemura, 2005).",
+      "startOffset" : 130,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 11,
+      "context" : "As we make the Softmax Bottleneck narrower by reducing the dimension d of the softmax inputs, more permutations become infeasible (Good and Tideman, 1977; Kamiya and Takemura, 2005).",
+      "startOffset" : 130,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 3,
+      "context" : "Importantly, if we choose |C| and d and whether to use a bias term, changing the values of the softmax weights changes the set of feasible permutations but not the cardinality of the set (Cover, 1967; Smith, 2014).",
+      "startOffset" : 187,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 27,
+      "context" : "Importantly, if we choose |C| and d and whether to use a bias term, changing the values of the softmax weights changes the set of feasible permutations but not the cardinality of the set (Cover, 1967; Smith, 2014).",
+      "startOffset" : 187,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 5,
+      "context" : "While some of these models such as BERT (Devlin et al., 2019) are not directly",
+      "startOffset" : 40,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 17,
+      "context" : "used for generation, a recent trend is to use these large LMs as prompt models (Liu et al., 2021) for few shot learning.",
+      "startOffset" : 79,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 18,
+      "context" : "BERT, RoBERTa (Liu et al., 2019), XLMRoBERTa (Conneau et al.",
+      "startOffset" : 14,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2019), XLMRoBERTa (Conneau et al., 2020) and GPT2 (Radford et al.",
+      "startOffset" : 20,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2020) and GPT2 (Radford et al., 2019) did not exhibit any bounded tokens and can be assessed without resorting to the exact algorithm (see Table 4 in the Appendix).",
+      "startOffset" : 17,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 26,
+      "context" : "In Figure 6 we can see the number of Byte Pair Encoding (BPE) (Sennrich et al., 2016) tokens that were bounded for these models, sorted in decreasing order.",
+      "startOffset" : 62,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 21,
+      "context" : "FAIR models (en-ru, ru-en, en-de, de-en) submitted to WMT’19 (Ng et al., 2019).",
+      "startOffset" : 61,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 25,
+      "context" : "These WMT’17 submissions (Sennrich et al., 2017) were ensembles of left-to-right trained models (l2r) and right-to-left trained models (r2l).",
+      "startOffset" : 25,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 16,
+      "context" : "transformer-base and transformer-big teacher models, as well as small knowledge distilled (Kim and Rush, 2016) student models.",
+      "startOffset" : 90,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 14,
+      "context" : "max layer when modelling infrequent classes for image classification (Kang et al., 2020) and rare words for MT (Nguyen and Chiang, 2018; Raunak et al.",
+      "startOffset" : 69,
+      "endOffset" : 88
+    } ],
+    "year" : 0,
+    "abstractText" : "Classifiers in natural language processing (NLP) often have a large number of output classes. For example, neural language models (LMs) and machine translation (MT) models both predict tokens from a vocabulary of thousands. The softmax output layer of these models typically receives as input a dense feature representation, which has much lower dimensionality than the output. In theory, the result is some words may be impossible to predict via argmax, irrespective of input features, and empirically, this has been shown to happen in small language models (Demeter et al., 2020). In this paper we ask whether it can happen in practical large language models and translation models. To do so, we develop algorithms to detect such unargmaxable tokens in public models. We find that that 13 out of 150 models do indeed have such tokens; however, they are very infrequent and unlikely to impact model quality. We release our algorithms and code to the public.1",
+    "creator" : null
+  }
+}

@@ -1,0 +1,946 @@
+{
+  "name" : "ACL_2017_557_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "End-to-End Neural Relation Extraction with Global Optimization",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "Neural networks have recently shown promising results for relation extraction. State-of-the-art models cast the task as an end-to-end problem, solved incrementally using a local classifier. Yet previous work using statistical models have demonstrated that global optimization can achieve better performances compared to local classification. We build a globally optimized neural model for end-to-end relation extraction, proposing novel LSTM features in order to better learn representations. Experiments show that our model is highly effective, achieving the best performances on two standard benchmarks."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Extracting entities (Florian et al., 2006, 2010) and relations (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Sun et al., 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al., 2004). Traditional approaches to relation extraction take entity recognition as a predecessor step in a pipeline (Zelenko et al., 2003; Chan and Roth, 2011), predicting relations between given entities.\nIn recent years, there has been a surge of interest in performing end-to-end relation extraction, jointly recognizing entities and relations given free text inputs (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016). End-to-end learning prevents error propagation in the pipeline approach, and allows cross-task dependencies to be modeled explicitly for entity recognition. As a result, it gives better relation extraction accuracies compared to pipelines.\nMiwa and Bansal (2016) were among the first to use neural networks for end-to-end relation extraction, showing highly promising results. In particular, they used a bidirectional LSTM (Graves et al., 2013) to learn hidden word representations under a sentential context, and further leveraged a tree-structured LSTMs (Tai et al., 2015) to encode syntactic information, given the output of a parser. The resulting representations are then used for making local decisions for entity and relation extraction incrementally, leading to much improved results compared with the best statistical model (Li and Ji, 2014). This demonstrates the strength of neural representation learning for endto-end relation extraction.\nOn the other hand, Miwa and Bansal (2016)’s model is trained locally, without considering structural correspondences between incremental decisions. This is unlike existing statistical methods, which utilize well-studied structured prediction methods to address the problem (Li and Ji, 2014; Miwa and Sasaki, 2014). As has been commonly understood, learning local decisions for structured prediction can lead to label bias (Lafferty et al., 2001), which prevents globally optimal structures from receiving optimal scores by the model. We address this potential issue by building a structural neural model for end-to-end relation extraction, following a recent line of efforts on globally optimized models for neural structured prediction (Zhou et al., 2015; Watanabe and Sumita, 2015; Andor et al., 2016; Wiseman and Rush, 2016).\nIn particular, we follow Miwa and Bansal (2016), casting the task as an end-to-end tablefilling problem. This is different from the actionbased method of Li and Ji (2014), yet has shown to be more flexible and accurate (Miwa and Sasaki, 2014). We take a different approach to representation learning, addressing two potential limitations of Miwa and Bansal (2016).\nFirst, Miwa and Bansal (2016) rely on external syntactic parsers for obtaining syntactic information, which is crucial for relation extraction (Culotta and Sorensen, 2004; Zhou et al., 2005; Bunescu and Mooney, 2005; Qian et al., 2008). However, parsing errors can lead to encoding inaccuracies of tree-LSTMs, thereby hurting relation extraction potentially. We take an alternative approach to integrating syntactic information, by taking the hidden LSTM layers of a bi-affine attention parser (Dozat and Manning, 2016) to augment input representations. Pretrained for parsing, such hidden layers contain rich syntactic information on each word, yet do not explicitly represent parsing decisions, thereby avoiding potential issues caused by incorrect parses.\nOur method is also free from a particular syntactic formalism, such as dependency grammar, constituent grammar or CCG, requiring only hidden representations on word that contain syntactic information. In contrast, the method of Miwa and Bansal (2016) must consider tree LSTM formulations that are specific to grammar formalisms, which can be very different (Tai et al., 2015).\nSecond, Miwa and Bansal (2016) did not explicitly learn the representation of segments when predicting entity boundaries or making relation classification decisions, which can be intuitively highly useful. We take the LSTM-Minus method of Wang and Chang (2016), modelling a segment as the difference between its last and first LSTM hidden vectors. This method is highly efficient, yet gives as accurate results as compared to more complex neural network structures to model a span of words (Cross and Huang, 2016).\nEvaluation on two benchmark datasets shows that our method outperforms previous methods of Miwa and Bansal (2016), Li and Ji (2014) and Miwa and Sasaki (2014), giving the best reported results on both benchmarks. Our code is available under GPL at https://github.com/〈anonymized〉."
+    }, {
+      "heading" : "2 Model",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Task Definition",
+      "text" : "As shown in Figure 1, the goal of relation extraction is to mine relations from raw texts. It consists of two sub-tasks, namely entity detection, which recognizes valid entities, and relation classification, which determines the relation categories over entity pairs. We follow recent studies and recognize entities and relations as one single task."
+    }, {
+      "heading" : "2.2 Method",
+      "text" : "We follow Miwa and Sasaki (2014) and Gupta et al. (2016), treating relation extraction as a tablefilling problem, performing entity detection and relation classification using a single incremental model, which is similar in spirit to Miwa and Bansal (2016). Figure 2 shows an example of the table-filling process.\nFormally, given a sentence w1w2 · · ·wn, we maintain a table Tn×n, where T (i, j) denotes the relation between wi and wj . When i = j, T (i, j) denotes an entity boundary label. We map entity words into labels under the BILOU (Begin, Inside, Last, Outside, Unit) scheme, assuming that there are no overlapping entities in one sentence (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016). Only the upper triangular table is necessary for indicating the relations.\nWe adopt the close-first left-to-right strategy (Miwa and Sasaki, 2014) to map the twodimensional table into a sequence, in order to fill the table incrementally. During the table-filling process, we take two label sets for entity detection (i = j) and relation classification (i < j), respectively. The labels for entity detection include {B*, I-*, L-*, O, U-* }, where * denotes the entity type, and the labels for relation classification are {−→∗ ,←−∗ }, where * denotes the relation category.\nAt each step, given a partially-filled table T , we determine the most suitable label l for the next step (order in Figure 2) using a scoring function:\nscore(T, l) = WlhT , (1)\nwhere Wl is a model parameter and hT is the vector representation of T . Based on the function, we aim to find the best label sequence l1 · · · lm, where m = n(n+1)2 , and the resulting sequence of partially-filled tables is T0T1 · · ·Tm, where Ti = FILL(Ti−1, li), and T0 is an empty table. Different from previous work, we investigate a structural\nmodel that is optimized for the label sequence l1 · · · lm globally, rather than for each li locally."
+    }, {
+      "heading" : "2.3 Representation Learning",
+      "text" : "At the ith step, we determine the label li of the next table slot based on the current hypothesis Ti−1. Following Miwa and Bansal (2016), we use a neural network to learn the vector representation of Ti−1, and then use Equation 1 to rank candidate next labels. There are two types of input features, including the word sequence w1w2 · · ·wn, and the readily filled label sequence l1l2 · · · li−1. We build a neural network to represent Ti−1."
+    }, {
+      "heading" : "2.3.1 Word Representation",
+      "text" : "Shown in Figure 3, we represent each word wi by hwi using its word form, POS tag and characters. Based on the word form, we use two different embeddings, one being obtained by using a randomly initialized look-up table Ew, tuned during training and represented by ew, and the other being a pretrained external word embedding from E′w, which is fixed and represented by e′w.\n1 For a POS tag t, its embedding et is obtained from a look-up table Et similar to Ew.\nThe above two components have also been used by Miwa and Bansal (2016). In addition, we enhance the word representation by its character sequence (Ballesteros et al., 2015; Lample et al., 2016), using a convolution neural network (CNN) to derive a character-based word representation hchar, which has been demonstrated effective for\n1We use the set of pre-trained glove word embeddings available at http://nlp.stanford.edu/data/glove.6B.zip as external word embeddings.\nseveral NLP tasks (dos Santos and Gatti, 2014). We obtain the final hwi based on a non-linear feedforward layer on e′w ⊕ ew ⊕ et ⊕ hchar, where ⊕ denotes concatenation."
+    }, {
+      "heading" : "2.3.2 Label Representation",
+      "text" : "In addition to the word sequence, the history label sequence l1l2 · · · li−1, especially the labels representing detected entities, is also useful disambiguation. For example, the previous entity boundary label can be helpful to deciding the boundary label of the current word. During relation classification, the types of the entities involved can indicate the relation category between them. We exploit the diagonal label sequence of partial table T , which denotes entity boundaries of words, to enhance the representation learning. We obtain a word’s entity boundary label embedding el by a randomly initialized looking-up table El."
+    }, {
+      "heading" : "2.3.3 LSTM Features",
+      "text" : "We follow Miwa and Bansal (2016), learning global context representations using LSTMs. Three basic LSTM structures are used: a leftto-right word LSTM ( −−−−→ LSTMw), a right-to-left word LSTM ( ←−−−− LSTMw) and a left-to-right entity boundary label LSTM ( −−−−→ LSTMe). Each LSTM derives a sequence of hidden vectors for inputs. For example, for w1w2 · · ·wn, −−−−→ LSTMw gives hw,→1 h w,→ 2 · · ·h w,→ n .\nDifferent from Miwa and Bansal (2016), who use the output hidden vectors {hi} of LSTMs to represent words, we exploit segment representations as well. In particular, for a segment of text [i, j], the representation is computed by using LSTM-Minus (Wang and Chang, 2016), shown by Figure 4, where hj − hi−1 in a left-to-right LSTM\nand hi − hj+1 in a right-to-left LSTM are used to represent the segment [i, j]. The segment representations can reflect entities in a sentence, and thus can be potentially useful for both entity detection and relation extraction."
+    }, {
+      "heading" : "2.3.4 Feature Representation",
+      "text" : "We use separate feature representations for entity detection and relation classification, both of which are induced according to the above three LSTM structures. In particular, we first extract a set of base neural features, and then concatenate them and feed them into a non-linear neural layer for entity detection and relation classification, respectively. Figure 5 shows the overall representation.\n[Entity Detection] Figure 5(a) shows the feature representation method for the entity detection actions. First, we extract six feature vectors from the three basic LSTMs, three of which are word features, namely hw,→i , h w,← i and h e,→ i−1 , and the remaining are segment features, namely hw,→[j,i−1], hw,←[j,i−1] and h e,→ [j,i−1], where j denotes the start po-\nsition of the previous entity.2 The six vectors are concatenated and then fed into a non-linear layer for entity detection.\n[Relation Classification] Figure 5(b) shows the feature representation method for relation classification. Similar to entity detection, we extract a set of features from the basic LSTMs (\n−−−−→ LSTMw,←−−−−\nLSTMw and −−−−→ LSTMe), and then concatenate them for a non-linear classification layer. The differences between relation classification with entity detection lie in the range of hidden layers from LSTMs. For relation classification between i and j, we split each LSTM into five segments according to the two entities ended with i and j. Formally, let [s(i), i] and [s(j), j] denote the two entities above, where s(·) denotes the start position of an entity, the resulted segments are [0, s(i)− 1] (i.e., left, in Figure 5(b)), [s(i), i] (i.e., entityi), [i + 1, s(j) − 1] (i.e., middle), [s(j), j] (i.e., entityj) and [j + 1, n] (i.e., right), respectively. For the word LSTMs, we extract all five segment features, while the entity label LSTM, we only use the segment features of entityi and entityj ."
+    }, {
+      "heading" : "2.3.5 Syntactic Features",
+      "text" : "Previous work has shown that syntactic features are useful for relation extraction (Zhou et al., 2005). For example, the shortest dependency path has been used by several relation extraction models (Bunescu and Mooney, 2005; Miwa and Bansal, 2016). Here we propose a novel method to integrate syntax, without need for prior knowledge on concrete syntactic structures.\nIn particular, many state-of-the-art syntactic parsers use encoder-decoder neural models (Buys and Blunsom, 2015; Kiperwasser and Goldberg, 2016), where the encoder represents the features of the input sentences. For example, LSTM over the input word/tag sequences has been used frequently (Kiperwasser and Goldberg, 2016). The decoder can also leverage partially-parsed results, such as features from partial syntactic trees. Table 1 shows the encoder structures of three state-ofthe-art dependency parsers.\nOur method is to dump the encoder source representations of state-of-the-art parsers, and then use them directly as part of input embeddings in our proposed model. Denoting the dumped syntactic features on each word as hsyn1 h syn 2 · · ·h syn n , we feed them into a non-linear neural layer, 2The non-entity word is treated as a special unit entity to extract segmental features.\nand then generate two LSTMs (bi-directional) based on the outputs, namely\n−−−−→ LSTMsyn and←−−−− LSTMsyn, respectively, augmenting the original three LSTMs into five LSTMs. Features are extracted from the two new LSTMs in the same way as from the basic bi-directional word LSTMs.\nWe exploit the parser of Dozat and Manning (2016) to extract syntactic features, since it achieves the current best performance for dependency parsing. Our method can be easily generalized to the use of other parsers, which are potentially useful for our task as well. For example, we can use a constituent parser in the same way."
+    }, {
+      "heading" : "2.4 Training and Search",
+      "text" : ""
+    }, {
+      "heading" : "2.4.1 Local Optimization",
+      "text" : "Previous work (Miwa and Bansal, 2016; Gupta et al., 2016) trains model parameters by modeling each step for labeling one input sentence separately. Given a partial table T , we first obtain its neural representation hT , and then compute the next label scores {l1, l2, · · · , ls} using Equation 1. The output scores are regularized into a probability distribution {pl1 , pl2 , · · · , pls} by using a softmax layer. Our training objective is to minimize the cross-entropy loss between this output distribution with the gold-standard distribution:\nloss(T, lgi ,Θ) = − log plgi , (2)\nwhere lgi is the gold-standard next label for T , and Θ is the set of all model parameters. We refer this training method as local optimization, because it maximizes the score of the gold-standard label at each step locally.\nDuring the decoding phase, the greedy search strategy is applied in consistence with the training. At each step, we find the highest-scored label\nAlgorithm 1 Beam-search. agenda← { (empty table, score=0.0) } for i in 1 · · ·max-step\nnext scored tables← { } for scored table in agenda\nlabels← NEXTLABELS(scored table) for next label in labels\nnew← FILL(scored table, next label) ADDITEM(next scored tables, new)\nagenda← TOP-B(next scored tables, B)\nbased on the current partial table, before going on to the next step."
+    }, {
+      "heading" : "2.4.2 Global Optimization",
+      "text" : "We exploit the global optimization strategy of Andor et al. (2016), maximizing the cumulative score of the gold-standard label sequence for one sentence as a unit. Global optimization has achieved success for several NLP tasks under the neural setting (Zhou et al., 2015; Watanabe and Sumita, 2015). For relation extraction, global learning gives the best performances under the discrete setting (Li and Ji, 2014; Miwa and Sasaki, 2014). We study such models here under the neural setting.\nGiven a label sequence of l1l2 · · · li, the score of Ti is defined as follows:\nscore(Ti) = i∑\nj=0\nscore(Tj−1, lj)\n= score(Ti−1) + score(Ti−1, li),\n(3)\nwhere score(T0) = 0 and score(Ti−1, li) is computed by Equation 1. By this definition, we maximize the scores of all gold-standard partial tables.\nAgain cross-entropy loss is used to perform model updates. At each step i, the objective function is defined by:\nloss(x, T gi ,Θ) = − log pT gi\n= − log score(T gi )∑ T ′i score(T ′i ) ,\n(4)\nwhere x denotes the input sentence, T gi denotes the gold-standard state at step i, and T ′i are all partial tables that can be reached at step i.\nThe major challenge is to compute pT gi , because we cannot traverse all partial tables that are valid at step i, since their count increases exponentially by the step number. We follow Andor\net al. (2016), approximating the probability by using beam search and early-update.\nShown in Algorithm 1, we use standard beam search, using an agenda to maintain B highestscored partially-filled tables at each step. When each action of table filling is taken, all hypotheses in the agenda are expanded by enumerating the next labels, and the B highest-scored resulting tables are used to replace the agenda for the next step. Search begins with the agenda containing an empty table, and finishes when all cells of the tables in the agenda have been filled. When the beam size is 1, the algorithm is the same as greedy decoding. When the beam size is larger than 1, however, error propagation from greedy steps can be alleviated. For training, the same beam search algorithm is applied to training examples, and early-update (Collins and Roark, 2004) is used to fix search errors."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Data and Evaluation",
+      "text" : "We evaluate the proposed model on two datasets, namely the ACE05 data and the corpus of Roth and Yih (2004) (CONLL04), respectively. The ACE05 data defines seven coarse-grained entity types and six coarse-grained relation categories, while the CONLL04 data defines four entity types and five relation categories.\nFor the ACE05 dataset, we follow Li and Ji (2014) and Miwa and Bansal (2016), splitting and preprocessing the dataset into training, development and test sets.3 For CONLL04, we follow Miwa and Sasaki (2014) to split and preprocess the dataset into training and test corpus, and divide 10% of the training corpus for development.\nWe use the micro F1-measure as the major metric to evaluate model performances, treating an entity as correct when its head region and type are both exactly matched,4 and regard a relation as correct when the argument entities and the relation category are all correct."
+    }, {
+      "heading" : "3.2 Parameter Tuning",
+      "text" : "We update all model parameters by back propagation using Adam (Kingma and Ba, 2014) with a learning rate 10−3, using gradient clipping by\n3https://github.com/tticoin/LSTM-ER/. 4For the ACE05 dataset, the head region is defined by the corpus, and for the CONLL04 dataset, the head region covers the entire scope of an entity.\na max norm 10 and l2-regularization by a parameter 10−5. The dimension sizes of various vectors in neural network structure are shown in Table 2. All the hyper-parameters are tuned by development experiments. All experiments are conducted under gcc version 4.9.4 (Ubuntu 4.9.4- 2ubuntu1 14.04.1), on an Intel(R) Xeon(R) CPU E5-2670 @ 2.60GHz.\nOnline training is used to learn model parameters, traversing over the entire training examples by 300 iterations. We select the best iteration model according to the development results. In particular, we exploit pre-training techniques to learn better model parameters (Wiseman and Rush, 2016). For the local model, we follow Miwa and Bansal (2016), training parameters only for entity detection during the first 20 iterations. For the global model, we pretrain our model using local optimization for 40 iterations, before conducting beam global optimization."
+    }, {
+      "heading" : "3.3 Development Experiments",
+      "text" : "We conduct several development experiments on the ACE05 development dataset."
+    }, {
+      "heading" : "3.3.1 Feature Ablation Tests",
+      "text" : "We consider the baseline system with no syntactic features using local training. Compared with Miwa and Bansal (2016), we introduce characterlevel features, and in addition exploit segmental features for entity detection. Feature ablation experiments are conducted for the two types of features. As shown in Table 3, without character-level features, the F-scores of entity detection and relation classification decrease 0.6% and 0.7%, respectively. Without segmental features for entity\ndetection, the baseline model loses 1.3% in entity detection, which results in an error propagation of 1.1% for relation classification. The results demonstrate that the two types of new features we use are useful for relation extraction."
+    }, {
+      "heading" : "3.3.2 Local v.s. Global",
+      "text" : "We study the influence of training strategies for the relation extraction model without using syntactic features. For the local model, we apply the scheduled sampling strategy (Bengio et al., 2015), which has been shown to improve the performances by Miwa and Bansal (2016).\nTable 4 shows the relation F1 scores. Scheduled sampling achieves improved F-measure scores for the local model. With the same greedy search strategy, the globally normalized model gives slightly better results than the local model with scheduled sampling. The performance of the global model increases with a larger beam size. However, the decoding speed becomes intolerably slow when the beam size increases beyond 5. Thus we exploit a beam size of 5 for global training considering both performance and efficiency."
+    }, {
+      "heading" : "3.3.3 Syntactic Features",
+      "text" : "We examine the effectiveness of the proposed syntactic features. Table 5 shows the developmental results using both local and global optimization. The proposed features improve the relation performances significantly under both settings, where the p-values are below 10−4 by using pairwise ttest, demonstrating that our use of syntactic features is highly effective for relation extraction."
+    }, {
+      "heading" : "3.4 Final Results",
+      "text" : "Table 6 shows the final results on the test datasets of ACE05 and CONLL04. We show several topperforming systems in the table as well, where M&B (2016) refers to Miwa and Bansal (2016), who exploit end-to-end LSTM neural networks\nwith local optimization, and L&J (2014) and M&S (2014) refer to Li and Ji (2014) and Miwa and Sasaki (2014), respectively, which are both globally optimized models using discrete features, giving the top F-scores among statistical models.5\nOverall, neural models give better performances than statistical models, and global optimization can give improved performances as well. Our final model achieves the best performances on both datasets. Compared with the best reported results, our model gives improvements of 1.9% on ACE05, and 6.8% on CONLL04."
+    }, {
+      "heading" : "3.5 Analysis",
+      "text" : "We conduct analysis on the ACE05 test dataset in order to understand our models in depth. We focus on two major contributions by our model, first examining the influences of global optimization, and then studying the gains by using the proposed syntactic features.\nGlobal optimization aims to find the best label sequences, rather than the best label locally at each step. Thus intuitively global optimization should give better accuracies at the sentence level. We verify this by examining the sentence-level accuracies, where one sentence is regarded as correct when all the labels in the resulted table are correct. Figure 6 shows the result, which is consistent with our intuition. On the one hand, the sentence-\n5Gupta et al. (2016) proposed a locally optimized model but used a different test dataset from CONLL04 and a different evaluation method, reporting entity and relation F-scores of 93.6% and 72.1%, respectively. Their results are not directly comparable to the results in Table 6. In particular, they regard an entity as correct if at least one token is tagged correctly, which influences the results significantly since multiword entities accounts for over 50% of all entities.\nlevel accuracies of the globally normalized model are consistently better than the local model. On the other hand, the accuracy decreases sharply as the sentence length increases, with the local model suffering more severely from larger sentences.\nTo understand the effectiveness of the proposed syntactic features, we examine the relation Fscores with respect to entity distances. Miwa and Bansal (2016) exploit the shortest dependency path, which can make the distance between two entities closer compared with their sequential distance, thus facilitating relation extraction. We verify whether the proposed syntactic features can benefit our model similarly. As shown in Figure 7, the F-scores of entity-pairs with large distances see apparent improvements, demonstrating that our use of syntactic features has a similar effect compared to the shortest dependency path."
+    }, {
+      "heading" : "4 Related Work",
+      "text" : "Entity recognition (Florian et al., 2004, 2006; Ratinov and Roth, 2009; Florian et al., 2010; Kuru et al., 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community. The dominant methods treat the two tasks separately, where relation extraction is performed assuming that entity boundaries have been given (Zelenko et al., 2003; Miwa et al.,\n2009; Chan and Roth, 2011; Lin et al., 2016). Several studies find that extracting entities and relations jointly can benefit both tasks. Early work conducts joint inference for separate models (Ji and Grishman, 2005; Roth and Yih, 2004, 2007). Recent work shows that joint learning and decoding with a single model brings more benefits for the two tasks (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016), and we follow this line of work in the study.\nLSTM features have been extensively exploited for NLP tasks, including tagging (Huang et al., 2015; Lample et al., 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al., 2015; Vu et al., 2016; Miwa and Bansal, 2016) and sentiment analysis (Li et al., 2015; Teng et al., 2016). Based on the output of LSTM structures, Wang and Chang (2016) introduce segmental features, and apply it to dependency parsing. The same method is applied to constituent parsing by Cross and Huang (2016). We exploit this segmental representation for relation extraction.\nGlobal optimization and normalization has been successfully applied on many NLP tasks that involve structural prediction (Lafferty et al., 2001; Collins, 2002; McDonald et al., 2010; Zhang and Clark, 2011), using traditional discrete features. For neural models, it has recently received increasing interests (Zhou et al., 2015; Andor et al., 2016; Xu, 2016; Wiseman and Rush, 2016), and improved performances can be achieved with global optimization accompanied by beam search. Our work is in line with these efforts. To our knowledge, we are the first to apply globally optimized neural models for end-to-end relation extraction, achieving the best results on standard benchmarks."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We proposed a novel relation extraction model using neural network, based on the table-filling framework proposed by Miwa and Sasaki (2014). Feature representations are learned from several LSTM structures over the inputs, and a simple method is used to integrate syntactic information into our model without the need of parser outputs. In addition, global optimization is taken to make use of structural information more effectively. Compared with previous work, our final model achieved the best performances on two benchmark datasets."
+    } ],
+    "references" : [ {
+      "title" : "Globally normalized transition-based neural networks",
+      "author" : [ "Daniel Andor", "Chris Alberti", "David Weiss", "Aliaksei Severyn", "Alessandro Presta", "Kuzman Ganchev", "Slav Petrov", "Michael Collins." ],
+      "venue" : "ACL. pages 2442–2452.",
+      "citeRegEx" : "Andor et al\\.,? 2016",
+      "shortCiteRegEx" : "Andor et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Improved transition-based parsing by modeling characters instead of words with lstms",
+      "author" : [ "Miguel Ballesteros", "Chris Dyer", "Noah A. Smith." ],
+      "venue" : "Proceedings of the EMNLP. pages 349–359.",
+      "citeRegEx" : "Ballesteros et al\\.,? 2015",
+      "shortCiteRegEx" : "Ballesteros et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Scheduled sampling for sequence prediction with recurrent neural networks",
+      "author" : [ "Samy Bengio", "Oriol Vinyals", "Navdeep Jaitly", "Noam Shazeer." ],
+      "venue" : "NIPS. pages 1171–1179.",
+      "citeRegEx" : "Bengio et al\\.,? 2015",
+      "shortCiteRegEx" : "Bengio et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A shortest path dependency kernel for relation extraction",
+      "author" : [ "Razvan C Bunescu", "Raymond J Mooney." ],
+      "venue" : "EMNLP. Association for Computational Linguistics, pages 724–731.",
+      "citeRegEx" : "Bunescu and Mooney.,? 2005",
+      "shortCiteRegEx" : "Bunescu and Mooney.",
+      "year" : 2005
+    }, {
+      "title" : "Generative incremental dependency parsing with neural networks",
+      "author" : [ "Jan Buys", "Phil Blunsom." ],
+      "venue" : "Proceedings of the 53rd ACL. pages 863–869.",
+      "citeRegEx" : "Buys and Blunsom.,? 2015",
+      "shortCiteRegEx" : "Buys and Blunsom.",
+      "year" : 2015
+    }, {
+      "title" : "Exploiting background knowledge for relation extraction",
+      "author" : [ "Yee Seng Chan", "Dan Roth." ],
+      "venue" : "COLING. pages 152–160.",
+      "citeRegEx" : "Chan and Roth.,? 2010",
+      "shortCiteRegEx" : "Chan and Roth.",
+      "year" : 2010
+    }, {
+      "title" : "Exploiting syntactico-semantic structures for relation extraction",
+      "author" : [ "Yee Seng Chan", "Dan Roth." ],
+      "venue" : "ACL. pages 551–560.",
+      "citeRegEx" : "Chan and Roth.,? 2011",
+      "shortCiteRegEx" : "Chan and Roth.",
+      "year" : 2011
+    }, {
+      "title" : "Discriminative training methods for hidden markov models: Theory and experiments with perceptron algorithms",
+      "author" : [ "Michael Collins." ],
+      "venue" : "EMNLP. pages 1–8.",
+      "citeRegEx" : "Collins.,? 2002",
+      "shortCiteRegEx" : "Collins.",
+      "year" : 2002
+    }, {
+      "title" : "Incremental parsing with the perceptron algorithm",
+      "author" : [ "Michael Collins", "Brian Roark." ],
+      "venue" : "ACL. pages 111–118.",
+      "citeRegEx" : "Collins and Roark.,? 2004",
+      "shortCiteRegEx" : "Collins and Roark.",
+      "year" : 2004
+    }, {
+      "title" : "Span-based constituency parsing with a structure-label system and provably optimal dynamic oracles",
+      "author" : [ "James Cross", "Liang Huang." ],
+      "venue" : "EMNLP. pages 1–11.",
+      "citeRegEx" : "Cross and Huang.,? 2016",
+      "shortCiteRegEx" : "Cross and Huang.",
+      "year" : 2016
+    }, {
+      "title" : "Dependency tree kernels for relation extraction",
+      "author" : [ "Aron Culotta", "Jeffrey Sorensen." ],
+      "venue" : "ACL. pages 423–429.",
+      "citeRegEx" : "Culotta and Sorensen.,? 2004",
+      "shortCiteRegEx" : "Culotta and Sorensen.",
+      "year" : 2004
+    }, {
+      "title" : "The automatic content extraction (ace) program-tasks, data, and evaluation",
+      "author" : [ "George R Doddington", "Alexis Mitchell", "Mark A Przybocki", "Lance A Ramshaw", "Stephanie Strassel", "Ralph M Weischedel." ],
+      "venue" : "LREC. volume 2, page 1.",
+      "citeRegEx" : "Doddington et al\\.,? 2004",
+      "shortCiteRegEx" : "Doddington et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Deep convolutional neural networks for sentiment analysis of short texts",
+      "author" : [ "Cicero dos Santos", "Maira Gatti." ],
+      "venue" : "Proceedings of COLING 2014. pages 69–78.",
+      "citeRegEx" : "Santos and Gatti.,? 2014",
+      "shortCiteRegEx" : "Santos and Gatti.",
+      "year" : 2014
+    }, {
+      "title" : "Deep biaffine attention for neural dependency parsing",
+      "author" : [ "Timothy Dozat", "Christopher D Manning." ],
+      "venue" : "arXiv preprint arXiv:1611.01734 .",
+      "citeRegEx" : "Dozat and Manning.,? 2016",
+      "shortCiteRegEx" : "Dozat and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "Transitionbased dependency parsing with stack long shortterm memory",
+      "author" : [ "Chris Dyer", "Miguel Ballesteros", "Wang Ling", "Austin Matthews", "Noah A. Smith." ],
+      "venue" : "ACL. pages 334–343.",
+      "citeRegEx" : "Dyer et al\\.,? 2015",
+      "shortCiteRegEx" : "Dyer et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A statistical model for multilingual entity detection and tracking",
+      "author" : [ "R Florian", "H Hassan", "A Ittycheriah", "H Jing", "N Kambhatla", "X Luo", "N Nicolov", "S Roukos." ],
+      "venue" : "NAACL. pages 1–8.",
+      "citeRegEx" : "Florian et al\\.,? 2004",
+      "shortCiteRegEx" : "Florian et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Factorizing complex models: A case study in mention detection",
+      "author" : [ "Radu Florian", "Hongyan Jing", "Nanda Kambhatla", "Imed Zitouni." ],
+      "venue" : "COLING/ACL. pages 473–480.",
+      "citeRegEx" : "Florian et al\\.,? 2006",
+      "shortCiteRegEx" : "Florian et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Improving mention detection robustness to noisy input",
+      "author" : [ "Radu Florian", "John Pitrelli", "Salim Roukos", "Imed Zitouni." ],
+      "venue" : "EMNLP. pages 335–345.",
+      "citeRegEx" : "Florian et al\\.,? 2010",
+      "shortCiteRegEx" : "Florian et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Speech recognition with deep recurrent neural networks",
+      "author" : [ "Alex Graves", "Abdel-rahman Mohamed", "Geoffrey Hinton." ],
+      "venue" : "ICASSP. IEEE, pages 6645–6649.",
+      "citeRegEx" : "Graves et al\\.,? 2013",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Information extraction: Techniques and challenges",
+      "author" : [ "Ralph Grishman." ],
+      "venue" : "Information extraction a multidisciplinary approach to an emerging information technology, Springer, pages 10–27.",
+      "citeRegEx" : "Grishman.,? 1997",
+      "shortCiteRegEx" : "Grishman.",
+      "year" : 1997
+    }, {
+      "title" : "Table filling multi-task recurrent neural network for joint entity and relation extraction",
+      "author" : [ "Pankaj Gupta", "Hinrich Schütze", "Bernt Andrassy." ],
+      "venue" : "Proceedings of COLING 2016. pages 2537–2547.",
+      "citeRegEx" : "Gupta et al\\.,? 2016",
+      "shortCiteRegEx" : "Gupta et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Bidirectional lstm-crf models for sequence tagging",
+      "author" : [ "Zhiheng Huang", "Wei Xu", "Kai Yu." ],
+      "venue" : "arXiv preprint arXiv:1508.01991 .",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Improving name tagging by reference resolution and relation detection",
+      "author" : [ "Heng Ji", "Ralph Grishman." ],
+      "venue" : "ACL. pages 411–418.",
+      "citeRegEx" : "Ji and Grishman.,? 2005",
+      "shortCiteRegEx" : "Ji and Grishman.",
+      "year" : 2005
+    }, {
+      "title" : "A systematic exploration of the feature space for relation extraction",
+      "author" : [ "Jing Jiang", "ChengXiang Zhai." ],
+      "venue" : "NAACL. pages 113–120.",
+      "citeRegEx" : "Jiang and Zhai.,? 2007",
+      "shortCiteRegEx" : "Jiang and Zhai.",
+      "year" : 2007
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980 .",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Simple and accurate dependency parsing using bidirectional lstm feature representations",
+      "author" : [ "Eliyahu Kiperwasser", "Yoav Goldberg." ],
+      "venue" : "TACL 4:313– 327.",
+      "citeRegEx" : "Kiperwasser and Goldberg.,? 2016",
+      "shortCiteRegEx" : "Kiperwasser and Goldberg.",
+      "year" : 2016
+    }, {
+      "title" : "Charner: Character-level named entity recognition",
+      "author" : [ "Onur Kuru", "Ozan Arkan Can", "Deniz Yuret." ],
+      "venue" : "Proceedings of COLING 2016. pages 911–921.",
+      "citeRegEx" : "Kuru et al\\.,? 2016",
+      "shortCiteRegEx" : "Kuru et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Conditional random fields: Probabilistic models for segmenting and labeling sequence data",
+      "author" : [ "John Lafferty", "Andrew McCallum", "Fernando Pereira" ],
+      "venue" : "In ICML",
+      "citeRegEx" : "Lafferty et al\\.,? \\Q2001\\E",
+      "shortCiteRegEx" : "Lafferty et al\\.",
+      "year" : 2001
+    }, {
+      "title" : "Neural architectures for named entity recognition",
+      "author" : [ "Guillaume Lample", "Miguel Ballesteros", "Sandeep Subramanian", "Kazuya Kawakami", "Chris Dyer." ],
+      "venue" : "NAACL. pages 260–270.",
+      "citeRegEx" : "Lample et al\\.,? 2016",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "When are tree structures necessary for deep learning of representations? In Proceedings of the EMNLP",
+      "author" : [ "Jiwei Li", "Thang Luong", "Dan Jurafsky", "Eduard Hovy." ],
+      "venue" : "pages 2304–2314.",
+      "citeRegEx" : "Li et al\\.,? 2015",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Incremental joint extraction of entity mentions and relations",
+      "author" : [ "Qi Li", "Heng Ji." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Li and Ji.,? 2014",
+      "shortCiteRegEx" : "Li and Ji.",
+      "year" : 2014
+    }, {
+      "title" : "Neural relation extraction with selective attention over instances",
+      "author" : [ "Yankai Lin", "Shiqi Shen", "Zhiyuan Liu", "Huanbo Luan", "Maosong Sun." ],
+      "venue" : "ACL. pages 2124–2133.",
+      "citeRegEx" : "Lin et al\\.,? 2016",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Distributed training strategies for the structured perceptron",
+      "author" : [ "Ryan McDonald", "Keith Hall", "Gideon Mann." ],
+      "venue" : "NAACL. pages 456–464.",
+      "citeRegEx" : "McDonald et al\\.,? 2010",
+      "shortCiteRegEx" : "McDonald et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "End-to-end relation extraction using lstms on sequences and tree structures",
+      "author" : [ "Makoto Miwa", "Mohit Bansal." ],
+      "venue" : "ACL. pages 1105–1116.",
+      "citeRegEx" : "Miwa and Bansal.,? 2016",
+      "shortCiteRegEx" : "Miwa and Bansal.",
+      "year" : 2016
+    }, {
+      "title" : "A rich feature vector for protein-protein interaction extraction from multiple corpora",
+      "author" : [ "Makoto Miwa", "Rune Sætre", "Yusuke Miyao", "Jun’ichi Tsujii" ],
+      "venue" : "In EMNLP",
+      "citeRegEx" : "Miwa et al\\.,? \\Q2009\\E",
+      "shortCiteRegEx" : "Miwa et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Modeling joint entity and relation extraction with table representation",
+      "author" : [ "Makoto Miwa", "Yutaka Sasaki." ],
+      "venue" : "EMNLP. pages 1858–1869.",
+      "citeRegEx" : "Miwa and Sasaki.,? 2014",
+      "shortCiteRegEx" : "Miwa and Sasaki.",
+      "year" : 2014
+    }, {
+      "title" : "Embedding semantic similarity in tree kernels for domain adaptation of relation extraction",
+      "author" : [ "Barbara Plank", "Alessandro Moschitti." ],
+      "venue" : "ACL. pages 1498–1507.",
+      "citeRegEx" : "Plank and Moschitti.,? 2013",
+      "shortCiteRegEx" : "Plank and Moschitti.",
+      "year" : 2013
+    }, {
+      "title" : "Clusteringbased stratified seed sampling for semi-supervised relation classification",
+      "author" : [ "Longhua Qian", "Guodong Zhou." ],
+      "venue" : "EMNLP. pages 346–355.",
+      "citeRegEx" : "Qian and Zhou.,? 2010",
+      "shortCiteRegEx" : "Qian and Zhou.",
+      "year" : 2010
+    }, {
+      "title" : "Exploiting constituent dependencies for tree kernel-based semantic relation extraction",
+      "author" : [ "Longhua Qian", "Guodong Zhou", "Fang Kong", "Qiaoming Zhu", "Peide Qian." ],
+      "venue" : "Coling 2008. pages 697–704.",
+      "citeRegEx" : "Qian et al\\.,? 2008",
+      "shortCiteRegEx" : "Qian et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Design challenges and misconceptions in named entity recognition",
+      "author" : [ "Lev Ratinov", "Dan Roth." ],
+      "venue" : "Proceedings of the Thirteenth Conference on Computational Natural Language Learning (CoNLL-2009). pages 147–155.",
+      "citeRegEx" : "Ratinov and Roth.,? 2009",
+      "shortCiteRegEx" : "Ratinov and Roth.",
+      "year" : 2009
+    }, {
+      "title" : "A linear programming formulation for global inference in natural language tasks",
+      "author" : [ "Dan Roth", "Wen-tau Yih." ],
+      "venue" : "CoNLL. pages 1–8.",
+      "citeRegEx" : "Roth and Yih.,? 2004",
+      "shortCiteRegEx" : "Roth and Yih.",
+      "year" : 2004
+    }, {
+      "title" : "Global inference for entity and relation identification via a linear programming formulation",
+      "author" : [ "Dan Roth", "Wen-tau Yih." ],
+      "venue" : "Introduction to statistical relational learning pages 553–580.",
+      "citeRegEx" : "Roth and Yih.,? 2007",
+      "shortCiteRegEx" : "Roth and Yih.",
+      "year" : 2007
+    }, {
+      "title" : "Semi-supervised relation extraction with large-scale word clustering",
+      "author" : [ "Ang Sun", "Ralph Grishman", "Satoshi Sekine." ],
+      "venue" : "ACL. pages 521–529.",
+      "citeRegEx" : "Sun et al\\.,? 2011",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Improved semantic representations from tree-structured long short-term memory networks",
+      "author" : [ "Kai Sheng Tai", "Richard Socher", "Christopher D. Manning." ],
+      "venue" : "ACL. pages 1556–1566.",
+      "citeRegEx" : "Tai et al\\.,? 2015",
+      "shortCiteRegEx" : "Tai et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Context-sensitive lexicon features for neural sentiment analysis",
+      "author" : [ "Zhiyang Teng", "Duy Tin Vo", "Yue Zhang." ],
+      "venue" : "Proceedings of the EMNLP. pages 1629–1638.",
+      "citeRegEx" : "Teng et al\\.,? 2016",
+      "shortCiteRegEx" : "Teng et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Multilingual relation extraction using compositional universal schema",
+      "author" : [ "Patrick Verga", "David Belanger", "Emma Strubell", "Benjamin Roth", "Andrew McCallum." ],
+      "venue" : "Proceedings of the 2016 NAACL. pages 886–896.",
+      "citeRegEx" : "Verga et al\\.,? 2016",
+      "shortCiteRegEx" : "Verga et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Combining recurrent and convolutional neural networks for relation classification",
+      "author" : [ "Ngoc Thang Vu", "Heike Adel", "Pankaj Gupta", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the NAACL. pages 534–539.",
+      "citeRegEx" : "Vu et al\\.,? 2016",
+      "shortCiteRegEx" : "Vu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Graph-based dependency parsing with bidirectional lstm",
+      "author" : [ "Wenhui Wang", "Baobao Chang." ],
+      "venue" : "ACL. pages 2306–2315.",
+      "citeRegEx" : "Wang and Chang.,? 2016",
+      "shortCiteRegEx" : "Wang and Chang.",
+      "year" : 2016
+    }, {
+      "title" : "Transitionbased neural constituent parsing",
+      "author" : [ "Taro Watanabe", "Eiichiro Sumita." ],
+      "venue" : "ACL. pages 1169–1179.",
+      "citeRegEx" : "Watanabe and Sumita.,? 2015",
+      "shortCiteRegEx" : "Watanabe and Sumita.",
+      "year" : 2015
+    }, {
+      "title" : "Sequence-to-sequence learning as beam-search optimization",
+      "author" : [ "Sam Wiseman", "Alexander M. Rush." ],
+      "venue" : "EMNLP. pages 1296–1306.",
+      "citeRegEx" : "Wiseman and Rush.,? 2016",
+      "shortCiteRegEx" : "Wiseman and Rush.",
+      "year" : 2016
+    }, {
+      "title" : "Lstm shift-reduce ccg parsing",
+      "author" : [ "Wenduan Xu." ],
+      "venue" : "EMNLP. pages 1754–1764.",
+      "citeRegEx" : "Xu.,? 2016",
+      "shortCiteRegEx" : "Xu.",
+      "year" : 2016
+    }, {
+      "title" : "Classifying relations via long short term memory networks along shortest dependency paths",
+      "author" : [ "Yan Xu", "Lili Mou", "Ge Li", "Yunchuan Chen", "Hao Peng", "Zhi Jin." ],
+      "venue" : "Proceedings of the 2015 EMNLP. pages 1785–1794.",
+      "citeRegEx" : "Xu et al\\.,? 2015",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Kernel methods for relation extraction",
+      "author" : [ "Dmitry Zelenko", "Chinatsu Aone", "Anthony Richardella." ],
+      "venue" : "Journal of machine learning research 3(Feb):1083–1106.",
+      "citeRegEx" : "Zelenko et al\\.,? 2003",
+      "shortCiteRegEx" : "Zelenko et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Syntactic processing using the generalized perceptron and beam search",
+      "author" : [ "Yue Zhang", "Stephen Clark." ],
+      "venue" : "Computational Linguistics 37(1):105–151.",
+      "citeRegEx" : "Zhang and Clark.,? 2011",
+      "shortCiteRegEx" : "Zhang and Clark.",
+      "year" : 2011
+    }, {
+      "title" : "Extracting relations with integrated information using kernel methods",
+      "author" : [ "Shubin Zhao", "Ralph Grishman." ],
+      "venue" : "ACL. pages 419–426.",
+      "citeRegEx" : "Zhao and Grishman.,? 2005",
+      "shortCiteRegEx" : "Zhao and Grishman.",
+      "year" : 2005
+    }, {
+      "title" : "Exploring various knowledge in relation extraction",
+      "author" : [ "GuoDong Zhou", "Jian Su", "Jie Zhang", "Min Zhang." ],
+      "venue" : "ACL. pages 427–434.",
+      "citeRegEx" : "Zhou et al\\.,? 2005",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "Tree kernel-based relation extraction with context-sensitive structured parse tree information",
+      "author" : [ "GuoDong Zhou", "Min Zhang", "DongHong Ji", "QiaoMing Zhu." ],
+      "venue" : "EMNLP-CoNLL. pages 728–736.",
+      "citeRegEx" : "Zhou et al\\.,? 2007",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "A neural probabilistic structuredprediction model for transition-based dependency parsing",
+      "author" : [ "Hao Zhou", "Yue Zhang", "Shujian Huang", "Jiajun Chen." ],
+      "venue" : "Proceedings of the 53rd ACL. pages 1213–1222.",
+      "citeRegEx" : "Zhou et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2015
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 54,
+      "context" : ", 2006, 2010) and relations (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Sun et al., 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al.",
+      "startOffset" : 28,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2006, 2010) and relations (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Sun et al., 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al.",
+      "startOffset" : 28,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2006, 2010) and relations (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Sun et al., 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al.",
+      "startOffset" : 28,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2006, 2010) and relations (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Sun et al., 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al.",
+      "startOffset" : 28,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al., 2004).",
+      "startOffset" : 113,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2011; Plank and Moschitti, 2013) from unstructured texts have been two central tasks in information extraction (Grishman, 1997; Doddington et al., 2004).",
+      "startOffset" : 113,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 52,
+      "context" : "Traditional approaches to relation extraction take entity recognition as a predecessor step in a pipeline (Zelenko et al., 2003; Chan and Roth, 2011), predicting relations between given entities.",
+      "startOffset" : 106,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 6,
+      "context" : "Traditional approaches to relation extraction take entity recognition as a predecessor step in a pipeline (Zelenko et al., 2003; Chan and Roth, 2011), predicting relations between given entities.",
+      "startOffset" : 106,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 30,
+      "context" : "In recent years, there has been a surge of interest in performing end-to-end relation extraction, jointly recognizing entities and relations given free text inputs (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016).",
+      "startOffset" : 164,
+      "endOffset" : 247
+    }, {
+      "referenceID" : 35,
+      "context" : "In recent years, there has been a surge of interest in performing end-to-end relation extraction, jointly recognizing entities and relations given free text inputs (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016).",
+      "startOffset" : 164,
+      "endOffset" : 247
+    }, {
+      "referenceID" : 33,
+      "context" : "In recent years, there has been a surge of interest in performing end-to-end relation extraction, jointly recognizing entities and relations given free text inputs (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016).",
+      "startOffset" : 164,
+      "endOffset" : 247
+    }, {
+      "referenceID" : 20,
+      "context" : "In recent years, there has been a surge of interest in performing end-to-end relation extraction, jointly recognizing entities and relations given free text inputs (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016).",
+      "startOffset" : 164,
+      "endOffset" : 247
+    }, {
+      "referenceID" : 18,
+      "context" : "In particular, they used a bidirectional LSTM (Graves et al., 2013) to learn hidden word representations under a sentential context, and further leveraged a tree-structured LSTMs (Tai et al.",
+      "startOffset" : 46,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 43,
+      "context" : ", 2013) to learn hidden word representations under a sentential context, and further leveraged a tree-structured LSTMs (Tai et al., 2015) to encode syntactic information, given the output of a parser.",
+      "startOffset" : 119,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 30,
+      "context" : "The resulting representations are then used for making local decisions for entity and relation extraction incrementally, leading to much improved results compared with the best statistical model (Li and Ji, 2014).",
+      "startOffset" : 195,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 30,
+      "context" : "This is unlike existing statistical methods, which utilize well-studied structured prediction methods to address the problem (Li and Ji, 2014; Miwa and Sasaki, 2014).",
+      "startOffset" : 125,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 35,
+      "context" : "This is unlike existing statistical methods, which utilize well-studied structured prediction methods to address the problem (Li and Ji, 2014; Miwa and Sasaki, 2014).",
+      "startOffset" : 125,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 27,
+      "context" : "As has been commonly understood, learning local decisions for structured prediction can lead to label bias (Lafferty et al., 2001), which prevents globally optimal structures from receiving optimal scores by the model.",
+      "startOffset" : 107,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 57,
+      "context" : "We address this potential issue by building a structural neural model for end-to-end relation extraction, following a recent line of efforts on globally optimized models for neural structured prediction (Zhou et al., 2015; Watanabe and Sumita, 2015; Andor et al., 2016; Wiseman and Rush, 2016).",
+      "startOffset" : 203,
+      "endOffset" : 293
+    }, {
+      "referenceID" : 48,
+      "context" : "We address this potential issue by building a structural neural model for end-to-end relation extraction, following a recent line of efforts on globally optimized models for neural structured prediction (Zhou et al., 2015; Watanabe and Sumita, 2015; Andor et al., 2016; Wiseman and Rush, 2016).",
+      "startOffset" : 203,
+      "endOffset" : 293
+    }, {
+      "referenceID" : 0,
+      "context" : "We address this potential issue by building a structural neural model for end-to-end relation extraction, following a recent line of efforts on globally optimized models for neural structured prediction (Zhou et al., 2015; Watanabe and Sumita, 2015; Andor et al., 2016; Wiseman and Rush, 2016).",
+      "startOffset" : 203,
+      "endOffset" : 293
+    }, {
+      "referenceID" : 49,
+      "context" : "We address this potential issue by building a structural neural model for end-to-end relation extraction, following a recent line of efforts on globally optimized models for neural structured prediction (Zhou et al., 2015; Watanabe and Sumita, 2015; Andor et al., 2016; Wiseman and Rush, 2016).",
+      "startOffset" : 203,
+      "endOffset" : 293
+    }, {
+      "referenceID" : 35,
+      "context" : "This is different from the actionbased method of Li and Ji (2014), yet has shown to be more flexible and accurate (Miwa and Sasaki, 2014).",
+      "startOffset" : 114,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 10,
+      "context" : "First, Miwa and Bansal (2016) rely on external syntactic parsers for obtaining syntactic information, which is crucial for relation extraction (Culotta and Sorensen, 2004; Zhou et al., 2005; Bunescu and Mooney, 2005; Qian et al., 2008).",
+      "startOffset" : 143,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 55,
+      "context" : "First, Miwa and Bansal (2016) rely on external syntactic parsers for obtaining syntactic information, which is crucial for relation extraction (Culotta and Sorensen, 2004; Zhou et al., 2005; Bunescu and Mooney, 2005; Qian et al., 2008).",
+      "startOffset" : 143,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 3,
+      "context" : "First, Miwa and Bansal (2016) rely on external syntactic parsers for obtaining syntactic information, which is crucial for relation extraction (Culotta and Sorensen, 2004; Zhou et al., 2005; Bunescu and Mooney, 2005; Qian et al., 2008).",
+      "startOffset" : 143,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 38,
+      "context" : "First, Miwa and Bansal (2016) rely on external syntactic parsers for obtaining syntactic information, which is crucial for relation extraction (Culotta and Sorensen, 2004; Zhou et al., 2005; Bunescu and Mooney, 2005; Qian et al., 2008).",
+      "startOffset" : 143,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 13,
+      "context" : "We take an alternative approach to integrating syntactic information, by taking the hidden LSTM layers of a bi-affine attention parser (Dozat and Manning, 2016) to augment input representations.",
+      "startOffset" : 135,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 43,
+      "context" : "In contrast, the method of Miwa and Bansal (2016) must consider tree LSTM formulations that are specific to grammar formalisms, which can be very different (Tai et al., 2015).",
+      "startOffset" : 156,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 9,
+      "context" : "This method is highly efficient, yet gives as accurate results as compared to more complex neural network structures to model a span of words (Cross and Huang, 2016).",
+      "startOffset" : 142,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 30,
+      "context" : "We map entity words into labels under the BILOU (Begin, Inside, Last, Outside, Unit) scheme, assuming that there are no overlapping entities in one sentence (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016).",
+      "startOffset" : 157,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 35,
+      "context" : "We map entity words into labels under the BILOU (Begin, Inside, Last, Outside, Unit) scheme, assuming that there are no overlapping entities in one sentence (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016).",
+      "startOffset" : 157,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 33,
+      "context" : "We map entity words into labels under the BILOU (Begin, Inside, Last, Outside, Unit) scheme, assuming that there are no overlapping entities in one sentence (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016).",
+      "startOffset" : 157,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 35,
+      "context" : "We adopt the close-first left-to-right strategy (Miwa and Sasaki, 2014) to map the twodimensional table into a sequence, in order to fill the table incrementally.",
+      "startOffset" : 48,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 1,
+      "context" : "In addition, we enhance the word representation by its character sequence (Ballesteros et al., 2015; Lample et al., 2016), using a convolution neural network (CNN) to derive a character-based word representation hchar, which has been demonstrated effective for",
+      "startOffset" : 74,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 28,
+      "context" : "In addition, we enhance the word representation by its character sequence (Ballesteros et al., 2015; Lample et al., 2016), using a convolution neural network (CNN) to derive a character-based word representation hchar, which has been demonstrated effective for",
+      "startOffset" : 74,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 47,
+      "context" : "In particular, for a segment of text [i, j], the representation is computed by using LSTM-Minus (Wang and Chang, 2016), shown by Figure 4, where hj − hi−1 in a left-to-right LSTM",
+      "startOffset" : 96,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 55,
+      "context" : "Previous work has shown that syntactic features are useful for relation extraction (Zhou et al., 2005).",
+      "startOffset" : 83,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 3,
+      "context" : "For example, the shortest dependency path has been used by several relation extraction models (Bunescu and Mooney, 2005; Miwa and Bansal, 2016).",
+      "startOffset" : 94,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 33,
+      "context" : "For example, the shortest dependency path has been used by several relation extraction models (Bunescu and Mooney, 2005; Miwa and Bansal, 2016).",
+      "startOffset" : 94,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 4,
+      "context" : "In particular, many state-of-the-art syntactic parsers use encoder-decoder neural models (Buys and Blunsom, 2015; Kiperwasser and Goldberg, 2016), where the encoder represents the features of the input sentences.",
+      "startOffset" : 89,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 25,
+      "context" : "In particular, many state-of-the-art syntactic parsers use encoder-decoder neural models (Buys and Blunsom, 2015; Kiperwasser and Goldberg, 2016), where the encoder represents the features of the input sentences.",
+      "startOffset" : 89,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 25,
+      "context" : "For example, LSTM over the input word/tag sequences has been used frequently (Kiperwasser and Goldberg, 2016).",
+      "startOffset" : 77,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 33,
+      "context" : "Previous work (Miwa and Bansal, 2016; Gupta et al., 2016) trains model parameters by modeling each step for labeling one input sentence separately.",
+      "startOffset" : 14,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 20,
+      "context" : "Previous work (Miwa and Bansal, 2016; Gupta et al., 2016) trains model parameters by modeling each step for labeling one input sentence separately.",
+      "startOffset" : 14,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 57,
+      "context" : "Global optimization has achieved success for several NLP tasks under the neural setting (Zhou et al., 2015; Watanabe and Sumita, 2015).",
+      "startOffset" : 88,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 48,
+      "context" : "Global optimization has achieved success for several NLP tasks under the neural setting (Zhou et al., 2015; Watanabe and Sumita, 2015).",
+      "startOffset" : 88,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 30,
+      "context" : "For relation extraction, global learning gives the best performances under the discrete setting (Li and Ji, 2014; Miwa and Sasaki, 2014).",
+      "startOffset" : 96,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 35,
+      "context" : "For relation extraction, global learning gives the best performances under the discrete setting (Li and Ji, 2014; Miwa and Sasaki, 2014).",
+      "startOffset" : 96,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 8,
+      "context" : "For training, the same beam search algorithm is applied to training examples, and early-update (Collins and Roark, 2004) is used to fix search errors.",
+      "startOffset" : 95,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 24,
+      "context" : "We update all model parameters by back propagation using Adam (Kingma and Ba, 2014) with a learning rate 10−3, using gradient clipping by",
+      "startOffset" : 62,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 49,
+      "context" : "In particular, we exploit pre-training techniques to learn better model parameters (Wiseman and Rush, 2016).",
+      "startOffset" : 83,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 2,
+      "context" : "For the local model, we apply the scheduled sampling strategy (Bengio et al., 2015), which has been shown to improve the performances by Miwa and Bansal (2016).",
+      "startOffset" : 62,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 39,
+      "context" : "Entity recognition (Florian et al., 2004, 2006; Ratinov and Roth, 2009; Florian et al., 2010; Kuru et al., 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al.",
+      "startOffset" : 19,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 17,
+      "context" : "Entity recognition (Florian et al., 2004, 2006; Ratinov and Roth, 2009; Florian et al., 2010; Kuru et al., 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al.",
+      "startOffset" : 19,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 26,
+      "context" : "Entity recognition (Florian et al., 2004, 2006; Ratinov and Roth, 2009; Florian et al., 2010; Kuru et al., 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al.",
+      "startOffset" : 19,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 54,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 56,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 45,
+      "context" : ", 2016) and relation extraction (Zhao and Grishman, 2005; Jiang and Zhai, 2007; Zhou et al., 2007; Qian and Zhou, 2010; Chan and Roth, 2010; Sun et al., 2011; Plank and Moschitti, 2013; Verga et al., 2016) have received much attention in the NLP community.",
+      "startOffset" : 32,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 52,
+      "context" : "The dominant methods treat the two tasks separately, where relation extraction is performed assuming that entity boundaries have been given (Zelenko et al., 2003; Miwa et al., 2009; Chan and Roth, 2011; Lin et al., 2016).",
+      "startOffset" : 140,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 34,
+      "context" : "The dominant methods treat the two tasks separately, where relation extraction is performed assuming that entity boundaries have been given (Zelenko et al., 2003; Miwa et al., 2009; Chan and Roth, 2011; Lin et al., 2016).",
+      "startOffset" : 140,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 6,
+      "context" : "The dominant methods treat the two tasks separately, where relation extraction is performed assuming that entity boundaries have been given (Zelenko et al., 2003; Miwa et al., 2009; Chan and Roth, 2011; Lin et al., 2016).",
+      "startOffset" : 140,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 31,
+      "context" : "The dominant methods treat the two tasks separately, where relation extraction is performed assuming that entity boundaries have been given (Zelenko et al., 2003; Miwa et al., 2009; Chan and Roth, 2011; Lin et al., 2016).",
+      "startOffset" : 140,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 22,
+      "context" : "Early work conducts joint inference for separate models (Ji and Grishman, 2005; Roth and Yih, 2004, 2007).",
+      "startOffset" : 56,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 30,
+      "context" : "Recent work shows that joint learning and decoding with a single model brings more benefits for the two tasks (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016), and we follow this line of work in the study.",
+      "startOffset" : 110,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 35,
+      "context" : "Recent work shows that joint learning and decoding with a single model brings more benefits for the two tasks (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016), and we follow this line of work in the study.",
+      "startOffset" : 110,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 33,
+      "context" : "Recent work shows that joint learning and decoding with a single model brings more benefits for the two tasks (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016), and we follow this line of work in the study.",
+      "startOffset" : 110,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 20,
+      "context" : "Recent work shows that joint learning and decoding with a single model brings more benefits for the two tasks (Li and Ji, 2014; Miwa and Sasaki, 2014; Miwa and Bansal, 2016; Gupta et al., 2016), and we follow this line of work in the study.",
+      "startOffset" : 110,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 21,
+      "context" : "LSTM features have been extensively exploited for NLP tasks, including tagging (Huang et al., 2015; Lample et al., 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al.",
+      "startOffset" : 79,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 28,
+      "context" : "LSTM features have been extensively exploited for NLP tasks, including tagging (Huang et al., 2015; Lample et al., 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al.",
+      "startOffset" : 79,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al.",
+      "startOffset" : 17,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al.",
+      "startOffset" : 17,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 51,
+      "context" : ", 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al., 2015; Vu et al., 2016; Miwa and Bansal, 2016) and sentiment analysis (Li et al.",
+      "startOffset" : 100,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al., 2015; Vu et al., 2016; Miwa and Bansal, 2016) and sentiment analysis (Li et al.",
+      "startOffset" : 100,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2016), parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016), relation classification (Xu et al., 2015; Vu et al., 2016; Miwa and Bansal, 2016) and sentiment analysis (Li et al.",
+      "startOffset" : 100,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2016; Miwa and Bansal, 2016) and sentiment analysis (Li et al., 2015; Teng et al., 2016).",
+      "startOffset" : 54,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 44,
+      "context" : ", 2016; Miwa and Bansal, 2016) and sentiment analysis (Li et al., 2015; Teng et al., 2016).",
+      "startOffset" : 54,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 27,
+      "context" : "Global optimization and normalization has been successfully applied on many NLP tasks that involve structural prediction (Lafferty et al., 2001; Collins, 2002; McDonald et al., 2010; Zhang and Clark, 2011), using traditional discrete features.",
+      "startOffset" : 121,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 7,
+      "context" : "Global optimization and normalization has been successfully applied on many NLP tasks that involve structural prediction (Lafferty et al., 2001; Collins, 2002; McDonald et al., 2010; Zhang and Clark, 2011), using traditional discrete features.",
+      "startOffset" : 121,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 32,
+      "context" : "Global optimization and normalization has been successfully applied on many NLP tasks that involve structural prediction (Lafferty et al., 2001; Collins, 2002; McDonald et al., 2010; Zhang and Clark, 2011), using traditional discrete features.",
+      "startOffset" : 121,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 53,
+      "context" : "Global optimization and normalization has been successfully applied on many NLP tasks that involve structural prediction (Lafferty et al., 2001; Collins, 2002; McDonald et al., 2010; Zhang and Clark, 2011), using traditional discrete features.",
+      "startOffset" : 121,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 57,
+      "context" : "For neural models, it has recently received increasing interests (Zhou et al., 2015; Andor et al., 2016; Xu, 2016; Wiseman and Rush, 2016), and improved performances can be achieved with global optimization accompanied by beam search.",
+      "startOffset" : 65,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 0,
+      "context" : "For neural models, it has recently received increasing interests (Zhou et al., 2015; Andor et al., 2016; Xu, 2016; Wiseman and Rush, 2016), and improved performances can be achieved with global optimization accompanied by beam search.",
+      "startOffset" : 65,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 50,
+      "context" : "For neural models, it has recently received increasing interests (Zhou et al., 2015; Andor et al., 2016; Xu, 2016; Wiseman and Rush, 2016), and improved performances can be achieved with global optimization accompanied by beam search.",
+      "startOffset" : 65,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 49,
+      "context" : "For neural models, it has recently received increasing interests (Zhou et al., 2015; Andor et al., 2016; Xu, 2016; Wiseman and Rush, 2016), and improved performances can be achieved with global optimization accompanied by beam search.",
+      "startOffset" : 65,
+      "endOffset" : 138
+    } ],
+    "year" : 0,
+    "abstractText" : "Neural networks have recently shown promising results for relation extraction. State-of-the-art models cast the task as an end-to-end problem, solved incrementally using a local classifier. Yet previous work using statistical models have demonstrated that global optimization can achieve better performances compared to local classification. We build a globally optimized neural model for end-to-end relation extraction, proposing novel LSTM features in order to better learn representations. Experiments show that our model is highly effective, achieving the best performances on two standard benchmarks.",
+    "creator" : null
+  }
+}

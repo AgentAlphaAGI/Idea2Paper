@@ -1,0 +1,490 @@
+{
+  "name" : "ACL_2017_105_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Morphological Inflection Generation with Hard Monotonic Attention",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "We present a neural model for morphological inflection generation which employs a hard attention mechanism, inspired by the nearly-monotonic alignment commonly found between the characters in a word and the characters in its inflection. We evaluate the model on three previously studied morphological inflection generation datasets and show that it provides state of the art results in various setups compared to previous neural and nonneural approaches. Finally we present an analysis of the continuous representations learned by both the hard and soft attention (Bahdanau et al., 2014) models for the task, shedding some light on the features such models extract."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Morphological inflection generation involves generating a target word (e.g. “härtestem”, the German word for “hardest”), given a source word (e.g. “hart”, the German word for “hard”) and the morpho-syntactic attributes of the target (POS=adjective, gender=masculine, type=superlative, etc.).\nThe task is important for many down-stream NLP tasks such as machine translation, especially for dealing with data sparsity in morphologically rich languages where a lemma can be inflected into many different word forms. Several studies have shown that translating into lemmas in the target language and then applying inflection generation as a post-processing step is beneficial for phrase-based machine translation (Minkov et al., 2007; Toutanova et al., 2008; Clifton and Sarkar, 2011; Fraser et al., 2012; Chahuneau et al., 2013)\nand more recently for neural machine translation (Garcı́a-Martı́nez et al., 2016).\nThe task was traditionally tackled with hand engineered finite state transducers (FST) (Koskenniemi, 1983; Kaplan and Kay, 1994) which rely on expert knowledge, or using trainable weighted finite state transducers (Mohri et al., 1997; Eisner, 2002) which combine expert knowledge with datadriven parameter tuning. Many other machinelearning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to create the output sequence.\nMore recently, the task was tackled using neural sequence to sequence learning over character sequences with impressive results (Faruqui et al., 2016). The vanilla encoder-decoder models as used by Faruqui et al. compress the input sequence to a single, fixed-sized continuous representation. Instead, soft-attention based sequence to sequence learning paradigm (Bahdanau et al., 2014) allows directly conditioning on the entire input sequence, and was utilized for morphological inflection generation with great success (Kann and Schütze, 2016b,a).\nHowever, the sequence-to-sequence models require large training sets in order to perform well: their performance on the relatively small CELEX dataset is inferior to the latent variable WFST model of Dreyer et al. (2008). Interestingly, the neural WFST model by Rastogi et al. (2016) also suffered from the same issue on the CELEX dataset, and surpassed the latent variable model only when given twice as much data to train on.\nWe propose a model which handles the above issues by directly modeling an almost monotonic alignment between the input and output character\nsequences, which is commonly found in the morphological inflection generation task (e.g. in languages with suffixing morphology). The model consists of an encoder-decoder neural network with a dedicated control mechanism: in each step, the model attends to a single input state and either writes a symbol to the output sequence or advances the attention pointer to the next input state from the bi-directionally encoded sequence, as described visually in Figure 1.\nThis modeling suits the natural monotonic alignment between the input and output, as the network learns to attend to the relevant inputs before writing the output which they are aligned to. The encoder is a bi-directional RNN, where each character in the input word is represented using a concatenation of a forward RNN and a backward RNN states over the word’s characters. The combination of the bi-directional encoder and the controllable hard attention mechanism enables to condition the output on the entire input sequence. Moreover, since each character representation is aware of the neighboring characters, non-monotone relations are also captured, which is important in cases where segments in the output word are a result of long range dependencies in the input word. The recurrent nature of the decoder, together with a dedicated feedback connection that passes the last prediction to the next decoder step explicitly, enables the model to also condition the current output on all the previous outputs at each prediction step. The hard attention mechanism allows the network to jointly align and transduce while using a focused representation at each step, rather then the weighted sum of representations used in the soft attention model. In contrast to previous sequence-to-sequence work, we do not require the training procedure to also learn the alignment. Instead, we use a simple training procedure which relies on independently learned character-level alignments, from which we derive gold transduction+control sequences. The network can then be trained using straightforward cross-entropy loss.\nTo evaluate our model, we perform extensive experiments on three previously studied morphological inflection generation datasets: the CELEX dataset (Baayen et al., 1993), the Wiktionary dataset (Durrett and DeNero, 2013) and the SIGMORPHON2016 dataset (Cotterell et al., 2016). We show that while our model is on par with\nor better than the previous neural and non-neural state-of-the-art approaches, it also performs significantly better with very small training sets, being the first neural model to surpass the performance of the weighted FST model with latent variables specifically tailored for the task by Dreyer et al. (2008). Finally, we analyze and compare our model and the soft attention model, showing how they function very similarly with respect to the alignments and representations they learn, in spite of our model being much simpler. This analysis also sheds light on the representations such models learn for the morphological inflection generation task, showing how they encode specific features like a symbol’s type and the symbol’s location in a sequence.\nTo summarize, our contributions in this paper are three-fold:\n1. We present a hard attention model for nearlymonotonic sequence to sequence learning, as common in the morphological inflection setting.\n2. We evaluate the model on the task of morphological inflection generation, establishing a new state of the art on three previouslystudied datasets for the task.\n3. We perform an analysis and comparison of our model and the soft-attention model, shedding light on the features such models extract for the inflection generation task."
+    }, {
+      "heading" : "2 The Hard Attention Model",
+      "text" : "We would like to transduce an input sequence, x1:n ∈ Σ∗x into an output sequence, y1:m ∈ Σ∗y, where Σx and Σy are the input and output vocabularies, respectively. Imagine a machine with read-only random access to the encoding of the input sequence, and a single pointer that determines the current read location. We can then model sequence transduction as a series of pointer movement and write operations. If we assume the alignment is monotone, the machine can be simplified: the memory can be read in sequential order, where the pointer movement is controlled by a single “move forward” operation (step) which we add to the output vocabulary. We implement this behavior using an encoder-decoder neural network, with a control mechanism which determines in each step of the decoder whether to write an\noutput symbol or promote the attention pointer the next element of the encoded input."
+    }, {
+      "heading" : "2.1 Model Definition",
+      "text" : "In prediction time, we seek the output sequence y1:m ∈ Σ∗y, for which:\ny1:m = arg max y′∈Σ∗y\np(y′|x1:n, f) (1)\nWhere x ∈ Σ∗x is the input sequence and f = {f1, ..., fl} is a set of features influencing the transduction task (in the inflection generation task these would be the desired morpho-syntactic features of the output sequence). Given a nearlymonotonic alignment between the input and the output, we replace the search for a sequence of letters with a sequence of write and step actions s1:q ∈ Σ∗s, where Σs = Σy ∪ {step}. This sequence is a series of step and write actions required to go from x1:n to y1:m according to the monotonic alignment between them. In this case we define: 1\ns1:q = arg max s′∈Σ∗s\np(s′|x1:n, f)\n= arg max s′∈Σ∗s ∏ s′i∈s′ p(s′i|s′1...s′i−1, x1:n, f) (2)\nwe can then estimate this using a neural network:\ns1:q = arg max s′∈Σ∗s NN(x1:n, f,Θ) (3)\nWhere the network’s parameters Θ are learned using a set of training examples. We will now describe the network architecture."
+    }, {
+      "heading" : "2.2 Network Architecture",
+      "text" : "Notation We use bold letters for vectors and matrices. We treat LSTM as a parameterized function LSTMθ(x1...xn) mapping a sequence of input vectors x1...xn to a an output vector hn. The equations for the LSTM variant we use are detailed in the supplementary material of this paper.\nEncoder For every element in the input sequence: x1:n = x1...xn, we take the corresponding embedding: ex1 ...exn , where: exi ∈ RE .\n1We note that our model (Eq 2) solves a different objective than (Eq 1), as it searches for the best derivation and not the best sequence. In order to accurately solve (1) we would need to marginalize over the different derivations leading to the same sequence, which is computationally challenging. However, as we see in the experiments section, the best-derivation approximation is effective in practice.\nThese embeddings are parameters of the model which will be learned during training. We then feed the embeddings into a bi-directional LSTM encoder (Graves and Schmidhuber, 2005) which results in a sequence of vectors: x1:n = x1...xn, where each vector xi ∈ R2H is a concatenation of: LSTMforward(ex1 , ex2 , ...exi) and LSTMbackward(exn , exn−1 ...exi), the forward LSTM and the backward LSTM outputs when fed with exi .\nDecoder Once the input sequence is encoded, we feed the decoder RNN, LSTMdec, with three inputs at each step:\n1. The current attended input, xa ∈ R2H , initialized with the first element of the encoded sequence, x1.\n2. A set of feature embeddings that influence the generation process, concatenated to a single vector: f = [f1...fl] ∈ RF ·l.\n3. si−1 ∈ RE , which is an embedding for the predicted output symbol in the previous decoder step.\nThose three inputs are concatenated into a single vector zi = [xa, f , si−1] ∈ R2H+F ·l+E , which is fed into the decoder, providing the decoder output vector: LSTMdec(z1...zi) ∈ RH . Finally, to model the distribution over the possible actions, we project the decoder output to a vector of |Σs| elements, followed by a softmax layer:\np(si = c)\n= softmax c(W · LSTMdec(z1...zi) + b) (4)\nControl Mechanism When the most probable action is step, the attention is promoted so xa contains the next encoded input representation to be used in the next step of the decoder. The process is demonstrated visually in Figure 1."
+    }, {
+      "heading" : "2.3 Training the Model",
+      "text" : "For every example: (x1:n, y1:m, f) in the training data, we should produce a sequence of step and write actions s1:q to be predicted by the decoder. The sequence is dependent on the alignment between the input and the output: ideally, the network will attend to all the input characters aligned to an output character before writing it. While recent work in sequence transduction advocate jointly training the alignment and the decoding mechanisms (Bahdanau et al., 2014; Yu et al., 2016), we instead show that in our case it is worthwhile to decouple these stages and learn a hard alignment beforehand, using it to guide the training of the encoder-decoder network and enabling the use of correct alignments for the attention mechanism from the beginning of the network training phase. For this purpose, we first run a character level alignment process on the training data. We use the character alignment model of Sudoh et al. (2013) which is based on a Chinese Restaurant Process which weights single alignments (character-to-character) in proportion to how many times such an alignment has been seen elsewhere out of all possible alignments. Once we have the character level alignment per input-output sequence pair in the training set, we deterministically infer the sequence of actions s1:q from it by requiring to read all the input elements aligned to an output element (using the step action) before writing it. We then train the network to predict this sequence of actions by using a conventional cross entropy loss function per example: L(x1:n, y1:m, f,Θ) = − ∑\nsj∈s1:q\nlog softmax sj (d),\nd = W · LSTMdec(z1...zi) + b (5)\nAn alternative view of our encoder-decoder architecture is that of a transition system with ADVANCE and WRITE(CH) actions, where the oracle is derived from a given character-level alignment, the input is encoded using a biRNN, and the next action is determined by an RNN over the previous state/action combinations."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : "We perform extensive experiments with three previously studied morphological inflection generation datasets to evaluate our hard attention model in various settings. In all experiments we report the results of the best performing neural and nonneural baselines which were previously published on those datasets. The implementation details for our models are described in the supplementary material section of this paper. The source code for our models is available on github.2\nCELEX Our first evaluation is on a very small dataset, to see if our model indeed avoids the tendency to overfit with small training sets. We report exact match accuracy on the German inflection generation dataset compiled by Dreyer et al. (2008) from the CELEX database (Baayen et al., 1993). The dataset includes only 500 training examples for each of the four inflection types: 13SIA→13SKE, 2PIE→13PKE, 2PKE→z, and rP→pA which we refer to as 13SIA, 2PIE, 2PKE and rP, respectively.3 We compare our model to three competitive models that reported results on this dataset: the Morphological Encoder-Decoder (MED) of Kann and Schütze (2016a) which is based on the soft-attention model of Bahdanau et al. (2014), the neural-weighted FST of Rastogi et al. (2016) which uses stacked bi-directional LSTM’s to weigh its arcs (NWFST), and the model of Dreyer et al. (2008) which uses a weighted FST with latent-variables structured particularly for morphological string transduction tasks (LAT). Following previous reports on this dataset, we use the same data splits as Dreyer et al. (2008), dividing the data for each inflection type into five folds, each consisting of 500 training, 1000 development and 1000 test examples. We train a separate model for each fold and report exact match accuracy, averaged over the five folds.\nWiktionary To neutralize the negative effect of very small training sets on the performance of the different learning approaches, we also evaluate our model on the dataset created by Durrett and DeN-\n2the link is removed in this version to keep the submission anonymized\n3The acronyms stand for: 13SIA=1st/3rd person, singular, indefinite, past;13SKE=1st/3rd person, subjunctive, present; 2PIE=2nd person, plural, indefinite, present;13PKE=1st/3rd person, plural, subjunctive, present; 2PKE=2nd person, plural, subjunctive, present; z=infinitive; rP=imperative, plural; pA=past participle.\nero (2013), which contains up to 360k training examples per language. It was built by extracting Finnish, German and Spanish inflection tables from Wiktionary, used in order to evaluate their system based on string alignments and a semiCRF sequence classifier with linguistically inspired features. We also used the expansion made by Nicolai et al. (2015) to include French and Dutch inflections as well. Their system also performs an align-and-transduce approach, extracting rules from the aligned training set and applying them in inference time with a proprietary character sequence classifier. In addition to those systems we also compare to the results of the recent neural approaches of Faruqui et al. (2016), which did not use an attention mechanism, and Yu et al. (2016), which coupled the alignment and transduction tasks.\nSIGMORPHON As different languages show different morphological phenomena, we also experiment with how our model copes with this various phenomena using the morphological inflection dataset from the SIGMORPHON2016 shared task (Cotterell et al., 2016). Here the training data consists of ten languages, with five morphological system types (detailed in Table 3): Russian (RU), German (DE), Spanish (ES), Georgian (GE), Finnish (FI), Turkish (TU), Arabic (AR), Navajo (NA), Hungarian (HU) and Maltese (MA) with roughly 12,800 training and 1600 development examples per language. We compare our model to two soft attention baselines on this dataset: MED (Kann and Schütze, 2016b), which was the best participating system in the shared\ntask, and our implementation of the global (soft) attention model presented by Luong et al. (2015)."
+    }, {
+      "heading" : "4 Results",
+      "text" : "On the low resource setting (CELEX), our model significantly outperforms both the recent neural models of Kann and Schütze (2016a) and Rastogi et al. (2016) and the morphologically aware latent variable model of Dreyer et al. (2008), as detailed in Table 1. It is also, to our knowledge, the first model that surpassed in overall accuracy the latent variable model on this dataset. We attribute our advantage over the soft attention model to the ability of the hard attention control mechanism to harness the monotonic alignments found in the data, while also conditioning on the entire output history which wasn’t available in the FST models. Figure 2 plots the train-set and dev-set accuracies of the soft and hard attention models as a function of the training epoch. While both models perform similarly on the train-set (with the soft attention model fitting it slightly faster), the hard attention model performs significantly better on the dev-set. This shows the soft attention model’s tendency to overfit on the small dataset, as it is not enforcing the monotonic assumption of the hard attention model.\nOn the large training set experiments (Wiktionary), our model is the best performing model on German verbs, Finnish nouns/adjectives and Dutch verbs, resulting in the highest reported average accuracy across all the inflection types when compared to the four previous neural and nonneural state of the art baselines, as detailed in Ta-\nble 2. This shows the robustness of our model also with large amounts of training examples, and the advantage the hard attention mechanism provides over the encoder-decoder approach of Faruqui et al. (2016) which does not employ an attention mechanism. Our model is also significantly more accurate than the model of Yu et al. (2016), which shows the advantage of using independently learned alignments to guide the network’s attention from the beginning of the training process. As can be seen in Table 3, on the SIGMORPHON 2016 dataset our model performs better than both soft-attention baselines for the suffixing+stem-change languages (Russian, German and Spanish) and is slightly less accurate than our implementation of the soft attention model on the rest of the languages, which is now the best performing model on this dataset to our knowledge. We explain this by looking at the languages from a linguistic typology point of view, as detailed in Cotterell et al. (2016). Since Russian, German and Spanish employ a suffixing morphol-\nogy with internal stem changes, they are more suitable for monotonic alignment as the transformations they need to model are the addition of suffixes and changing characters in the stem. The rest of the languages in the dataset employ more context sensitive morphological phenomena like vowel harmony and consonant harmony, which require to model long range dependencies in the input sequence which better suits the soft attention mechanism. While our implementation of the soft attention model and MED are very similar modelwise, we hypothesize that our soft attention model results are better due to the fact that we trained the model for 100 epochs and picked the best performing model on the development set, while the MED system was trained for a fixed amount of 20 epochs (although trained on more data – both train and development sets)."
+    }, {
+      "heading" : "5 Analysis",
+      "text" : "The Learned Alignments In order to see if the alignments predicted by our model fit the mono-\ntonic alignment structure found in the data, and whether are they more suitable for the task when compared to the alignments found by the soft attention model, we examined alignment predictions of the two models on examples from the development portion of the CELEX dataset, as depicted in Figure 3. First, we notice the alignments found by the soft attention model are also monotonic, supporting our modeling approach for the task. Figure 3 (bottom-right) also shows how the hardattention model performs deletion (legte→lege) by predicting a sequence of two step operations. Another notable morphological transformation is the one-to-many alignment, found in the top example: flog→fliege, where the model needs to transform a character in the input, o, to two characters in the output, ie. This is performed by two consecutive write operations after the step operation of the relevant character to be replaced. Notice that in this case, the soft attention model performs a different alignment by aligning the character i to o and the character g to the sequence eg, which\nis not the expected alignment in this case from a linguistic point of view.\nThe Learned Representations How does the soft-attention model manage to learn monotonic alignments? Perhaps the the network learns to encode the sequential position as part of its encoding of an input element? More generally, what information is encoded by the soft and hard alignment encoders? We selected 500 random encoded characters-in-context from input words in the CELEX development set, where every encoded representation is a vector in R200. Since those vectors are outputs from the bi-LSTM encoders of the models, every vector of this form carries information of the specific character with its entire context. We project these encodings into 2-D using SVD and plot them twice, each time using a different coloring scheme. We first color each point according to the character it represents (Figures 4a, 4b). In the second coloring scheme (Figures 4c, 4d), each point is colored according\nto the character’s sequential position in the word it came from, blue indicating positions near the beginning of the word, and red positions near its end.\nWhile both models tend to cluster representations for similar characters together (Figures 4a, 4b), the hard attention model tends to have much more isolated character clusters. Figures 4c, 4d show that both models also tend to learn representations which are sensitive to the position of the character, although it seems that here the soft attention model is more sensitive to this information as its coloring forms a nearly-perfect red-to-blue transition on the X axis. This may be explained by the soft-attention mechanism encouraging the encoder to encode positional information in the input representations, which may help it to predict better attention scores, and to avoid collisions when computing the weighted sum of representations for the context vector. In contrast, our hardattention model has other means of obtaining the position information in the decoder using the step actions, and for that reason it does not encode it as strongly in the representations of the inputs. This behavior may allow it to perform well even with fewer examples, as the location information is represented more explicitly in the model using the step actions."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word. Our work was mainly inspired by Faruqui et al. (2016) which trained an independent encoder-decoder neural network for every inflection type in the training data, alleviating the need for feature engineering. Kann and Schütze (2016b,a) tackled the task with a single soft attention model (Bahdanau et al., 2014) for all inflection types, which resulted in the best submission at the SIGMORPHON 2016 shared task (Cotterell et al., 2016). Another closely related work (Rastogi et al., 2016) modeled the task with a WFST in which the arcs are learned by optimizing a global loss function over all the possible paths in the state graph while modeling contextual features with bi-directional LSTM’s. Another recent work (Kann et al., 2016)\nproposed performing neural multi-source morphological reinflection, generating an inflection from several source forms of a word.\nPrevious works on neural sequence transduction include the RNN Transducer (Graves, 2012) which uses two independent RNN’s over monotonically aligned sequences to predict a distribution over the possible output symbols in each step, including a null symbol to model the alignment. Yu et al. (2016) improved this by replacing the null symbol with a dedicated learned transition probability. Both models are trained using a forwardbackward approach, marginalizing over all possible alignments. Our model differs from the above by learning the alignments independently, thus enabling a dependency between the encoder and decoder. While providing better results than Yu et al. (2016), this also simplifies the model training using a simple cross-entropy loss. Jaitly et al. (2015) proposed the Neural Transducer model, which is also trained on external alignments. They divide the input into blocks of a constant size and perform soft attention separately on each block. Lu et al. (2016) used a combination of an RNN encoder with a CRF layer to model the dependencies in the output sequence. A line of work on attention-based speech recognition (Chorowski et al., 2015; Bahdanau et al., 2016) proposed improvements to the attention mechanism: adding location awareness by using the previous attention weights when computing the next ones, and preventing the model from attending on too many or too few inputs using “sharpening” and “smoothing” techniques on the attention weight distributions."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "We presented a hard attention model for morphological inflection generation. The model employs an explicit alignment which is used to train a neural network to perform transduction by decoding with a hard attention mechanism. Our model performs on par or better than previous neural and non-neural approaches on various morphological inflection generation datasets, while staying competitive with dedicated models even with very few training examples. Future work may include applying the model to other nearly-monotonic alignand-transduce tasks like abstractive summarization, transliteration or machine translation."
+    } ],
+    "references" : [ {
+      "title" : "Paradigm classification in supervised learning of morphology",
+      "author" : [ "Malin Ahlberg", "Markus Forsberg", "Mans Hulden." ],
+      "venue" : "NAACL HLT 2015. pages 1024– 1029.",
+      "citeRegEx" : "Ahlberg et al\\.,? 2015",
+      "shortCiteRegEx" : "Ahlberg et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "The {CELEX} lexical data base on {CDROM",
+      "author" : [ "R Harald Baayen", "Richard Piepenbrock", "Rijn van H" ],
+      "venue" : null,
+      "citeRegEx" : "Baayen et al\\.,? \\Q1993\\E",
+      "shortCiteRegEx" : "Baayen et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "CoRR abs/1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "End-to-end attentionbased large vocabulary speech recognition",
+      "author" : [ "Dzmitry Bahdanau", "Jan Chorowski", "Dmitriy Serdyuk", "Yoshua Bengio" ],
+      "venue" : "In 2016 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)",
+      "citeRegEx" : "Bahdanau et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Translating into morphologically rich languages with synthetic phrases",
+      "author" : [ "Victor Chahuneau", "Eva Schlinger", "Noah A. Smith", "Chris Dyer." ],
+      "venue" : "EMNLP. pages 1677–1687.",
+      "citeRegEx" : "Chahuneau et al\\.,? 2013",
+      "shortCiteRegEx" : "Chahuneau et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Attention-based models for speech recognition",
+      "author" : [ "Jan K Chorowski", "Dzmitry Bahdanau", "Dmitriy Serdyuk", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "Advances in Neural Information Processing Systems 28, pages 577–585.",
+      "citeRegEx" : "Chorowski et al\\.,? 2015",
+      "shortCiteRegEx" : "Chorowski et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Combining morpheme-based machine translation with postprocessing morpheme prediction",
+      "author" : [ "Ann Clifton", "Anoop Sarkar." ],
+      "venue" : "ACL. pages 32–42.",
+      "citeRegEx" : "Clifton and Sarkar.,? 2011",
+      "shortCiteRegEx" : "Clifton and Sarkar.",
+      "year" : 2011
+    }, {
+      "title" : "The SIGMORPHON 2016 shared task— morphological reinflection",
+      "author" : [ "Ryan Cotterell", "Christo Kirov", "John Sylak-Glassman", "David Yarowsky", "Jason Eisner", "Mans Hulden." ],
+      "venue" : "Proceedings of the 2016 Meeting of SIGMORPHON.",
+      "citeRegEx" : "Cotterell et al\\.,? 2016",
+      "shortCiteRegEx" : "Cotterell et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Discovering morphological paradigms from plain text using a dirichlet process mixture model",
+      "author" : [ "Markus Dreyer", "Jason Eisner." ],
+      "venue" : "EMNLP. pages 616–627.",
+      "citeRegEx" : "Dreyer and Eisner.,? 2011",
+      "shortCiteRegEx" : "Dreyer and Eisner.",
+      "year" : 2011
+    }, {
+      "title" : "Latent-variable modeling of string transductions with finite-state methods",
+      "author" : [ "Markus Dreyer", "Jason R Smith", "Jason Eisner." ],
+      "venue" : "Proceedings of the conference on empirical methods in natural language processing. pages 1080–1089.",
+      "citeRegEx" : "Dreyer et al\\.,? 2008",
+      "shortCiteRegEx" : "Dreyer et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Supervised learning of complete morphological paradigms",
+      "author" : [ "Greg Durrett", "John DeNero." ],
+      "venue" : "NAACL HLT 2013. pages 1185–1195.",
+      "citeRegEx" : "Durrett and DeNero.,? 2013",
+      "shortCiteRegEx" : "Durrett and DeNero.",
+      "year" : 2013
+    }, {
+      "title" : "Parameter estimation for probabilistic finite-state transducers",
+      "author" : [ "Jason Eisner." ],
+      "venue" : "Proceedings of the 40th annual meeting on Association for Computational Linguistics. pages 1–8.",
+      "citeRegEx" : "Eisner.,? 2002",
+      "shortCiteRegEx" : "Eisner.",
+      "year" : 2002
+    }, {
+      "title" : "Morphological inflection generation using character sequence to sequence learning",
+      "author" : [ "Manaal Faruqui", "Yulia Tsvetkov", "Graham Neubig", "Chris Dyer." ],
+      "venue" : "NAACL HLT 2016.",
+      "citeRegEx" : "Faruqui et al\\.,? 2016",
+      "shortCiteRegEx" : "Faruqui et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Modeling inflection and wordformation in smt",
+      "author" : [ "Alexander M. Fraser", "Marion Weller", "Aoife Cahill", "Fabienne Cap." ],
+      "venue" : "EACL. pages 664–674.",
+      "citeRegEx" : "Fraser et al\\.,? 2012",
+      "shortCiteRegEx" : "Fraser et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Factored neural machine translation",
+      "author" : [ "Mercedes Garcı́a-Martı́nez", "Loı̈c Barrault", "Fethi Bougares" ],
+      "venue" : null,
+      "citeRegEx" : "Garcı́a.Martı́nez et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Garcı́a.Martı́nez et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Framewise phoneme classification with bidirectional LSTM and other neural network architectures",
+      "author" : [ "A. Graves", "J. Schmidhuber." ],
+      "venue" : "Neural Networks 18(5-6):602–610.",
+      "citeRegEx" : "Graves and Schmidhuber.,? 2005",
+      "shortCiteRegEx" : "Graves and Schmidhuber.",
+      "year" : 2005
+    }, {
+      "title" : "Sequence transduction with recurrent neural networks",
+      "author" : [ "Alex Graves." ],
+      "venue" : "arXiv preprint arXiv:1211.3711 .",
+      "citeRegEx" : "Graves.,? 2012",
+      "shortCiteRegEx" : "Graves.",
+      "year" : 2012
+    }, {
+      "title" : "Semi-supervised learning of morphological paradigms and lexicons",
+      "author" : [ "Mans Hulden", "Markus Forsberg", "Malin Ahlberg." ],
+      "venue" : "EACL. pages 569–578.",
+      "citeRegEx" : "Hulden et al\\.,? 2014",
+      "shortCiteRegEx" : "Hulden et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "A neural transducer",
+      "author" : [ "Navdeep Jaitly", "David Sussillo", "Quoc V Le", "Oriol Vinyals", "Ilya Sutskever", "Samy Bengio." ],
+      "venue" : "arXiv preprint arXiv:1511.04868 .",
+      "citeRegEx" : "Jaitly et al\\.,? 2015",
+      "shortCiteRegEx" : "Jaitly et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Neural multi-source morphological reinflection",
+      "author" : [ "Katharina Kann", "Ryan Cotterell", "Hinrich Schütze." ],
+      "venue" : "EACL 2017 .",
+      "citeRegEx" : "Kann et al\\.,? 2016",
+      "shortCiteRegEx" : "Kann et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Med: The lmu system for the sigmorphon 2016 shared task on morphological reinflection",
+      "author" : [ "Katharina Kann", "Hinrich Schütze" ],
+      "venue" : null,
+      "citeRegEx" : "Kann and Schütze.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Kann and Schütze.",
+      "year" : 2016
+    }, {
+      "title" : "Singlemodel encoder-decoder with explicit morphological representation for reinflection",
+      "author" : [ "Katharina Kann", "Hinrich Schütze." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Kann and Schütze.,? 2016b",
+      "shortCiteRegEx" : "Kann and Schütze.",
+      "year" : 2016
+    }, {
+      "title" : "Regular models of phonological rule systems",
+      "author" : [ "Ronald M. Kaplan", "Martin Kay." ],
+      "venue" : "Computational Linguistics 20(3):331–378.",
+      "citeRegEx" : "Kaplan and Kay.,? 1994",
+      "shortCiteRegEx" : "Kaplan and Kay.",
+      "year" : 1994
+    }, {
+      "title" : "Two-level morphology: A general computational model of word-form recognition and production",
+      "author" : [ "Kimmo Koskenniemi." ],
+      "venue" : "Technical report.",
+      "citeRegEx" : "Koskenniemi.,? 1983",
+      "shortCiteRegEx" : "Koskenniemi.",
+      "year" : 1983
+    }, {
+      "title" : "Segmental recurrent neural networks for end-to-end speech recognition",
+      "author" : [ "Liang Lu", "Lingpeng Kong", "Chris Dyer", "Noah A Smith", "Steve Renals." ],
+      "venue" : "arXiv preprint arXiv:1603.00223 .",
+      "citeRegEx" : "Lu et al\\.,? 2016",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Effective approaches to attentionbased neural machine translation",
+      "author" : [ "Minh-Thang Luong", "Hieu Pham", "Christopher D Manning." ],
+      "venue" : "arXiv preprint arXiv:1508.04025 .",
+      "citeRegEx" : "Luong et al\\.,? 2015",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Generating complex morphology for machine translation",
+      "author" : [ "Einat Minkov", "Kristina Toutanova", "Hisami Suzuki." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Minkov et al\\.,? 2007",
+      "shortCiteRegEx" : "Minkov et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "A rational design for a weighted finite-state transducer library",
+      "author" : [ "Mehryar Mohri", "Fernando Pereira", "Michael Riley." ],
+      "venue" : "International Workshop on Implementing Automata. pages 144–158.",
+      "citeRegEx" : "Mohri et al\\.,? 1997",
+      "shortCiteRegEx" : "Mohri et al\\.",
+      "year" : 1997
+    }, {
+      "title" : "Inflection generation as discriminative string transduction",
+      "author" : [ "Garrett Nicolai", "Colin Cherry", "Grzegorz Kondrak." ],
+      "venue" : "NAACL HLT 2015. pages 922–931.",
+      "citeRegEx" : "Nicolai et al\\.,? 2015",
+      "shortCiteRegEx" : "Nicolai et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Weighting finite-state transductions with neural context",
+      "author" : [ "Pushpendre Rastogi", "Ryan Cotterell", "Jason Eisner." ],
+      "venue" : "Proc. of NAACL.",
+      "citeRegEx" : "Rastogi et al\\.,? 2016",
+      "shortCiteRegEx" : "Rastogi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Noise-aware character alignment for bootstrapping statistical machine transliteration from bilingual corpora",
+      "author" : [ "Katsuhito Sudoh", "Shinsuke Mori", "Masaaki Nagata." ],
+      "venue" : "EMNLP 2013. pages 204–209.",
+      "citeRegEx" : "Sudoh et al\\.,? 2013",
+      "shortCiteRegEx" : "Sudoh et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Applying morphology generation models to machine translation",
+      "author" : [ "Kristina Toutanova", "Hisami Suzuki", "Achim Ruopp." ],
+      "venue" : "ACL. pages 514–522.",
+      "citeRegEx" : "Toutanova et al\\.,? 2008",
+      "shortCiteRegEx" : "Toutanova et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Minimally supervised morphological analysis by multimodal alignment",
+      "author" : [ "David Yarowsky", "Richard Wicentowski." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Yarowsky and Wicentowski.,? 2000",
+      "shortCiteRegEx" : "Yarowsky and Wicentowski.",
+      "year" : 2000
+    }, {
+      "title" : "Online segment to segment neural transduction",
+      "author" : [ "Lei Yu", "Jan Buys", "Phil Blunsom." ],
+      "venue" : "arXiv preprint arXiv:1609.08194 .",
+      "citeRegEx" : "Yu et al\\.,? 2016",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adadelta: an adaptive learning rate method",
+      "author" : [ "Matthew D Zeiler." ],
+      "venue" : "arXiv preprint arXiv:1212.5701 .",
+      "citeRegEx" : "Zeiler.,? 2012",
+      "shortCiteRegEx" : "Zeiler.",
+      "year" : 2012
+    }, {
+      "title" : "2016) which also performed a similar ensembling technique. For the character level alignment process we use the implementation provided by the organizers of the SIGMORPHON2016 shared task.5",
+      "author" : [ "Kann", "Schütze (2016a", "Faruqui" ],
+      "venue" : null,
+      "citeRegEx" : "Kann et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Kann et al\\.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 2,
+      "context" : "Finally we present an analysis of the continuous representations learned by both the hard and soft attention (Bahdanau et al., 2014) models for the task, shedding some light on the features",
+      "startOffset" : 109,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 26,
+      "context" : "ation as a post-processing step is beneficial for phrase-based machine translation (Minkov et al., 2007; Toutanova et al., 2008; Clifton and Sarkar, 2011; Fraser et al., 2012; Chahuneau et al., 2013) and more recently for neural machine translation (Garcı́a-Martı́nez et al.",
+      "startOffset" : 83,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 31,
+      "context" : "ation as a post-processing step is beneficial for phrase-based machine translation (Minkov et al., 2007; Toutanova et al., 2008; Clifton and Sarkar, 2011; Fraser et al., 2012; Chahuneau et al., 2013) and more recently for neural machine translation (Garcı́a-Martı́nez et al.",
+      "startOffset" : 83,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 6,
+      "context" : "ation as a post-processing step is beneficial for phrase-based machine translation (Minkov et al., 2007; Toutanova et al., 2008; Clifton and Sarkar, 2011; Fraser et al., 2012; Chahuneau et al., 2013) and more recently for neural machine translation (Garcı́a-Martı́nez et al.",
+      "startOffset" : 83,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 13,
+      "context" : "ation as a post-processing step is beneficial for phrase-based machine translation (Minkov et al., 2007; Toutanova et al., 2008; Clifton and Sarkar, 2011; Fraser et al., 2012; Chahuneau et al., 2013) and more recently for neural machine translation (Garcı́a-Martı́nez et al.",
+      "startOffset" : 83,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 4,
+      "context" : "ation as a post-processing step is beneficial for phrase-based machine translation (Minkov et al., 2007; Toutanova et al., 2008; Clifton and Sarkar, 2011; Fraser et al., 2012; Chahuneau et al., 2013) and more recently for neural machine translation (Garcı́a-Martı́nez et al.",
+      "startOffset" : 83,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2013) and more recently for neural machine translation (Garcı́a-Martı́nez et al., 2016).",
+      "startOffset" : 57,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 27,
+      "context" : "niemi, 1983; Kaplan and Kay, 1994) which rely on expert knowledge, or using trainable weighted finite state transducers (Mohri et al., 1997; Eisner, 2002) which combine expert knowledge with datadriven parameter tuning.",
+      "startOffset" : 120,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 11,
+      "context" : "niemi, 1983; Kaplan and Kay, 1994) which rely on expert knowledge, or using trainable weighted finite state transducers (Mohri et al., 1997; Eisner, 2002) which combine expert knowledge with datadriven parameter tuning.",
+      "startOffset" : 120,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 32,
+      "context" : "learning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to cre-",
+      "startOffset" : 23,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 8,
+      "context" : "learning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to cre-",
+      "startOffset" : 23,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 10,
+      "context" : "learning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to cre-",
+      "startOffset" : 23,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 17,
+      "context" : "learning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to cre-",
+      "startOffset" : 23,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 0,
+      "context" : "learning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to cre-",
+      "startOffset" : 23,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 28,
+      "context" : "learning based methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) were proposed for the task, although with specific assumptions about the set of possible processes that are needed to cre-",
+      "startOffset" : 23,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 12,
+      "context" : "More recently, the task was tackled using neural sequence to sequence learning over character sequences with impressive results (Faruqui et al., 2016).",
+      "startOffset" : 128,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 2,
+      "context" : "Instead, soft-attention based sequence to sequence learning paradigm (Bahdanau et al., 2014) allows directly conditioning on the entire input sequence, and was utilized for morphological inflection generation with great success (Kann and Schütze, 2016b,a).",
+      "startOffset" : 69,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 1,
+      "context" : "To evaluate our model, we perform extensive experiments on three previously studied morphological inflection generation datasets: the CELEX dataset (Baayen et al., 1993), the Wiktionary",
+      "startOffset" : 148,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 10,
+      "context" : "dataset (Durrett and DeNero, 2013) and the SIGMORPHON2016 dataset (Cotterell et al.",
+      "startOffset" : 8,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 7,
+      "context" : "dataset (Durrett and DeNero, 2013) and the SIGMORPHON2016 dataset (Cotterell et al., 2016).",
+      "startOffset" : 66,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 15,
+      "context" : "feed the embeddings into a bi-directional LSTM encoder (Graves and Schmidhuber, 2005) which results in a sequence of vectors: x1:n = x1.",
+      "startOffset" : 55,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 2,
+      "context" : "vocate jointly training the alignment and the decoding mechanisms (Bahdanau et al., 2014; Yu et al., 2016), we instead show that in our case it is worthwhile to decouple these stages and learn a hard alignment beforehand, using it to guide the training of the encoder-decoder network and en-",
+      "startOffset" : 66,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 33,
+      "context" : "vocate jointly training the alignment and the decoding mechanisms (Bahdanau et al., 2014; Yu et al., 2016), we instead show that in our case it is worthwhile to decouple these stages and learn a hard alignment beforehand, using it to guide the training of the encoder-decoder network and en-",
+      "startOffset" : 66,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 7,
+      "context" : "SIGMORPHON As different languages show different morphological phenomena, we also experiment with how our model copes with this various phenomena using the morphological inflection dataset from the SIGMORPHON2016 shared task (Cotterell et al., 2016).",
+      "startOffset" : 225,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 21,
+      "context" : "We compare our model to two soft attention baselines on this dataset: MED (Kann and Schütze, 2016b), which was the best participating system in the shared task, and our implementation of the global (soft)",
+      "startOffset" : 74,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 32,
+      "context" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word.",
+      "startOffset" : 75,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 8,
+      "context" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word.",
+      "startOffset" : 75,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 10,
+      "context" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word.",
+      "startOffset" : 75,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 17,
+      "context" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word.",
+      "startOffset" : 75,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 0,
+      "context" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word.",
+      "startOffset" : 75,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 28,
+      "context" : "Many previous works on inflection generation used machine learning methods (Yarowsky and Wicentowski, 2000; Dreyer and Eisner, 2011; Durrett and DeNero, 2013; Hulden et al., 2014; Ahlberg et al., 2015; Nicolai et al., 2015) with assumptions about the set of possible processes needed to create the output word.",
+      "startOffset" : 75,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 2,
+      "context" : "Kann and Schütze (2016b,a) tackled the task with a single soft attention model (Bahdanau et al., 2014) for all inflection types, which resulted in the best submission at the SIGMORPHON 2016 shared task (Cotterell et al.",
+      "startOffset" : 79,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2014) for all inflection types, which resulted in the best submission at the SIGMORPHON 2016 shared task (Cotterell et al., 2016).",
+      "startOffset" : 107,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 29,
+      "context" : "Another closely related work (Rastogi et al., 2016) modeled the task with a WFST in which the arcs are learned by optimizing a global loss function",
+      "startOffset" : 29,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 19,
+      "context" : "Another recent work (Kann et al., 2016) proposed performing neural multi-source morphological reinflection, generating an inflection from several source forms of a word.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 16,
+      "context" : "Previous works on neural sequence transduction include the RNN Transducer (Graves, 2012) which uses two independent RNN’s over monotonically aligned sequences to predict a distribution over the possible output symbols in each step, including a null symbol to model the alignment.",
+      "startOffset" : 74,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 5,
+      "context" : "A line of work on attention-based speech recognition (Chorowski et al., 2015; Bahdanau et al., 2016) proposed improvements to the attention mechanism: adding location awareness by using the previous attention",
+      "startOffset" : 53,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 3,
+      "context" : "A line of work on attention-based speech recognition (Chorowski et al., 2015; Bahdanau et al., 2016) proposed improvements to the attention mechanism: adding location awareness by using the previous attention",
+      "startOffset" : 53,
+      "endOffset" : 100
+    } ],
+    "year" : 0,
+    "abstractText" : "We present a neural model for morphological inflection generation which employs a hard attention mechanism, inspired by the nearly-monotonic alignment commonly found between the characters in a word and the characters in its inflection. We evaluate the model on three previously studied morphological inflection generation datasets and show that it provides state of the art results in various setups compared to previous neural and nonneural approaches. Finally we present an analysis of the continuous representations learned by both the hard and soft attention (Bahdanau et al., 2014) models for the task, shedding some light on the features such models extract.",
+    "creator" : null
+  }
+}

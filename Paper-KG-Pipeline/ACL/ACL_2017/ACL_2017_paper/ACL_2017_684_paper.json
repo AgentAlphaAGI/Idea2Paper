@@ -1,0 +1,474 @@
+{
+  "name" : "ACL_2017_684_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "1 ACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "A recent trend to measure progress towards machine reading is to test a system’s ability to answer questions about a document it has to comprehend. Towards this end, several large-scale datasets of cloze-style questions over a context document have been introduced recently, which allow the training of supervised machine learning systems (Hermann et al., 2015; Hill et al., 2015; Onishi et al., 2016). Such datasets can be easily constructed automatically and the unambiguous nature of their queries provides an objective benchmark to measure a system’s performance at text comprehension.\nDeep learning models have been shown to outperform traditional shallow approaches on text comprehension tasks (Hermann et al., 2015). The\nsuccess of many recent models can be attributed primarily to two factors: (1) Multi-hop architectures allow a (Weston et al., 2014; Sordoni et al., 2016; Shen et al., 2016), model to scan the document and the question iteratively for multiple passes. (2) Attention mechanisms, (Chen et al., 2016; Hermann et al., 2015) borrowed from the machine translation literature (Bahdanau et al., 2014), allow the model to focus on appropriate subparts of the context document. Intuitively, the multi-hop architecture allows the reader to incrementally refine token representations, and the attention mechanism re-weights different parts in the document according to their relevance to the query.\nThe effectiveness of multi-hop reasoning and attentions have been explored orthogonally so far in the literature. In this paper, we focus on combining both in a complementary manner, by designing a novel attention mechanism which gates the evolving token representations across hops. More specifically, unlike existing models where the query attention is applied either token-wise (Hermann et al., 2015; Kadlec et al., 2016; Chen et al., 2016; Hill et al., 2015) or sentence-wise (Weston et al., 2014; Sukhbaatar et al., 2015) to allow weighted aggregation, the Gated-Attention (GA) module proposed in this work allows the query to directly interact with each dimension of the token embeddings at the semantic-level, and is applied layer-wise as information filters during the multi-hop representation learning process. Such a fine-grained attention enables our model to learn conditional token representations w.r.t. the given question, leading to accurate answer selections.\nWe show in our experiments that the proposed GA reader, despite its relative simplicity, consistently improves over a variety of strong baselines on three benchmark datasets Our key contribution, the GA module, provides a significant im-\n2 ACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE. provement for large datasets. Qualitatively, visualization of the attentions at intermediate layers of the GA reader shows that in each layer the GA reader attends to distinct salient aspects of the query which help in determining the answer."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "The cloze-style QA task involves tuples of the form (d, q, a, C), where d is a document (context), q is a query over the contents of d, in which a phrase is replaced with a placeholder, and a is the answer to q, which comes from a set of candidates C. In this work we consider datasets where each candidate c ∈ C has at least one token which also appears in the document. The task can then be described as: given a document-query pair (d, q), find a ∈ C which answers q. Below we provide an overview of representative neural network architectures which have been applied to this problem. LSTMs with Attention: Several architectures introduced in (Hermann et al., 2015) employ LSTM units to compute a combined document-query representation g(d, q), which is used to rank the candidate answers. These include the DeepLSTM Reader which performs a single forward pass through the concatenated (document, query) pair to obtain g(d, q); the Attentive Reader which first computes a document vector d(q) by a weighted aggregation of words according to attentions based on q, and then combines d(q) and q to obtain their joint representation g(d(q), q); and the Impatient Reader where the document representation is built incrementally. The architecture of the Attentive Reader has been simplified recently in Stanford Attentive Reader, where shallower recurrent units were used with a bilinear form for the query-document attention (Chen et al., 2016). Attention Sum: The Attention-Sum (AS) Reader (Kadlec et al., 2016) uses two bidirectional GRU networks (Cho et al., 2014) to encode both d and q into vectors. A probability distribution over the entities in d is obtained by computing dot products between q and the entity embeddings and taking a softmax. Then, an aggregation scheme named pointer-sum attention is further applied to sum the probabilities of the same entity, so that frequent entities the document will be favored compared to rare ones. Building on the AS Reader, the Attention-over-Attention (AoA) Reader (Cui et al., 2016) introduces a two-way attention mechanism where the query and the document are mutually attentive to each other. Mulit-hop Architectures: Memory Networks (MemNets) were proposed in (Weston et al., 2014), where each sentence in the document is encoded to a memory by aggregating nearby words. Attention over the memory slots given the query is used to compute an overall memory and to renew the query representation over multiple iterations, allowing certain types of reasoning over the salient facts in the memory and the query. Neural Semantic Encoders (NSE) (Munkhdalai & Yu, 2016a) extended MemNets by introducing a write operation which can evolve the memory over time during the course of reading. Iterative reasoning has been found effective in several more recent models, including the Iterative Attentive Reader (Sordoni et al., 2016) and ReasoNet (Shen et al., 2016). The latter allows dynamic reasoning steps and is trained with reinforcement learning. Other related works include Dynamic Entity Representation network (DER) (Kobayashi et al., 2016), which builds dynamic representations of the candidate answers while reading the document, and accumulates the information about an entity by max-pooling; EpiReader (Trischler et al., 2016) consists of two networks, where one proposes a small set of candidate answers, and the other reranks the proposed candidates conditioned on the query and the context; Bi-Directional Attention Flow network (BiDAF) (Seo et al., 2016) adopts a multi-stage hierarchical architecture along with a flow-based attention mechanism; (Bajgar et al., 2016) showed a 10% improvement on the CBT corpus (Hill et al., 2015) by training the AS Reader on an augmented training set of about 14 million examples, making a case for the community to exploit data abundance. The focus of this paper, however, is on designing models which exploit the available data efficiently."
+    }, {
+      "heading" : "3 Gated-Attention Reader",
+      "text" : "Our proposed GA readers perform multiple hops over the document (context), similar to the Memory Networks architecture (Sukhbaatar et al., 2015). Multi-hop architectures mimic the multistep comprehension process of human readers, and have shown promising results in several recent models for text comprehension (Sordoni et al., 2016; Kumar et al., 2015; Shen et al., 2016). The contextual representations in GA readers, namely the embeddings of words in the document, are it-\n3 ACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE. eratively refined across hops until reaching a final attention-sum module (Kadlec et al., 2016) which maps the contextual representations in the last hop to a probability distribution over candidate answers. The attention mechanism has been introduced recently to model human focus, leading to significant improvement in machine translation and image captioning (Bahdanau et al., 2014; Mnih et al., 2014). In reading comprehension tasks, ideally, the semantic meanings carried by the contextual embeddings should be aware of the query across hops. As an example, human readers are able to keep the question in mind during multiple passes of reading, to successively mask away information irrelevant to the query. However, existing neural network readers are restricted to either attend to tokens (Hermann et al., 2015; Chen et al., 2016) or entire sentences (Weston et al., 2014), with the assumption that certain sub-parts of the document are more important than others. In contrast, we propose a finer-grained model which attends to components of the semantic representation being built up by the GRU. The new attention mechanism, called gated-attention, is implemented via multiplicative interactions between the query and the contextual embeddings, and is applied per hop to act as fine-grained information filters during the multi-step reasoning. The filters weigh individual components of the vector representation of each token in the document separately. The design of gated-attention layers is motivated by the effectiveness of multiplicative interaction among vector-space representations, e.g., in various types of recurrent units (Hochreiter & Schmidhuber, 1997; Wu et al., 2016) and in relational learning (Yang et al., 2014; Kiros et al., 2014). While other types of compositional operators are possible, such as concatenation or addition (Mitchell & Lapata, 2008), we find that multiplication has strong empirical performance (section 4.3), where query representations naturally serve as information filters across hops."
+    }, {
+      "heading" : "3.1 Model Details",
+      "text" : "Several components of the model use a Gated Recurrent Unit (GRU) (Cho et al., 2014) which maps an input sequence X = [x1, x2, . . . , xT ] to an ouput sequence H = [h1, h2, . . . , hT ] as follows: rt = σ(Wrxt + Urht−1 + br), zt = σ(Wzxt + Uzht−1 + bz), h̃t = tanh(Whxt + Uh(rt ht−1) + bh), ht = (1− zt) ht−1 + zt h̃t. where denotes the Hadamard product or the element-wise multiplication. rt and zt are called the reset and update gates respectively, and h̃t the candidate output. A Bi-directional GRU (BiGRU) processes the sequence in both forward and backward directions to produce two sequences [hf1 , h f 2 , . . . , h f T ] and [h b 1, h b 2, . . . , h b T ], which are concatenated at the output ←→ GRU(X) = [hf1‖h b T , . . . , h f T ‖h b 1] (1) where ←→ GRU(X) denotes the full output of the Bi-GRU obtained by concatenating each forward state hfi and backward state h b T−i+1 at step i given the inputX . Note ←→ GRU(X) is a matrix in R2nh×T where nh is the number of hidden units in GRU. Let X(0) = [x(0)1 , x (0) 2 , . . . x (0) |D|] denote the token embeddings of the document, which are also inputs at layer 1 for the document reader below, and Y = [y1, y2, . . . y|Q|] denote the token embeddings of the query. Here |D| and |Q| denote the document and query lengths respectively."
+    }, {
+      "heading" : "3.1.1 Multi-Hop Architecture",
+      "text" : "Fig. 1 illustrates the Gated-Attention (GA) reader. The model reads the document and the query over K horizontal layers, where layer k receives the contextual embeddings X(k−1) of the document from the previous layer. The document embeddings are transformed by taking the full output of a document Bi-GRU (indicated in blue in Fig. 1): D(k) = ←→ GRU (k) D (X (k−1)) (2) At the same time, a layer-specific query representation is computed as the full output of a separate query Bi-GRU (indicated in green in Figure 1): Q(k) = ←→ GRU (k) Q (Y ) (3) Next, Gated-Attention is applied to D(k) and Q(k) to compute inputs for the next layer X(k). X(k) = GA(D(k), Q(k)) (4) where GA is defined in the following subsection.\n4\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE."
+    }, {
+      "heading" : "3.1.2 Gated-Attention Module",
+      "text" : "For brevity, let us drop the superscript k in this subsection as we are focusing on a particular layer. For each token di in D, the GA module forms a token-specific representation of the query q̃i using soft attention, and then multiplies the query representation element-wise with the document token representation. Specifically, for i = 1, . . . , |D|: αi = softmax(Q>di) (5) q̃i = Qαi xi = di q̃i (6) In equation (6) we use the multiplication operator to model the interactions between di and q̃i. In the experiments section, we also report results for other choices of gating functions, including addition xi = di + q̃i and concatenation xi = di‖q̃i."
+    }, {
+      "heading" : "3.1.3 Answer Prediction",
+      "text" : "Let q(K)` = q f ` ‖q b T−`+1 be an intermediate output of the final layer query Bi-GRU at the location ` of the cloze token in the query, and D(K) = ←→ GRU (K) D (X (K−1)) be the full output of final layer document Bi-GRU. To obtain the probability that a particular token in the document answers the query, we take an inner-product between these two, and pass through a softmax layer: s = softmax((q(K)` ) TD(K)) (7) where vector s defines a probability distribution over the |D| tokens in the document. The probability of a particular candidate c ∈ C as being the answer is then computed by aggregating the probabilities of all document tokens which appear in c and renormalizing over the candidates: Pr(c|d, q) ∝ ∑ i∈I(c,d) si (8) where I(c, d) is the set of positions where a token in c appears in the document d. This aggregation operation is the same as the pointer sum attention applied in the AS Reader (Kadlec et al., 2016). Finally, the candidate with maximum probability is selected as the predicted answer: a∗ = argmaxc∈C Pr(c|d, q). (9) During the training phase, model parameters of GA are updated w.r.t. a cross-entropy loss between the predicted probabilities and the true answers."
+    }, {
+      "heading" : "3.1.4 Further Enhancements",
+      "text" : "Character-level Embeddings: Given a token w from the document or query, its vector space representation is computed as x = L(w)||C(w). L(w) retrieves the word-embedding forw from a lookup table L ∈ R|V |×nl , whose rows hold a vector for each unique token in the vocabulary. We also utilize a character composition model C(w) which generates an orthographic embedding of the token. Such embeddings have been previously shown to be helpful for tasks like Named Entity Recognition (Yang et al., 2016) and dealing with OOV tokens at test time (Dhingra et al., 2016). The embedding C(w) is generated by taking the final outputs zfnc and zbnc of a Bi-GRU applied to embeddings from\n5 ACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE. a lookup table of characters in the token, and applying a linear transformation: z = zfnc ||z b nc C(w) =Wz + b Question Evidence Common Word Feature (qecomm): (Li et al., 2016) recently proposed a simple token level indicator feature which significantly boosts reading comprehension performance in some cases. For each token in the document we construct a one-hot vector fi ∈ {0, 1}2 indicating its presence in the query. It can be incorporated into the GA reader by assigning a feature lookup table F ∈ RnF×2 (we use nF = 2), taking the feature embedding ei = fTi F and appending it to the inputs of the last layer document BiGRU as, x(K)i ‖fi for all i. We conducted several experiments both with and without this feature and observed some interesting trends, which are discussed below. Henceforth, we refer to this feature as the qe-comm feature or just feature."
+    }, {
+      "heading" : "4 Experiments and Results",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "We evaluate the GA reader on five large-scale datasets recently proposed in the literature. The first two, CNN and Daily Mail news stories1 consist of articles from the popular CNN and Daily Mail websites (Hermann et al., 2015). A query over each article is formed by removing an entity from the short summary which follows the article. Further, entities within each article were anonymized to make the task purely a comprehension one. N-gram statistics, for instance, computed over the entire corpus are no longer useful in such an anonymized corpus. The next two datasets are formed from two different subsets of the Children’s Book Test (CBT)2 (Hill et al., 2015). Documents consist of 20 contiguous sentences from the body of a popular children’s book, and queries are formed by deleting a token from the 21st sentence. We only focus on subsets where the deleted token is either a common noun (CN) or named entity (NE) since simple language models already give human-level performance on the other types (cf. (Hill et al., 2015)). The final dataset is Who Did What3 (WDW) (Onishi et al., 2016), constructed from the LDC 1 https://github.com/deepmind/rc-data 2 http://www.thespermwhale.com/jaseweston/babi/ CBTest.tgz 3 https://tticnlp.github.io/who_did_what/ English Gigaword newswire corpus. First, article pairs which appeared around the same time and with overlapping entities are chosen, and then one article forms the document and a cloze query is constructed from the other. Missing tokens are always person named entities. Questions which are easily answered by simple baselines are filtered out, to make the task more challenging. There are two versions of the training set—a small but focused “Strict” version and a large but noisy “Relaxed” version. We report results on both settings which share the same validation and test sets. Statistics of all the datasets used in our experiments are summarized in the Appendix (Table 4)."
+    }, {
+      "heading" : "4.2 Performance Comparison",
+      "text" : "Tables 1 and 3 show a comparison of the performance of GA Reader with previously published results on WDW and CNN, Daily Mail, CBT datasets respectively. The numbers reported for GA Reader are for single best models, though we compare to both ensembles and single models from prior work. GA Reader-- refers to an earlier version of the model, unpublished but described in a preprint, with the following differences—(1) it does not utilize token-specific attentions within the GA module, as described in equation (5), (2) it does not use a character composition model, (3) it is initialized with word embeddings pretrained on the corpus itself rather than GloVe. A detailed analysis of these differences is studied in the next section. Here we present 4 variants of the latest GA Reader, using combinations of whether the qe-comm feature is used (+feature) or not, and whether the word lookup table L(w) is updated during training or fixed to its initial value. Other hyperparameters are listed in Appendix A. Interestingly, we observe that feature engineering leads to significant improvements for WDW and CBT datasets, but not for CNN and Daily Mail datasets. We note that anonymization of the latter datasets means that there is already some feature engineering (it adds hints about whether a token is an entity), and these are much larger than the other four. In machine learning it is common to see the effect of feature engineering diminish with increasing data size. Similarly, fixing the word embeddings provides an improvement for the WDW and CBT, but not for CNN and Daily Mail. This is not surprising given that the latter datasets are larger and less prone to overfitting.\n6\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nTable 1: Validation/Test accuracy (%) on WDW dataset for both “Strict” and “Relaxed” settings. Results with “†” are cf previously published works.\nModel Strict Relaxed Val Test Val Test Human † – 84 – – Attentive Reader † – 53 – 55 AS Reader † – 57 – 59 Stanford AR † – 64 – 65 NSE † 66.5 66.2 67.0 66.7 GA-- † – 57 – 60.0 GA (update L(w)) 67.8 67.0 67.0 66.6 GA (fix L(w)) 68.3 68.0 69.6 69.1 GA (+feature, update L(w)) 70.1 69.5 70.9 71.0 GA (+feature, fix L(w)) 71.6 71.2 72.6 72.6\nTable 2: Top: Performance of different gating functions. Bottom: Effect of varying the number of hops K. Results on WDW without using the qe-comm feature and with fixed L(w).\nGating Function Accuracy Val Test Sum 64.9 64.5 Concatenate 64.4 63.7 Multiply 68.3 68.0 K 1 (AS) † – 57 2 65.6 65.6 3 68.3 68.0 4 68.3 68.2 Comparing with prior work, on the WDW dataset the basic version of the GA Reader outperforms all previously published models when trained on the Strict setting. By adding the qecomm feature the performance increases by 3.2% and 3.5% on the Strict and Relaxed settings respectively to set a new state of the art on this dataset. On the CNN and Daily Mail datasets the GA Reader leads to an improvement of 3.2% and 4.3% respectively over the best previous single models. They also outperform previous ensemble models, setting a new state of that art for both datasets. For CBT-NE, GA Reader with the qecomm feature outperforms all previous single and ensemble models except the AS Reader trained on the much larger BookTest Corpus (Bajgar et al., 2016). Lastly, on CBT-CN the GA Reader with the qe-comm feature outperforms all previously published single models except the NSE, and AS Reader trained on a larger corpus."
+    }, {
+      "heading" : "4.3 GA Reader Analysis",
+      "text" : "In this section we do an ablation study to see the effect of Gated Attention. We compare the GA Reader as described here to a model which is exactly the same in all aspects, except that it passes document embeddings D(k) in each layer directly to the inputs of the next layer without using the GA module. In other words X(k) = D(k) for all k > 0. This model ends up using only one query GRU at the output layer for selecting the answer from the document. We compare these two variants both with and without the qe-comm feature on CNN and WDW datasets for three subsets of the training data - 50%, 75% and 100%. Test set accuracies for these settings are shown in Figure 2. On CNN when tested without feature engineering, we observe that GA provides a significant boost in performance compared to without GA. When tested with the feature it still gives an improvement, but the improvement is significant only with 100% training data. On WDW-Strict, which is a third of the size of CNN, without the feature we see an improvement when using GA versus without using GA, which becomes significant as the training set size increases. When tested with the feature on WDW, for a small data size without GA does better than with GA, but as the dataset size increases they become equivalent. We conclude that GA provides a boost in the absence of feature engineering, or as the training set size increases. Next we look at the question of how to gate intermediate document reader states from the query, i.e. what operation to use in equation 6. Table 2 (top) shows the performance on WDW dataset for three common choices – sum (x = d + q), concatenate (x = d‖q) and multiply (x = d q). Empirically we find element-wise multiplication does significantly better than the other two, which justifies our motivation to “filter” out document features which are irrelevant to the query. At the bottom of Table 2 we show the effect of varying the number of hops K of the GA Reader on the final performance. We note that for K = 1, our model is equivalent to the AS Reader without any GA modules. We see a steep and steady rise in accuracy as the number of hops is increased from K = 1 to 3, which remains constant beyond\n7\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nTable 3: Validation/Test accuracy (%) on CNN, Daily Mail and CBT. Results marked with “†” are cf previously published works. Results marked with “‡” were obtained by training on a larger training set. Best performance on standard training sets is in bold, and on larger training sets in italics.\nModel CNN Daily Mail CBT-NE CBT-CN Val Test Val Test Val Test Val Test Humans (query) † – – – – – 52.0 – 64.4 Humans (context + query) † – – – – – 81.6 – 81.6 LSTMs (context + query) † – – – – 51.2 41.8 62.6 56.0 Deep LSTM Reader † 55.0 57.0 63.3 62.2 – – – – Attentive Reader † 61.6 63.0 70.5 69.0 – – – – Impatient Reader † 61.8 63.8 69.0 68.0 – – – – MemNets † 63.4 66.8 – – 70.4 66.6 64.2 63.0 AS Reader † 68.6 69.5 75.0 73.9 73.8 68.6 68.8 63.4 DER Network † 71.3 72.9 – – – – – – Stanford AR (relabeling) † 73.8 73.6 77.6 76.6 – – – – Iterative Attentive Reader † 72.6 73.3 – – 75.2 68.6 72.1 69.2 EpiReader † 73.4 74.0 – – 75.3 69.7 71.5 67.4 AoA Reader † 73.1 74.4 – – 77.8 72.0 72.2 69.4 ReasoNet † 72.9 74.7 77.6 76.6 – – – – NSE † – – – – 78.2 73.2 74.3 71.9 BiDAF † 76.3 76.9 80.3 79.6 – – – – MemNets (ensemble) † 66.2 69.4 – – – – – – AS Reader (ensemble) † 73.9 75.4 78.7 77.7 76.2 71.0 71.1 68.9 Stanford AR (relabeling,ensemble) † 77.2 77.6 80.2 79.2 – – – – Iterative Attentive Reader (ensemble) † 75.2 76.1 – – 76.9 72.0 74.1 71.0 EpiReader (ensemble) † – – – – 76.6 71.8 73.6 70.6 AS Reader (+BookTest) † ‡ – – – – 80.5 76.2 83.2 80.8 AS Reader (+BookTest,ensemble) † ‡ – – – – 82.3 78.4 85.7 83.7 GA-- 73.0 73.8 76.7 75.7 74.9 69.0 69.0 63.9 GA (update L(w)) 77.9 77.9 81.5 80.9 76.7 70.1 69.8 67.3 GA (fix L(w)) 77.9 77.8 80.4 79.6 77.2 71.4 71.6 68.0 GA (+feature, update L(w)) 77.3 76.9 80.7 80.0 77.2 73.3 73.0 69.8 GA (+feature, fix L(w)) 76.7 77.4 80.0 79.3 78.5 74.9 74.4 70.7 that. This is a common trend in machine learning as model complexity is increased, however we note that a multi-hop architecture is important to achieve a high performance for this task, and provide further evidence for this in the next section. Lastly, we perform an ablation study for the three components of the GA Reader which were absent in the preprint version (GA Reader--). See Appendix B for more details."
+    }, {
+      "heading" : "4.4 Attention Visualization",
+      "text" : "To gain an insight into the reading process employed by the model we analyzed the attention distributions at intermediate layers of the reader. Figure 3 shows an example from the validation set of WDW dataset (several more are in the Appendix). In each figure, the left and middle plots visualize attention over the query (equation 5) for candidates in the document after layers 1 & 2 respectively. The right plot shows attention over candidates in the document of cloze placeholder (XXX) in the query at the final layer. The full document, query and correct answer are shown at the bottom. A generic pattern observed in these examples is that in intermediate layers, candidates in the document (shown along rows) tend to pick out salient tokens in the query which provide clues about the cloze, and in the final layer the candidate with the highest match with these tokens is\n8\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nselected as the answer. In Figure 3 there is a high attention of the correct answer on financial regulatory standards in the first layer, and on us president in the second layer. The incorrect answer, in contrast, only attends to one of these aspects, and hence receives a lower score in the final layer despite the n-gram overlap it has with the cloze token in the query. Importantly, different layers tend to focus on different tokens in the query, supporting the hypothesis that the multihop architecture of GA Reader is able to combine distinct pieces of information to answer the query."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We presented the Gated-Attention reader for answering cloze-style questions over documents. The GA reader features a novel multiplicative gating mechanism, combined with a multi-hop architecture. Our model achieves the state-of-theart performance on several large-scale benchmark datasets with more than 4% improvements over competitive baselines. Our model design is backed up by an ablation study showing statistically significant improvements of using Gated Attention as information filters. We also showed empirically that multiplicative gating is superior to addition and concatenation operations for implementing gated-attentions, though a theoretical justification remains part of future research goals. Analysis of document and query attentions in intermediate layers of the reader further reveals that the model iteratively attends to different aspects of the query to arrive at the final answer. In this paper we have focused on text comprehension, but we believe that the Gated-Attention mechanism may benefit other tasks as well where multiple sources of information interact.\n9 ACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE."
+    }, {
+      "heading" : "B Ablation Study for Model Components",
+      "text" : "Table 6 shows accuracy on WDW by removing one component at a time.\nThe steepest reduction is observed when we replace pretrained GloVe vectors with those pretrained on the corpus itself. GloVe vectors were trained on a large corpus of about 6 billion tokens (Pennington et al., 2014), and provide an important source of prior knowledge for the model. Note that the strongest baseline on WDW, NSE (Munkhdalai & Yu, 2016b), also uses pretrained GloVe vectors, hence the comparison is fair in that respect. Next, we observe a substantial drop when removing token-specific attentions over the query in the GA module, which allow gating individual tokens in the document only by parts of the query relevant to that token rather than the overall query representation. Finally, removing the character embeddings, which were only used for WDW and CBT, leads to a reduction of about 1% in the performance.\nC Attention Plots\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE.\nACL 2017 Submission ***. Confidential Review Copy. DO NOT DISTRIBUTE."
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio" ],
+      "venue" : "arXiv preprint arXiv:1409.0473,",
+      "citeRegEx" : "Bahdanau et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Embracing data abundance: Booktest dataset for reading comprehension",
+      "author" : [ "Ondrej Bajgar", "Rudolf Kadlec", "Jan Kleindienst" ],
+      "venue" : "arXiv preprint arXiv:1610.00956,",
+      "citeRegEx" : "Bajgar et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Bajgar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A thorough examination of the cnn/daily mail reading comprehension",
+      "author" : [ "Danqi Chen", "Jason Bolton", "Christopher D Manning" ],
+      "venue" : "task. arXiv preprint arXiv:1606.02858,",
+      "citeRegEx" : "Chen et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention-over-attention neural networks for reading comprehension",
+      "author" : [ "Yiming Cui", "Zhipeng Chen", "Si Wei", "Shijin Wang", "Ting Liu", "Guoping Hu" ],
+      "venue" : "arXiv preprint arXiv:1607.04423,",
+      "citeRegEx" : "Cui et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Cui et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Tweet2vec: Character-based distributed representations for social media",
+      "author" : [ "Bhuwan Dhingra", "Zhong Zhou", "Dylan Fitzpatrick", "Michael Muehl", "William W Cohen" ],
+      "venue" : null,
+      "citeRegEx" : "Dhingra et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Dhingra et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomas Kocisky", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom" ],
+      "venue" : "In Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Hermann et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "The goldilocks principle: Reading children’s books with explicit memory representations",
+      "author" : [ "Felix Hill", "Antoine Bordes", "Sumit Chopra", "Jason Weston" ],
+      "venue" : "arXiv preprint arXiv:1511.02301,",
+      "citeRegEx" : "Hill et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Hill et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Long shortterm memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber" ],
+      "venue" : "Neural computation,",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? \\Q1997\\E",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Text understanding with the attention sum reader network",
+      "author" : [ "Rudolf Kadlec", "Martin Schmid", "Ondrej Bajgar", "Jan Kleindienst" ],
+      "venue" : "arXiv preprint arXiv:1603.01547,",
+      "citeRegEx" : "Kadlec et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Kadlec et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba" ],
+      "venue" : "arXiv preprint arXiv:1412.6980,",
+      "citeRegEx" : "Kingma and Ba.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "A multiplicative model for learning distributed text-based attribute representations",
+      "author" : [ "Ryan Kiros", "Richard Zemel", "Ruslan R Salakhutdinov" ],
+      "venue" : "In Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Kiros et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Kiros et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Dynamic entity representations with max-pooling improves machine reading",
+      "author" : [ "Sosuke Kobayashi", "Ran Tian", "Naoaki Okazaki", "Kentaro Inui" ],
+      "venue" : "In NAACLHLT,",
+      "citeRegEx" : "Kobayashi et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Kobayashi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dataset and neural recurrent sequence labeling model for opendomain factoid question answering",
+      "author" : [ "Peng Li", "Wei Li", "Zhengyan He", "Xuguang Wang", "Ying Cao", "Jie Zhou", "Wei Xu" ],
+      "venue" : "arXiv preprint arXiv:1607.06275,",
+      "citeRegEx" : "Li et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Vector-based models of semantic composition",
+      "author" : [ "Jeff Mitchell", "Mirella Lapata" ],
+      "venue" : "In ACL, pp",
+      "citeRegEx" : "Mitchell and Lapata.,? \\Q2008\\E",
+      "shortCiteRegEx" : "Mitchell and Lapata.",
+      "year" : 2008
+    }, {
+      "title" : "Recurrent models of visual attention",
+      "author" : [ "Volodymyr Mnih", "Nicolas Heess", "Alex Graves" ],
+      "venue" : "In Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Mnih et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Mnih et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Neural semantic encoders",
+      "author" : [ "Tsendsuren Munkhdalai", "Hong Yu" ],
+      "venue" : "arXiv preprint arXiv:1607.04315,",
+      "citeRegEx" : "Munkhdalai and Yu.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Munkhdalai and Yu.",
+      "year" : 2016
+    }, {
+      "title" : "Reasoning with memory augmented neural networks for language comprehension",
+      "author" : [ "Tsendsuren Munkhdalai", "Hong Yu" ],
+      "venue" : "arXiv preprint arXiv:1610.06454,",
+      "citeRegEx" : "Munkhdalai and Yu.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Munkhdalai and Yu.",
+      "year" : 2016
+    }, {
+      "title" : "Who did what: A largescale person-centered cloze dataset",
+      "author" : [ "Takeshi Onishi", "Hai Wang", "Mohit Bansal", "Kevin Gimpel", "David McAllester" ],
+      "venue" : null,
+      "citeRegEx" : "Onishi et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Onishi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "On the difficulty of training recurrent neural networks",
+      "author" : [ "Razvan Pascanu", "Tomas Mikolov", "Yoshua Bengio" ],
+      "venue" : "arXiv preprint arXiv:1211.5063,",
+      "citeRegEx" : "Pascanu et al\\.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Pascanu et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Glove: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher D. Manning" ],
+      "venue" : "In Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Pennington et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Bidirectional attention flow for machine comprehension",
+      "author" : [ "Minjoon Seo", "Aniruddha Kembhavi", "Ali Farhadi", "Hannaneh Hajishirzi" ],
+      "venue" : "arXiv preprint arXiv:1611.01603,",
+      "citeRegEx" : "Seo et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Seo et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Reasonet: Learning to stop reading in machine comprehension",
+      "author" : [ "Yelong Shen", "Po-Sen Huang", "Jianfeng Gao", "Weizhu Chen" ],
+      "venue" : "arXiv preprint arXiv:1609.05284,",
+      "citeRegEx" : "Shen et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Iterative alternating neural attention for machine reading",
+      "author" : [ "Alessandro Sordoni", "Phillip Bachman", "Yoshua Bengio" ],
+      "venue" : "arXiv preprint arXiv:1606.02245,",
+      "citeRegEx" : "Sordoni et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Sordoni et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "End-to-end memory networks",
+      "author" : [ "Sainbayar Sukhbaatar", "Jason Weston", "Rob Fergus" ],
+      "venue" : "In Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Sukhbaatar et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Sukhbaatar et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Natural language comprehension with the epireader",
+      "author" : [ "Adam Trischler", "Zheng Ye", "Xingdi Yuan", "Kaheer Suleman" ],
+      "venue" : "arXiv preprint arXiv:1606.02270,",
+      "citeRegEx" : "Trischler et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Trischler et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "On multiplicative integration with recurrent neural networks",
+      "author" : [ "Yuhuai Wu", "Saizheng Zhang", "Ying Zhang", "Yoshua Bengio", "Ruslan Salakhutdinov" ],
+      "venue" : "arXiv preprint arXiv:1606.06630,",
+      "citeRegEx" : "Wu et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Learning multi-relational semantics using neural-embedding models",
+      "author" : [ "Bishan Yang", "Wen-tau Yih", "Xiaodong He", "Jianfeng Gao", "Li Deng" ],
+      "venue" : "arXiv preprint arXiv:1411.4072,",
+      "citeRegEx" : "Yang et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Multi-task cross-lingual sequence tagging from scratch",
+      "author" : [ "Zhilin Yang", "Ruslan Salakhutdinov", "William Cohen" ],
+      "venue" : "arXiv preprint arXiv:1603.06270,",
+      "citeRegEx" : "Yang et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 5,
+      "context" : "Towards this end, several large-scale datasets of cloze-style questions over a context document have been introduced recently, which allow the training of supervised machine learning systems (Hermann et al., 2015; Hill et al., 2015; Onishi et al., 2016).",
+      "startOffset" : 191,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 6,
+      "context" : "Towards this end, several large-scale datasets of cloze-style questions over a context document have been introduced recently, which allow the training of supervised machine learning systems (Hermann et al., 2015; Hill et al., 2015; Onishi et al., 2016).",
+      "startOffset" : 191,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 17,
+      "context" : "Towards this end, several large-scale datasets of cloze-style questions over a context document have been introduced recently, which allow the training of supervised machine learning systems (Hermann et al., 2015; Hill et al., 2015; Onishi et al., 2016).",
+      "startOffset" : 191,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 5,
+      "context" : "Deep learning models have been shown to outperform traditional shallow approaches on text comprehension tasks (Hermann et al., 2015).",
+      "startOffset" : 110,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 22,
+      "context" : "The success of many recent models can be attributed primarily to two factors: (1) Multi-hop architectures allow a (Weston et al., 2014; Sordoni et al., 2016; Shen et al., 2016), model to scan the document and the question iteratively for multiple passes.",
+      "startOffset" : 114,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 21,
+      "context" : "The success of many recent models can be attributed primarily to two factors: (1) Multi-hop architectures allow a (Weston et al., 2014; Sordoni et al., 2016; Shen et al., 2016), model to scan the document and the question iteratively for multiple passes.",
+      "startOffset" : 114,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 2,
+      "context" : "(2) Attention mechanisms, (Chen et al., 2016; Hermann et al., 2015) borrowed from the machine translation literature (Bahdanau et al.",
+      "startOffset" : 26,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 5,
+      "context" : "(2) Attention mechanisms, (Chen et al., 2016; Hermann et al., 2015) borrowed from the machine translation literature (Bahdanau et al.",
+      "startOffset" : 26,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2015) borrowed from the machine translation literature (Bahdanau et al., 2014), allow the model to focus on appropriate subparts of the context document.",
+      "startOffset" : 57,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 5,
+      "context" : "More specifically, unlike existing models where the query attention is applied either token-wise (Hermann et al., 2015; Kadlec et al., 2016; Chen et al., 2016; Hill et al., 2015) or sentence-wise (Weston et al.",
+      "startOffset" : 97,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 8,
+      "context" : "More specifically, unlike existing models where the query attention is applied either token-wise (Hermann et al., 2015; Kadlec et al., 2016; Chen et al., 2016; Hill et al., 2015) or sentence-wise (Weston et al.",
+      "startOffset" : 97,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 2,
+      "context" : "More specifically, unlike existing models where the query attention is applied either token-wise (Hermann et al., 2015; Kadlec et al., 2016; Chen et al., 2016; Hill et al., 2015) or sentence-wise (Weston et al.",
+      "startOffset" : 97,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 6,
+      "context" : "More specifically, unlike existing models where the query attention is applied either token-wise (Hermann et al., 2015; Kadlec et al., 2016; Chen et al., 2016; Hill et al., 2015) or sentence-wise (Weston et al.",
+      "startOffset" : 97,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2015) or sentence-wise (Weston et al., 2014; Sukhbaatar et al., 2015) to allow weighted aggregation, the Gated-Attention (GA) module proposed in this work allows the query to directly interact with each dimension of the token embeddings at the semantic-level, and is applied layer-wise as information filters during the multi-hop representation learning process.",
+      "startOffset" : 25,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 5,
+      "context" : "LSTMs with Attention: Several architectures introduced in (Hermann et al., 2015) employ LSTM units to compute a combined document-query representation g(d, q), which is used to rank the candidate answers.",
+      "startOffset" : 58,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 2,
+      "context" : "The architecture of the Attentive Reader has been simplified recently in Stanford Attentive Reader, where shallower recurrent units were used with a bilinear form for the query-document attention (Chen et al., 2016).",
+      "startOffset" : 196,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 8,
+      "context" : "Attention Sum: The Attention-Sum (AS) Reader (Kadlec et al., 2016) uses two bidirectional GRU networks (Cho et al.",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 3,
+      "context" : "Building on the AS Reader, the Attention-over-Attention (AoA) Reader (Cui et al., 2016) introduces a two-way attention mechanism where the query and the document are mutually attentive to each other.",
+      "startOffset" : 69,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 22,
+      "context" : "Iterative reasoning has been found effective in several more recent models, including the Iterative Attentive Reader (Sordoni et al., 2016) and ReasoNet (Shen et al.",
+      "startOffset" : 117,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 11,
+      "context" : "Other related works include Dynamic Entity Representation network (DER) (Kobayashi et al., 2016), which builds dynamic representations of the candidate answers while reading the document, and accumulates the information about an entity by max-pooling; EpiReader (Trischler et al.",
+      "startOffset" : 72,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2016), which builds dynamic representations of the candidate answers while reading the document, and accumulates the information about an entity by max-pooling; EpiReader (Trischler et al., 2016) consists of two networks, where one proposes a small set of candidate answers, and the other reranks the proposed candidates conditioned on the query and the context; Bi-Directional Attention Flow network (BiDAF) (Seo et al.",
+      "startOffset" : 173,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2016) consists of two networks, where one proposes a small set of candidate answers, and the other reranks the proposed candidates conditioned on the query and the context; Bi-Directional Attention Flow network (BiDAF) (Seo et al., 2016) adopts a multi-stage hierarchical architecture along with a flow-based attention mechanism; (Bajgar et al.",
+      "startOffset" : 221,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2016) adopts a multi-stage hierarchical architecture along with a flow-based attention mechanism; (Bajgar et al., 2016) showed a 10% improvement on the CBT corpus (Hill et al.",
+      "startOffset" : 100,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2016) showed a 10% improvement on the CBT corpus (Hill et al., 2015) by training the AS Reader on an augmented training set of about 14 million examples, making a case for the community to exploit data abundance.",
+      "startOffset" : 51,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 23,
+      "context" : "Our proposed GA readers perform multiple hops over the document (context), similar to the Memory Networks architecture (Sukhbaatar et al., 2015).",
+      "startOffset" : 119,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 22,
+      "context" : "Multi-hop architectures mimic the multistep comprehension process of human readers, and have shown promising results in several recent models for text comprehension (Sordoni et al., 2016; Kumar et al., 2015; Shen et al., 2016).",
+      "startOffset" : 165,
+      "endOffset" : 226
+    }, {
+      "referenceID" : 21,
+      "context" : "Multi-hop architectures mimic the multistep comprehension process of human readers, and have shown promising results in several recent models for text comprehension (Sordoni et al., 2016; Kumar et al., 2015; Shen et al., 2016).",
+      "startOffset" : 165,
+      "endOffset" : 226
+    }, {
+      "referenceID" : 8,
+      "context" : "eratively refined across hops until reaching a final attention-sum module (Kadlec et al., 2016) which maps the contextual representations in the last hop to a probability distribution over candidate answers.",
+      "startOffset" : 74,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 0,
+      "context" : "The attention mechanism has been introduced recently to model human focus, leading to significant improvement in machine translation and image captioning (Bahdanau et al., 2014; Mnih et al., 2014).",
+      "startOffset" : 154,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 14,
+      "context" : "The attention mechanism has been introduced recently to model human focus, leading to significant improvement in machine translation and image captioning (Bahdanau et al., 2014; Mnih et al., 2014).",
+      "startOffset" : 154,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 5,
+      "context" : "However, existing neural network readers are restricted to either attend to tokens (Hermann et al., 2015; Chen et al., 2016) or entire sentences (Weston et al.",
+      "startOffset" : 83,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 2,
+      "context" : "However, existing neural network readers are restricted to either attend to tokens (Hermann et al., 2015; Chen et al., 2016) or entire sentences (Weston et al.",
+      "startOffset" : 83,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 25,
+      "context" : ", in various types of recurrent units (Hochreiter & Schmidhuber, 1997; Wu et al., 2016) and in relational learning (Yang et al.",
+      "startOffset" : 38,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2016) and in relational learning (Yang et al., 2014; Kiros et al., 2014).",
+      "startOffset" : 35,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2016) and in relational learning (Yang et al., 2014; Kiros et al., 2014).",
+      "startOffset" : 35,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 8,
+      "context" : "This aggregation operation is the same as the pointer sum attention applied in the AS Reader (Kadlec et al., 2016).",
+      "startOffset" : 93,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 27,
+      "context" : "Such embeddings have been previously shown to be helpful for tasks like Named Entity Recognition (Yang et al., 2016) and dealing with OOV tokens at test time (Dhingra et al.",
+      "startOffset" : 97,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2016) and dealing with OOV tokens at test time (Dhingra et al., 2016).",
+      "startOffset" : 49,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 12,
+      "context" : "comm): (Li et al., 2016) recently proposed a simple token level indicator feature which significantly boosts reading comprehension performance in some cases.",
+      "startOffset" : 7,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 5,
+      "context" : "The first two, CNN and Daily Mail news stories1 consist of articles from the popular CNN and Daily Mail websites (Hermann et al., 2015).",
+      "startOffset" : 113,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 6,
+      "context" : "The next two datasets are formed from two different subsets of the Children’s Book Test (CBT)2 (Hill et al., 2015).",
+      "startOffset" : 95,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 17,
+      "context" : "The final dataset is Who Did What3 (WDW) (Onishi et al., 2016), constructed from the LDC",
+      "startOffset" : 41,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 1,
+      "context" : "For CBT-NE, GA Reader with the qecomm feature outperforms all previous single and ensemble models except the AS Reader trained on the much larger BookTest Corpus (Bajgar et al., 2016).",
+      "startOffset" : 162,
+      "endOffset" : 183
+    } ],
+    "year" : 0,
+    "abstractText" : "In this paper we study the problem of answering cloze-style questions over documents. Our model, the Gated-Attention (GA) Reader, integrates a multi-hop architecture with a novel attention mechanism, which is based on multiplicative interactions between the query embedding and the intermediate states of a recurrent neural network document reader. This enables the reader to build query-specific representations of tokens in the document for accurate answer selection. The GA Reader obtains state-of-the-art results on three benchmarks for this task–the CNN & Daily Mail news stories and the Who Did What dataset. The effectiveness of multiplicative interaction is demonstrated by an ablation study, and by comparing to alternative compositional operators for implementing the gated-attention.",
+    "creator" : null
+  }
+}

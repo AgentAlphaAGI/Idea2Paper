@@ -1,0 +1,642 @@
+{
+  "name" : "ACL_2017_49_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Chunk-based Decoder for Neural Machine Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Neural machine translation (NMT) performs an end-to-end translation based on a simple encoderdecoder model (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al., 2016; Luong and Manning, 2016; Cromieres et al., 2016; Neubig, 2016). In NMT, an encoder first maps a source sequence into vector representations and a decoder then maps the vectors into a target sequence (§ 2). This simple framework allows researchers to incorporate the structure of the source\nsentence as in SMT by leveraging various architectures as the encoder (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b; Eriguchi et al., 2016b). Most of the NMT models, however, still rely on a sequential decoder based on recurrent neural network (RNN), due to the difficulty in capturing the structure of a target sentence that is unseen during translation.\nWith the sequential decoder, however, there are two problems to be solved. First, it is difficult to model long-distance dependencies (Bahdanau et al., 2015). A hidden state ht in an RNN is only conditioned by its previous output yt−1, previous hidden state ht−1 and current input xt. This makes it difficult to capture the dependencies between an older output yt−N if they are too far from the current output. This problem can become more serious when the target sequence become longer. For example in Figure 1, when one translates the English sentence into the Japanese one, after the decoder predicts the content word “噛ま (bite)”, it has to predict five function words “れ (passive)”, “た (past)”, “そう (hearsay)”, “だ (positive)”, and “けれど (but)” and a punctuation mark “、” before predicting the next content word “君 (you)”. In such a case, the decoder is required to capture the longer dependencies in a target sentence.\nAnother problem with the sequential decoder is that it is expected to cover possible word orders simply by memorizing the local word sequences in the limited training data. This problem can be more serious in free word-order languages such as Czech, German, Japanese, and Turkish. In the case of the example in Figure 1, the order of the subject phrase “だれかが (someone was)” and the modifier phrase “犬に (by a dog)” are flexible. This means that simply memorizing the word order in training data is not enough to train a model that can assign a high probability to a correct sentence regardless of its word order.\nLooking back to the past, chunks (or phrases) are utilized to handle the above aforementioned problems in statistical machine translation (SMT) (Watanabe et al., 2003; Koehn et al., 2003) and in example-based machine translation (EBMT) (Kim et al., 2010). By using a chunk rather than a word as the basic translation unit, one can treat a sentence as a shorter sequence. This makes it easy to capture the longer dependencies in a target sentence. The order of words in a chunk is relatively fixed while that in a sentence is much more flexible. Thus, modeling intra-chunk (local) dependencies and inter-chunk (global) dependencies independently can help capture the difference of the flexibility between the word order and the chunk order in free word-order languages.\nIn this paper, we refine the original RNN decoder to consider chunk information in NMT. We propose three novel NMT models that capture and utilize the chunk structure in the target language (§ 3). Our focus is the hierarchical structure of a sentence: each sentence consists of chunks, and each chunk consists of words. To encourage an NMT model to capture the hierarchical structure, we start from a hierarchical RNN that consists of a chunk-level decoder and a word-level decoder (Model 1). Then, we improve the word-level decoder by introducing inter-chunk connections to capture the interaction between chunks (Model 2). Finally, we introduce a feedback mechanism to the chunk-level decoder to enhance the memory capacity of previous outputs (Model 3).\nWe evaluate the three models on the WAT ’16 English-to-Japanese translation task (§ 4). The experimental results show that our best model outperforms the best single NMT model reported in WAT ’16 (Eriguchi et al., 2016b).\nOur contributions are twofold: (1) chunk information is firstly introduced into NMT to improve translation performance, and (2) a novel hierarchical decoder is devised to model the properties of chunk structure in the encoder-decoder framework."
+    }, {
+      "heading" : "2 Preliminaries: Attention-based Neural Machine Translation",
+      "text" : "In this section, we briefly introduce the architecture of the attention-based NMT model, which is the basis of our proposed models."
+    }, {
+      "heading" : "2.1 Neural Machine Translation",
+      "text" : "An NMT model usually consists of two connected neural networks: an encoder and a decoder. After the encoder maps a source sentence into a fixed-length vector, the decoder maps the vector into a target sentence. The implementation of the encoder can be a convolutional neural network (CNN) (Kalchbrenner and Blunsom, 2013), a long short-term memory (LSTM) (Sutskever et al., 2014; Luong and Manning, 2016), a gated recurrent unit (GRU) (Cho et al., 2014b; Bahdanau et al., 2015), or a Tree-LSTM (Eriguchi et al., 2016b). While various architectures are leveraged as an encoder to capture the structural information in the source language, most of the NMT models rely on a standard sequential network such as LSTM or GRU as its decoder.\nFollowing (Bahdanau et al., 2015), we use GRU as the recurrent unit in this paper. A GRU unit computes its hidden state vector hi given an input vector xi and the previous hidden state hi−1:\nhi = GRU(hi−1, xi). (1)\nThe function GRU(·) is calculated as:\nri = σ(Wrxi +Urhi−1 + br), (2)\nzi = σ(Wzxi +Uzhi−1 + bz), (3)\nh̃i = tanh(Wxi +U(ri hi−1 + b)), (4) hi = (1− zi) h̃i + zi hi−1, (5)\nwhere the vectors ri and zi are reset gate and update gate, respectively. While the former gate allows the model to forget the previous states, the latter gate decides how much the model updates its content. All the W s and Us, or the bs above\nare trainable matrices or vectors. σ(·) and denote the sigmoid function and element-wise multiplication operator, respectively.\nWe train a GRU that encodes a source sentence {x1, · · · , xI} into a single vector hI . At the same time, we jointly train another GRU that decodes hI to the target sentence {y1, · · · , yJ}. Here, the jth word in the target sentence yj can be predicted with this decoder GRU and a nonlinear function g(·) followed by a softmax layer, as\nc = hI , (6)\nsj = GRU(sj−1, [yj−1; c]), (7)\ns̃j = g(yj−1, sj , c), (8) P (yj |y<j ,x) = softmax(s̃j), (9)\nwhere c is a context vector of the encoded sentence and sj is a hidden state of the decoder GRU.\nFollowing Bahdanau et al. (2015), we use a mini-batch stochastic gradient descent (SGD) algorithm with ADADELTA (Zeiler, 2012) to train the above two GRUs (i.e., the encoder and the decoder) jointly. The objective is to minimize the cross-entropy loss of the training data D, as\nJ = ∑\n(x,y)∈D\n− logP (y|x). (10)"
+    }, {
+      "heading" : "2.2 Attention Mechanism for Neural Machine Translation",
+      "text" : "To use all the hidden states of the encoder and improve the translation performance of long sentences, Bahdanau et al. (2015) proposed using an attention mechanism. In their model, the context vector is not simply the last encoder state hI but rather the weighted sum of all encoder states, as follows:\ncj = I∑\ni=1\nαjihi. (11)\nHere, the weight αji decides how much a source word xi contributes to the target word yj . αji is\ncomputed by a feedforward layer and a softmax layer as\neji = v · tanh(Wehi +Uesj + be), (12) αji = exp(eji)∑J\nj′=1 exp(ej′i) , (13)\nwhere We, Ue are trainable matrices and the be is a trainable vector. In a decoder using the attention mechanism, the obtained context vector cj in each timestep replaces cs in Eqs. (7) and (8). An illustration of the NMT model with the attention mechanism is shown in Figure 2.\nThe attention mechanism is expected to learn alignments between source and target words, and plays a similar role to the translation model in phrase-based SMT (Koehn et al., 2003)."
+    }, {
+      "heading" : "3 Chunk-based Neural Machine Translation",
+      "text" : "Taking non-sequential information such as chunks (or phrases) structure into consideration is proved to be helpful for SMT (Watanabe et al., 2003; Koehn et al., 2003) and EBMT (Kim et al., 2010). We here focus on two important properties of chunks (Abney, 1991): (1) The word order in a chunk is almost always fixed; (2) A chunk consists of a few (typically one) content words surrounded by zero or more function words.\nTo fully utilize the above properties of a chunk, we propose to model the intra-chunk and the interchunk dependencies independently with a “chunkby-chunk” decoder (See Figure 3). In the standard word-by-word decoder described in § 2, a target word yj in the target sentence y is predicted by taking the previous outputs y<j and the source\nsentence x as input:\nP (y|x) = J∏\nj=1\nP (yj |y<j ,x), (14)\nwhere J is the length of the target sentence. Not assuming any structural information of the target language, the sequential decoder has to memorize long dependencies in a sequence. To release the model from the strong pressure of memorizing the long dependencies over a sentence, we redefine this problem as the combination of a word prediction problem and a chunk generation problem: P (y|x) = K∏ k=1 P (ck|c<k,x) Jk∏ j=1 P (yj |y<j , ck,x)  , (15) whereK is the number of chunks in the target sentence and Jk is the length of the k-th chunk (see Figure 3). The first term represents the generation probability of a chunk and the second term indicates the probability of a word in the chunk . We model the former term as a chunk-level decoder and the latter term as a word-level decoder. As we will later confirm in § 4, both K and Jk are much shorter than the sentence length J , which is why our decoders do not have to memorize the long dependencies like the standard decoder does.\nIn the above formulation, we model the information of the words and their orders in a chunk.\nNo matter which language we target, a chunk usually consists of some content words and function words, and the word order in the chunk is almost always fixed (Abney, 1991). Although our idea can be used in several languages, the optimal network architecture could be adapted depending on the word order of the target language. In this work, we design models for languages in which content words are followed by function words, such as Japanese and Korean. The details of our models are described in the following sections."
+    }, {
+      "heading" : "3.1 Model 1: Standard Chunk-based NMT",
+      "text" : "The model described in this section is the basis of our proposed models. It consists of three parts: a sequential encoder (§ 3.1.1), a chunk-level decoder (§ 3.1.2), and a word-level decoder (§ 3.1.3). The part drawn in black solid lines in Figure 4 illustrates the architecture of Model 1."
+    }, {
+      "heading" : "3.1.1 Sequential Encoder",
+      "text" : "We adopt a standard single-layer bidirectional GRU (Cho et al., 2014b; Bahdanau et al., 2015) as our encoder (see the right part in Figure 4). By using a standard sequential encoder, we need not perform any additional preprocessing on test data such as syntactic parsing. This design prevents our model from being affected by any errors that may occur as a result of additional preprocessing during test time."
+    }, {
+      "heading" : "3.1.2 Chunk-level Decoder",
+      "text" : "Our chunk-level decoder (see Figure 3) outputs a chunk representation. The chunk representation contains the information about the words that should be predicted by the word-level decoder.\nTo generate the representation of the k-th chunk s̃ (c) k , the chunk-level decoder (see the bottom layer in Figure 4) takes the last states of the word-level decoder s(w)Jk−1 and updates its hidden state s (c) k as:\ns (c) k = GRU(s (c) k−1, s (w) Jk−1 ), (16) s̃ (c) k = Wcs (c) k + bc. (17)\nThe obtained chunk representation s̃(c)k continues to be fed into the word-level decoder until it outputs all the words in current chunk."
+    }, {
+      "heading" : "3.1.3 Word-level Decoder",
+      "text" : "Our word-level decoder (see Figure 4) differs from the standard sequential decoder described in § 2 in that it takes the chunk representation s̃(c)k as input:\ns (w) j = GRU(s (w) j−1, [s̃ (c) k ; yj−1; c (w) j−1]), (18) s̃ (w) j = g(yj−1, s (w) j , c (w) j ), (19)\nP (yj |y<j ,x) = softmax(s̃(w)j ). (20)\nIn a standard sequential decoder, the hidden state iterates over the length of a target sentence. In other words, its hidden layers are required to memorize the long-term dependencies in the target language. In contrast, in our word-level decoder, the hidden state iterates only over the length of a chunk. Thus, our word-level decoder is released from the pressure of memorizing the long (interchunk) dependencies and can focus on learning the short (intra-chunk) dependencies."
+    }, {
+      "heading" : "3.2 Model 2: Inter-Chunk Connection",
+      "text" : "The second term in Eq. (15) only iterates over a chunk (j = 1 to Jk). This means that the last state and the last output of a chunk are not being fed into the word-level decoder at the next timestep (see the black part in Figure 4). In other words, s (w) 1 in Eq. (18) is always initialized before generating the first word in a chunk. This may affect the word-level decoder because it cannot access any previous information at the first word of each chunk.\nTo address this problem, we add new connections to Model 1 between the first state in a chunk\nand the last state in the previous chunk, as\ns (w) 1 = GRU(s (w) Jk−1 , [s̃ (c) k ; yJk−1 ; c (w) Jk−1 ]). (21)\nThe dashed blue arrows in Figure 4 illustrate the added inter-chunk connections."
+    }, {
+      "heading" : "3.3 Model 3: Word-to-Chunk Feedback",
+      "text" : "The chunk-level decoder in Eq. (16) is only conditioned by s(w)Jk−1 , the last word state in each chunk (see the black part in Figure 4). This may affect the chunk-level decoder because it cannot memorize what kind of information has already been generated by the word-level decoder. The information about the words in a chunk should not be included in the representation of the next chunk; otherwise, it may generate the same chunks for multiple times, or forget to translate some words in the source sentence.\nTo encourage the chunk-level decoder to remove the information about the previous outputs more carefully, we add feedback states to our chunk-level decoder in Model 2. The feedback state in the chunk-level decoder is updated at every timestep j as:\ns (c) j = GRU(s (c) j−1, s (w) j ). (22)\nThe red lines in Figure 4 illustrate the added feedback states and their connection. The connections in the thick black arrows are replaced with the dotted red arrows in Model 3."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Setup",
+      "text" : "Data To clarify the effectiveness of our decoders, we choose Japanese, a free word-order language, as the target language. Japanese sentences are easy to be broken into well-defined chunks (called bunsetsus (Hashimoto, 1934) in Japanese), and the accuracy of bunsetsu-chunking is over 99% (Murata et al., 2000; Yoshinaga and Kitsuregawa, 2014). The effect of chunking errors in training the decoder can be suppressed so we can evaluate the potential of our method. We use the English-Japanese training corpus in the Asian Scientific Paper Excerpt Corpus (ASPEC) (Nakazawa et al., 2016), which was provided in WAT ’16. To remove inaccurate translation pairs, we extracted the first 2 million data from the 3 million translation pairs following the setting that gave the best performances in WAT ’15 (Neubig et al., 2015).\nPreprocessings For Japanese sentences, we performed tokenization using KyTea 0.4.7.1 (Neubig et al., 2011) Then we performed bunsetsuchunking with CaboCha 0.69.2 For English sentences, we performed the same preprocessings described on the WAT ’16 Website.3 To suppress having possible chunking errors affect the translation quality, we removed extremely long chunks from the training data. Specifically, among the 2 million preprocessed translation pairs, we excluded the sentence pairs that matched any of following conditions: (1) The length of the source sentence or target sentence is larger than 64; (2) The maximum length of a chunk in the target sentence is larger than 8 (around 1% of whole data); (3) The maximum number of chunks in the target sentence is larger than 20 (around 2% of whole data). The amount of the excluded sentences by the condition (2) or (3) is negligible (less than 3% of whole data). Table 1 shows the details of the extracted data.\nPostprocessing To perform unknown word replacement (Luong et al., 2015), we built a bilingual English-Japanese dictionary from all of the 3 million translation pairs. The dictionary was extracted with the MGIZA++ 0.7.04 (Och and Ney, 2003; Gao and Vogel, 2008) word alignment tool by automatically extracting the alignments between English words and Japanese words.\nEvaluation Following the WAT ’16 evaluation procedure, we used BLEU (Papineni et al., 2002) and RIBES (Isozaki et al., 2010) to evaluate our models. The BLEU scores were calculated with multi-bleu.pl in Moses 2.1.15 (Koehn et al., 2007); RIBES scores were calculated with RIBES.py 1.03.1.6 (Isozaki et al., 2010)\n1http://www.phontron.com/kytea/ 2http://taku910.github.io/cabocha/ 3http://lotus.kuee.kyoto-u.ac.jp/WAT/\nbaseline/dataPreparationJE.html 4https://github.com/moses-smt/mgiza 5http://www.statmt.org/moses/ 6http://www.kecl.ntt.co.jp/icl/lirg/ ribes/index.html\nTraining Details We use a single layer bidirectional GRU for the encoder and standard single layer GRUs for the word-level decoder and the chunk-level decoder. The vocabulary sizes are set to 30k for both source and target languages. The conditional probability of each target word is computed with a deep-output (Pascanu et al., 2014) layer with maxout (Goodfellow et al., 2013) units. The maximum number of output chunks is set to 20 and the maximum length of a chunk is set to 9.\nThe models are optimized using ADADELTA following (Bahdanau et al., 2015). The hyperparameters of the training procedure are fixed to the values given in Table 2. Note that the learning rate is halved when the BLEU score on the development set does not increase for 30,000 batches. All the parameters are initialized randomly with Gaussian distribution. It takes about a week to train each model with an NVIDIA TITAN X (Pascal) GPU."
+    }, {
+      "heading" : "4.2 Results",
+      "text" : "Following (Cho et al., 2014a), we perform beam search8 with length-normalized log-probability to decode target sentences. We saved the trained models that performed best on the development set during training, and use them to test the systems with the test set. Table 3 shows the results on the test set. Note that all the models listed in Table 3, including our three models, are single models without ensemble techniques. We set the word-based sequence-to-sequence model (Li et al., 2016) as our baseline, which is a standard implementation of the attention-based NMT described in § 2. We also compare our methods with the tree-to-sequence model (Eriguchi et al., 2016b) to compare the effectiveness of capturing the structure in the source language and that in the target language. Our improved models (Model 2 and Model 3) outperform all the single models reported in WAT ’16. The best model (Model 3)\n7http://lotus.kuee.kyoto-u.ac.jp/WAT/ evaluation\n8Beam size is set to 20.\noutperforms the tree-to-sequence model (Eriguchi et al., 2016b) by +1.33 BLEU score and +0.48 RIBES score. The results show that capturing the chunk structure in the target language is more effective than capturing the syntax structure in the source language. Compared with the characterbased NMT model, our Model 3 outperformed the model of (Eriguchi et al., 2016a) by +4.68 BLEU score and +2.67 RIBES score. The characterbased model has a great advantage in that it does not require a large vocabulary size. Although the character-based model is less time-consuming thanks to the small target vocabulary size (|Vtrg| = 3k), our chunk-based model significantly outperformed it in terms of translation quality. One possible reason for this is that using a character-based model rather than a word-based model makes it more difficult to capture long-distance dependencies because the length of a target sequence becomes much longer in the character-based model.\nTo understand the qualitative difference between our three models, we show translation examples in Figure 5. While Model 3 outputs a cor-\nrect translation, there are some errors in the outputs of Model 1 and Model 2. Only Model 1 outputs a chunk “著者の (author’s)” twice continuously. This error indicates that the inter-chunk connections added in Model 2 play important roles in memorizing previous word states more efficiently. On the other hand, Model 2 does not output a chunk “新しい (new)” by mistake, which is probably because it does not have a good ability to memorize the previous chunks. This phenomenon supports the importance of the feedback states that are added in Model 3."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "There has been much work done on using chunk (or phrase) structure to improve machine translation quality. The most notable work was phrasebased SMT (Koehn et al., 2003), which has been the basis for a huge amount of work on SMT for more than ten years. Apart from this, Watanabe et al. (2003) proposed a chunk-based translation model that generates output sentences in a chunkby-chunk manner. The chunk structure is effective\nnot only for SMT but also for example-based machine translation (EBMT). Kim et al. (2010) proposed a chunk-based EBMT and showed that using chunk structures can help with finding better word alignments. Our work is different from their works in that our models are based on NMT, but not SMT or EBMT. The decoders in the above works can model the chunk structure by storing chunk pairs in a large table. On the other hand, we do that by separately training a chunk generation model and a word prediction model with two RNNs.\nWhile most of the NMT models focus on the conversion between sequential data, some works have tried to incorporate non-sequential information into NMT (Eriguchi et al., 2016b; Su et al., 2017). Eriguchi et al. (2016b) use tree-based LSTM (Tai et al., 2015) to encode input sentence into context vectors. Given a syntactic tree of a source sentence, their tree-based encoder encodes words from the leaf nodes to the root nodes recursively. Su et al. (2017) proposed a lattice-based encoder that considers multiple tokenization results while encoding the input sentence. To prevent the tokenization errors from propagating to the whole NMT system, their lattice-based encoder can utilize multiple tokenization results. These works focus on the encoding process and propose better encoders that can exploit the structures of the source language. In contrast, our work focuses on the decoding process to capture the structure of the target language. The encoders described above and our proposed decoders are complementary so they can be combined into a single network.\nConsidering that our Model 1 described in § 3.1 can be seen as a hierarchical RNN, our work is also related to previous studies that utilize multilayer RNNs to capture hierarchical structures in data. Hierarchical RNNs are used not only in the field of machine translation (Luong and Manning, 2016) but also for various NLP tasks such as document modeling (Li et al., 2015; Lin et al., 2015), dialog generation (Serban et al., 2017), image captioning (Krause et al., 2016), and video captioning (Yu et al., 2016). In particular, Li et al. (2015) and Luong and Manning (2016) use hierarchical sequence-to-sequence models, but not for the purpose of learning syntactic structures of target sentences. Li et al. (2015) build hierarchical models at the sentence-word level to obtain better document representations. Luong and Manning (2016) build the word-character level to cope with the out-\nof-vocabulary problem. In contrast, we build a chunk-word level model to explicitly capture the syntactic structure based on chunk segmentation.\nIn addition, the architecture of Model 3 is also related to stacked RNN, which has shown to be effective to improve the translation quality (Luong et al., 2015; Sutskever et al., 2014). Although these architectures look similar to each other, there is a fundamental difference between the directions of the connection between two layers. A stacked RNN consists of multiple RNN layers that are connected from the input side to the output side at every timestep. In contrast, our Model 3 has a different connection at each timestep. Before it generates a chunk, there is a feed-forward connection from the chunk-level decoder to the word-level decoder. However, after generating a chunk representation, the connection is to be reversed to feedback the information from the word-level decoder to the chunk-level decoder. By switching the connections between two layers, our model can capture the chunk structure explicitly. This is the first work that proposes the decoders for NMT that can capture plausible linguistic structures like chunk."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we propose chunk-based decoders for NMT. As the attention mechanism in NMT plays a similar role to the translation model in phrase-based SMT, our chunk-based decoders are intended to capture the notion of chunk in chunkbased (or phrase-based) SMT. We utilize the chunk structure to efficiently capture long-distance dependencies and cope with the problem of free word-order languages like Japanese. We design three models that have hierarchical RNN-like architectures, each of which consists of a word-level decoder and a chunk-level decoder. We performed experiments on the WAT ’16 English-to-Japanese translation task and found that our best model outperforms all the single models that were reported in WAT ’16 by +4.68 to +1.33 BLEU scores and by +3.31 to +0.48 RIBES scores.\nIn future work, we will apply our method to other target languages and evaluate the effectiveness on different languages such as Czech, German or Turkish. In addition, we plan to combine our decoder with other encoders that capture language structure, such as a Tree-LSTM (Eriguchi et al., 2016b), or an order-free encoder, such as a CNN (Kalchbrenner and Blunsom, 2013)."
+    } ],
+    "references" : [ {
+      "title" : "Parsing by chunks",
+      "author" : [ "Steven P. Abney." ],
+      "venue" : "Principle-based parsing, Springer, pages 257–278.",
+      "citeRegEx" : "Abney.,? 1991",
+      "shortCiteRegEx" : "Abney.",
+      "year" : 1991
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the Third International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "On the properties of neural machine translation: Encoder–decoder approaches",
+      "author" : [ "Kyunghyun Cho", "Bart van Merriënboer", "Dzmitry Bahdanau", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the Eighth Workshop on Syntax, Semantics and Structure in Statis-",
+      "citeRegEx" : "Cho et al\\.,? 2014a",
+      "shortCiteRegEx" : "Cho et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Learning phrase representations using RNN encoder–decoder for statistical machine translation",
+      "author" : [ "Kyunghyun Cho", "Bart van Merriënboer", "Caglar Gulcehre", "Dzmitry Bahdanau", "Fethi Bougares", "Holger Schwenk", "Yoshua Bengio." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Cho et al\\.,? 2014b",
+      "shortCiteRegEx" : "Cho et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Kyoto university participation to WAT 2016",
+      "author" : [ "Fabien Cromieres", "Chenhui Chu", "Toshiaki Nakazawa", "Sadao Kurohashi." ],
+      "venue" : "Proceedings of the Third Workshop on Asian Translation (WAT). pages 166– 174.",
+      "citeRegEx" : "Cromieres et al\\.,? 2016",
+      "shortCiteRegEx" : "Cromieres et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Character-based decoding in treeto-sequence attention-based neural machine translation",
+      "author" : [ "Akiko Eriguchi", "Kazuma Hashimoto", "Yoshimasa Tsuruoka." ],
+      "venue" : "Proceedings of the Third Workshop on Asian Translation (WAT). pages 175–183.",
+      "citeRegEx" : "Eriguchi et al\\.,? 2016a",
+      "shortCiteRegEx" : "Eriguchi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Tree-to-sequence attentional neural machine translation",
+      "author" : [ "Akiko Eriguchi", "Kazuma Hashimoto", "Yoshimasa Tsuruoka." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL). pages 823–833.",
+      "citeRegEx" : "Eriguchi et al\\.,? 2016b",
+      "shortCiteRegEx" : "Eriguchi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Parallel implementations of word alignment tool",
+      "author" : [ "Qin Gao", "Stephan Vogel." ],
+      "venue" : "Software Engineering, Testing, and Quality Assurance for Natural Language Processing. pages 49–57.",
+      "citeRegEx" : "Gao and Vogel.,? 2008",
+      "shortCiteRegEx" : "Gao and Vogel.",
+      "year" : 2008
+    }, {
+      "title" : "Maxout networks",
+      "author" : [ "Ian J. Goodfellow", "David Warde-Farley", "Mehdi Mirza", "Aaron Courville", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the 30th International Conference on Machine Learning (ICML). pages 1319–1327.",
+      "citeRegEx" : "Goodfellow et al\\.,? 2013",
+      "shortCiteRegEx" : "Goodfellow et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Kokugoho Yosetsu",
+      "author" : [ "Shinkichi Hashimoto." ],
+      "venue" : "Meiji Shoin.",
+      "citeRegEx" : "Hashimoto.,? 1934",
+      "shortCiteRegEx" : "Hashimoto.",
+      "year" : 1934
+    }, {
+      "title" : "Automatic evaluation of translation quality for distant language pairs",
+      "author" : [ "Hideki Isozaki", "Tsutomu Hirao", "Kevin Duh", "Katsuhito Sudoh", "Hajime Tsukada." ],
+      "venue" : "Proceedings of the 2010 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Isozaki et al\\.,? 2010",
+      "shortCiteRegEx" : "Isozaki et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Recurrent continuous translation models",
+      "author" : [ "Nal Kalchbrenner", "Phil Blunsom." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing (EMNLP). pages 1700– 1709.",
+      "citeRegEx" : "Kalchbrenner and Blunsom.,? 2013",
+      "shortCiteRegEx" : "Kalchbrenner and Blunsom.",
+      "year" : 2013
+    }, {
+      "title" : "Chunk-based EBMT",
+      "author" : [ "Jae Dong Kim", "Ralf D. Brown", "Jaime G. Carbonell." ],
+      "venue" : "Proceedings of the 14th workshop of the European Association for Machine Translation (EAMT).",
+      "citeRegEx" : "Kim et al\\.,? 2010",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Statistical phrase-based translation",
+      "author" : [ "Philipp Koehn", "Franz J. Och", "Daniel Marcu." ],
+      "venue" : "Proceedings of the 2003 Human Language Technology Conference of the North American Chapter of the Association for Computational Linguistics (HLT-NAACL).",
+      "citeRegEx" : "Koehn et al\\.,? 2003",
+      "shortCiteRegEx" : "Koehn et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "A hierarchical approach for generating descriptive image paragraphs",
+      "author" : [ "Jonathan Krause", "Justin Johnson", "Ranjay Krishna", "Li Fei-Fei." ],
+      "venue" : "arXiv:1611.06607 [cs.CV].",
+      "citeRegEx" : "Krause et al\\.,? 2016",
+      "shortCiteRegEx" : "Krause et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A hierarchical neural autoencoder for paragraphs and documents",
+      "author" : [ "Jiwei Li", "Minh-Thang Luong", "Dan Jurafsky." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference",
+      "citeRegEx" : "Li et al\\.,? 2015",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "System description of bjtu nlp neural machine translation system",
+      "author" : [ "Shaotong Li", "JinAn Xu", "Yufeng Chen", "Yujie Zhang." ],
+      "venue" : "Proceedings of the Third Workshop on Asian Translation (WAT). pages 104–110.",
+      "citeRegEx" : "Li et al\\.,? 2016",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Hierarchical recurrent neural network for document modeling",
+      "author" : [ "Rui Lin", "Shujie Liu", "Muyun Yang", "Mu Li", "Ming Zhou", "Sheng Li." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing (EMNLP). pages 899–907.",
+      "citeRegEx" : "Lin et al\\.,? 2015",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Achieving open vocabulary neural machine translation with hybrid word-character models",
+      "author" : [ "Minh-Thang Luong", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL). pages",
+      "citeRegEx" : "Luong and Manning.,? 2016",
+      "shortCiteRegEx" : "Luong and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "Addressing the rare word problem in neural machine translation",
+      "author" : [ "Minh-Thang Luong", "Ilya Sutskever", "Quoc Le", "Oriol Vinyals", "Wojciech Zaremba." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the",
+      "citeRegEx" : "Luong et al\\.,? 2015",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Bunsetsu identification using category-exclusive rules",
+      "author" : [ "Masaki Murata", "Kiyotaka Uchimoto", "Qing Ma", "Hitoshi Isahara." ],
+      "venue" : "Proceedings of the 18th International Conference on Computational Linguistics (COLING). pages 565–571.",
+      "citeRegEx" : "Murata et al\\.,? 2000",
+      "shortCiteRegEx" : "Murata et al\\.",
+      "year" : 2000
+    }, {
+      "title" : "ASPEC: Asian scientific paper excerpt corpus",
+      "author" : [ "Toshiaki Nakazawa", "Manabu Yaguchi", "Kiyotaka Uchimoto", "Masao Utiyama", "Eiichiro Sumita", "Sadao Kurohashi", "Hitoshi Isahara." ],
+      "venue" : "Proceedings of the Ninth International Conference on Lan-",
+      "citeRegEx" : "Nakazawa et al\\.,? 2016",
+      "shortCiteRegEx" : "Nakazawa et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Lexicons and minimum risk training for neural machine translation: NAISTCMU at WAT2016",
+      "author" : [ "Graham Neubig." ],
+      "venue" : "Proceedings of the Third Workshop on Asian Translation (WAT). pages 119– 125.",
+      "citeRegEx" : "Neubig.,? 2016",
+      "shortCiteRegEx" : "Neubig.",
+      "year" : 2016
+    }, {
+      "title" : "Neural reranking improves subjective quality of machine translation: NAIST at WAT2015",
+      "author" : [ "Graham Neubig", "Makoto Morishita", "Satoshi Nakamura." ],
+      "venue" : "Proceedings of the Second Workshop on Asian Translation (WAT). pages 35–41.",
+      "citeRegEx" : "Neubig et al\\.,? 2015",
+      "shortCiteRegEx" : "Neubig et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Pointwise prediction for robust, adaptable Japanese morphological analysis",
+      "author" : [ "Graham Neubig", "Yosuke Nakata", "Shinsuke Mori." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technolo-",
+      "citeRegEx" : "Neubig et al\\.,? 2011",
+      "shortCiteRegEx" : "Neubig et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "A systematic comparison of various statistical alignment models",
+      "author" : [ "Franz J. Och", "Hermann Ney." ],
+      "venue" : "Computational Linguistics 29(1):19–51.",
+      "citeRegEx" : "Och and Ney.,? 2003",
+      "shortCiteRegEx" : "Och and Ney.",
+      "year" : 2003
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of 40th Annual Meeting of the Association for Computational Linguistics (ACL). pages 311–318.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "How to construct deep recurrent neural networks",
+      "author" : [ "Razvan Pascanu", "Caglar Gulcehre", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the Second International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Pascanu et al\\.,? 2014",
+      "shortCiteRegEx" : "Pascanu et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Edinburgh neural machine translation systems for WMT 16",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the First Conference on Machine Translation (WMT). pages 371– 376.",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A hierarchical latent variable encoder-decoder model for generating dialogues",
+      "author" : [ "Iulian V. Serban", "Alessandro Sordoni", "Ryan Lowe", "Laurent Charlin", "Joelle Pineau", "Aaron Courville", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the 31st AAAI Conference on Artifi-",
+      "citeRegEx" : "Serban et al\\.,? 2017",
+      "shortCiteRegEx" : "Serban et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Lattice-based recurrent neural network encoders for neural machine translation",
+      "author" : [ "Jinsong Su", "Zhixing Tan", "Deyi Xiong", "Rongrong Ji", "Xiaodong Shi", "Yang Liu." ],
+      "venue" : "Proceedings of the 31st AAAI Conference on Artificial Intelligence (AAAI).",
+      "citeRegEx" : "Su et al\\.,? 2017",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V. Le." ],
+      "venue" : "Advances in neural information processing systems (NIPS). pages 3104–3112.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Improved semantic representations from tree-structured long short-term memory networks",
+      "author" : [ "Kai Sheng Tai", "Richard Socher", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Tai et al\\.,? 2015",
+      "shortCiteRegEx" : "Tai et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Chunk-based statistical translation",
+      "author" : [ "Taro Watanabe", "Eiichiro Sumita", "Hiroshi G. Okuno." ],
+      "venue" : "Proceedings of the 41st Annual Meeting of the Association for Computational Linguistics (ACL). pages 303–310.",
+      "citeRegEx" : "Watanabe et al\\.,? 2003",
+      "shortCiteRegEx" : "Watanabe et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "A self-adaptive classifier for efficient text-stream processing",
+      "author" : [ "Naoki Yoshinaga", "Masaru Kitsuregawa." ],
+      "venue" : "Proceedings of the 25th International Conference on Computational Linguistics (COLING). pages 1091–1102.",
+      "citeRegEx" : "Yoshinaga and Kitsuregawa.,? 2014",
+      "shortCiteRegEx" : "Yoshinaga and Kitsuregawa.",
+      "year" : 2014
+    }, {
+      "title" : "Video paragraph captioning using hierarchical recurrent neural networks",
+      "author" : [ "Haonan Yu", "Jiang Wang", "Zhiheng Huang", "Yi Yang", "Wei Xu." ],
+      "venue" : "Proceedings of the 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR). pages 4584–",
+      "citeRegEx" : "Yu et al\\.,? 2016",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "ADADELTA: An adaptive learning rate method",
+      "author" : [ "Matthew D. Zeiler." ],
+      "venue" : "arXiv:1212.5701 [cs.LG].",
+      "citeRegEx" : "Zeiler.,? 2012",
+      "shortCiteRegEx" : "Zeiler.",
+      "year" : 2012
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 11,
+      "context" : "Neural machine translation (NMT) performs an end-to-end translation based on a simple encoderdecoder model (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al.",
+      "startOffset" : 107,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 31,
+      "context" : "Neural machine translation (NMT) performs an end-to-end translation based on a simple encoderdecoder model (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al.",
+      "startOffset" : 107,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 3,
+      "context" : "Neural machine translation (NMT) performs an end-to-end translation based on a simple encoderdecoder model (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al.",
+      "startOffset" : 107,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al., 2016; Luong and Manning, 2016; Cromieres et al., 2016; Neubig, 2016).",
+      "startOffset" : 95,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al., 2016; Luong and Manning, 2016; Cromieres et al., 2016; Neubig, 2016).",
+      "startOffset" : 95,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al., 2016; Luong and Manning, 2016; Cromieres et al., 2016; Neubig, 2016).",
+      "startOffset" : 95,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2014b), and now has overwhelmed the classical, complex statistical machine translation (SMT) (Sennrich et al., 2016; Luong and Manning, 2016; Cromieres et al., 2016; Neubig, 2016).",
+      "startOffset" : 95,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 11,
+      "context" : "This simple framework allows researchers to incorporate the structure of the source sentence as in SMT by leveraging various architectures as the encoder (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b; Eriguchi et al., 2016b).",
+      "startOffset" : 154,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 31,
+      "context" : "This simple framework allows researchers to incorporate the structure of the source sentence as in SMT by leveraging various architectures as the encoder (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b; Eriguchi et al., 2016b).",
+      "startOffset" : 154,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 3,
+      "context" : "This simple framework allows researchers to incorporate the structure of the source sentence as in SMT by leveraging various architectures as the encoder (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b; Eriguchi et al., 2016b).",
+      "startOffset" : 154,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 6,
+      "context" : "This simple framework allows researchers to incorporate the structure of the source sentence as in SMT by leveraging various architectures as the encoder (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Cho et al., 2014b; Eriguchi et al., 2016b).",
+      "startOffset" : 154,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 1,
+      "context" : "First, it is difficult to model long-distance dependencies (Bahdanau et al., 2015).",
+      "startOffset" : 59,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 33,
+      "context" : "Looking back to the past, chunks (or phrases) are utilized to handle the above aforementioned problems in statistical machine translation (SMT) (Watanabe et al., 2003; Koehn et al., 2003) and in example-based machine translation (EBMT) (Kim et al.",
+      "startOffset" : 144,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 13,
+      "context" : "Looking back to the past, chunks (or phrases) are utilized to handle the above aforementioned problems in statistical machine translation (SMT) (Watanabe et al., 2003; Koehn et al., 2003) and in example-based machine translation (EBMT) (Kim et al.",
+      "startOffset" : 144,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2003) and in example-based machine translation (EBMT) (Kim et al., 2010).",
+      "startOffset" : 56,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 6,
+      "context" : "The experimental results show that our best model outperforms the best single NMT model reported in WAT ’16 (Eriguchi et al., 2016b).",
+      "startOffset" : 108,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 11,
+      "context" : "The implementation of the encoder can be a convolutional neural network (CNN) (Kalchbrenner and Blunsom, 2013), a long short-term memory (LSTM) (Sutskever et al.",
+      "startOffset" : 78,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 31,
+      "context" : "The implementation of the encoder can be a convolutional neural network (CNN) (Kalchbrenner and Blunsom, 2013), a long short-term memory (LSTM) (Sutskever et al., 2014; Luong and Manning, 2016), a gated recurrent unit (GRU) (Cho et al.",
+      "startOffset" : 144,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 18,
+      "context" : "The implementation of the encoder can be a convolutional neural network (CNN) (Kalchbrenner and Blunsom, 2013), a long short-term memory (LSTM) (Sutskever et al., 2014; Luong and Manning, 2016), a gated recurrent unit (GRU) (Cho et al.",
+      "startOffset" : 144,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2014; Luong and Manning, 2016), a gated recurrent unit (GRU) (Cho et al., 2014b; Bahdanau et al., 2015), or a Tree-LSTM (Eriguchi et al.",
+      "startOffset" : 63,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2014; Luong and Manning, 2016), a gated recurrent unit (GRU) (Cho et al., 2014b; Bahdanau et al., 2015), or a Tree-LSTM (Eriguchi et al.",
+      "startOffset" : 63,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 1,
+      "context" : "Following (Bahdanau et al., 2015), we use GRU as the recurrent unit in this paper.",
+      "startOffset" : 10,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 36,
+      "context" : "(2015), we use a mini-batch stochastic gradient descent (SGD) algorithm with ADADELTA (Zeiler, 2012) to train the above two GRUs (i.",
+      "startOffset" : 86,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 13,
+      "context" : "The attention mechanism is expected to learn alignments between source and target words, and plays a similar role to the translation model in phrase-based SMT (Koehn et al., 2003).",
+      "startOffset" : 159,
+      "endOffset" : 179
+    }, {
+      "referenceID" : 33,
+      "context" : "Taking non-sequential information such as chunks (or phrases) structure into consideration is proved to be helpful for SMT (Watanabe et al., 2003; Koehn et al., 2003) and EBMT (Kim et al.",
+      "startOffset" : 123,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 13,
+      "context" : "Taking non-sequential information such as chunks (or phrases) structure into consideration is proved to be helpful for SMT (Watanabe et al., 2003; Koehn et al., 2003) and EBMT (Kim et al.",
+      "startOffset" : 123,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 0,
+      "context" : "We here focus on two important properties of chunks (Abney, 1991): (1) The word order in a chunk is almost always fixed; (2) A chunk consists of a few (typically one) content words surrounded by zero or more function words.",
+      "startOffset" : 52,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 0,
+      "context" : "No matter which language we target, a chunk usually consists of some content words and function words, and the word order in the chunk is almost always fixed (Abney, 1991).",
+      "startOffset" : 158,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 3,
+      "context" : "We adopt a standard single-layer bidirectional GRU (Cho et al., 2014b; Bahdanau et al., 2015) as our encoder (see the right part in Figure 4).",
+      "startOffset" : 51,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 1,
+      "context" : "We adopt a standard single-layer bidirectional GRU (Cho et al., 2014b; Bahdanau et al., 2015) as our encoder (see the right part in Figure 4).",
+      "startOffset" : 51,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 9,
+      "context" : "Japanese sentences are easy to be broken into well-defined chunks (called bunsetsus (Hashimoto, 1934) in Japanese), and the accuracy of bunsetsu-chunking is over 99% (Murata et al.",
+      "startOffset" : 84,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 20,
+      "context" : "Japanese sentences are easy to be broken into well-defined chunks (called bunsetsus (Hashimoto, 1934) in Japanese), and the accuracy of bunsetsu-chunking is over 99% (Murata et al., 2000; Yoshinaga and Kitsuregawa, 2014).",
+      "startOffset" : 166,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 34,
+      "context" : "Japanese sentences are easy to be broken into well-defined chunks (called bunsetsus (Hashimoto, 1934) in Japanese), and the accuracy of bunsetsu-chunking is over 99% (Murata et al., 2000; Yoshinaga and Kitsuregawa, 2014).",
+      "startOffset" : 166,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 21,
+      "context" : "We use the English-Japanese training corpus in the Asian Scientific Paper Excerpt Corpus (ASPEC) (Nakazawa et al., 2016), which was provided in WAT ’16.",
+      "startOffset" : 97,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 23,
+      "context" : "To remove inaccurate translation pairs, we extracted the first 2 million data from the 3 million translation pairs following the setting that gave the best performances in WAT ’15 (Neubig et al., 2015).",
+      "startOffset" : 180,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 24,
+      "context" : "1 (Neubig et al., 2011) Then we performed bunsetsuchunking with CaboCha 0.",
+      "startOffset" : 2,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 19,
+      "context" : "Postprocessing To perform unknown word replacement (Luong et al., 2015), we built a bilingual English-Japanese dictionary from all of the 3 million translation pairs.",
+      "startOffset" : 51,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 25,
+      "context" : "04 (Och and Ney, 2003; Gao and Vogel, 2008) word alignment tool by automatically extracting the alignments between English words and Japanese words.",
+      "startOffset" : 3,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 7,
+      "context" : "04 (Och and Ney, 2003; Gao and Vogel, 2008) word alignment tool by automatically extracting the alignments between English words and Japanese words.",
+      "startOffset" : 3,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 26,
+      "context" : "Evaluation Following the WAT ’16 evaluation procedure, we used BLEU (Papineni et al., 2002) and RIBES (Isozaki et al.",
+      "startOffset" : 68,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2002) and RIBES (Isozaki et al., 2010) to evaluate our models.",
+      "startOffset" : 18,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 27,
+      "context" : "The conditional probability of each target word is computed with a deep-output (Pascanu et al., 2014) layer with maxout (Goodfellow et al.",
+      "startOffset" : 79,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 1,
+      "context" : "The models are optimized using ADADELTA following (Bahdanau et al., 2015).",
+      "startOffset" : 50,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 2,
+      "context" : "Following (Cho et al., 2014a), we perform beam search8 with length-normalized log-probability to decode target sentences.",
+      "startOffset" : 10,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 16,
+      "context" : "We set the word-based sequence-to-sequence model (Li et al., 2016) as our baseline, which is a standard implementation of the attention-based NMT described in § 2.",
+      "startOffset" : 49,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 6,
+      "context" : "We also compare our methods with the tree-to-sequence model (Eriguchi et al., 2016b) to compare the effectiveness of capturing the structure in the source language and that in the target language.",
+      "startOffset" : 60,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 16,
+      "context" : "System RNN |Vsrc| |Vtrg| BLEU RIBES Word-based Seq-to-Seq (Li et al., 2016) GRU 40k 30k 33.",
+      "startOffset" : 58,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 6,
+      "context" : "75 Word-based Tree-to-Seq (Eriguchi et al., 2016b) LSTM 88k 66k 34.",
+      "startOffset" : 26,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 5,
+      "context" : "58 Character-based Tree-to-Seq (Eriguchi et al., 2016a) LSTM 88k 3k 31.",
+      "startOffset" : 31,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 6,
+      "context" : "outperforms the tree-to-sequence model (Eriguchi et al., 2016b) by +1.",
+      "startOffset" : 39,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 5,
+      "context" : "Compared with the characterbased NMT model, our Model 3 outperformed the model of (Eriguchi et al., 2016a) by +4.",
+      "startOffset" : 82,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 13,
+      "context" : "The most notable work was phrasebased SMT (Koehn et al., 2003), which has been the basis for a huge amount of work on SMT for more than ten years.",
+      "startOffset" : 42,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 6,
+      "context" : "While most of the NMT models focus on the conversion between sequential data, some works have tried to incorporate non-sequential information into NMT (Eriguchi et al., 2016b; Su et al., 2017).",
+      "startOffset" : 151,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 30,
+      "context" : "While most of the NMT models focus on the conversion between sequential data, some works have tried to incorporate non-sequential information into NMT (Eriguchi et al., 2016b; Su et al., 2017).",
+      "startOffset" : 151,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 32,
+      "context" : "(2016b) use tree-based LSTM (Tai et al., 2015) to encode input sentence into context vectors.",
+      "startOffset" : 28,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 18,
+      "context" : "Hierarchical RNNs are used not only in the field of machine translation (Luong and Manning, 2016) but also for various NLP tasks such as document modeling (Li et al.",
+      "startOffset" : 72,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 15,
+      "context" : "Hierarchical RNNs are used not only in the field of machine translation (Luong and Manning, 2016) but also for various NLP tasks such as document modeling (Li et al., 2015; Lin et al., 2015), dialog generation (Serban et al.",
+      "startOffset" : 155,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 17,
+      "context" : "Hierarchical RNNs are used not only in the field of machine translation (Luong and Manning, 2016) but also for various NLP tasks such as document modeling (Li et al., 2015; Lin et al., 2015), dialog generation (Serban et al.",
+      "startOffset" : 155,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2015), dialog generation (Serban et al., 2017), image captioning (Krause et al.",
+      "startOffset" : 27,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2017), image captioning (Krause et al., 2016), and video captioning (Yu et al.",
+      "startOffset" : 26,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 19,
+      "context" : "In addition, the architecture of Model 3 is also related to stacked RNN, which has shown to be effective to improve the translation quality (Luong et al., 2015; Sutskever et al., 2014).",
+      "startOffset" : 140,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 31,
+      "context" : "In addition, the architecture of Model 3 is also related to stacked RNN, which has shown to be effective to improve the translation quality (Luong et al., 2015; Sutskever et al., 2014).",
+      "startOffset" : 140,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 6,
+      "context" : "In addition, we plan to combine our decoder with other encoders that capture language structure, such as a Tree-LSTM (Eriguchi et al., 2016b), or an order-free encoder, such as a CNN (Kalchbrenner and Blunsom, 2013).",
+      "startOffset" : 117,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2016b), or an order-free encoder, such as a CNN (Kalchbrenner and Blunsom, 2013).",
+      "startOffset" : 50,
+      "endOffset" : 82
+    } ],
+    "year" : 0,
+    "abstractText" : "Chunks (or phrases) had once played a pivotal role in machine translation. By using a chunk rather than a word as the basic translation unit, local (intrachunk) and global (inter-chunk) word orders/dependencies can be easily modeled. The chunk structure, despite its importance, has not been considered in the decoders of neural machine translation (NMT). In this paper, we propose chunkbased decoders for NMT, each of which consists of a chunk-level decoder and a word-level decoder. The chunk-level decoder models global dependencies, while the word-level decoder decides the word orders in a chunk. To generate a target sentence, the chunk-level decoder generates a chunk representation containing global information, based on which, the wordlevel decoder predicts the words inside the chunk. Experimental results show that our method can significantly improve translation performance in a WAT ’16 Englishto-Japanese translation task.",
+    "creator" : null
+  }
+}

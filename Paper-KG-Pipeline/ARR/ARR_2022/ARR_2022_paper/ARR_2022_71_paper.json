@@ -1,0 +1,695 @@
+{
+  "name" : "ARR_2022_71_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "SDR: Efficient Neural Re-ranking using Succinct Document Representation",
+    "authors" : [ ],
+    "emails" : [ "MRR@10", "MRR@10" ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "In this work, we propose the Succinct Document Representation (SDR) scheme that computes highly compressed intermediate document representations, mitigating the storage/network issue. Our approach first reduces the dimension of token representations by encoding them using a novel autoencoder architecture that uses the document’s textual content in both the encoding and decoding phases. After this token encoding step, we further reduce the size of the document representations using modern quantization techniques.\nEvaluation on MSMARCO’s passage rereranking task show that compared to existing approaches using compressed document representations, our method is highly efficient, achieving 4x–11.6x higher compression rates for the same ranking quality. Similarly, on the TREC CAR dataset, we achieve 7.7x higher compression rate for the same ranking quality."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Information retrieval (IR) systems traditionally comprise of two stages: retrieval and ranking. Given a user query, the role of the retrieval stage is to quickly retrieve a set of candidate documents from a (very large) search index. Retrieval is typically fast but not accurate enough; in order to improve the quality of the end result for the user, the\ncandidate documents are re-ranked using a more accurate but computationally expensive algorithm.\nNeural approaches have achieved the state of the art ranking performance in IR applications (Yates et al., 2021). Transformer networks such as BERT (Devlin et al., 2019) consistently show better ranking effectiveness at the cost of a higher computational cost and latency (Nogueira and Cho, 2019).\nTo rank k documents, the ranker is called k times with an input of the form (query, document), where the query is the same, but the document is different. Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers. Such approaches pre-compute document representations to improve latency significantly. Next, at runtime the model computes\nthe query representation (once), retrieves the precomputed document representations, and is only required to run a low-complexity interaction block k times to produce the final ranking score.\nPrecomputing document representations has shown to significantly reduce latency and at the same time retain comparable scores to BERT models (Gao et al., 2020b). However, this does not account for additional storage and/or network fetching latency costs. The representations typically consist of the contextual token embeddings in a transformer model, which consume orders of magnitude more storage than storing the entire corpus search index (cf. § 5.1).\nIn this work, we propose Succinct Document Representation (SDR), a general scheme for compressing document representations. It enables lateinteraction rankers to be efficient in both latency and storage, while maintaining high ranking quality. SDR is suitable for any ranking scheme that uses contextual embeddings, and achieves extreme compression ratios (2-3 orders of magnitude) with little to no impact on retrieval accuracy. SDR consists of two major components: (1) embedding dimension reduction using an autoencoder with side information and (2) distribution-optimized quantization of the reduced-dimension vectors.\nIn SDR, the autoencoder consists of two subnetworks: an encoder that reduces the vector’s dimensions and a decoder that reconstructs the compressed vector. The encoder’s output dimension represents the tradeoff between reconstruction fidelity and storage requirements. To improve the compression-reliability tradeoff, we leverage static token embeddings, which are available given that the ranker has access to the document text (as it needs to render it to the user), and are computationally cheap to obtain. We feed these embeddings to both the encoder and decoder as side information, allowing the autoencoder to focus more on storing “just the context” of a token, and less on its original meaning that is available in the static embeddings. Ablation tests verify that adding the static vectors significantly improves the compression rates for the same ranker accuracy.\nSince data storage is measured in bits rather than floating-point numbers, SDR uses quantization techniques to reduce storage size further. Given that it is hard to evaluate the amount of information in each of the encoder’s output dimensions, we perform a randomized Hadamard transform on the\nvectors, resulting in (1) evenly spread information across all coordinates and (2) transformed vectors that follow a Gaussian-like distribution. We utilize known quantization techniques to represent these vectors using a small number of bits, controlling for the amount of quantization distortion.\nExisting late-interaction schemes either ignore the storage overhead, or consider basic compression techniques, such as a simple (1 layer) autoencoder and float16 quantization. However, this is insufficient to reach reasonable storage size (MacAvaney et al., 2020); furthermore, this results in an increased fetching latency. For the MSMARCO dataset, we used a distilled model with a reduced vector width (Hofstätter et al., 2020a) as the initialized pre-trained weights for the late-interaction model. On top of this, we used a non-linear autoencoder consisting of 2 dense layers followed by float16 quantization, a natural extension of MacAvaney et al. (2020). This baseline achieves compression rates of 30x with no noticeable reduction in retrieval accuracy (measured with the official MRR@10 metric). In comparison with this strong baseline, our SDR scheme achieves an additional compression rate of between 4x to 11.6x with the same ranking quality, reducing document representation size to the same order of magnitude as the retrieved text itself. In Figure 1 we include a high-level presentation of the baseline, a variant of our method with float16 quantization, and our full method. For the TREC CAR dataset, for which we do not have a reduced-width baseline, we used a BERT model as the pre-trained weights for the late-interaction model. The baseline with 2 dense layers and float16 quantization achieves a 30x compression rates with a slight reduction in accuracy. The SDR scheme reaches the same quality while improving compression rate by another 7.7x.\nWe make the following contributions:\n• We propose the Succinct Document Representation (SDR) scheme for compressing the document representations required for fast Transformer-based rankers. The scheme is based on a specialized autoencoder architecture and subsequent quantization.\n• For the MSMARCO passage retrieval task, SDR shows compression ratios of 121x with no noticeable decrease in ranking performance. Compared to existing approaches for producing compressed representations, our method attains better compression rates (between 4x and 11.6x) for the\nsame ranking quality. Similar results are demonstrated on the TREC CAR dataset.\n• We provide a thorough analysis of the SDR system, showing that the contribution of each of the components to the compression-ranking effectiveness is significant."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Late-interaction models. The idea of running several transformer layers for the document and the query independently, and then combining them in the last transformer layers, was developed concurrently by multiple teams: PreTTR (MacAvaney et al., 2020), EARL (Gao et al., 2020a), DC-BERT (Nie et al., 2020), DiPair (Chen et al., 2020), and the Deformer (Cao et al., 2020). These works show that only a few layers where the query and document interact are sufficient to achieve results close to the performance of a full BERT ranker at a fraction of the runtime cost. For each document, the contextual token vectors are stored in a cache and retrieved during the document ranking phase. This impacts both storage cost as well as latency cost of fetching these vectors during the ranking phase. MORES (Gao et al., 2020b), extends lateinteraction models, where in the last interaction layers only the query attends to the document (and not vice-versa). As document are typically much longer, this results in additional performance improvements with similar storage requirements. ColBERT (Khattab and Zaharia, 2020) is another variant that runs all transformer layers independently for the query and the document, and the interaction between the final vectors is done through a sumof-max operator. A similar work, the TransformerKernel (TK) (Hofstätter et al., 2020b), has an interaction block based on a low-complexity kernel operation. Both ColBERT and TK result in models with lower runtime latency at the expense of a drop in ranking quality. However, the storage requirements for both approaches are still significant.\nSome of the works above acknowledge the issue of storing the precomputed document representations and proposed partial solutions. In ColBERT (Khattab and Zaharia, 2020), the authors proposed to reduce the dimension of the final token embedding using a linear layer. However, even moderate compression ratios caused a large drop in ranking quality. In the PreTTR model (MacAvaney et al., 2020), it was proposed to address the storage cost by using a standard auto-encoder architecture\nand the float16 format instead of float32. Again, the ranking quality drops even with moderate compression ratios (they measured up to 12x).\nSeveral other works (Guu et al., 2020; Karpukhin et al., 2020; Xiong et al., 2021; Qu et al., 2020; Lu et al., 2020) proposed representing the queries and documents as vectors (as opposed to a vector per token), and using dot product as the interaction block. While this ranker architecture approach is simple (and can also be used for the retrieval step via an approximate nearest neighbor search such as FAISS (Johnson et al., 2017) or ScaNN (Guo et al., 2020)), the overall ranking quality is generally lower compared to methods that employ a query-document cross-attention interaction.\nCompressed embeddings. Our work reduces storage requirements by reducing the number of bits per floating-point value. Quantization gained attention and success in reducing the size of neural network parameters (Gupta et al., 2015; Essam et al., 2017; Wang et al., 2018; Wu et al., 2018) and distributed learning communication costs (Suresh et al., 2017; Alistarh et al., 2017; Konečnỳ and Richtárik, 2018; Vargaftik et al., 2021b). Specifically, compressing word embeddings has been studied as an independent goal. May et al. (2019) studied the effect of quantized word embeddings on downstream applications and proposed a metric for quantifying this effect with simple linear models that operate on the word embeddings directly. As our work is concerned with compressing contextual embeddings, these methods do not apply since the set of possible embeddings values is not bounded by the vocabulary size. Nevertheless, as in (May et al., 2019), we also observe that simple quantization schemes are quite effective. Our work uses recent advances in this area to further reduce storage requirements for document representation, which, to the best of our knowledge, were not previously attempted in this context."
+    }, {
+      "heading" : "3 Succinct Document Representation (SDR)",
+      "text" : "Our work is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020), which separates BERT into L independent layers for the documents and the queries, and T − L interleaving layers, where T is the total number of layers in the original model, e.g., 12 for BERTBase. Naively storing all documents embeddings\nconsumes a huge amount of storage with a total of m · h · 4 bytes per document, where m is the average number of tokens per document and h is the model hidden size (384 for the distilled version and 768 for the BERT version). For MSMARCO, with 8.8M documents and m=76.9, it leads to a high storage cost of over a terabyte, which is not affordable except in large production systems.\nOur compression scheme for the document representations consists of two sequential steps, (i) dimensionality reduction and (ii) block-wise quantization, described in § 3.1 and § 3.2 respectively."
+    }, {
+      "heading" : "3.1 Dimensionality Reduction using AutoEncoders with Side Information (AESI)",
+      "text" : "To compress document representations, we reduce the dimensionality of token representations (i.e., the output of BERT’s L-th layer) using an autoencoder. Standard autoencoder architectures typically consist of a neural network split into an encoder and a decoder: the encoder projects the input vector into a lower-dimension vector, which is then reconstructed back using the decoder.\nOur architecture, AESI, extends the standard autoencoder by using the document’s text as side information to both the encoder and decoder. Such an approach is possible since, no matter how the document scores are computed, re-ranking systems have access to the document’s text in order to render it back to the user. In the rest of this section, we add the precise details of the AESI architecture.\nSide Information. In line with our observation that the ranker has access to the document’s raw text, we propose utilizing the token embedding information, which is computed by the embedding layer used in BERT’s architecture. The token embeddings encode rich semantic information about the token itself; however, they do not fully capture the context in which they occur; hence, we refer to them as static embeddings. For example, through token embeddings, we cannot disambiguate between the different meanings of the token bank, which can refer to either a geographical location (e.g., “river bank”) or a financial institution, depending on the context.\nStatic embeddings are key for upper BERT layers, which learn the contextual representation of tokens via the self-attention mechanism. We use the static embeddings as side information to both the encoder and decoder parts of the autoencoder.\nThis allows the model to focus on encoding the distilled context, and less on the token information since it is already provided to the decoder directly.\nAESI Approach. For a token whose representation we wish to compress, our approach proceeds as follows. We take the L-th layer’s output contextual representation of the token together with its static embedding and feed both inputs to the autoencoder. The information to be compressed (and reconstructed) is the contextual embedding, and the side-information, which aids in the compression task, is the static embedding. The decoder takes the encoder output, along with the static embedding, and attempts to reconstruct the contextual embedding. Figure 2 shows the AESI architecture.\nAESI approach has two parameters that are determined empirically. First, the L-th transformer layer of the contextual representation provided as input, which has a direct impact on latency1. Second, the size of the encoder’s output directly impacts the compression rate and thus storage costs.\nEncoding starts by concatenating the input vector (i.e., the output of layer L, the vector we compress) and the static token embedding (i.e., the output of BERT’s embedding layer), and then passes the concatenated vector through an encoder network, which outputs a c-dimensional encoded vector. Decoding starts by concatenating the encoded vector with the static token embedding, then passes the concatenated vector through a decoder layer, which reconstructs the input vector. Specifically, we use a two-layer dense network for both the encoder and the decoder, which can be written using the following formula:\ne = E(v, u) := W e2 · ( gelu ( W e1 (v;u) )) (1)\nv′ = D(e, u) := W d2 · ( gelu ( W d1 (e;u) )) (2)\nwhere v ∈ Rh is the contextualized token embedding (the output of the L-th layer), u ∈ Rh is the static token embedding (the output of the embedding layer, which is the input to BERT’s layer 0 and includes token position embeddings and type embeddings), and u; v means concatenation of these vectors. W e1 ∈ Ri×2h, W e2 ∈ Rc×i, W d1 ∈ Ri×(c+h), W d2 ∈ Rh×i are trainable parameters. h is the dimension of token embeddings (e.g., 384), i is the intermediate autoencoder size, and c is the dimension of the projected (encoded) vector. gelu(·) is an non-linear activation function\n1A ranker has to compute layers L+ 1 onward online.\n(Hendrycks and Gimpel, 2016). Additional autoencoder variations are explored in § 5.3."
+    }, {
+      "heading" : "3.2 Quantization",
+      "text" : "Storing the compressed contextual representations in a naive way consumes 32 bits (float32) per coordinate per token, which is still costly. To further reduce storage overhead, we propose to apply a quantization technique, which uses a predetermined B bits per coordinate. However, different coordinates and different tokens have different importance and possibly also different scales, so using the same number of bits and same quantization threshold for all of them increases the quantization error.\nTo remediate this issue, we follow the DRIVE approach (Vargaftik et al., 2021a), which uses a randomized Hadamard transform prior to quantization. Loosely speaking, this shuffles the information across all coordinates. Furthermore, each of the coordinates is guaranteed to follow Gaussianlike distribution, for which quantization boundaries can be computed optimally. For the sake of brevity, the full description of the quantization algorithm is deferred to Appendix A.\nEfficiently applying the Hadamard transform requires the size of the input to be a power of two. In addition, the input dimension should be large enough (specifically, larger than the output of AESI) so that information can be shuffled effectively. Therefore, we concatenate the AESI vectors of all tokens from a single document, then segment it to a larger block size (we use 128), padding the last block with zeros when necessary. The padding slightly increases space requirements and is consid-\nered when evaluating the compression efficiency."
+    }, {
+      "heading" : "4 Experimental Settings",
+      "text" : "In this section we describe the datasets used to evaluate the competing approaches for ranking documents given a query. Next, we describe the baseline and the different configurations of SDR with emphasis on how we measure the compression ratio."
+    }, {
+      "heading" : "4.1 Tasks and Datasets",
+      "text" : "To evaluate the effectiveness of our proposed approach (SDR) and the competing baseline, we consider two information retrieval datasets, each with different characteristics. MSMARCO passage re-ranking In this task (Nguyen et al., 2016), we are given a query and a list of 1,000 passages (retrieved via BM25), and the task is to rerank the passages according to their relevance to the query. The corpus consists of 8.8M passages, downloaded from the web. We consider two query sets:\n(1) MSMARCO-DEV, the development set for the MSMARCO passage reranking task, which consists of 6,980 queries. On average, each query has a single relevant passage, and other passages are not annotated. The models are measured using the mean reciprocal rank metric (MRR@10).\n(2) TREC 2019 DL Track. Here we consider the test queries from TREC 2019 DL Track passage reranking dataset. Unlike the above, there are many passages annotated for each query, and there are graded relevance labels (instead of binary labels). This allows us to use the more informative nDCG@10 metric. Due to the excessive annotation overhead, this dataset consists of just 200 queries, so results are noisier compared to MSMARCO-DEV.\nTREC Complex Answer Retrieval (CAR) is a dataset (Dietz et al., 2017) curated from Wikipedia, and consists of 30M passages, making storage requirements a bigger challenge compared to the MSMARCO task. The test query set consists of 2,254 queries with an average of 2.74 positive passages per query. We use the MAP@1K official metric.\nFor both datasets, in addition to the quality metrics, we also measure the Compression Ratio (CR) as the amount of storage required to store the token embeddings when compared to the baseline model. E.g., CR = 10 implies storage size that is one tenth of the baseline vectors.\n4.2 Baseline – BERTSPLIT Our algorithm is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020a; Nie et al., 2020; Chen et al., 2020; Cao et al., 2020). We created a model based on this architecture, which we name BERTSPLIT, consisting of 10 layers that are computed independently for the query and the document with an additional two lateinteraction layers that are executed jointly. For MSMARCO, we initialized the model from reduced width pre-trained weights2 and fine-tuned it using knowledge distillation from an ensemble of BERTLarge, BERT-Base, and ALBERT-Large (Hofstätter et al., 2020b) on the MSMARCO small training dataset, which consists of almost 40M tuples of query, a relevant document, and an irrelevant document. For CAR, the model is initialized from pre-trained BERT-base model and trained on 50M samples curated by Nogueira and Cho (2019).3"
+    }, {
+      "heading" : "4.3 SDR Configuration and Training",
+      "text" : "We trained autoencoder variants on a random subset of 500k documents to reduce training time. We incorporate the quantization overhead into the computation of the compression ratios, including metadata and the overhead of padding (cf. Appendix A).\nIt the following sections, we denote the SDR variants as “AESI-{c}-{B}b” where {c} is replaced with the width of the encoded vector and {B} is replaced with the number of bits in the quantization scheme. When discussing AESI with no quantization, we simply write “AESI-{c}”."
+    }, {
+      "heading" : "4.4 End to end Latency Measurement",
+      "text" : "To measure end to end latency, we configured an OpenSearch4 cluster in AWS. We used default “production” configurations, with 3 r6g.large datanode machines; disk space was set to 0.5TB. For ranking, we used a single g4dn.xlarge machine, featuring a single T4 GPU instance. This makes the cost of these two components similar."
+    }, {
+      "heading" : "5 Evaluation",
+      "text" : "In this section, we present the end to end latency results (§ 5.1), show compression ratios and quality\n2https://huggingface.co/cross-encoder/ms-marcoMiniLM-L-12-v2\n3The checkpoints will be released with the published paper. 4https://aws.amazon.com/opensearch-service/. OpenSearch is a successor to Elasticsearch and based on Lucene.\ntradeoff of the SDR scheme (§ 5.2). We then examine how the proposed autoencoder (§ 5.3) compares with other baselines and present additional measurements (§ 5.4)."
+    }, {
+      "heading" : "5.1 End to End Latency Evaluation",
+      "text" : "Table 1 (top) shows the latency benefits of SDR on the MSMARCO dataset, assuming document embeddings are stored in the OpenSearch retrieval system and 1k documents are retrieved per query. The Distilbert model has the highest quality and smallest index size (since it is only executed online). However, ranking latency is prohibitively expensive. As a baseline, we use a late interaction model, a two-layer autoencoder with code dimension 24 and float16 quantization, denoted Late+AE-24. For this baseline, the ranking latency is significantly reduced at a cost in terms of quality. However, the document representation is large, causing retrieval and overall latency to increase to 0.7 and 1.22 seconds, respectively. SDR, with a dimension of 16 and 6-bits quantization, reaches the same quality as the baseline while striking a better balance between retrieval and ranking latency, reaching overall latency of 1.1 seconds. The index size is also significantly reduced compared to the baseline compression algorithm.\nWe also consider variants of the algorithms where the documents are pre-tokenized, and the tokenization output is retrieved instead of computing at runtime (marked as +tok in the table). This further improves the ranking latency at the expense of a slight increase in index size. Note that the baseline does not use the raw text and therefore does not benefit from precomputed tokens.\nTable 1 (bottom) shows the latency results on the CAR dataset. Here too, the BERT baseline has the highest ranking quality, at the cost of prohibitive latency. The late interaction variants we consider have the same configuration as in the MSMARCO case, where the baseline uses 24 features (with float16 quantization) and SDR uses 16 features (with 6 bits DRIVE quantization). Unlike in the MSMARCO case, the quality (i.e., MAP@1k score) of these two options is not similar. This makes SDR better than the baseline in latency, index size, as well as quality (by a large margin of over 14%).\nIn Appendix D we explore additional configurations and show that the baseline with 52 features reaches the same quality as SDR-16-6b. However, we do not measure end-to-end latency for this case due to the excessive storage size and indexing time. Note that using 52 features for the baseline is expected to have a negative impact on retrieval latency, making the benefits of SDR even more pronounced."
+    }, {
+      "heading" : "5.2 Compression Rate and Quality Tradeoff",
+      "text" : "Table 2 shows the results on the MSMARCO query sets for SDR and its compression ratio against storing contextual token embeddings uncompressed. In\nterms of compression ratio, it can be seen that AESI allows us to massively reduce storage requirements both with and without quantization.\nAESI-16-6b reduces storage requirements by 121x, while at the same time showing no significant ranking performance drop. Using AESI-16-6b, a document’s embedding can be stored with only 947 bytes and the entire MSMARCO collection can be stored within 8.6GB. There are several advantages of fitting the entire collection’s representation into the main memory of the hosting machine, allowing for fast access, further fine-tuning, etc. If further compression rates are required, AESI-8-5b uses just 5 bytes per token, reaching a compression rate of 277x and 487 bytes per document on average. At this level of compression, the entire MSMARCO corpus fits in 3.8GB. The MRR@10 drop is noticeable (0.0119) but still quite low. Finally, for TREC19-DL, the impact of compressing token embeddings is less evident. Only in the most extreme cases such as AESI-4-4b we see a significant drop in nDCG@10 performance. These results demonstrate that the performance drop is very small, showing the effectiveness of our method."
+    }, {
+      "heading" : "5.3 Autoencoder Evaluation",
+      "text" : "To better understand the impact of the autoencoder, we present MRR@10 results as a function of autoencoder dimensions (i.e., number of floats stored per token) and with the different autoencoder configurations. In addition to the 2-layer AESI architecture we described in § 3.1 (AESI-2L), we consider the following variations:\nAutoEncoder with 2 Layers (AE-2L). Standard 2-layer autoencoder with gelu activation. This is the same as AESI, only without the side information. AutoEncoder with 1 Layer (AE-1L). Standard autoencoder with a single dense layer in the encoder and decoder. AESI with 1 Layer (AESI-1L). AESI with a single dense encoder and decoder layer. DECoder-only AESI (AESI-DEC-2L). Provides side information to the decoder but not the encoder.\n5A relative t-test compares systems on the same queries, making it easier to distinguish subtle differences. An independent t-test corresponds to an external observer that only sees results on one system at a time. According to the latter, most of the cases are indistinguishable, except for AESI-{4, 8}-4b and AESI-4-5b.\nTo reduce measurement overhead, we ran the experiment only over the MSMARCO dataset. In addition, we took only the top 25 BERTSPLIT passages for each query, denoted MSMARCO-DEV-25, which has a negligible impact on the results. Figure 3 shows the results for the different autoencoder configurations. Providing the side information to the autoencoder proves to be very effective in reducing storage costs, especially when the encoded vector size is small. A 2-layer encoder/decoder model, as expected, is more effective than a singlelayer model. The gap is especially large when using side information, showing that the interaction between the encoded vector and the static token embeddings is highly nonlinear. Finally, providing the static embeddings only to the decoder is slightly inferior to providing it also to the encoder."
+    }, {
+      "heading" : "5.4 Additional Measurements",
+      "text" : "Quantization Techniques we compare the quantization technique we use to several other techniques, including Deterministic Rounding (Gersho and Gray, 1992), Stochastic Rounding (Connolly et al., 2021), and Subtractive Dithering (Roberts, 1962; Gray and Stockham, 1993). Due to lack of space, the results appear in Appendix B. We found that a randomized Hadamard transform improves quality (assuming similar bit rate), especially in the low-bits regime. Using a quantization technique fitted to the Gaussian distribution of post randomized Hadamard transform data further improve quality, making the DRIVE quantization superior to other quantization techniques in our case.\nOur scheme uses a fixed number of bits per coordinate, which is essential for performance. How-\never, variable-rate compression can further reduce storage. We used rate-distortion theory (from the information theory field) to upper bound the benefits of such techniques by 11%, which does not seem to justify the added system complexity (cf. Appendix B).\nIntrinsic Evaluation of AESI-Encoded Vectors To better understand the impact of side information, we measure the error rate between an input vector and a reconstructed vector (i.e., after encoding and decoding) for different input vectors. As expected, in practically all cases, adding the side information reduces error rate compared to a 2-layer autoencoder (AE-2L) with the same code dimension.\nIn the information retrieval field, the document frequency of a token is known to negatively correlated with the token’s importance. We found that the error rate for AE-2L decreases with frequency, while the error rate for AESI increases with frequency. This shows that the AESI scheme has a better focus on tokens that are important for ranking. A possible explanation for this phenomena is that the static embeddings for infrequent tokens is more informative (i.e., more helpful as side information) compared to static embeddings for frequent tokens (e.g., ‘the’). We also found AESI excels more in compressing nouns, verbs, and adjectives, while AE-2L excels more in compressing punctuations, determiners, and adpositions. Again, this demonstrate that the static embeddings is most helpful in encoding tokens that are crucial for ranking. The details of this evaluation appear in Appendix C."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we proposed a system called SDR to solve the storage cost and latency overhead of existing late-interaction models. The SDR scheme uses a novel autoencoder architecture that uses static token embeddings as side information to improve encoding quality. In addition, we explored different quantization techniques and showed that the recently proposed DRIVE performs well in our use case and presented extensive experimentation. Overall, the SDR scheme reduces pre-computed document representation size by 4x–11.6x compared to a baseline that uses existing approaches.\nIn future work, we plan to continue investigating means to reduce pre-computed document representation size.We believe that additional analysis of BERT’s vector and their interaction with the context would be fundamental in such an advancement."
+    }, {
+      "heading" : "A DRIVE Quantization",
+      "text" : "In this Appendix, we include an overview of the quantization method we adapted to our use case. The algorithm is summarized in Algorithm 1, for full details see Vargaftik et al., 2021b,a.\nWe start by introducing the following definitions:\nDefinition 1 (Horadam, 2012). A normalized Walsh-Hadamard matrix, H2k ∈ {+1,−1}2 k×2k , is recursively defined as\nH1 = 1; H2k = 1√ 2 ( H2k−1 H2k−1 H2k−1 −H2k−1 ) .\nDefinition 2 (Ailon and Chazelle, 2006). A randomized Hadamard transform, H, of a vector, x ∈ R2k , is defined as H(x) := H2kDx, where H2k is a normazlized Walsh-Hadmard matrix, and D is a diagonal matrix whose diagonal entries are i.i.d. Rademacher random variables (i.e., taken uniformly from {+1,−1}). While H is randomized and thus defines a distribution, when D is known, we abuse the notation and define the inverse Hadamard transform as H−1(x) := (H2kD)−1x = DH2kx.\nThe quantization operates as follows. Given a vector, denoted x ∈ Rd, we first precondition it using a randomized Hadamard transform,H, and normalize by multiplying by √ d/‖x‖2. There are several desired outcomes of this transform6. First, the dynamic range of the values is reduced (measured, for instance, by the ratio of the `∞ and the `2 norms). Loosely speaking, we can think of the transform as spreading the vector’s information evenly among its coordinates. Second, regardless of the distribution of the input vector, each coordinate of the transformed vector will have a distribution that is close to the standard Gaussian distribution (as an outcome of the central limit theorem). After the transform, we perform scalar quantization that is optimized for the N (0, 1) distribution, using K-means (also known as Max-Lloyd in the quantization literature (Gersho and Gray, 1992)), with K = 2B . The vector X of cluster assignments together with the original vector’s `2 norm can now be stored as the compressed representation of the original vector.\nTo retrieve an estimate of the original vector, we perform the same steps in reverse. We replace\n6We also note that the transform has the advantage of having a vectorized, in-place, O(d log d)-time implementation (Fino and Algazi, 1976).\nAlgorithm 1 B-bits Vector Quantization (DRIVE) (Vargaftik et al., 2021a)\nH - A randomized Hadamard transform c - K-Means centroids over the normal distribution, where K = 2B\nQuantize(x ∈ Rd): y := √ d\n‖x‖2 H(x)\nCompute Xi = argmink |yi − ck|: X ∈ {0, . . . , 2B − 1}d return X , ‖x‖2\nDequantize(X , ‖x‖2): Compute ŷi = cXi : ŷ ∈ {c0, . . . ,c2B−1}d return x̂ = H−1 ( ‖x‖2√ d ŷ )\nthe vector of cluster assignments X with a vector ŷ containing each assigned cluster’s centroid, denormalize, and then apply the inverse randomized Hadamard transform, H−1. To avoid encoding D directly, we recreate it using shared randomness (Newman, 1991) (e.g., a shared pseudorandom number generator seeded from a hash of the vector’s text).\nBlock-wise Quantization. The AESI encoder reduces the dimension of the contextual embeddings from hundreds (e.g., 384) to a much smaller number (e.g., 12). On the other hand, the randomized Hadamard transform’s preconditioning effect works best in higher dimensions (Ailon and Chazelle, 2006). In order to resolve this conflict, we first concatenate the reduced-dimension vectors of all the tokens from a single document. We then apply the Hadamard transform with a larger block size (e.g., 128) on the concatenated vector, blockby-block (padding the last block with zeros when necessary). When evaluating the compression efficiency, we consider the overhead incurred from (a) the need to store the vectors’ `2 norms and (b) the padding of the final Hadamard block in a concatenated vector. Balancing these factors should be done per use case. We empirically measured the padding overhead (for a block size of 128) for AESI 4, 8, 12, and 16 to be 20.1%, 9.7%, 6.7%, and 4.5% for the MSMARCO dataset and 41%, 18.5%, 12.5%, and 8.4% for the CAR dataset."
+    }, {
+      "heading" : "B Quantization Evaluation",
+      "text" : "To study the impact of quantization, we fix AESI16 as our baseline and measure how different quantization strategies and number of bits affect the MRR@10 score. Note that we do not measure quantization over the baseline BERTSPLIT since it can only achieve a compression ratio of up to 32x per coordinate (using 1 bit per coordinate). In addition to DRIVE (Appendix A, Algorithm 1), we consider the following quantization strategies:\nDeterministic Rounding (DR) (Gersho and Gray, 1992). Maps the input coordinates into the [0, 2B−1] range using min-max normalization and rounds to the nearest integer. Stochastic Rounding (SR) (Barnes et al., 1951; Connolly et al., 2021). Normalizes as before using min-max normalization, and additionally adds a uniform dither noise in (−0.5, 0.5) and then rounds to the nearest integer. This provides an unbiased estimate of each coordinate. Subtractive Dithering (SD) (Roberts, 1962; Gray and Stockham, 1993). Same as SR, only now before denormalization, instead of just using the values in {0, . . . , 2B − 1}, we first subtract the original dither noise, which we assume can be regenerated using shared randomness. This is an unbiased estimator with reduced variance. Hadamard Variants (H-DR, H-SR, and H-SD). These variants correspond to the previous methods; only they are preceded by a randomized Hadamard transform. DRIVE with Bias Correction (DRIVE-BC) (Vargaftik et al., 2021b, Appendix C.3). This variant of DRIVE optimizes for lower bias over the mean squared error (MSE) by multiplying the dequantization result in Algorithm 1 by a bias correction scalar: ‖x‖22 / ‖ŷ‖ 2 2 .\nFigure 4 shows the results for the different quantization methods. First, we observe that the Hadamard variants perform better than their nonHadamard counterparts. Second, we see that DRIVE performs better than all other schemes. The differences are more pronounced in the low-bit regime, where the choice of quantization scheme has a drastic impact on quality. We also note that unlike in other use cases, such as distributed mean estimation, bias correction is inappropriate here and should not be performed at the cost of increased mean squared error (MSE). This conclusion fol-\nlows by observing that DRIVE and the deterministic rounding methods (DR, H-DR) are respectively better than DRIVE-BC and the stochastic rounding methods (SR, H-SR). We add that the subtractive dithering methods (SD, H-SD), expectedly, work the same or better than their deterministic counterparts since they produce a similar MSE while also being unbiased.\nThe current quantization scheme requires padding to full 128 blocks. For AESI with a small code size, the padding overhead may reach 10% – 20% percent. In addition, we send a normalization value per 128-block, which we currently send as a float32 value, adding 4% – 5% additional overhead. Padding can be reduced by treating the last 128-block separately, e.g., applying a method that does not require Hadamard transform. Normalization overhead can be reduced, e.g., by sending normalization factors as float16 instead of full float32. However, such solutions complicate the implementation while providing limited storage benefits, hence, they were not explored in the context of this paper.\nBeyond Scalar Quantization. Scalar quantization using a fixed number of bits is a suboptimal technique in general since it does not allocate fewer bits for more frequent cases. Entropy coding(Gersho and Gray, 1992) can do better in this aspect. However, this improvement seems may not justify the added complexity: For the case of 6-bit quantization, the entropy of the quantization indices turned out to be 5.71bit, indicating that the compression gain is limited to about 5% in this case (even before accounting for the overhead incurred from the entropy coding algorithm itself). Additional directions include quantizing multiple values together (vector quantization), as well as designing the quantizer with entropy consideration in mind (entropy-constrained vector quantization). In order to estimate the potential gains of all these methods combined, we turn to information theory, and rate-distortion theory in particular, which studies the optimal tradeoffs between distortion and compression rate (Cover and Thomas, 2006). For a Gaussian source, which is a reasonable approximation of the vectors that are compressed in our case (following the randomized Hadamard transform), it is known that the optimal (lossy) compression rate is given by 12 log2( 1 MSE ), where MSE is the mean squared error of the compressed source. We computed the optimal rate that is achievable for the\nMSE that our system achieved for 6 bits, and the optimal rate was 5.35bit, indicating a potential gain of 11%. Given these results, and also given that for other bit rates the results were similar, we conclude that further quantization improvements have limited gain, which most likely does not justify the added system complexity.\nC Intrinsic Evaluation of AESI-Encoded Vectors\nIn the body of the paper, we showed the effectiveness in ranking and utility in compression rates of AESI over AE architectures. However, such evaluations do not capture the encoded information at the token-level. In this intrinsic evaluation we try to discern when and why adding the static embedding as side information contributes to better capturing the token meaning.\nWe study the effectiveness of different autoencoder configurations in reconstructing back the original token vector, as measured through the MSE between the original vector and the reconstructed vector:\nMSE (v,D (E(v, u), u)) ,\nwhere v is a contextualized vector (BERTSPLIT output at layer 10), u is the static embedding, and the encoder E(v, u) and the decoder D(e, u) are as defined in § 3.1. High MSE scores indicate the inability of the autoencoder to encode the original vector’s information.\nDocument Frequency: One way to assess the importance of a document w.r.t. a query is through\nthe inverse document frequency of query tokens, typically measured through TF-IDF or BM25 schemes (Robertson and Zaragoza, 2009). In principle, the more infrequent a query token is in a document collection, the higher the ranking of a document containing that token will be. Tokens with (very) high frequencies are typically stop words or punctuation symbols, which have lower importance when determining the query-document relevance.\nBased on this premise, we study how MSE varies across token frequency. We selected a random sample of 256k documents from MSMARCO, tokenized them, and run them through BERTSPLIT to get 20M contextualized token representations. Then, for each token we measured their document frequency as DF (t) = log10(|{d ∈ D : t ∈ d}|/|D|) (where D is our document collection), and in Figure 5 we plot the average MSE against the rounded DF scores. From this experiment, we make the following observations.\nFirst, on all encoded width configurations, our approach, AESI, consistently achieves lower MSE compared to the AE architecture (for all DF values). Lower MSE correlates to a better ranking quality, as shown in § 5.3. Furthermore, for tokens with low DF, adding the static side information during the training of AESI for compression provides a huge advantage, which shrinks when the token is present in many documents in the collection.\nSecond, on the end spectrum of high-frequency tokens, we note a downwards trend for AE and\nan upwards trend for AESI, especially for DF ∈ [−1, 0]. The MSE decrease for AE is expected since the training data contains more frequent tokens. The increase for AESI can be explained given that in this frequency range, we deal with tokens that are function words (e.g., ‘the’) whose role is more in tying up content within a sentence and has less standalone meaning. In this case, static embeddings cannot capture context, which reduces the contribution provided by the side information."
+    }, {
+      "heading" : "D Compression Results on TREC CAR",
+      "text" : "In Table 3 we show MAP@1K results on the TREC CAR dataset for a varying number of features. We compare the baseline – an autoencoder with 2 layers and float16 quantization – to SDR scheme, with the same number of features and DRIVE 6bits quantization. The SDR scheme is able to provide solid results even for 3 features with 0.266 (as a comparison, BM25 using Answerini system (Yang et al., 2017) reaches 15.6 MAP@1K score). With the baseline method, similar results are achieved only with 36 features. With 16 features (the configuration we used for Table 1), SDR reaches a score of 0.311, compared to 0.312 for the baseline with 52 features. Finally, with the largest size of features we tested, 64, the baseline reached a MAP@1K score of 0.313, similar to the score achieved by SDR-20 (0.315), demonstrating the effectiveness of the static embeddings as side information."
+    }, {
+      "heading" : "E Late Interaction Model Illustration",
+      "text" : "In Figure 6 we illustrate the architecture of the late interaction model vs. the standard BERT model. In standard BERT, the query and documents are concatenated before the first BERT layer. Therefore, if K documents are ranked, all BERT transformers layers are applied K times. In the late interaction architecture, the bottom L layers (e.g., 10 transformer layers shown in the figure) are executed independently for the query and the documents. The document representation is precomputed and stored in the index. During online execution, the query representation is computed once, and the document representations are retrieved from the index. Only the interaction block (e.g., 2 transformer layers) are executed K times, once for each ranked document."
+    }, {
+      "heading" : "64 0.3137* 0.3222",
+      "text" : ""
+    }, {
+      "heading" : "60 0.3156* 0.3208",
+      "text" : ""
+    }, {
+      "heading" : "56 0.3135* 0.3218",
+      "text" : ""
+    }, {
+      "heading" : "52 0.3127* 0.3207",
+      "text" : ""
+    }, {
+      "heading" : "48 0.3017* 0.32",
+      "text" : ""
+    }, {
+      "heading" : "44 0.2968* 0.32",
+      "text" : ""
+    }, {
+      "heading" : "40 0.2881* 0.3186",
+      "text" : ""
+    }, {
+      "heading" : "36 0.267* 0.3188",
+      "text" : ""
+    }, {
+      "heading" : "32 0.2465* 0.3182",
+      "text" : ""
+    }, {
+      "heading" : "28 0.2316* 0.3166*",
+      "text" : ""
+    }, {
+      "heading" : "24 0.1888* 0.3152*",
+      "text" : ""
+    }, {
+      "heading" : "20 0.1531* 0.3159*",
+      "text" : ""
+    }, {
+      "heading" : "16 0.1197* 0.3119*",
+      "text" : ""
+    }, {
+      "heading" : "12 0.0795* 0.3087*",
+      "text" : ""
+    }, {
+      "heading" : "8 0.057* 0.3007*",
+      "text" : ""
+    }, {
+      "heading" : "6 0.0461* 0.2965*",
+      "text" : ""
+    }, {
+      "heading" : "4 0.045* 0.2797*",
+      "text" : ""
+    }, {
+      "heading" : "3 0.048* 0.2666*",
+      "text" : ""
+    }, {
+      "heading" : "2 0.041* 0.208*",
+      "text" : ""
+    }, {
+      "heading" : "1 0.0618* 0.2*",
+      "text" : ""
+    } ],
+    "references" : [ {
+      "title" : "Approximate nearest neighbors and the fast johnson-lindenstrauss transform",
+      "author" : [ "Nir Ailon", "Bernard Chazelle." ],
+      "venue" : "Proceedings of the Thirty-Eighth Annual ACM Symposium on Theory of Computing, STOC ’06, page 557–563, New York, NY, USA. As-",
+      "citeRegEx" : "Ailon and Chazelle.,? 2006",
+      "shortCiteRegEx" : "Ailon and Chazelle.",
+      "year" : 2006
+    }, {
+      "title" : "QSGD: CommunicationEfficient Sgd via Gradient Quantization and Encoding",
+      "author" : [ "Dan Alistarh", "Demjan Grubic", "Jerry Li", "Ryota Tomioka", "Milan Vojnovic." ],
+      "venue" : "Advances in Neural Information Processing Systems, 30:1709–1720.",
+      "citeRegEx" : "Alistarh et al\\.,? 2017",
+      "shortCiteRegEx" : "Alistarh et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "An electronic digital computor using cold cathode counting tubes for storage",
+      "author" : [ "RCM Barnes", "EH Cooke-Yarborough", "DGA Thomas." ],
+      "venue" : "Electronic Engineering.",
+      "citeRegEx" : "Barnes et al\\.,? 1951",
+      "shortCiteRegEx" : "Barnes et al\\.",
+      "year" : 1951
+    }, {
+      "title" : "DeFormer: Decomposing pre-trained transformers for faster question answering",
+      "author" : [ "Qingqing Cao", "Harsh Trivedi", "Aruna Balasubramanian", "Niranjan Balasubramanian." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Compu-",
+      "citeRegEx" : "Cao et al\\.,? 2020",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "DiPair: Fast and accurate distillation for trillion-scale text matching and pair modeling",
+      "author" : [ "Jiecao Chen", "Liu Yang", "Karthik Raman", "Michael Bendersky", "Jung-Jung Yeh", "Yun Zhou", "Marc Najork", "Danyang Cai", "Ehsan Emadzadeh." ],
+      "venue" : "Findings of the As-",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Stochastic rounding and its probabilistic backward error analysis",
+      "author" : [ "Michael P. Connolly", "Nicholas J. Higham", "Theo Mary." ],
+      "venue" : "SIAM Journal on Scientific Computing, 43(1):A566–A585.",
+      "citeRegEx" : "Connolly et al\\.,? 2021",
+      "shortCiteRegEx" : "Connolly et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Elements of Information Theory (Wiley Series in Telecommunications and Signal Processing)",
+      "author" : [ "Thomas M. Cover", "Joy A. Thomas." ],
+      "venue" : "Wiley-Interscience, USA.",
+      "citeRegEx" : "Cover and Thomas.,? 2006",
+      "shortCiteRegEx" : "Cover and Thomas.",
+      "year" : 2006
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Trec complex answer retrieval overview",
+      "author" : [ "Laura Dietz", "Manisha Verma", "Filip Radlinski", "Nick Craswell." ],
+      "venue" : "TREC.",
+      "citeRegEx" : "Dietz et al\\.,? 2017",
+      "shortCiteRegEx" : "Dietz et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Dynamic point stochastic rounding algorithm for limited precision arithmetic in deep belief network training",
+      "author" : [ "Mohaned Essam", "Tong Boon Tang", "Eric Tatt Wei Ho", "Hsin Chen." ],
+      "venue" : "2017 8th International IEEE/EMBS Conference on Neural Engineer-",
+      "citeRegEx" : "Essam et al\\.,? 2017",
+      "shortCiteRegEx" : "Essam et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Unified matrix treatment of the fast walsh-hadamard transform",
+      "author" : [ "Bernard J. Fino", "V. Ralph Algazi." ],
+      "venue" : "IEEE Transactions on Computers, 25(11):1142– 1146.",
+      "citeRegEx" : "Fino and Algazi.,? 1976",
+      "shortCiteRegEx" : "Fino and Algazi.",
+      "year" : 1976
+    }, {
+      "title" : "Earl: Speedup transformer-based rankers with precomputed representation",
+      "author" : [ "Luyu Gao", "Zhuyun Dai", "Jamie Callan." ],
+      "venue" : "arXiv: Information Retrieval.",
+      "citeRegEx" : "Gao et al\\.,? 2020a",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Modularized transfomer-based ranking framework",
+      "author" : [ "Luyu Gao", "Zhuyun Dai", "Jamie Callan." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 4180–4190.",
+      "citeRegEx" : "Gao et al\\.,? 2020b",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Vector quantization and signal compression",
+      "author" : [ "A. Gersho", "R.M. Gray." ],
+      "venue" : "Kluwer Academic Publishers.",
+      "citeRegEx" : "Gersho and Gray.,? 1992",
+      "shortCiteRegEx" : "Gersho and Gray.",
+      "year" : 1992
+    }, {
+      "title" : "Dithered quantizers",
+      "author" : [ "R.M. Gray", "T.G. Stockham." ],
+      "venue" : "IEEE Transactions on Information Theory, 39(3):805–812.",
+      "citeRegEx" : "Gray and Stockham.,? 1993",
+      "shortCiteRegEx" : "Gray and Stockham.",
+      "year" : 1993
+    }, {
+      "title" : "Accelerating large-scale inference with anisotropic vector quantization",
+      "author" : [ "Ruiqi Guo", "Philip Sun", "Erik Lindgren", "Quan Geng", "David Simcha", "Felix Chern", "Sanjiv Kumar." ],
+      "venue" : "International Conference on Machine Learning.",
+      "citeRegEx" : "Guo et al\\.,? 2020",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep learning with limited numerical precision",
+      "author" : [ "Suyog Gupta", "Ankur Agrawal", "Kailash Gopalakrishnan", "Pritish Narayanan." ],
+      "venue" : "Proceedings of the 32nd International Conference on Machine Learning, volume 37 of Proceedings of Machine",
+      "citeRegEx" : "Gupta et al\\.,? 2015",
+      "shortCiteRegEx" : "Gupta et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Retrieval augmented language model pre-training",
+      "author" : [ "Kelvin Guu", "Kenton Lee", "Zora Tung", "Panupong Pasupat", "Mingwei Chang." ],
+      "venue" : "ICML 2020: 37th International Conference on Machine Learning, volume 1, pages 3929–3938.",
+      "citeRegEx" : "Guu et al\\.,? 2020",
+      "shortCiteRegEx" : "Guu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Gaussian error linear units (gelus)",
+      "author" : [ "Dan Hendrycks", "Kevin Gimpel." ],
+      "venue" : "arXiv preprint arXiv:1606.08415.",
+      "citeRegEx" : "Hendrycks and Gimpel.,? 2016",
+      "shortCiteRegEx" : "Hendrycks and Gimpel.",
+      "year" : 2016
+    }, {
+      "title" : "Improving efficient neural ranking models with cross-architecture knowledge distillation",
+      "author" : [ "Sebastian Hofstätter", "Sophia Althammer", "Michael Schröder", "Mete Sertkan", "Allan Hanbury." ],
+      "venue" : "arXiv preprint arXiv:2010.02666.",
+      "citeRegEx" : "Hofstätter et al\\.,? 2020a",
+      "shortCiteRegEx" : "Hofstätter et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Interpretable & time-budgetconstrained contextualization for re-ranking",
+      "author" : [ "Sebastian Hofstätter", "Markus Zlabinger", "Allan Hanbury." ],
+      "venue" : "ECAI, pages 513–520.",
+      "citeRegEx" : "Hofstätter et al\\.,? 2020b",
+      "shortCiteRegEx" : "Hofstätter et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hadamard Matrices and Their Applications",
+      "author" : [ "Kathy J Horadam." ],
+      "venue" : "Princeton university press.",
+      "citeRegEx" : "Horadam.,? 2012",
+      "shortCiteRegEx" : "Horadam.",
+      "year" : 2012
+    }, {
+      "title" : "Billion-scale similarity search with gpus",
+      "author" : [ "Jeff Johnson", "Matthijs Douze", "Hervé Jégou." ],
+      "venue" : "IEEE Transactions on Big Data.",
+      "citeRegEx" : "Johnson et al\\.,? 2017",
+      "shortCiteRegEx" : "Johnson et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Dense passage retrieval for open-domain question answering",
+      "author" : [ "Vladimir Karpukhin", "Barlas Oguz", "Sewon Min", "Patrick S.H. Lewis", "Ledell Wu", "Sergey Edunov", "Danqi Chen", "Wen tau Yih." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical",
+      "citeRegEx" : "Karpukhin et al\\.,? 2020",
+      "shortCiteRegEx" : "Karpukhin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Colbert: Efficient and effective passage search via contextualized late interaction over bert",
+      "author" : [ "Omar Khattab", "Matei Zaharia." ],
+      "venue" : "Proceedings of the 43rd International ACM SIGIR Conference on Research and Development in Information Retrieval,",
+      "citeRegEx" : "Khattab and Zaharia.,? 2020",
+      "shortCiteRegEx" : "Khattab and Zaharia.",
+      "year" : 2020
+    }, {
+      "title" : "Randomized Distributed Mean Estimation: Accuracy vs",
+      "author" : [ "Jakub Konečnỳ", "Peter Richtárik." ],
+      "venue" : "Communication. Frontiers in Applied Mathematics and Statistics, 4:62.",
+      "citeRegEx" : "Konečnỳ and Richtárik.,? 2018",
+      "shortCiteRegEx" : "Konečnỳ and Richtárik.",
+      "year" : 2018
+    }, {
+      "title" : "Twinbert: Distilling knowledge to twin-structured bert models for efficient retrieval",
+      "author" : [ "Wenhao Lu", "Jian Jiao", "Ruofei Zhang." ],
+      "venue" : "arXiv preprint arXiv:2002.06275.",
+      "citeRegEx" : "Lu et al\\.,? 2020",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Efficient document re-ranking for transformers by precomputing term representations",
+      "author" : [ "Sean MacAvaney", "Franco Maria Nardini", "Raffaele Perego", "Nicola Tonellotto", "Nazli Goharian", "Ophir Frieder." ],
+      "venue" : "Proceedings of the 43rd International ACM",
+      "citeRegEx" : "MacAvaney et al\\.,? 2020",
+      "shortCiteRegEx" : "MacAvaney et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On the Downstream Performance of Compressed Word Embeddings",
+      "author" : [ "Avner May", "Jian Zhang", "Tri Dao", "Christopher Ré." ],
+      "venue" : "Curran Associates Inc., Red Hook, NY, USA.",
+      "citeRegEx" : "May et al\\.,? 2019",
+      "shortCiteRegEx" : "May et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Private vs",
+      "author" : [ "Ilan Newman." ],
+      "venue" : "Common Random Bits in Communication Complexity. Information processing letters, 39(2):67–71.",
+      "citeRegEx" : "Newman.,? 1991",
+      "shortCiteRegEx" : "Newman.",
+      "year" : 1991
+    }, {
+      "title" : "Ms marco: A human generated machine reading comprehension dataset",
+      "author" : [ "Tri Nguyen", "Mir Rosenberg", "Xia Song", "Jianfeng Gao", "Saurabh Tiwary", "Rangan Majumder", "Li Deng." ],
+      "venue" : "CoCo@NIPS.",
+      "citeRegEx" : "Nguyen et al\\.,? 2016",
+      "shortCiteRegEx" : "Nguyen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dc-bert: Decoupling question and document for efficient contextual encoding",
+      "author" : [ "Ping Nie", "Yuyu Zhang", "Xiubo Geng", "Arun Ramamurthy", "Le Song", "Daxin Jiang." ],
+      "venue" : "Proceedings of the 43rd International ACM SIGIR Conference on Research and",
+      "citeRegEx" : "Nie et al\\.,? 2020",
+      "shortCiteRegEx" : "Nie et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Passage re-ranking with BERT",
+      "author" : [ "Rodrigo Nogueira", "Kyunghyun Cho." ],
+      "venue" : "CoRR, abs/1901.04085.",
+      "citeRegEx" : "Nogueira and Cho.,? 2019",
+      "shortCiteRegEx" : "Nogueira and Cho.",
+      "year" : 2019
+    }, {
+      "title" : "Passage re-ranking with bert",
+      "author" : [ "Rodrigo Nogueira", "Kyunghyun Cho." ],
+      "venue" : "arXiv: Information Retrieval.",
+      "citeRegEx" : "Nogueira and Cho.,? 2019",
+      "shortCiteRegEx" : "Nogueira and Cho.",
+      "year" : 2019
+    }, {
+      "title" : "Rocketqa: An optimized training approach to dense passage retrieval for open-domain question answering",
+      "author" : [ "Yingqi Qu", "Yuchen Ding", "Jing Liu", "Kai Liu", "Ruiyang Ren", "Xin Zhao", "Daxiang Dong", "Hua Wu", "Haifeng Wang." ],
+      "venue" : "arXiv preprint",
+      "citeRegEx" : "Qu et al\\.,? 2020",
+      "shortCiteRegEx" : "Qu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Picture coding using pseudo-random noise",
+      "author" : [ "L. Roberts." ],
+      "venue" : "IRE Transactions on Information Theory, 8(2):145–154.",
+      "citeRegEx" : "Roberts.,? 1962",
+      "shortCiteRegEx" : "Roberts.",
+      "year" : 1962
+    }, {
+      "title" : "The probabilistic relevance framework: BM25 and beyond",
+      "author" : [ "Stephen Robertson", "Hugo Zaragoza." ],
+      "venue" : "Now Publishers Inc.",
+      "citeRegEx" : "Robertson and Zaragoza.,? 2009",
+      "shortCiteRegEx" : "Robertson and Zaragoza.",
+      "year" : 2009
+    }, {
+      "title" : "Distributed Mean Estimation With Limited Communication",
+      "author" : [ "Ananda Theertha Suresh", "X Yu Felix", "Sanjiv Kumar", "H Brendan McMahan." ],
+      "venue" : "International Conference on Machine Learning, pages 3329–3337. PMLR.",
+      "citeRegEx" : "Suresh et al\\.,? 2017",
+      "shortCiteRegEx" : "Suresh et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Communication-efficient federated learning via robust distributed mean estimation",
+      "author" : [ "Shay Vargaftik", "Ran Ben Basat", "Amit Portnoy", "Gal Mendelson", "Yaniv Ben-Itzhak", "Michael Mitzenmacher." ],
+      "venue" : "CoRR, abs/2108.08842.",
+      "citeRegEx" : "Vargaftik et al\\.,? 2021a",
+      "shortCiteRegEx" : "Vargaftik et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "DRIVE: One-bit distributed mean estimation",
+      "author" : [ "Shay Vargaftik", "Ran Ben Basat", "Amit Portnoy", "Gal Mendelson", "Yaniv Ben-Itzhak", "Michael Mitzenmacher" ],
+      "venue" : null,
+      "citeRegEx" : "Vargaftik et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Vargaftik et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Training deep neural networks with 8-bit floating point numbers",
+      "author" : [ "Naigang Wang", "Jungwook Choi", "Daniel Brand", "ChiaYu Chen", "Kailash Gopalakrishnan." ],
+      "venue" : "Proceedings of the 32nd International Conference on Neural Information Processing Sys-",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Training and inference with integers in deep neural networks",
+      "author" : [ "Shuang Wu", "Guoqi Li", "Feng Chen", "Luping Shi." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Wu et al\\.,? 2018",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Approximate nearest neighbor negative contrastive learning for dense text retrieval",
+      "author" : [ "Lee Xiong", "Chenyan Xiong", "Ye Li", "Kwok-Fung Tang", "Jialin Liu", "Paul N. Bennett", "Junaid Ahmed", "Arnold Overwikj." ],
+      "venue" : "ICLR 2021: The Ninth International Con-",
+      "citeRegEx" : "Xiong et al\\.,? 2021",
+      "shortCiteRegEx" : "Xiong et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Anserini: Enabling the use of lucene for information retrieval research",
+      "author" : [ "Peilin Yang", "Hui Fang", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 40th International ACM SIGIR Conference on Research and Development in Information Retrieval, SIGIR ’17, page",
+      "citeRegEx" : "Yang et al\\.,? 2017",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Pretrained transformers for text ranking: BERT and beyond",
+      "author" : [ "Andrew Yates", "Rodrigo Nogueira", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Lan-",
+      "citeRegEx" : "Yates et al\\.,? 2021",
+      "shortCiteRegEx" : "Yates et al\\.",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 44,
+      "context" : "art ranking performance in IR applications (Yates et al., 2021).",
+      "startOffset" : 43,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 7,
+      "context" : "Transformer networks such as BERT (Devlin et al., 2019) consistently show better ranking effectiveness at the cost of a higher computational cost and latency (Nogueira and Cho, 2019).",
+      "startOffset" : 34,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2019) consistently show better ranking effectiveness at the cost of a higher computational cost and latency (Nogueira and Cho, 2019).",
+      "startOffset" : 110,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 27,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 12,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 4,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 3,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 31,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 12,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 24,
+      "context" : "Several works (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020; Gao et al., 2020b; Khattab and Zaharia, 2020) have proposed to modify BERT-based rankers in a way that allows part of the model to compute query and document representations separately, and then produce the final score using a low-complexity interaction block; we denote these models as lateinteraction rankers.",
+      "startOffset" : 14,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 12,
+      "context" : "Precomputing document representations has shown to significantly reduce latency and at the same time retain comparable scores to BERT models (Gao et al., 2020b).",
+      "startOffset" : 141,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 27,
+      "context" : "However, this is insufficient to reach reasonable storage size (MacAvaney et al., 2020); furthermore, this results in an increased fetching latency.",
+      "startOffset" : 63,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 19,
+      "context" : "For the MSMARCO dataset, we used a distilled model with a reduced vector width (Hofstätter et al., 2020a) as the initialized pre-trained weights for the late-interaction model.",
+      "startOffset" : 79,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2020), EARL (Gao et al., 2020a), DC-BERT (Nie et al.",
+      "startOffset" : 14,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2020a), DC-BERT (Nie et al., 2020), DiPair (Chen et al.",
+      "startOffset" : 18,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020), DiPair (Chen et al., 2020), and the Deformer (Cao et al.",
+      "startOffset" : 16,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 12,
+      "context" : "MORES (Gao et al., 2020b), extends lateinteraction models, where in the last interaction layers only the query attends to the document (and not vice-versa).",
+      "startOffset" : 6,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 24,
+      "context" : "ColBERT (Khattab and Zaharia, 2020) is another variant that runs all transformer layers independently for the query and the document, and the interaction between the final vectors is done through a sumof-max operator.",
+      "startOffset" : 8,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 20,
+      "context" : "A similar work, the TransformerKernel (TK) (Hofstätter et al., 2020b), has an interaction block based on a low-complexity kernel operation.",
+      "startOffset" : 43,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 24,
+      "context" : "In ColBERT (Khattab and Zaharia, 2020), the authors proposed to reduce the dimension of the final token embedding using a linear layer.",
+      "startOffset" : 11,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 27,
+      "context" : "In the PreTTR model (MacAvaney et al., 2020), it was proposed to address the storage cost by using a standard auto-encoder architecture and the float16 format instead of float32.",
+      "startOffset" : 20,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 17,
+      "context" : "Several other works (Guu et al., 2020; Karpukhin et al., 2020; Xiong et al., 2021; Qu et al., 2020; Lu et al., 2020) proposed representing the queries and documents as vectors (as opposed to a vector per token), and using dot product as the interaction block.",
+      "startOffset" : 20,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 23,
+      "context" : "Several other works (Guu et al., 2020; Karpukhin et al., 2020; Xiong et al., 2021; Qu et al., 2020; Lu et al., 2020) proposed representing the queries and documents as vectors (as opposed to a vector per token), and using dot product as the interaction block.",
+      "startOffset" : 20,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 42,
+      "context" : "Several other works (Guu et al., 2020; Karpukhin et al., 2020; Xiong et al., 2021; Qu et al., 2020; Lu et al., 2020) proposed representing the queries and documents as vectors (as opposed to a vector per token), and using dot product as the interaction block.",
+      "startOffset" : 20,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 34,
+      "context" : "Several other works (Guu et al., 2020; Karpukhin et al., 2020; Xiong et al., 2021; Qu et al., 2020; Lu et al., 2020) proposed representing the queries and documents as vectors (as opposed to a vector per token), and using dot product as the interaction block.",
+      "startOffset" : 20,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 26,
+      "context" : "Several other works (Guu et al., 2020; Karpukhin et al., 2020; Xiong et al., 2021; Qu et al., 2020; Lu et al., 2020) proposed representing the queries and documents as vectors (as opposed to a vector per token), and using dot product as the interaction block.",
+      "startOffset" : 20,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 22,
+      "context" : "via an approximate nearest neighbor search such as FAISS (Johnson et al., 2017) or ScaNN (Guo et al.",
+      "startOffset" : 57,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2017) or ScaNN (Guo et al., 2020)), the overall ranking quality is generally lower compared to methods that employ a query-document cross-attention interaction.",
+      "startOffset" : 17,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 16,
+      "context" : "ral network parameters (Gupta et al., 2015; Essam et al., 2017; Wang et al., 2018; Wu et al., 2018) and distributed learning communication costs (Suresh et al.",
+      "startOffset" : 23,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 9,
+      "context" : "ral network parameters (Gupta et al., 2015; Essam et al., 2017; Wang et al., 2018; Wu et al., 2018) and distributed learning communication costs (Suresh et al.",
+      "startOffset" : 23,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 40,
+      "context" : "ral network parameters (Gupta et al., 2015; Essam et al., 2017; Wang et al., 2018; Wu et al., 2018) and distributed learning communication costs (Suresh et al.",
+      "startOffset" : 23,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 41,
+      "context" : "ral network parameters (Gupta et al., 2015; Essam et al., 2017; Wang et al., 2018; Wu et al., 2018) and distributed learning communication costs (Suresh et al.",
+      "startOffset" : 23,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2018) and distributed learning communication costs (Suresh et al., 2017; Alistarh et al., 2017; Konečnỳ and Richtárik, 2018; Vargaftik et al., 2021b).",
+      "startOffset" : 53,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2018) and distributed learning communication costs (Suresh et al., 2017; Alistarh et al., 2017; Konečnỳ and Richtárik, 2018; Vargaftik et al., 2021b).",
+      "startOffset" : 53,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2018) and distributed learning communication costs (Suresh et al., 2017; Alistarh et al., 2017; Konečnỳ and Richtárik, 2018; Vargaftik et al., 2021b).",
+      "startOffset" : 53,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 28,
+      "context" : "Nevertheless, as in (May et al., 2019), we also observe that simple quantization schemes are quite effective.",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 27,
+      "context" : "Our work is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020), which separates BERT into L independent layers for the documents and the queries, and T − L interleaving layers, where T is the total number of layers in the original model, e.",
+      "startOffset" : 55,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 12,
+      "context" : "Our work is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020), which separates BERT into L independent layers for the documents and the queries, and T − L interleaving layers, where T is the total number of layers in the original model, e.",
+      "startOffset" : 55,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 4,
+      "context" : "Our work is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020), which separates BERT into L independent layers for the documents and the queries, and T − L interleaving layers, where T is the total number of layers in the original model, e.",
+      "startOffset" : 55,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 3,
+      "context" : "Our work is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020), which separates BERT into L independent layers for the documents and the queries, and T − L interleaving layers, where T is the total number of layers in the original model, e.",
+      "startOffset" : 55,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 31,
+      "context" : "Our work is based on the late-interaction architecture (MacAvaney et al., 2020; Gao et al., 2020b; Chen et al., 2020; Cao et al., 2020; Nie et al., 2020), which separates BERT into L independent layers for the documents and the queries, and T − L interleaving layers, where T is the total number of layers in the original model, e.",
+      "startOffset" : 55,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 38,
+      "context" : "To remediate this issue, we follow the DRIVE approach (Vargaftik et al., 2021a), which uses a randomized Hadamard transform prior to quantization.",
+      "startOffset" : 54,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 30,
+      "context" : "MSMARCO passage re-ranking In this task (Nguyen et al., 2016), we are given a query",
+      "startOffset" : 40,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 8,
+      "context" : "TREC Complex Answer Retrieval (CAR) is a dataset (Dietz et al., 2017) curated from Wikipedia, and consists of 30M passages, making storage requirements a bigger challenge compared to the MSMARCO task.",
+      "startOffset" : 49,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 20,
+      "context" : "For MSMARCO, we initialized the model from reduced width pre-trained weights2 and fine-tuned it using knowledge distillation from an ensemble of BERTLarge, BERT-Base, and ALBERT-Large (Hofstätter et al., 2020b) on the MSMARCO small training",
+      "startOffset" : 184,
+      "endOffset" : 210
+    }, {
+      "referenceID" : 13,
+      "context" : "Quantization Techniques we compare the quantization technique we use to several other techniques, including Deterministic Rounding (Gersho and Gray, 1992), Stochastic Rounding (Connolly et al.",
+      "startOffset" : 131,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 5,
+      "context" : "Quantization Techniques we compare the quantization technique we use to several other techniques, including Deterministic Rounding (Gersho and Gray, 1992), Stochastic Rounding (Connolly et al., 2021), and Subtractive Dithering (Roberts, 1962; Gray and Stockham, 1993).",
+      "startOffset" : 176,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 35,
+      "context" : ", 2021), and Subtractive Dithering (Roberts, 1962; Gray and Stockham, 1993).",
+      "startOffset" : 35,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2021), and Subtractive Dithering (Roberts, 1962; Gray and Stockham, 1993).",
+      "startOffset" : 35,
+      "endOffset" : 75
+    } ],
+    "year" : 0,
+    "abstractText" : "BERT based ranking models have achieved superior performance on various information retrieval tasks. However, the large number of parameters and complex self-attention operations come at a significant latency overhead. To remedy this, recent works propose late-interaction architectures, which allow precomputation of intermediate document representations, thus reducing latency. Nonetheless, having solved the immediate latency issue, these methods now introduce storage costs and network fetching latency, which limit their adoption in real-life production systems. In this work, we propose the Succinct Document Representation (SDR) scheme that computes highly compressed intermediate document representations, mitigating the storage/network issue. Our approach first reduces the dimension of token representations by encoding them using a novel autoencoder architecture that uses the document’s textual content in both the encoding and decoding phases. After this token encoding step, we further reduce the size of the document representations using modern quantization techniques. Evaluation on MSMARCO’s passage rereranking task show that compared to existing approaches using compressed document representations, our method is highly efficient, achieving 4x–11.6x higher compression rates for the same ranking quality. Similarly, on the TREC CAR dataset, we achieve 7.7x higher compression rate for the same ranking quality.",
+    "creator" : null
+  }
+}

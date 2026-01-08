@@ -1,0 +1,730 @@
+{
+  "name" : "ARR_2022_325_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Bridging Pre-trained Language Models and Hand-crafted Features for Unsupervised POS Tagging",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Unsupervised learning has been an important yet challenging research direction in NLP (Klein and Manning, 2004; Liang et al., 2006; Seginer, 2007). Training models directly from unlabeled data can relieve painful data annotation and is thus especially attractive for low-resource languages (He et al., 2018). As three typical tasks related to syntactic analysis, unsupervised part-of-speech (POS) tagging (or induction), dependency parsing, and constituency parsing have attracted intensive interest during the past three decades (Pereira and Schabes 1992; Christodoulopoulos et al. 2010, inter alia). Compared with tree-structure dependency and constituency parsing, POS tagging corresponds to simpler sequential structure, and aims to assign a POS tag to each word, as depicted in Figure 1. Besides the alleviation of labeled data, unsupervised\nPOS tagging is particularly valuable for child language acquisition study because every child manages to induce syntactic categories without access to labeled (Yuret et al., 2014).\nNowadays, supervised POS tagging models trained on large-scale labeled data can already achieve extremely high accuracy, for example over 97.5% on English Penn Treebank (PTB) texts (Huang et al., 2015; Bohnet et al., 2018; Zhou et al., 2020). However, unsupervised POS tagging, though having attracted a lot of research interest (Lin et al., 2015; Tran et al., 2016; He et al., 2018; Stratos, 2019; Gupta et al., 2020), can only achieve at most 80.8% many-to-one (M-1) accuracy, where M-1 means multiple induced tags can be mapped to a single ground-truth tag when evaluating the model on the test data.\nThe generative Hidden Markov Models (HMMs) are the most representative and successful approach for unsupervised POS tagging (Merialdo, 1994; Graça et al., 2009). By treating POS tags as latent variables, an first-order HMM factorizes the joint probability of a sentence and a tag sequence p(x,y) into independent emission probabilities p(xi ∣ yi) and transition probabilities p(yi−1 ∣ yi). The training objective is to maximize the marginal probability p(x), which can be solved by the EM algorithm or direct gradient descent (Salakhutdinov et al., 2003). Berg-Kirkpatrick et al. (2010) propose a feature-rich HMM (FHMM), which further parameterizes p(xi ∣ yi) with many hand-crafted morphological features, greatly boosting M-1 accuracy to 75.5 from 63.1 of the basic HMM.\nIn the DL era, researchers have paid a lot of atten-\ntion to HMMs for unsupervised POS tagging. Lin et al. (2015) propose a Gaussian HMM (GHMM), where p(xi ∣ yi) corresponds to the probability of the pre-trained word embedding (fixed during training) of xi against the Gaussian distribution of yi. Tran et al. (2016) propose a neural HMM model (NHMM), where p(xi ∣ yi) and p(yi−1 ∣ yi) are all computed via neural networks with POS tag and word embeddings as inputs. He et al. (2018) extend the Gaussian HMM of Lin et al. (2015) by introducing an invertible neural projection (INP) component for the pre-trained word embeddings, which has a similar effect of tuning word embeddings during training. Their INP Gaussian HMM (INP-GHMM) approach achieves state-of-the-art (SOTA) M-1 accuracy (80.8) on PTB so far.\nThe major weakness of HMMs is the strong independence assumption in emission probabilities p(xi ∣ yi), which directly hinders the use of contextualized word representations from powerful pre-trained language models (PLMs) such as ELMo/BERT (Peters et al., 2018; Devlin et al., 2019). It is a pity since PLMs are able to greatly boost performance of many NLP tasks.\nIn this work, we for the first time propose a neural conditional random field autoencoder (CRFAE) model for unsupervised POS tagging, inspired by Ammar et al. (2014) who propose a non-neural CRF-AE model. In the discriminative encoder of CRF-AE, we straightforwardly incorporate ELMo word representations. Moreover, inspired by feature-rich HMM (Berg-Kirkpatrick et al., 2010), we reintroduce hand-crafted features into the decoder of CRF-AE. In summary, this work makes the following contributions:\n● We for the first time propose a neural CRF-AE model for unsupervised POS tagging. ● We successfully bridge PLMs and hand-crafted features in our CRF-AE model. ● Our model achieves new SOTA M-1 accuracy of 83.21 on the 45-tag English PTB data and outperforms the previous best result by 2.41. ● After a few straightforward adjustments, our model achieves new SOTA M-1 accuracy on the 12-tag multilingual Universal Dependencies treebank v2.0 (UD), surpassing the previous best results by 4.97 on average.\nWe will release all our code at https:// github, including our re-implemented HMM and FHMM models."
+    }, {
+      "heading" : "2 Vanilla CRF-AE",
+      "text" : "In this work, we adopt the CRF-AE approach as our basic model for unsupervised POS tagging. The non-neural CRF-AE model is first proposed by Ammar et al. (2014) for unsupervised sequence labeling tasks, inspired by neural network autoencoders. Cai et al. (2017) also extend the idea to non-neural unsupervised dependency parsing. The basic idea is first producing latent structures, i.e., POS tag sequences, with a discriminative CRF over the observed sentence, and then reconstructing the original sentence given each latent structure. The two steps correspond to the encoder and the decoder respectively.\nTraining loss. We denote a sentence as x = x1, x2,⋯, xn, and a POS tag sequence as y = y1, y2,⋯, yn. Given a dataset D, the training loss is:\nL(D;φ,θ) = − ∑ x∈D logEy∼p(y∣x;φ)p(x ∣ y;θ)\n+ λ (∥φ∥22 + ∥θ∥ 2 2) ,\n(1)\nwhere p(y ∣ x;φ) is the CRF encoder; p(x ∣ y;θ) is the decoder; φ and θ are model parameters.\nThis training loss encourages the model to meet the intuition: that a high-probability POS sequence should also permit reconstruction of the sentence with a high probability.\nAmmar et al. (2014) adopt the ExpectationMaximization (EM) algorithm for training. In this work, we directly compute the training loss via the Forward algorithm, since the reconstruction probability, p(x ∣ y;θ), can be decomposed as clique-local factors, e.g., bi-gram scores. Then, we employ the powerful AutoGrad function of deep learning to compute the gradient of each parameter. Our preliminary experiments on HMM and featurerich HMM show that this gradient-based approach is consistently superior to EM in both efficiency and performance.\nInference. During evaluation, we follow Ammar et al. (2014) and use both the CRF and the reconstruction probabilities to obtain the optimal tag sequence:\ny∗ = arg max y p(y ∣ x;φ)p(x ∣ y;θ), (2)\nwhich can be solved by the Viterbi algorithm. CRF Encoder: p(y ∣ x;φ). As a discriminative log-linear model, the CRF encoder defines a conditional probability:\np(y ∣ x;φ) = exp (S(x,y;φ))\nZ(x;φ) ≡ ∑y exp(S(x,y;φ)) ,\n(3)\nwhere Z(x) is the partition function, also known as the normalization term.\nThe score of y given x is decomposed into bigram scores:\nS(x,y;φ) = n\n∑ i=1 s (x, yi−1, yi;φ). (4)\nAmmar et al. (2014) use hand-crafted discrete features to obtain bigram scores.\ns (x, yi−1, yi;φ) = φ⊺g(x, yi−1, yi, i). (5)\nDecoder: p(x ∣ y;θ). The decoder computes the reconstruction probability of x given a POS tag sequence y, which is factorized into position-wise generation probabilities based on a strong independence assumption.\np(x ∣ y;θ) = n\n∏ i=1 p(xi ∣ yi;θ). (6)\nAmmar et al. (2014) use a categorical distribution matrix θ, which is updated via EM training, to maintain all generation probabilities p(xi ∣ yi), i.e., a word xi generated by a tag yi."
+    }, {
+      "heading" : "3 Proposed Approach",
+      "text" : "In this work, we for the first time propose a neural CRF-AE and leverage PLM representations and hand-crafted features for unsupervised POS tagging."
+    }, {
+      "heading" : "3.1 CRF Encoder w/ PLM Representations",
+      "text" : "As discussed in Section 2, the CRF-AE framework consists of two major components, i.e., the CRF encoder and the decoder for sentence reconstruction. In the previous subsection, we have introduced how\nto enhance the decoder with rich hand-crafted features. For the CRF encoder, the major challenge is how to induce latent sequences more accurately via effective contextual representations. Like most works before the DL era, Ammar et al. (2014) employ manually designed features to represent contexts.\nOne of the major advances brought by DL is the strong capability of contextual representation via neural networks like LSTM and Transformer. Furthermore, pre-trained language models, such as ELMo and BERT, greatly amplify this advantage and are shown to be able to substantially improve performance for almost all NLP tasks.\nHowever, few works have tried to utilize such neural contextualized encoders for unsupervised POS tagging, except Tran et al. (2016) and Gupta et al. (2020). Most importantly, according to our knowledge, there is no work so far that successfully employ PLMs for unsupervised POS tagging.\nIn this work, we propose to employ the contextual representations from PLM to enhance the CRF encoder of the CRF-AE model. We use ELMo (Peters et al., 2018) as a typical PLM.\nELMo outputs. The encoder of ELMo consists of three layers (Peters et al., 2018). The bottom layer computes context-free word representations via word-wise character-level convolutional neural\nnetworks. The top two layers, each with two unidirectional LSTMs (forward and backward), obtain context-aware word representations by concatenating the forward and backward representations.\nAfter feeding an input sentence into ELMo, each word xi has three representation vectors, i.e., (h0i ,h 1 i ,h 2 i ), corresponding to three encoder layers respectively. Following the standard practice, we take the weighted arithmetic mean (ScalarMix) of output vectors as the final contextualized word representation for xi.\nhi = γ 2\n∑ k=1 ωkh\nk i , (7)\nwhere ω are softmax-normalized weights; γ is the scale factor of the entire contextualized word representation. Our experiments in 4.2 show that using h0i degrades performance.\nMinus operation. Apart from specific information of the focused word xi, the contextualized word representation hi from ELMo also contains a lot of common contextual information shared by neighbour words (Ethayarajh, 2019). Therefore, inspired by previous works on constituent parsing (Wang and Chang, 2016; Cross and Huang, 2016), we use minus operation to obtain purified representations.\nmi = ⎡ ⎢ ⎢ ⎢ ⎢ ⎣ Ð→ h i ←Ð h i ⎤ ⎥ ⎥ ⎥ ⎥ ⎦ − ⎡ ⎢ ⎢ ⎢ ⎢ ⎣ Ð→ h i−1 ←Ð h i+1 ⎤ ⎥ ⎥ ⎥ ⎥ ⎦ , (8)\nwhere Ð→ h i is the forward representation and ←Ð h i is backward one. Please kindly note that minus operations do not apply to vectors at the 0-th layer, i.e., context-independent word type embeddings, which are directly used as mi.\nBottleneck MLP. The ELMo adopts large dimensions d, i.e. 1024, to encode as much information as possible. Representations from ELMo contains syntax clues and even semantic ones besides the information about the POS. Inspired by supervised dependency parsing models (Dozat and Manning, 2017; Li and Eisner, 2019), we adopt a bottleneck MLP (MLP⧖), whose output vector has a very low dimension. Because of the low dimension of the MLP output, redundant and irrelevant information will be stripped away:\nci = MLP ⧖ (mi)\n= LeakyReLU (W⧖ ⋅ LayerNorm(mi) + b⧖) , (9)\nwhere the bottleneck size d′ ≪ d is output dimensions of the projection weight W⧖ ∈ Rd×d′ and the bias b⧖ ∈ Rd′ . We employ a layer normalization module after the input to keep training stable by scaling the variance and shifting the mean of input representations and output scores.\nScorer. The definition of a POS tagging sequence y given x is identical to equation 4. But the definition of bigram scores is different from the vanilla CRF-AE. Here, a bigram score consists of two parts: a unigram score s (x, yi;φ) estimated from ELMo representations and a matrix-maintained transition score t (yi−1, yi;φ).\ns (x, yi−1, yi;φ) = s (x, yi;φ) + t (yi−1, yi;φ) . (10)\nSpecifically, s (x, yi) is calculated as follows:\ns (x, yi;φ) = LayerNorm(W s ⋅ ci + b s ). (11)"
+    }, {
+      "heading" : "3.2 Reconstruction w/ Hand-crafted Features",
+      "text" : "In Ammar et al. (2014), the reconstruction probabilities are stored and updated as a matrix. The conditional probability p(xi ∣ yi), i.e., generating xi given yi, is modeled at the whole-word level. This leads to the data spareness problem. For rare words, the probabilities are usually unreliable.\nTherefore, we borrow the idea of feature-rich HMM by Berg-Kirkpatrick et al. (2010). The idea is to utilize rich morphological information to learn more reliable generation probability. For example, suffixes usually provide strong clues to POS categories. In this work, we adopt the feature templates proposed by Berg-Kirkpatrick et al. (2010), as shown in Table 1.\nWith the hand-crafted features, we then parameterize tag-to-word emission probabilities as local multinomials.\np(xi ∣ yi;θ) = exp (θ ⋅ f (xi, yi))\n∑x′∈V exp (θ ⋅ f (x′, yi)) , (12)\nwhere θ is the feature weight vector and V is the vocabulary set."
+    }, {
+      "heading" : "4 Experiments on English PTB",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Settings",
+      "text" : "Data. Following previous works on unsupervised POS tagging, we conduct experiments on the Wall Street Journal (WSJ) data from PTB, yet with two distinct data settings.\n(1) WSJ-All. Almost all previous works train and evaluate the models on the entire WSJ data. We report results on WSJ-All for comparison with previous works. However, this data setting is very unfriendly for selecting hyper-parameters, such as learning rates and network dimensions. It is probable that previous works make modeling choices by directly looking at the evaluation performance, since training loss (e.g., data likelihood) is quite loosely correlated with performance. Such details are usually omitted or only implicitly discussed in previous works.\n(2) WSJ-Split. We follow the practice in unsupervised dependency parsing and divide the WSJ dataset into train (sections 02-21), dev (section 22) and test (section 23). We tune hyper-parameters and study the contributions of individual model components by referring to performance on WSJDev. Moreover, we determine the best many-to-one mappings on WSJ-Dev, which are directly used to compute many-to-one accuracy (M-1) on both WSJ-Dev and WSJ-Test.\nThe WSJ-Split setting is more realistic because it is able to evaluate a model’s generalization ability with out-of-vocabulary words.\nEvaluation metrics. Following previous works, we mainly adopt many-to-one accuracy, and also report validity-measure (VM) values for better comparison. Please see Appendix B for details.\nTo reduce the effect of performance vibration, we follow previous works and run each model for five times with different random seeds. We report the mean and standard deviation1.\n1Standard deviation: S = √ ∑ni (ri−r̄)2\nn−1\nHyper-parameters. We train each model on the training data for at most 50 epochs, and select the best epoch based on data log-likelihood (LL). The output dimensions of bottleneck MLP⧖ are 5. We also set the feature cutoff threshold to 50, which means that all features that appear in the training data less than 50 times are replaced with a special “UNK” feature. Please see Appendix A for full details of hyper-parameters.\nTraining procedure. Unsupervised models are very sensitive to parameter initialization. Inspired by previous works (Han et al., 2017; He et al., 2018), we adopt a three-step progressive training procedure. 1) We train a feature-rich HMM model from random initialization, and produce the 1-best prediction from it for each training sentence. 2) The feature-rich HMM model is used as a teacher to pre-train the CRF-AE model. More concretely, we train the CRF encoder on the pseudo-labeled training data in a supervised fashion for 5 epochs; meanwhile we directly copy the feature weights from the feature-rich HMM model to the decoder of the CRF-AE model. 3) We train our full CRF-AE model on unlabeled training data with parameters obtained in the second step as initialization."
+    }, {
+      "heading" : "4.2 Model Development on WSJ-Split",
+      "text" : "Using which ELMo layers. As mentioned above, ELMo produces three representation vectors for each word x, corresponding to its three encoder layers. Since the usefulness of information contained in different ELMo layers is unknown for our task at hand, we conduct experiments to study which layers to use and how to use them. Table 2 shows the results. When using single-layer representations, it is obvious that using one of the top two layers (1/2) is superior to using the bottom 0-th layer. This is in line with our expectation con-\nsidering that the 0-th layer corresponds to contextindependent word type embeddings. The first layer is superior to the second one, which is consistent with Peters et al. (2018), who also conclude that the information contained by the first layer are more suitable for POS tagging than the second layer.\nThen we try to combine multiple layers by using aforementioned ScalarMix in Equation 7. It is clear that using the top two contextualized layers {1, 2} achieves best performance. We find that the weight contribution of layer 1 and 2 is about 92% vs. 8%, confirming again that the first contextualized layer provides the majority of syntactic information, while the second layer is more concerned with high-level semantics.\nWe can also see that replacing ScalarMix with simple concatenation leads to large performance drop.\nComparing M-1, VM, and LL, we can see that M-1 and VM are highly correlated, whereas LL is quite loosely correlated with model performance, suggesting that training loss cannot be used for selecting models or tuning hyper-parameters.\nIn the following, we try to understand the contribution of different components by removing one from the full CRF-AE model at a time. Table 3 shows the results.\nUsefulness of hand-crafted features. In order to measure the effectiveness of hand-crafted features in the reconstruction part, we revert to the vanilla version, i.e., using only the first word form feature in Table 1. We can see that rich handcrafted features are critical and not using them leads to the largest performance drop.\nUsefulness of PLMs. We replace pre-trained ELMo with an conventional three-layer BiLSTM encoder that is trained from scratch. We use pretrained word embeddings of He et al. (2018) as encoder inputs. As expected, performance also de-\nclines a lot. This shows that ELMo does provide very useful information.\nUsefulness of minus operation. Beside minus operation in Equation 8, another common choice to represent a word is simple concatenation, i.e.,\nmi = Ð→ h i ⊕ ←Ð h i\nAs shown in the fourth row, this decreases performance substantially.\nFinally, we can also see from Table 3 that the full model achieves the highest performance and is more stable with the lowest variance."
+    }, {
+      "heading" : "4.3 Results on WSJ-Test",
+      "text" : "We report results on WSJ-Test in Table 4 and hope future researchers adopt the WSJ-Split setting. Considering that INP-GHMM is the current SOTA model on English PTB, we re-run their open-source code2 with default configuration on WSJ-Split. We re-implement vanilla HMM and feature-rich HMM of Berg-Kirkpatrick et al. (2010), and train them with Adam algorithm via direct gradient descent. Results show that our model is superior to the previous best one, and achieves current SOTA results."
+    }, {
+      "heading" : "4.4 Performance Comparison on WSJ-All",
+      "text" : "In order to compare with previous works, we report results on WSJ-All in Table 5. We directly use all hyper-parameters obtained from WSJ-Split.\nWe can see that our proposed model outperforms all previous works by large margin. The INP-GHMM model (He et al., 2018) achieves the previous best performance on WSJ-All. Our model outperforms theirs by 2.41 and 3.54 on M-1 and VM, respectively."
+    }, {
+      "heading" : "5 Experiments on Multilingual UD",
+      "text" : "Data. For more thorough comparison with previous works, we report results on the Multilingual\n2https://github.com/jxhe/struct-learning-with-flow\nUD data, consisting of 10 languages (McDonald et al., 2013), i.e., German (de), English (en), Spanish (es), French (fr), Indonesian (id), Italian (it), Japanese (it), Korean (ko), Brazilian Portuguese (ptbr), and Swedish (sv). Following previous works, we train and evaluate the models on the entire data without train-dev-test split for each language, similar to WSJ-All.\nEvaluation metrics. Following previous works, we adopt M-1 as evaluation metrics. We run each model for five times with different random seed and report the mean and variance of M-1.\nHyper-parameters. We directly adopt most hyper-parameters obtained for WSJ-Split and WSJAll with two important exceptions. First, since the scale of data for each language diverge a lot, we adjust the feature cutoff threshold to be proportional to the token number against English partition. For example, the “de” data contains about 293k tokens, which is about 28% of that of “en” (1M), and therefore we set the threshold to 14 (28%× 50). Second, we adjust the hand-crafted features to accommodate the 12-tag UD standard and characteristics of different languages, detailed in the following.\nModifications on hand-crafted features. The fine-grained 45-tag WSJ standard is greatly different from the coarse-grained 12-tag UD standard adopted by the multilingual UD datasets (Petrov et al., 2012). Therefore, we start from the features\nof Berg-Kirkpatrick et al. (2010) in Table 1 as the base, and make adjustments from two aspects.\n(1) Adjustments for UD. We remove the “Capitalized” feature, which is originally purposed to distinguish proper and common nouns which correspond to a single UD tag. Moreover, we replace all punctuation marks with a special “PUNCT” word form, add a new feature template “is-Punctuation”, as UD uses a single tag for punctuation marks.\n(2) Adjustments for specific languages. The UD tag set doesn’t distinguish inflections such as numbers, tenses, and genders. We find this can be accommodated by customizing suffix uni/bi/tri-gram features. We simply remove a certain number of ending characters (related to inflectional affixes) for a word form before extracting suffix features. We remove the last character for “it”, and the last two characters for “de”. For “fr”, “es”, and “pt-br”, we remove last two characters if the word ends with “s”, and the last one otherwise. For “en”, we only remove the last “s” letter if applicable.\nResults. Table 6 shows the results. Our reimplemented feature-rich HMM, which modifies hand-crafted features for UD and specific languages, achieves an average improvement over the original feature-rich HMM by 11.49. Our CRF-AE model achieves highest M-1 accuracy for all ten languages. Overall, compared with the previous SOTA of Gupta et al. (2020), our model obtains an average improvement of 4.97. In particular, our model greatly outperforms theirs by 11.97, 9.64, 6.43, and 5.17 on French, Swedish, Italian, and Korean, respectively."
+    }, {
+      "heading" : "6 Related Works",
+      "text" : "Unsupervised POS tagging. In addition to HMMs and the CRF-AE, other approaches for unsupervised POS tagging are as follows.\n(1) Clustering. The clustering approach, as a mainstream unsupervised learning technique, is also investigated for unsupervised POS tagging Yatbaz et al. (2012); Yuret et al. (2014); Gupta et al. (2020). All three works adopt k-means algorithm to divide word tokens into different groups. The difference among them is how to represent words. Yatbaz et al. (2012) propose to learn context-free word embeddings by minimizing the distance between each word and its substituted words. Substituted words are selected according to a n-gram language model. It is noteworthy that Yatbaz et al. (2012) achieve very high performance, only slightly lower\nthan He et al. (2018). Yuret et al. (2014) extend their previous work to produce context-sensitive word embeddings. Gupta et al. (2020) adopt a deep clustering approach that uses a feed-forward neural network to transform word representations from mBERT into a lower-dimension clustering-friendly space. Transformation with reconstruction loss and clustering are jointly trained. Their model achieves much better performance on the multilingual UD data than previous works. Unfortunately, all three works have not released their source code.\n(2) Mutual information maximization. Inspired by Brown et al. (1992), Stratos (2019) propose a mutual information maximization approach for unsupervised POS tagging. The idea is that we can predict POS tags in two ways (using the words themselves or their context), and predictions from these two ways should agree as more as possible.\nUtilizing PLMs for unsupervised tagging or parsing. There exist few works exploiting PLMs for unsupervised POS tagging and parsing so far. The above-mentioned clustering proposed by Gupta et al. (2020) is the only work using PLMs for unsupervised POS tagging. As for unsupervised parsing, Wu et al. (2020) propose a perturbed masking technique to estimate inter-word correlations and then induce syntax trees from those correlations. Inspired by Shen et al. (2018), Kim et al. (2020) extract constituency trees from the PLMs through capturing syntactical proximity between representations of two adjacent words (or subwords). If the proximity is loose, then it is likely that the middle position of the two words corresponds to some constituent boundary. Cao et al.\n(2020) successfully exploit PLMs for unsupervised constituency parsing based on constituency test, achieving SOTA performance.\nUtilizing CRF-AE. As mentioned above, Ammar et al. (2014) first proposes CRF-AE for unsupervised sequence labeling. Cai et al. (2017) apply CRF-AE to unsupervised dependency parsing. Similarly, they use the encoder to generate a most likely dependency tree and then force the decoder to reconstruct the input sentence from the tree. CRF-AE was initially designed for unsupervised learning. However, recent works show it is useful under the semi-supervised learning setting. For instance, Zhang et al. (2017) propose a neural CRF-AE for semi-supervised learning on sequence labeling problems (including POS tagging) and Jia et al. (2020) adopt a neural CRF-AE for semi-supervised semantic parsing."
+    }, {
+      "heading" : "7 Conclusions",
+      "text" : "This work bridges PLMs and hand-crafted features for unsupervised POS tagging. Based on the CRFAE framework, we employ powerful contextualized representations from PLMs in the CRF encoder, and incorporate rich morphological features for better reconstruction. Our proposed approach achieves new SOTA on 45-tag English PTB and 12- tag multilingual UD datasets, outperforming previous results by large margin. Experiments and analysis show that rich features and PLM representations are critical for the superior performance of our model. Meanwhile, simple adjustments of hand-crafted features are key for the success of our model on languages other than English."
+    }, {
+      "heading" : "A Details of Hyper-parameters",
+      "text" : "A.1 Model\nThe ELMo parameters we use for experiments on WSJ are “Original (5.5B)” 3 from AllenNLP. The parameters for Multilingual are from “ELMoForManyLangs” 4 (Che et al., 2018). The number of predicted POS tags is 45 for experiments on WSJ and 12 for Multilingual experiments. The dropout value is uniformly set to 0.33, and the negative slope of the activation function Leaky-ReLU is set to 1 × 10−2. The MLP⧖ size is 5.\nA.2 Training\nWe use a mini-batch update strategy with a batch size of 5000 words and optimize models with Adam. The learning rate used in the training of the FHMM in the first step is 0.5. The CRF encoder is then trained on pseudo-labeled data for 5 epochs with a learning rate of 2 × 10−3 in the subsequent pre-training step. In the final step, the CRF encoder has a learning rate of 1 × 10−2, and we set the reconstruction learning rate to 2× 10−1. Other hyperparameters are identical among all three steps in training procedure, The β1 and β2 are both 0.9. The learning rate decay is 0.75 per 45 epochs, the gradient clipping value is 5, and the weight decay value λ is 1 × 10−5.\nA.3 Adjustments for specific languages on UD\nMost of European languages are inflected languages. Some words are inflected for number, gender, tense, aspect and so on. For example in English nouns are inflected for number (singular or plural); verbs for tense. A major way to inflect words is adding inflectional suffixes to the end of words, e.g., English nouns inflected for number with suffix “s” (“museum”→ “museums”). Therefore, in some\n3https://allennlp.org/elmo 4https://github.com/HIT-SCIR/\nELMoForManyLangs\nlanguages suffixes is more closely related to inflections than coarse-grained POS. For instance, as shown in Table 7, the last character of Italian words is highly corresponding to gender and number, and haves little connection to coarse-grained POS. In this work, we simply remove a certain number of ending characters for a word form before extracting suffix features, as shown in Table 8. We also give the results of models without specific languages adjustment in Table 9 to understand the contribution of it. Results show that our model is comparable to recent SOTA when language-specific adjustments are not adopted. Even if our adjustments are heuristic and simple, the language-specific adjustments clearly result in a significant performance improvement."
+    }, {
+      "heading" : "B Details of Evaluation Metrics",
+      "text" : "The core issue of the unsupervised POS tagging evaluation is that we can not directly compute the tagging accuracy since the correspondence between ground truth tags and predicted tag indexes (index-\nto-tag mapping) is unknown and varies from model to model. The two evaluation metrics handle this issue in different way.\nB.1 Many-to-One Accuracy\nM-1 is the most commonly used evaluation metric. It addresses the problem of correspondence by assigning each predicted tag index to its most frequent co-occurring ground truth tag:\nM-1 =∑ j max gi Agi,j (13)\nwhere A ∈ Rn×n is contingency matrix and the matrix item Agi,j is the number of words which are annotated as a gi and predicted as a j by the model to be evaluated. This metric, obviously, allows different predicted indexes to map to the same ground truth tag5.\nB.2 Validity-Measure (VM)\nVM (Rosenberg and Hirschberg, 2007) is an entropy-based measure, which do not require the index-to-tag mapping and considers two criteria: homogeneity h and completeness c. The homogeneity of a predicted index indicates the purity of its co-occurring ground truth tags. The predicted index j results the highest homogeneity when it only co-occur with gi, i.e., Agi,j = ∑gi′ Agi′ ,j , and has a low homogeneity it appears with different ground truth tags randomly. The homogeneity of a model is the simply the sum of the homogeneity of all index indicates. The completeness is symmetrical to homogeneity, merely exchanging the position of predicted indexes and ground truth tags. VM employs the conditional entropy to measure\n5In the WSJ-Split data setting, the index-to-tag mapping of metrics for WSJ-Dev and WSJ-Test are both observed from WSJ-Dev.\nthe value of homogeneity and completeness:\nH(G ∣ P) = −∑ j ∑ i\nAgi,j\nN log\nAgi,j\n∑gi′ Agi′ ,j (14)\nH(P ∣ G) = −∑ i ∑ j\nAgi,j\nN log\nAgi,j\n∑j′ Agi,j′ (15)\nwhere A ∈ Rn×n is contingency matrix and the matrix item Agi,j is the number of words which are annotated as a gi and predicted as a j.\nTo alleviate the impact of the size of the dataset and the numbers of the POS class, the conditional entropy is normalized by the entropy of ground truth POS tag H(G) and H(P) for homogeneity and completeness, respectively:\nh = 1 − H(G ∣ P)\nH(G) (16)\nc = 1 − H(P ∣ G)\nH(P) , (17)\nwhere\nH(G) = −∑ i\n∑j Agi,j N log ∑j Agi,j N (18)\nH(P) = −∑ j\n∑gi Agi,j N log ∑gi Agi,j N . (19)\nCompleteness is symmetrical to homogeneity, merely exchanging G and P in the formulas.\nIn order to balance the significance between homogeneity and completeness, VM is defined as the weighted harmonic mean of homogeneity and completeness:\nVM = (1 + β)hc\nβh + c (20)\nwhere β are set to 1 in experiments."
+    } ],
+    "references" : [ {
+      "title" : "Conditional random field autoencoders for unsupervised structured prediction",
+      "author" : [ "Waleed Ammar", "Chris Dyer", "Noah A Smith." ],
+      "venue" : "Proceedings of NeurIPS, volume 27.",
+      "citeRegEx" : "Ammar et al\\.,? 2014",
+      "shortCiteRegEx" : "Ammar et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Painless unsupervised learning with features",
+      "author" : [ "Taylor Berg-Kirkpatrick", "Alexandre Bouchard-Côté", "John DeNero", "Dan Klein." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 582–590.",
+      "citeRegEx" : "Berg.Kirkpatrick et al\\.,? 2010",
+      "shortCiteRegEx" : "Berg.Kirkpatrick et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Morphosyntactic tagging with a metaBiLSTM model over context sensitive token encodings",
+      "author" : [ "Bernd Bohnet", "Ryan McDonald", "Gonçalo Simões", "Daniel Andor", "Emily Pitler", "Joshua Maynez." ],
+      "venue" : "Proceedings of ACL, pages 2642–2652.",
+      "citeRegEx" : "Bohnet et al\\.,? 2018",
+      "shortCiteRegEx" : "Bohnet et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Class-based n-gram models of natural language",
+      "author" : [ "Peter F. Brown", "Vincent J. Della Pietra", "Peter V. deSouza", "Jenifer C. Lai", "Robert L. Mercer." ],
+      "venue" : "CL, 18(4):467–480.",
+      "citeRegEx" : "Brown et al\\.,? 1992",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1992
+    }, {
+      "title" : "CRF autoencoder for unsupervised dependency parsing",
+      "author" : [ "Jiong Cai", "Yong Jiang", "Kewei Tu." ],
+      "venue" : "Proceedings of EMNLP, pages 1638–1643.",
+      "citeRegEx" : "Cai et al\\.,? 2017",
+      "shortCiteRegEx" : "Cai et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Unsupervised parsing via constituency tests",
+      "author" : [ "Steven Cao", "Nikita Kitaev", "Dan Klein." ],
+      "venue" : "Proceedings of EMNLP, pages 4798–4808.",
+      "citeRegEx" : "Cao et al\\.,? 2020",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards better UD parsing: Deep contextualized word embeddings, ensemble, and treebank concatenation",
+      "author" : [ "Wanxiang Che", "Yijia Liu", "Yuxuan Wang", "Bo Zheng", "Ting Liu." ],
+      "venue" : "Proceedings of CoNLL, pages 55–64, Brussels, Belgium.",
+      "citeRegEx" : "Che et al\\.,? 2018",
+      "shortCiteRegEx" : "Che et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Two decades of unsupervised POS induction: How far have we come",
+      "author" : [ "Christos Christodoulopoulos", "Sharon Goldwater", "Mark Steedman" ],
+      "venue" : "In Proceedings of EMNLP,",
+      "citeRegEx" : "Christodoulopoulos et al\\.,? \\Q2010\\E",
+      "shortCiteRegEx" : "Christodoulopoulos et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Span-based constituency parsing with a structure-label system and provably optimal dynamic oracles",
+      "author" : [ "James Cross", "Liang Huang." ],
+      "venue" : "Proceedings of EMNLP, pages 1–11.",
+      "citeRegEx" : "Cross and Huang.,? 2016",
+      "shortCiteRegEx" : "Cross and Huang.",
+      "year" : 2016
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 4171–4186.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Deep biaffine attention for neural dependency parsing",
+      "author" : [ "Timothy Dozat", "Christopher D. Manning." ],
+      "venue" : "Proceedings of ICLR.",
+      "citeRegEx" : "Dozat and Manning.,? 2017",
+      "shortCiteRegEx" : "Dozat and Manning.",
+      "year" : 2017
+    }, {
+      "title" : "How contextual are contextualized word representations? Comparing the geometry of BERT, ELMo, and GPT-2 embeddings",
+      "author" : [ "Kawin Ethayarajh." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP, pages 55–65.",
+      "citeRegEx" : "Ethayarajh.,? 2019",
+      "shortCiteRegEx" : "Ethayarajh.",
+      "year" : 2019
+    }, {
+      "title" : "Posterior vs parameter sparsity in latent variable models",
+      "author" : [ "João Graça", "Kuzman Ganchev", "Ben Taskar", "Fernando C.N. Pereira." ],
+      "venue" : "Proceedings of NeurIPS, pages 664–672.",
+      "citeRegEx" : "Graça et al\\.,? 2009",
+      "shortCiteRegEx" : "Graça et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Clustering contextualized representations of text for unsupervised syntax induction",
+      "author" : [ "Vikram Gupta", "Haoyue Shi", "Kevin Gimpel", "Mrinmaya Sachan" ],
+      "venue" : null,
+      "citeRegEx" : "Gupta et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Gupta et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Dependency grammar induction with neural lexicalization and big training data",
+      "author" : [ "Wenjuan Han", "Yong Jiang", "Kewei Tu." ],
+      "venue" : "Proceedings of EMNLP, pages 1683–1688.",
+      "citeRegEx" : "Han et al\\.,? 2017",
+      "shortCiteRegEx" : "Han et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Unsupervised learning of syntactic structure with invertible neural projections",
+      "author" : [ "Junxian He", "Graham Neubig", "Taylor BergKirkpatrick." ],
+      "venue" : "Proceedings of EMNLP, pages 1292–1302.",
+      "citeRegEx" : "He et al\\.,? 2018",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Bidirectional LSTM-CRF models for sequence tagging",
+      "author" : [ "Zhiheng Huang", "Wei Xu", "Kai Yu." ],
+      "venue" : "CoRR, abs/1508.01991.",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semi-supervised semantic dependency parsing using CRF autoencoders",
+      "author" : [ "Zixia Jia", "Youmi Ma", "Jiong Cai", "Kewei Tu." ],
+      "venue" : "Proceedings of ACL, pages 6795–6805, Online.",
+      "citeRegEx" : "Jia et al\\.,? 2020",
+      "shortCiteRegEx" : "Jia et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Are pre-trained language models aware of phrases? simple but strong baselines for grammar induction",
+      "author" : [ "Taeuk Kim", "Jihun Choi", "Daniel Edmiston", "Sanggoo Lee." ],
+      "venue" : "Proceedings of ICLR.",
+      "citeRegEx" : "Kim et al\\.,? 2020",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Corpusbased induction of syntactic structure: Models of dependency and constituency",
+      "author" : [ "Dan Klein", "Christopher D. Manning." ],
+      "venue" : "Proceedings of ACL, pages 478–485.",
+      "citeRegEx" : "Klein and Manning.,? 2004",
+      "shortCiteRegEx" : "Klein and Manning.",
+      "year" : 2004
+    }, {
+      "title" : "Specializing word embeddings (for parsing) by information bottleneck",
+      "author" : [ "Xiang Lisa Li", "Jason Eisner." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP, pages 2744–2754.",
+      "citeRegEx" : "Li and Eisner.,? 2019",
+      "shortCiteRegEx" : "Li and Eisner.",
+      "year" : 2019
+    }, {
+      "title" : "Alignment by agreement",
+      "author" : [ "Percy Liang", "Ben Taskar", "Dan Klein." ],
+      "venue" : "Proceedings of the Human Language Technology Conference of the NAACL, Main Conference, pages 104–111, New York City, USA. Association for Computational Linguistics.",
+      "citeRegEx" : "Liang et al\\.,? 2006",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Unsupervised POS induction with word embeddings",
+      "author" : [ "Chu-Cheng Lin", "Waleed Ammar", "Chris Dyer", "Lori Levin." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 1311–1316.",
+      "citeRegEx" : "Lin et al\\.,? 2015",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Tagging English text with a probabilistic model",
+      "author" : [ "Bernard Merialdo." ],
+      "venue" : "CL, 20(2):155–171.",
+      "citeRegEx" : "Merialdo.,? 1994",
+      "shortCiteRegEx" : "Merialdo.",
+      "year" : 1994
+    }, {
+      "title" : "Insideoutside reestimation from partially bracketed corpora",
+      "author" : [ "Fernando Pereira", "Yves Schabes." ],
+      "venue" : "30th Annual Meeting of the Association for Computational Linguistics, pages 128–135, Newark, Delaware, USA. Association for Computational Lin-",
+      "citeRegEx" : "Pereira and Schabes.,? 1992",
+      "shortCiteRegEx" : "Pereira and Schabes.",
+      "year" : 1992
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 2227–2237.",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A universal part-of-speech tagset",
+      "author" : [ "Slav Petrov", "Dipanjan Das", "Ryan T. McDonald." ],
+      "venue" : "Proceedings of LREC, pages 2089–2096.",
+      "citeRegEx" : "Petrov et al\\.,? 2012",
+      "shortCiteRegEx" : "Petrov et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Vmeasure: A conditional entropy-based external cluster evaluation measure",
+      "author" : [ "Andrew Rosenberg", "Julia Hirschberg." ],
+      "venue" : "Proceedings of EMNLPCoNLL, pages 410–420.",
+      "citeRegEx" : "Rosenberg and Hirschberg.,? 2007",
+      "shortCiteRegEx" : "Rosenberg and Hirschberg.",
+      "year" : 2007
+    }, {
+      "title" : "Optimization with em and expectation-conjugate-gradient",
+      "author" : [ "Ruslan Salakhutdinov", "Sam Roweis", "Zoubin Ghahramani." ],
+      "venue" : "Proceedings of ICML, page 672–679.",
+      "citeRegEx" : "Salakhutdinov et al\\.,? 2003",
+      "shortCiteRegEx" : "Salakhutdinov et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Fast unsupervised incremental parsing",
+      "author" : [ "Yoav Seginer." ],
+      "venue" : "Proceedings of the 45th Annual Meeting of the Association of Computational Linguistics, pages 384–391, Prague, Czech Republic. Association for Computational Linguistics.",
+      "citeRegEx" : "Seginer.,? 2007",
+      "shortCiteRegEx" : "Seginer.",
+      "year" : 2007
+    }, {
+      "title" : "Neural language modeling by jointly learning syntax and lexicon",
+      "author" : [ "Yikang Shen", "Zhouhan Lin", "Chin-Wei Huang", "Aaron C. Courville." ],
+      "venue" : "Proceedings of ICLR.",
+      "citeRegEx" : "Shen et al\\.,? 2018",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Mutual information maximization for simple and accurate part-of-speech induction",
+      "author" : [ "Karl Stratos." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 1095–1104.",
+      "citeRegEx" : "Stratos.,? 2019",
+      "shortCiteRegEx" : "Stratos.",
+      "year" : 2019
+    }, {
+      "title" : "Unsupervised part-of-speech tagging with anchor hidden Markov models",
+      "author" : [ "Karl Stratos", "Michael Collins", "Daniel Hsu." ],
+      "venue" : "TACL, pages 245–257.",
+      "citeRegEx" : "Stratos et al\\.,? 2016",
+      "shortCiteRegEx" : "Stratos et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Unsupervised neural hidden Markov models",
+      "author" : [ "Ke M. Tran", "Yonatan Bisk", "Ashish Vaswani", "Daniel Marcu", "Kevin Knight." ],
+      "venue" : "Proceedings of the Workshop on Structured Prediction for NLP, pages 63–71.",
+      "citeRegEx" : "Tran et al\\.,? 2016",
+      "shortCiteRegEx" : "Tran et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Graph-based dependency parsing with bidirectional LSTM",
+      "author" : [ "Wenhui Wang", "Baobao Chang." ],
+      "venue" : "Proceedings of ACL, pages 2306–2315.",
+      "citeRegEx" : "Wang and Chang.,? 2016",
+      "shortCiteRegEx" : "Wang and Chang.",
+      "year" : 2016
+    }, {
+      "title" : "Perturbed masking: Parameter-free probing for analyzing and interpreting BERT",
+      "author" : [ "Zhiyong Wu", "Yun Chen", "Ben Kao", "Qun Liu." ],
+      "venue" : "Proceedings of ACL, pages 4166–4176.",
+      "citeRegEx" : "Wu et al\\.,? 2020",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning syntactic categories using paradigmatic representations of word context",
+      "author" : [ "Mehmet Ali Yatbaz", "Enis Sert", "Deniz Yuret." ],
+      "venue" : "Proceedings of EMNLP-CoNLL, pages 940–951.",
+      "citeRegEx" : "Yatbaz et al\\.,? 2012",
+      "shortCiteRegEx" : "Yatbaz et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Unsupervised instance-based part of speech induction using probable substitutes",
+      "author" : [ "Deniz Yuret", "Mehmet Ali Yatbaz", "Enis Sert." ],
+      "venue" : "Proceedings of COLING, pages 2303–2313.",
+      "citeRegEx" : "Yuret et al\\.,? 2014",
+      "shortCiteRegEx" : "Yuret et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Semi-supervised structured prediction with neural CRF autoencoder",
+      "author" : [ "Xiao Zhang", "Yong Jiang", "Hao Peng", "Kewei Tu", "Dan Goldwasser." ],
+      "venue" : "Proceedings of EMNLP, pages 1701–1711, Copenhagen, Denmark.",
+      "citeRegEx" : "Zhang et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Is POS tagging necessary or even helpful for neural dependency parsing",
+      "author" : [ "Houquan Zhou", "Yu Zhang", "Zhenghua Li", "Min Zhang" ],
+      "venue" : "In Proceedings of NLPCC,",
+      "citeRegEx" : "Zhou et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 15,
+      "context" : "The recent SOTA performance is yielded by a Guassian HMM variant proposed by He et al. (2018). However, as a generative model, HMM makes very strong independence assumptions, making it very challenging to incorporate contexualized word representations from PLMs.",
+      "startOffset" : 77,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 19,
+      "context" : "Unsupervised learning has been an important yet challenging research direction in NLP (Klein and Manning, 2004; Liang et al., 2006; Seginer, 2007).",
+      "startOffset" : 86,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 21,
+      "context" : "Unsupervised learning has been an important yet challenging research direction in NLP (Klein and Manning, 2004; Liang et al., 2006; Seginer, 2007).",
+      "startOffset" : 86,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 29,
+      "context" : "Unsupervised learning has been an important yet challenging research direction in NLP (Klein and Manning, 2004; Liang et al., 2006; Seginer, 2007).",
+      "startOffset" : 86,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 15,
+      "context" : "Training models directly from unlabeled data can relieve painful data annotation and is thus especially attractive for low-resource languages (He et al., 2018).",
+      "startOffset" : 142,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 37,
+      "context" : "POS tagging is particularly valuable for child language acquisition study because every child manages to induce syntactic categories without access to labeled (Yuret et al., 2014).",
+      "startOffset" : 159,
+      "endOffset" : 179
+    }, {
+      "referenceID" : 16,
+      "context" : "5% on English Penn Treebank (PTB) texts (Huang et al., 2015; Bohnet et al., 2018; Zhou et al., 2020).",
+      "startOffset" : 40,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 2,
+      "context" : "5% on English Penn Treebank (PTB) texts (Huang et al., 2015; Bohnet et al., 2018; Zhou et al., 2020).",
+      "startOffset" : 40,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 39,
+      "context" : "5% on English Penn Treebank (PTB) texts (Huang et al., 2015; Bohnet et al., 2018; Zhou et al., 2020).",
+      "startOffset" : 40,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 22,
+      "context" : "However, unsupervised POS tagging, though having attracted a lot of research interest (Lin et al., 2015; Tran et al., 2016; He et al., 2018; Stratos, 2019; Gupta et al., 2020), can only achieve at most 80.",
+      "startOffset" : 86,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 33,
+      "context" : "However, unsupervised POS tagging, though having attracted a lot of research interest (Lin et al., 2015; Tran et al., 2016; He et al., 2018; Stratos, 2019; Gupta et al., 2020), can only achieve at most 80.",
+      "startOffset" : 86,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 15,
+      "context" : "However, unsupervised POS tagging, though having attracted a lot of research interest (Lin et al., 2015; Tran et al., 2016; He et al., 2018; Stratos, 2019; Gupta et al., 2020), can only achieve at most 80.",
+      "startOffset" : 86,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 31,
+      "context" : "However, unsupervised POS tagging, though having attracted a lot of research interest (Lin et al., 2015; Tran et al., 2016; He et al., 2018; Stratos, 2019; Gupta et al., 2020), can only achieve at most 80.",
+      "startOffset" : 86,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 13,
+      "context" : "However, unsupervised POS tagging, though having attracted a lot of research interest (Lin et al., 2015; Tran et al., 2016; He et al., 2018; Stratos, 2019; Gupta et al., 2020), can only achieve at most 80.",
+      "startOffset" : 86,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 23,
+      "context" : "The generative Hidden Markov Models (HMMs) are the most representative and successful approach for unsupervised POS tagging (Merialdo, 1994; Graça et al., 2009).",
+      "startOffset" : 124,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 12,
+      "context" : "The generative Hidden Markov Models (HMMs) are the most representative and successful approach for unsupervised POS tagging (Merialdo, 1994; Graça et al., 2009).",
+      "startOffset" : 124,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 28,
+      "context" : "The training objective is to maximize the marginal probability p(x), which can be solved by the EM algorithm or direct gradient descent (Salakhutdinov et al., 2003).",
+      "startOffset" : 136,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 1,
+      "context" : "Berg-Kirkpatrick et al. (2010) propose a feature-rich HMM (FHMM), which further parameterizes p(xi ∣ yi) with many hand-crafted morphological features, greatly boosting M-1 accuracy to 75.",
+      "startOffset" : 0,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 21,
+      "context" : "Lin et al. (2015) propose a Gaussian HMM (GHMM), where p(xi ∣ yi) corresponds to the probability of the pre-trained word embedding (fixed during training) of xi against the Gaussian distribution of yi.",
+      "startOffset" : 0,
+      "endOffset" : 18
+    }, {
+      "referenceID" : 21,
+      "context" : "Lin et al. (2015) propose a Gaussian HMM (GHMM), where p(xi ∣ yi) corresponds to the probability of the pre-trained word embedding (fixed during training) of xi against the Gaussian distribution of yi. Tran et al. (2016) propose a neural HMM model (NHMM), where p(xi ∣ yi) and p(yi−1 ∣ yi) are all computed via neural networks with POS tag and word embeddings as inputs.",
+      "startOffset" : 0,
+      "endOffset" : 221
+    }, {
+      "referenceID" : 15,
+      "context" : "He et al. (2018) extend the Gaussian HMM of Lin et al.",
+      "startOffset" : 0,
+      "endOffset" : 17
+    }, {
+      "referenceID" : 15,
+      "context" : "He et al. (2018) extend the Gaussian HMM of Lin et al. (2015) by introducing an invertible neural projection (INP) component for the pre-trained word embeddings, which has a similar effect of tuning word embeddings during training.",
+      "startOffset" : 0,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 25,
+      "context" : "The major weakness of HMMs is the strong independence assumption in emission probabilities p(xi ∣ yi), which directly hinders the use of contextualized word representations from powerful pre-trained language models (PLMs) such as ELMo/BERT (Peters et al., 2018; Devlin et al., 2019).",
+      "startOffset" : 240,
+      "endOffset" : 282
+    }, {
+      "referenceID" : 9,
+      "context" : "The major weakness of HMMs is the strong independence assumption in emission probabilities p(xi ∣ yi), which directly hinders the use of contextualized word representations from powerful pre-trained language models (PLMs) such as ELMo/BERT (Peters et al., 2018; Devlin et al., 2019).",
+      "startOffset" : 240,
+      "endOffset" : 282
+    }, {
+      "referenceID" : 1,
+      "context" : "Moreover, inspired by feature-rich HMM (Berg-Kirkpatrick et al., 2010), we reintroduce hand-crafted features into the decoder of CRF-AE.",
+      "startOffset" : 39,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 0,
+      "context" : "In this work, we for the first time propose a neural conditional random field autoencoder (CRFAE) model for unsupervised POS tagging, inspired by Ammar et al. (2014) who propose a non-neural CRF-AE model.",
+      "startOffset" : 146,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 0,
+      "context" : "The non-neural CRF-AE model is first proposed by Ammar et al. (2014) for unsupervised sequence labeling tasks, inspired by neural network autoencoders.",
+      "startOffset" : 49,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 0,
+      "context" : "The non-neural CRF-AE model is first proposed by Ammar et al. (2014) for unsupervised sequence labeling tasks, inspired by neural network autoencoders. Cai et al. (2017) also extend the idea to non-neural unsupervised dependency parsing.",
+      "startOffset" : 49,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 0,
+      "context" : "During evaluation, we follow Ammar et al. (2014) and use both the CRF and the reconstruction probabilities to obtain the optimal tag sequence:",
+      "startOffset" : 29,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 0,
+      "context" : "Like most works before the DL era, Ammar et al. (2014) employ manually designed features to represent contexts.",
+      "startOffset" : 35,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 32,
+      "context" : "However, few works have tried to utilize such neural contextualized encoders for unsupervised POS tagging, except Tran et al. (2016) and Gupta et al.",
+      "startOffset" : 114,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 13,
+      "context" : "(2016) and Gupta et al. (2020). Most importantly, according to our knowledge, there is no work so far that successfully employ PLMs for unsupervised POS tagging.",
+      "startOffset" : 11,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 25,
+      "context" : "The encoder of ELMo consists of three layers (Peters et al., 2018).",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 11,
+      "context" : "Apart from specific information of the focused word xi, the contextualized word representation hi from ELMo also contains a lot of common contextual information shared by neighbour words (Ethayarajh, 2019).",
+      "startOffset" : 187,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 34,
+      "context" : "Therefore, inspired by previous works on constituent parsing (Wang and Chang, 2016; Cross and Huang, 2016), we use minus operation to obtain purified representations.",
+      "startOffset" : 61,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 8,
+      "context" : "Therefore, inspired by previous works on constituent parsing (Wang and Chang, 2016; Cross and Huang, 2016), we use minus operation to obtain purified representations.",
+      "startOffset" : 61,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 10,
+      "context" : "Inspired by supervised dependency parsing models (Dozat and Manning, 2017; Li and Eisner, 2019), we adopt a bottleneck MLP (MLP⧖), whose output vector has a very low dimension.",
+      "startOffset" : 49,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 20,
+      "context" : "Inspired by supervised dependency parsing models (Dozat and Manning, 2017; Li and Eisner, 2019), we adopt a bottleneck MLP (MLP⧖), whose output vector has a very low dimension.",
+      "startOffset" : 49,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 0,
+      "context" : "In Ammar et al. (2014), the reconstruction probabilities are stored and updated as a matrix.",
+      "startOffset" : 3,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 0,
+      "context" : "In Ammar et al. (2014), the reconstruction probabilities are stored and updated as a matrix. The conditional probability p(xi ∣ yi), i.e., generating xi given yi, is modeled at the whole-word level. This leads to the data spareness problem. For rare words, the probabilities are usually unreliable. Therefore, we borrow the idea of feature-rich HMM by Berg-Kirkpatrick et al. (2010). The idea is to utilize rich morphological information to learn more reliable generation probability.",
+      "startOffset" : 3,
+      "endOffset" : 383
+    }, {
+      "referenceID" : 14,
+      "context" : "Inspired by previous works (Han et al., 2017; He et al., 2018), we adopt a three-step progressive training procedure.",
+      "startOffset" : 27,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 15,
+      "context" : "Inspired by previous works (Han et al., 2017; He et al., 2018), we adopt a three-step progressive training procedure.",
+      "startOffset" : 27,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 25,
+      "context" : "The first layer is superior to the second one, which is consistent with Peters et al. (2018), who also conclude that the information contained by the first layer are more suitable for POS tagging than the second layer.",
+      "startOffset" : 72,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 15,
+      "context" : "We use pretrained word embeddings of He et al. (2018) as encoder inputs.",
+      "startOffset" : 37,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 1,
+      "context" : "We re-implement vanilla HMM and feature-rich HMM of Berg-Kirkpatrick et al. (2010), and train them with Adam algorithm via direct gradient descent.",
+      "startOffset" : 52,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 15,
+      "context" : "The INP-GHMM model (He et al., 2018) achieves the previous best performance on WSJ-All.",
+      "startOffset" : 19,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al.",
+      "startOffset" : 18,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al. (2010), Y’12 for Yatbaz et al.",
+      "startOffset" : 18,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al. (2010), Y’12 for Yatbaz et al. (2012), L’15 for Lin et al.",
+      "startOffset" : 18,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al. (2010), Y’12 for Yatbaz et al. (2012), L’15 for Lin et al. (2015), T’16 for Tran et al.",
+      "startOffset" : 18,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al. (2010), Y’12 for Yatbaz et al. (2012), L’15 for Lin et al. (2015), T’16 for Tran et al. (2016), H’18 for He et al.",
+      "startOffset" : 18,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al. (2010), Y’12 for Yatbaz et al. (2012), L’15 for Lin et al. (2015), T’16 for Tran et al. (2016), H’18 for He et al. (2018), S’19 for Stratos (2019), and, G’20 for Gupta et al.",
+      "startOffset" : 18,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 1,
+      "context" : "Here, B’10 is for Berg-Kirkpatrick et al. (2010), C’10 for Christodoulopoulos et al. (2010), Y’12 for Yatbaz et al. (2012), L’15 for Lin et al. (2015), T’16 for Tran et al. (2016), H’18 for He et al. (2018), S’19 for Stratos (2019), and, G’20 for Gupta et al.",
+      "startOffset" : 18,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 26,
+      "context" : "The fine-grained 45-tag WSJ standard is greatly different from the coarse-grained 12-tag UD standard adopted by the multilingual UD datasets (Petrov et al., 2012).",
+      "startOffset" : 141,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 1,
+      "context" : "Therefore, we start from the features of Berg-Kirkpatrick et al. (2010) in Table 1 as the base, and make adjustments from two aspects.",
+      "startOffset" : 41,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 13,
+      "context" : "Overall, compared with the previous SOTA of Gupta et al. (2020), our model obtains an average improvement of 4.",
+      "startOffset" : 44,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 35,
+      "context" : "The clustering approach, as a mainstream unsupervised learning technique, is also investigated for unsupervised POS tagging Yatbaz et al. (2012); Yuret et al.",
+      "startOffset" : 124,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 35,
+      "context" : "The clustering approach, as a mainstream unsupervised learning technique, is also investigated for unsupervised POS tagging Yatbaz et al. (2012); Yuret et al. (2014); Gupta et al.",
+      "startOffset" : 124,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 13,
+      "context" : "(2014); Gupta et al. (2020). All three works adopt k-means algorithm to divide word tokens into different groups.",
+      "startOffset" : 8,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 13,
+      "context" : "(2014); Gupta et al. (2020). All three works adopt k-means algorithm to divide word tokens into different groups. The difference among them is how to represent words. Yatbaz et al. (2012) propose to learn context-free word embeddings by minimizing the distance between each word and its substituted words.",
+      "startOffset" : 8,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 13,
+      "context" : "(2014); Gupta et al. (2020). All three works adopt k-means algorithm to divide word tokens into different groups. The difference among them is how to represent words. Yatbaz et al. (2012) propose to learn context-free word embeddings by minimizing the distance between each word and its substituted words. Substituted words are selected according to a n-gram language model. It is noteworthy that Yatbaz et al. (2012) achieve very high performance, only slightly lower",
+      "startOffset" : 8,
+      "endOffset" : 418
+    }, {
+      "referenceID" : 6,
+      "context" : "C’10 is for Christodoulopoulos et al. (2010), B’10 for Berg-Kirkpatrick et al.",
+      "startOffset" : 12,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 1,
+      "context" : "(2010), B’10 for Berg-Kirkpatrick et al. (2010), S’16 for Stratos et al.",
+      "startOffset" : 17,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 1,
+      "context" : "(2010), B’10 for Berg-Kirkpatrick et al. (2010), S’16 for Stratos et al. (2016), S’19 for Stratos (2019), and G’20 for Gupta et al.",
+      "startOffset" : 17,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 1,
+      "context" : "(2010), B’10 for Berg-Kirkpatrick et al. (2010), S’16 for Stratos et al. (2016), S’19 for Stratos (2019), and G’20 for Gupta et al.",
+      "startOffset" : 17,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 14,
+      "context" : "than He et al. (2018). Yuret et al. (2014) extend their previous work to produce context-sensitive word embeddings.",
+      "startOffset" : 5,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 13,
+      "context" : "Gupta et al. (2020) adopt a deep clustering approach that uses a feed-forward neural network to transform word representations from mBERT into a lower-dimension clustering-friendly space.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 3,
+      "context" : "Inspired by Brown et al. (1992), Stratos (2019) propose a mutual information maximization approach for unsupervised POS tagging.",
+      "startOffset" : 12,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 3,
+      "context" : "Inspired by Brown et al. (1992), Stratos (2019) propose a mutual information maximization approach for unsupervised POS tagging.",
+      "startOffset" : 12,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 12,
+      "context" : "The above-mentioned clustering proposed by Gupta et al. (2020) is the only work using PLMs for unsupervised POS tagging.",
+      "startOffset" : 43,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 12,
+      "context" : "The above-mentioned clustering proposed by Gupta et al. (2020) is the only work using PLMs for unsupervised POS tagging. As for unsupervised parsing, Wu et al. (2020) propose a perturbed masking technique to estimate inter-word correlations and then induce syntax trees from those correlations.",
+      "startOffset" : 43,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 12,
+      "context" : "The above-mentioned clustering proposed by Gupta et al. (2020) is the only work using PLMs for unsupervised POS tagging. As for unsupervised parsing, Wu et al. (2020) propose a perturbed masking technique to estimate inter-word correlations and then induce syntax trees from those correlations. Inspired by Shen et al. (2018), Kim et al.",
+      "startOffset" : 43,
+      "endOffset" : 326
+    }, {
+      "referenceID" : 12,
+      "context" : "The above-mentioned clustering proposed by Gupta et al. (2020) is the only work using PLMs for unsupervised POS tagging. As for unsupervised parsing, Wu et al. (2020) propose a perturbed masking technique to estimate inter-word correlations and then induce syntax trees from those correlations. Inspired by Shen et al. (2018), Kim et al. (2020) extract constituency trees from the PLMs through capturing syntactical proximity between representations of two adjacent words (or subwords).",
+      "startOffset" : 43,
+      "endOffset" : 345
+    }, {
+      "referenceID" : 5,
+      "context" : "Cao et al. (2020) successfully exploit PLMs for unsupervised constituency parsing based on constituency test, achieving SOTA performance.",
+      "startOffset" : 0,
+      "endOffset" : 18
+    }, {
+      "referenceID" : 0,
+      "context" : "As mentioned above, Ammar et al. (2014) first proposes CRF-AE for unsupervised sequence labeling.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 0,
+      "context" : "As mentioned above, Ammar et al. (2014) first proposes CRF-AE for unsupervised sequence labeling. Cai et al. (2017) apply CRF-AE to unsupervised dependency parsing.",
+      "startOffset" : 20,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 0,
+      "context" : "As mentioned above, Ammar et al. (2014) first proposes CRF-AE for unsupervised sequence labeling. Cai et al. (2017) apply CRF-AE to unsupervised dependency parsing. Similarly, they use the encoder to generate a most likely dependency tree and then force the decoder to reconstruct the input sentence from the tree. CRF-AE was initially designed for unsupervised learning. However, recent works show it is useful under the semi-supervised learning setting. For instance, Zhang et al. (2017) propose a neural CRF-AE for semi-supervised learning on sequence labeling problems (including POS tagging) and Jia et al.",
+      "startOffset" : 20,
+      "endOffset" : 490
+    }, {
+      "referenceID" : 0,
+      "context" : "As mentioned above, Ammar et al. (2014) first proposes CRF-AE for unsupervised sequence labeling. Cai et al. (2017) apply CRF-AE to unsupervised dependency parsing. Similarly, they use the encoder to generate a most likely dependency tree and then force the decoder to reconstruct the input sentence from the tree. CRF-AE was initially designed for unsupervised learning. However, recent works show it is useful under the semi-supervised learning setting. For instance, Zhang et al. (2017) propose a neural CRF-AE for semi-supervised learning on sequence labeling problems (including POS tagging) and Jia et al. (2020) adopt a neural CRF-AE for semi-supervised semantic parsing.",
+      "startOffset" : 20,
+      "endOffset" : 619
+    } ],
+    "year" : 0,
+    "abstractText" : "In recent years, large-scale pre-trained language models (PLMs) have made extraordinary progress in most NLP tasks. But, in the unsupervised POS tagging task, works utilizing PLMs are few and fail to achieve stateof-the-art (SOTA) performance. The recent SOTA performance is yielded by a Guassian HMM variant proposed by He et al. (2018). However, as a generative model, HMM makes very strong independence assumptions, making it very challenging to incorporate contexualized word representations from PLMs. In this work, we for the first time propose a neural conditional random field autoencoder (CRF-AE) model for unsupervised POS tagging. The discriminative encoder of CRF-AE can straightforwardly incorporate ELMo word representations. Moreover, inspired by featurerich HMM, we reintroduce hand-crafted features into the decoder of CRF-AE. Finally, experiments clearly show that our model outperforms previous state-of-the-art models by a large margin on Penn Treebank and multilingual Universal Dependencies treebank v2.0.",
+    "creator" : null
+  }
+}

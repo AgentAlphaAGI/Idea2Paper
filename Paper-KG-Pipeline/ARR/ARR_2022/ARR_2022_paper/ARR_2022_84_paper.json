@@ -1,0 +1,725 @@
+{
+  "name" : "ARR_2022_84_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Debiased Contrastive Learning of Unsupervised Sentence Representations",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "As a fundamental task in the natural language processing (NLP) field, unsupervised sentence representation learning (Kiros et al., 2015; Hill et al., 2016) aims to derive high-quality sentence representations that can benefit various downstream tasks, especially for low-resourced domains or computationally expensive tasks, e.g., zero-shot text semantic match (Qiao et al., 2016), large-scale semantic similarity comparison (Agirre et al., 2015), and document retrieval (Le and Mikolov, 2014).\nAs a widely used semantic representation approach, pre-trained language models (PLMs) (Devlin et al., 2019) have achieved remarkable performance on various NLP tasks. However, several studies have found that the original sentence representations derived by PLMs are not uniformly distributed with respect to directions, but instead oc-\ncupy a narrow cone in the vector space (Ethayarajh, 2019), which largely limits their expressiveness. To address this issue, contrastive learning (Chen et al., 2020) has been adopted to refine PLM-derived sentence representations. It pulls semantically close neighbors together to improve the alignment, while pushing apart non-neighbors for the uniformity of the whole representation space. In the learning process, both positive and negative examples are involved in contrast with the original sentence. For positive examples, previous works apply data augmentation strategies (Yan et al., 2021) on the original sentence to generate highly similar variations. While, negative examples are commonly randomly sampled from the batch or training data (e.g., inbatch negatives (Gao et al., 2021)), due to the lack of ground-truth negatives.\nAlthough such a negative sampling way is simple and convenient, it may cause sampling bias and affects the sentence representation learning. First, the sampled negatives are likely to be false negatives that are indeed semantically close to the original sentence. As shown in Figure 1, given a random input sentence, about half of in-batch negatives have a cosine similarity above 0.7 with the original sentence based on the SimCSE model (Gao et al., 2021). It may hurt the semantics of the sen-\ntence representations by simply pushing apart sampled negatives. Second, due to the anisotropy problem (Ethayarajh, 2019), the sampled negatives are from the narrow representation cone spanned by PLMs, which cannot fully reflect the overall semantics of the representation space. Hence, it is sub-optimal for learning the uniformity objective of sentence representations.\nTo address the above issues, we propose a debiased contrastive learning framework for unsupervised sentence representation learning. The core idea is to improve the random negative sampling strategy for alleviating the sampling bias problem. First, in our framework, we design an instance weighting method to punish the sampled false negatives during training. We incorporate a complementary model to evaluate the similarity score between each negative and the original sentence, and assign lower weight for negatives with a higher similarity score. In this way, we can detect semantically-close false negatives and further reduce their influence. Second, we randomly initialize new negatives based on random Gaussian noise to simulate sampling within the whole semantic space, and devise a gradient-based algorithm to optimize the noise-based negatives towards the most nonuniform points. By learning to contrast with the nonuniform noise-based negatives, we can extend the occupied space of sentence representations and improve the uniformity of the representation space.\nTo this end, we propose DCLR, a general framework towards Debiased Contrastive Learning of unsupervised sentence Representations. In our approach, we first initialize the noise-based negatives from a Gaussian distribution, and leverage a gradient-based algorithm to update the new negatives by considering the uniformity of the representation space. Then, we adopt the complementary model to produce the weights for the new negatives and randomly sampled negatives, where the false negatives will be punished. Finally, we augment the positive examples via dropout (Gao et al., 2021) and combine it with the negatives for contrastive learning. We demonstrate that our DCLR outperforms competitive baselines on semantic textual similarity (STS) tasks using BERT (Devlin et al., 2019) and RoBERTa (Liu et al., 2019).\nOur contributions are summarized as follows:\n(1) To our knowledge, our approach is the first attempt to reduce the sampling bias in contrastive learning of unsupervised sentence representations.\n(2) We propose DCLR, a debiased contrastive learning framework that utilizes an instance weighting method to punish false negatives and generates noise-based negatives to guarantee the uniformity of the whole representation space.\n(3) Experimental results on seven semantic textual similarity tasks show the effectiveness of our framework."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Sentence Representation Learning Learning sentence representations (Kiros et al., 2015; Hill et al., 2016) is to generate universal sentence representations for downstream tasks. Previous works can be categorized into supervised (Conneau et al., 2017; Cer et al., 2018) and unsupervised approaches (Hill et al., 2016; Li et al., 2020). Supervised approaches rely on annotated datasets (e.g., NLI (Bowman et al., 2015; Williams et al., 2018)) to train the sentence encoder (Cer et al., 2018; Reimers and Gurevych, 2019). Unsupervised ones consider deriving sentence representations without labeled datasets. As a simple but effective approach, pooling word2vec embeddings (Mikolov et al., 2013) has been widely used. Recently, to leverage the strong potential of PLMs (Devlin et al., 2019), several works propose to alleviate the anisotropy problem (Ethayarajh, 2019; Li et al., 2020) of PLMs via special strategies, e.g., flow-based approach (Li et al., 2020) and whitening method (Huang et al., 2021). Besides, recent works (Wu et al., 2020; Gao et al., 2021) adopt contrastive learning to refine the representations of PLMs.\nContrastive Learning Contrastive learning has been popular in the computer vision area with solid performance (Hadsell et al., 2006; He et al., 2020). Usually, it requires data augmentation strategies e.g., random cropping and image rotation (Chen et al., 2020; Yan et al., 2021) to produce a set of semantically related positive examples for learning, and randomly samples negatives from the batch or whole dataset. For sentence representation learning, contrastive learning can achieve a better alignment-uniformity balance. Several works adopt back translation (Fang and Xie, 2020), token shuffle (Yan et al., 2021) and dropout (Gao et al., 2021) to augment positive examples for sentence representation learning. However, the quality of the randomly sampled negatives is usually neglected.\nVirtual Adversarial Training Virtual adversarial\ntraining (VAT) (Miyato et al., 2019; Kurakin et al., 2017) perturbs a given input with learnable noise to maximize the divergence of the model’s prediction with the original input, then utilizes the perturbed examples to improve the generalization (Miyato et al., 2017; Madry et al., 2018). A class of VAT methods can be formulated into solving a min-max problem, which can be achieved by multiple projected gradient ascent steps (Qin et al., 2019). In the NLP field, several works apply adversarial perturbations in the embedding layer, and report its effectiveness on text classification (Miyato et al., 2017), machine translation (Sun et al., 2020), and NLU (Jiang et al., 2020) tasks."
+    }, {
+      "heading" : "3 Preliminary",
+      "text" : "This work seeks to make use of unlabeled corpus for learning effective sentence representations that can be directly utilized for downstream tasks, e.g., semantic textual similarity task (Agirre et al., 2015). Given a set of input sentences X = {x1, x2, . . . , xn}, our goal is to learn a representation hi ∈ Rd for each sentence xi in an unsupervised manner. For simplicity, we denote this process with a parameterized function hi = f(xi).\nIn this work, we mainly focus on using BERTbased PLMs (Devlin et al., 2019; Liu et al., 2019) to generate sentence representations. Following existing works (Li et al., 2020; Yan et al., 2021), we fine-tune the PLMs on the unlabeled corpus via our proposed unsupervised learning method. For each sentence xi, we encode it by the fine-tuned PLMs and take the representation of the [CLS] token from the last layer as its representation hi."
+    }, {
+      "heading" : "4 Approach",
+      "text" : "Our proposed framework DCLR is to reduce the influence of sampling bias in contrastive learning paradigm for sentence representation learning. In this framework, we devise a noise-based negatives generation strategy to reduce the bias caused by the anisotropy PLM-derived representations, and an instance weighting method to reduce the bias caused by false negatives. Concretely, we initialize new negatives based on a Gaussian distribution and iteratively update these negatives by non-uniformity maximization. Then, we utilize a complementary model to produce weights for all negatives (i.e., randomly sampled and the noise-based ones). Finally, we combine the weighted negatives and augmented positive examples for contrastive learning. The\noverview of our DCLR is presented in Figure 2."
+    }, {
+      "heading" : "4.1 Generating Noise-based Negatives",
+      "text" : "We aim to generate new negatives beyond the immediate sentence representation space, to alleviate the bias derived from the anisotropy problem of PLMs (Ethayarajh, 2019). For each input sentence xi, we first initialize k noise vectors from a Gaussian distribution as the negative representations:\n{ĥ1, ĥ2, · · · , ĥk} ∼ N (0, σ2), (1)\nwhere σ is the standard variance. Since these vectors are randomly initialized, they are uniformly distributed within the whole semantic space. By learning to contrast with these new negatives, it is beneficial for the uniformity of sentence representations.\nTo further improve the quality of the new negatives, we consider iteratively updating the negatives to capture the non-uniformity points within the whole semantic space. Inspired by VAT (Miyato et al., 2017; Zhu et al., 2020), we design a nonuniformity loss maximization objective to produce gradients for improving the negatives. The nonuniformity loss is denoted as the contrastive loss between the new negatives {ĥ} and the positive representations of the original sentence (hi, h+i ) as:\nLU (hi, h + i , {ĥ}) = − log esim(hi,h + i )/τu∑\nĥj∈{ĥ} e sim(hi,ĥi)/τu\n, (2)\nwhere τu is a temperature hyper-parameter and sim(hi, h+i ) is the cosine similarity h⊤i h + i\n||hi||·||h+i || .\nBased on it, for each negative ĥj ∈ {ĥ}, we optimize it as\nĥj = Π(ĥj + βg(ĥj)/||g(ĥj)||2), (3) g(ĥj) = ▽ĥjLU (hi, h + i , {ĥ}), (4)\nwhere β is the learning rate, || · ||2 is the L2-norm. g(ĥj) denotes the gradient of ĥj by maximizing the non-uniformity loss between the positive representations and the noise-based negatives. In this way, the noise-based negatives will be optimized into more non-uniform points of the whole semantic space. By learning to contrast with these negatives, the uniformity of the representation space can be improved, which is essential for effective sentence representations."
+    }, {
+      "heading" : "4.2 Contrastive Learning with Instance Weighting",
+      "text" : "Despite the above noise-based negatives, we also follow existing works (Yan et al., 2021; Gao et al., 2021) that adopt other in-batch representations as negatives {h̃−}. However, as discussed before, the sampled negatives may contain examples that have similar semantics with the positive example (i.e., false negatives). To alleviate this problem, we propose an instance weighting method to punish the false negatives. Since we cannot obtain the true labels or semantic similarities, we utilize a complementary model to produce the weights for each negative. In this paper, we adopt the state-of-the-art SimCSE (Gao et al., 2021) as the complementary model. 1 Given a negative representation h− from {h̃−} or {ĥ} and the representation of the original sentence hi, we utilize the complementary model to produce the weight as\nαh− = { 0, simC(hi, h−) ≥ ϕ 1, simC(hi, h−) < ϕ\n(5)\nwhere ϕ is a hyper-parameter of the instance weighting threshold, and simC(hi, h−) is the cosine similarity score evaluated by the complementary model. In this way, the negatives that have higher semantic similarity with the representations of the original sentence will be regarded as a false negative and will be punished by assigning the weight 0. Based on the weights, we optimize the sentence representations with a debiased crossentropy contrastive learning loss function as\nL = − log e sim(hi,h+i )/τ∑\nh−∈{ĥ}∪{h̃−} αh− × esim(hi,h −)/τ\n,\n(6) 1For convenience, we utilize SimCSE on BERT-base and\nRoBERTa-base model as the complementary model.\nwhere τ is a temperature hyper-parameter. In our framework, we follow SimCSE (Gao et al., 2021) that utilizes dropout to augment positive examples h+i . Actually, it can be changed according to various positive augmentation strategies, which will be discussed in Section 6.1."
+    }, {
+      "heading" : "4.3 Overview and Discussion",
+      "text" : "In this part, we present the overview and discussions of our DCLR approach."
+    }, {
+      "heading" : "4.3.1 Overview of DCLR",
+      "text" : "Our framework DCLR contains two important phases. In the first phase, we generate noise-based negatives as the expansion of the negative set. Concretely, we first initialize a set of new negatives via a random Gaussian noise. Then, we incorporate a gradient-based algorithm to adjust the noise-based negatives by maximizing the non-uniform objective. After t iterations, we can obtain the noisebased negatives that reflect the most nonuniform points within the whole semantic space. In the second phase, we adopt a complementary model (i.e., SimCSE) to compute the semantic similarity between each negative and the representation of the original sentence, and produce the weights using Eq. 5. Finally, we augment the positive examples via dropout and utilize the negatives with corresponding weights for contrastive learning using Eq. 6."
+    }, {
+      "heading" : "4.3.2 Discussion",
+      "text" : "As mentioned above, our approach aims to reduce the sampling bias about the negatives, and is agnostic to various positive data augmentation methods (e.g., token cutoff and dropout). Compared with traditional contrastive learning methods (Yan et al., 2021; Gao et al., 2021), our proposed DCLR expands the negative set by introducing noise-based\nnegatives {ĥ}, and adds a weight term αh− to punish false negatives. Since the noise-based negatives are initialized from a Gaussian distribution do not correspond to real sentences, they are highconfident negatives to broaden and smooth the representation space. By learning to contrast with them, the learning of the contrastive objective will not be limited by the anisotropy representations derived from PLMs. As a result, the sentence representations can generalize into broader semantic space, and the uniformity of the representation semantic space can be improved. Besides, our instance weighting method also alleviates the false negative problem caused by the randomly sampling strategy. With the help of a complementary model, the false negatives that have similar semantics as the original sentence will be detected and punished."
+    }, {
+      "heading" : "5 Experiment - Main Results",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Experiment Setup",
+      "text" : "Following previous works (Kim et al., 2021; Gao et al., 2021), we conduct experiments on 7 standard STS tasks. For all these tasks, we use the SentEval toolkit (Conneau and Kiela, 2018) for evaluation.\nSemantic Textual Similarity Task We evaluate on 7 STS tasks: STS 2012–2016 (Agirre et al., 2012, 2013, 2014, 2015, 2016), STS Benchmark (Cer et al., 2017) and SICK-Relatedness (Marelli et al., 2014). These datasets contain pairs of two sentences, whose similarity scores are labeled from 0 to 5. The relevance between gold annotations and the scores predicted by sentence representations is measured in the Spearman correlation. Following the suggestions from previous works (Gao et al., 2021; Reimers and Gurevych, 2019), we directly compute the cosine similarity between sentence embeddings for all STS tasks.\nBaseline Methods We compare DCLR with competitive unsupervised sentence representation learning methods, consisting of non-BERT and BERTbased methods:\n(1) GloVe (Pennington et al., 2014) averages GloVe embeddings of words as the representation.\n(2) USE (Cer et al., 2018) utilizes Transformer model and learns the objective of reconstructing the surrounding sentences within a passage.\n(3) CLS, Mean and First-Last AVG (Devlin et al., 2019) adopt the [CLS] embedding, mean pooling of token representations, average representations of the first and last layers as sentence\nrepresentations, respectively. (4) Flow (Li et al., 2020) applies mean pooling on the layer representations and maps the outputs to the Gaussian space as sentence representations.\n(5) Whitening (Su et al., 2021) uses the whitening operation to refine representations and reduce dimensionality.\n(6) Contrastive (BT) (Fang and Xie, 2020) uses contrastive learning with back-translation as data augmentation to enhance sentence representations.\n(7) ConSERT (Yan et al., 2021) explores various text augmentation strategies for contrastive learning on sentence representation learning.\n(8) SG-OPT (Kim et al., 2021) proposes a contrastive learning method with a self-guidance mechanism for improving BERT sentence embeddings.\n(9) SimCSE (Gao et al., 2021) proposes a simple contrastive learning framework that utilizes dropout as perturbation for data augmentation.\nImplementation Details We implement our model based on Huggingface’s transformers (Wolf et al., 2020). We start from pre-trained checkpoints of BERT (Devlin et al., 2019) or RoBERTa (Liu et al., 2019). Following SimCSE (Gao et al., 2021), we use 1,000,000 sentences randomly sampled from Wikipedia as the training corpus. During training, we train our models for 3 epoch with temperature τ = 0.05 using an Adam optimizer (Kingma and Ba, 2015). For BERT-base and RoBERTa-base, the batch size is 256 and the learning rate is 3e5. For BERT-large and RoBERTa-large, the batch size is 128 and learning rate is 1e-5. For each batch, we generate 1 × batch_size noise-based negatives as the common negatives of all instance in it, and the standard variance is 1. We update the noise-based negatives four times, and the learning rate is 1e-3. The instance weighting threshold ϕ is set as 0.9. We keep the default dropout layer in PLMs. We evaluate the model every 150 steps on the development set of STS-B and keep the best checkpoint for evaluation on test sets."
+    }, {
+      "heading" : "5.2 Main Results",
+      "text" : "To verify the effectiveness of our framework on PLMs, we selected BERT-base, BERT-large, RoBERTa-base, and RoBERTa-large as the base model. Table 1 shows the results of different methods on 7 STS tasks.\nBased on the results, we can find that the nonBERT methods mostly outperform native PLM representation based baselines (i.e., CLS, Mean and\nFirst-Last AVG). The reason is that directly utilizing the PLM native representations is prone to the anisotropy problem. Among non-BERT methods, USE outperforms Glove. A potential reason is that USE encodes the sentence using the Transformer model, which is more effective than simply averaging GloVe embeddings.\nFor other PLM-based approaches, first, we can see that flow and whitening achieve similar results and outperform the native representations based PLMs by a margin. The reason is that the two methods adopt special strategies to refine the representations of PLMs. Second, approaches based on contrastive learning mostly outperform other baselines. The reason is that contrastive learning can\nenhance both the alignment between semantically related positive pairs and the uniformity of the representation space using negative samples, resulting in better sentence representations. Furthermore, SimCSE performs the best among all the baselines. It indicates that dropout is a more effective positive augmentation method than others since it rarely hurts the semantics of the sentence.\nFinally, DCLR performs better than all baselines in most settings. Contrastive learning based baselines mostly utilize in-batch negatives to learn the uniformity, but the randomly negative sampling strategy may lead to sampling bias, such as false negatives and anisotropy representations. Different from these methods, our framework adopts an in-\nstance weighting method for punishing false negatives and a gradient-based algorithm for generating noise-based negatives towards the most nonuniform points. In this way, the influence of false negatives can be alleviated and our model can better learn the uniformity. It finally reduces the sampling bias and improves the model performance."
+    }, {
+      "heading" : "6 Experiment - Analysis and Extension",
+      "text" : "In this section, we continue to study the effectiveness of our proposed DCLR."
+    }, {
+      "heading" : "6.1 Debiased Contrastive Learning on Other Methods",
+      "text" : "Since our proposed DCLR is a general framework for contrastive learning of unsupervised sentence representations, it can be applied to other methods for this task that have various positive data augmentation strategies. Thus, in this part, we conduct experiments to examine whether our framework can bring improvements with the following positive data augmentation strategies: (1) Token Shuffling that randomly shuffles the order of the tokens in the input sequences; (2) Feature/Token/Span Cutoff (Yan et al., 2021) that randomly erase features/tokens/token spans in the input; (3) Dropout that is similar to SimCSE (Gao et al., 2021). It is worth noting that we only need to revise the negative sampling strategies in existing methods with few lines of code to implement our DCLR.\nAs shown in Figure 3, our DCLR can boost the performance of all these methods, it demonstrates the generality and effectiveness of our framework. Furthermore, DCLR with Dropout outperforms all other models. It indicates that dropout is a more effective approach to augment high-quality positives, and is also more appropriate for our approach."
+    }, {
+      "heading" : "6.2 Ablation and Variation Study",
+      "text" : "Our proposed DCLR devises an instance weighting method to punish false negatives and generates noise-based negatives to improve the uniformity of the whole representation space. To verify their effectiveness, we conduct an ablation study for each of the two components on 7 STS tasks. As shown in Table 2, removing each component would lead to a performance drop. It indicates that the instance weighting method and the noise-based negatives are both important in our framework. Besides, removing the instance weights results in a larger performance drop. The reason may be that the false negative problem in these tasks is more serious.\nRandom Noise, Knowledge Distillation, and Self Instance Weighting are the variations of our framework. (1) Random Noise directly generates noisebased negatives without gradient-based optimization; (2) Knowledge Distillation (Hinton et al., 2015) utilizes SimCSE as the teacher model to distill knowledge into the student model during training; (3) Self Instance Weighting adopts the model itself as the complementary model. From Table 2, we can see that these variations don’t perform as well as DCLR. The reason may be that these approaches are not proper for this task."
+    }, {
+      "heading" : "6.3 Uniformity Analysis",
+      "text" : "Uniformity is an essential characteristic for sentence representations, which describes how well the representations are uniformly distributed. To\nvalidate the improvement of the uniformity of our framework, we compare the uniformity loss between DCLR and SimCSE. Following SimCSE (Gao et al., 2021), we utilize the following function to evaluate the uniformity:\nℓuniform ≜ log E xi,xj i.i.d.∼ pdata e−2∥f(xi)−f(xj)∥ 2 ,\nwhere pdata is the distribution of all sentence representations. As shown in Figure 4, the uniformity loss of DCLR is much lower than that of SimCSE in the almost whole training process. Furthermore, we can see that the uniformity loss of DCLR diminishes faster than SimCSE as training goes, the reason may be that our DCLR samples noise-based negatives to learn the uniformity better."
+    }, {
+      "heading" : "6.4 Performance under Few-shot Settings",
+      "text" : "To validate the reliability and the robustness of DCLR under the data scarcity scenarios, we conduct few-shot experiments. We train our model via different amounts of available training data from 100% to the extremely small size (i.e., 0.3%). We report the results evaluated on STS-B and SICK-R.\nAs shown in Figure 5, our approach achieves stable results under different proportions of the training data. Under the most extreme setting with 0.3% data proportion, the performance of our model drops by only 9 and 4 percent on STS-B and SICK-R, respectively. The results reveal the robustness and effectiveness of our approach under the data scarcity scenarios. Such characteristics are important in real-world application."
+    }, {
+      "heading" : "6.5 Hyper-parameters Analysis",
+      "text" : "For hyper-parameters analysis, we study the impact of instance weighting threshold ϕ and the proportion of noise-based negatives k. The ϕ is the threshold to punish false negatives, and k is the ratio of\nthe noise-based negatives to the batch size. Both hyper-parameters are important in our framework. Concretely, we evaluate our model with varying values of ϕ and k on the STS-B and SICK-R tasks using the BERT-base model.\nWeighting threshold. Figure 6a shows the influence of the instance weighting threshold ϕ. For the STS-B tasks, ϕ has a significant effect on the model performance. Too large or too small ϕ may lead to a performance drop. The reason is that a larger threshold cannot achieve effective punishment and a smaller one may cause misjudgment of true negatives. In contrast, the SICK-R is insensitive to the changes of ϕ. The reason may be that the problem of false negatives is not serious in this task.\nNegative proportion. As shown in Figure 6b, our DCLR performs better when the number of noise-based negatives is close to the batch size. Under these circumstances, the noise-based negatives are enough to learn the uniformity of the whole semantic space but not hurt the alignment, so that DCLR can perform well."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "In this paper, we proposed DCLR, a debiased contrastive learning framework for unsupervised sentence representation learning. Our core idea is to alleviate the sampling bias caused by the random negative sampling strategy. To achieve it, in our framework, we incorporated an instance weighting method to punish false negatives during training and generated noise-based negatives to alleviate the influence of anisotropy PLM-derived representation. Experimental results have shown that our approach outperforms several competitive baselines.\nIn the future, we will explore more effective paradigms to reduce the bias in contrastive learning of sentence representations. We will also consider applying our approach to other representation learning tasks, such as graph representation learning."
+    } ],
+    "references" : [ {
+      "title" : "Semeval-2015 task 2: Semantic textual",
+      "author" : [ "Eneko Agirre", "Carmen Banea", "Claire Cardie", "Daniel M. Cer", "Mona T. Diab", "Aitor Gonzalez-Agirre", "Weiwei Guo", "Iñigo Lopez-Gazpio", "Montse Maritxalar", "Rada Mihalcea", "German Rigau", "Larraitz Uria", "Janyce Wiebe" ],
+      "venue" : null,
+      "citeRegEx" : "Agirre et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semeval-2014 task 10: Multilingual semantic textual similarity",
+      "author" : [ "Eneko Agirre", "Carmen Banea", "Claire Cardie", "Daniel M. Cer", "Mona T. Diab", "Aitor Gonzalez-Agirre", "Weiwei Guo", "Rada Mihalcea", "German Rigau", "Janyce Wiebe." ],
+      "venue" : "COLING, pages 81–",
+      "citeRegEx" : "Agirre et al\\.,? 2014",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Semeval-2016 task 1: Semantic textual similarity, monolingual and cross-lingual evaluation",
+      "author" : [ "Eneko Agirre", "Carmen Banea", "Daniel M. Cer", "Mona T. Diab", "Aitor Gonzalez-Agirre", "Rada Mihalcea", "German Rigau", "Janyce Wiebe." ],
+      "venue" : "COLING, pages 497–",
+      "citeRegEx" : "Agirre et al\\.,? 2016",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Semeval-2012 task 6: A pilot on semantic textual similarity",
+      "author" : [ "Eneko Agirre", "Daniel M. Cer", "Mona T. Diab", "Aitor Gonzalez-Agirre." ],
+      "venue" : "NAACL-HLT, pages 385–393.",
+      "citeRegEx" : "Agirre et al\\.,? 2012",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "sem 2013 shared task: Semantic textual similarity",
+      "author" : [ "Eneko Agirre", "Daniel M. Cer", "Mona T. Diab", "Aitor Gonzalez-Agirre", "Weiwei Guo." ],
+      "venue" : "*SEM, pages 32–43.",
+      "citeRegEx" : "Agirre et al\\.,? 2013",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "A large annotated corpus for learning natural language inference",
+      "author" : [ "Samuel R. Bowman", "Gabor Angeli", "Christopher Potts", "Christopher D. Manning." ],
+      "venue" : "EMNLP, pages 632–642.",
+      "citeRegEx" : "Bowman et al\\.,? 2015",
+      "shortCiteRegEx" : "Bowman et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Universal sentence encoder for english",
+      "author" : [ "Daniel Cer", "Yinfei Yang", "Sheng-yi Kong", "Nan Hua", "Nicole Limtiaco", "Rhomni St. John", "Noah Constant", "Mario Guajardo-Cespedes", "Steve Yuan", "Chris Tar", "Brian Strope", "Ray Kurzweil." ],
+      "venue" : "EMNLP, pages 169–",
+      "citeRegEx" : "Cer et al\\.,? 2018",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Semeval2017 task 1: Semantic textual similarity multilingual and crosslingual focused evaluation",
+      "author" : [ "Daniel M. Cer", "Mona T. Diab", "Eneko Agirre", "Iñigo Lopez-Gazpio", "Lucia Specia." ],
+      "venue" : "ACL, pages 1–14.",
+      "citeRegEx" : "Cer et al\\.,? 2017",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey E. Hinton." ],
+      "venue" : "ICML, volume 119 of Proceedings of Machine Learning Research, pages 1597–1607.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Senteval: An evaluation toolkit for universal sentence representations",
+      "author" : [ "Alexis Conneau", "Douwe Kiela." ],
+      "venue" : "LREC.",
+      "citeRegEx" : "Conneau and Kiela.,? 2018",
+      "shortCiteRegEx" : "Conneau and Kiela.",
+      "year" : 2018
+    }, {
+      "title" : "Supervised learning of universal sentence representations from natural language inference data",
+      "author" : [ "Alexis Conneau", "Douwe Kiela", "Holger Schwenk", "Loïc Barrault", "Antoine Bordes." ],
+      "venue" : "EMNLP, pages 670–680.",
+      "citeRegEx" : "Conneau et al\\.,? 2017",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "BERT: pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "NAACL-HLT, pages 4171–4186.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "How contextual are contextualized word representations? comparing the geometry of bert, elmo, and GPT-2 embeddings",
+      "author" : [ "Kawin Ethayarajh." ],
+      "venue" : "EMNLP-IJCNLP, pages 55–65.",
+      "citeRegEx" : "Ethayarajh.,? 2019",
+      "shortCiteRegEx" : "Ethayarajh.",
+      "year" : 2019
+    }, {
+      "title" : "CERT: contrastive self-supervised learning for language understanding",
+      "author" : [ "Hongchao Fang", "Pengtao Xie." ],
+      "venue" : "CoRR, abs/2005.12766.",
+      "citeRegEx" : "Fang and Xie.,? 2020",
+      "shortCiteRegEx" : "Fang and Xie.",
+      "year" : 2020
+    }, {
+      "title" : "Simcse: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "EMNLP, pages 6894–6910. Association for Computational Linguistics.",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Dimensionality reduction by learning an invariant mapping",
+      "author" : [ "Raia Hadsell", "Sumit Chopra", "Yann LeCun." ],
+      "venue" : "CVPR, pages 1735–1742.",
+      "citeRegEx" : "Hadsell et al\\.,? 2006",
+      "shortCiteRegEx" : "Hadsell et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross B. Girshick." ],
+      "venue" : "CVPR, pages 9726–9735.",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning distributed representations of sentences from unlabelled data",
+      "author" : [ "Felix Hill", "Kyunghyun Cho", "Anna Korhonen." ],
+      "venue" : "NAACL-HLT, pages 1367– 1377.",
+      "citeRegEx" : "Hill et al\\.,? 2016",
+      "shortCiteRegEx" : "Hill et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Distilling the knowledge in a neural network",
+      "author" : [ "Geoffrey E. Hinton", "Oriol Vinyals", "Jeffrey Dean." ],
+      "venue" : "CoRR, abs/1503.02531.",
+      "citeRegEx" : "Hinton et al\\.,? 2015",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Whiteningbert: An easy unsupervised sentence embedding approach",
+      "author" : [ "Junjie Huang", "Duyu Tang", "Wanjun Zhong", "Shuai Lu", "Linjun Shou", "Ming Gong", "Daxin Jiang", "Nan Duan." ],
+      "venue" : "CoRR, abs/2104.01767.",
+      "citeRegEx" : "Huang et al\\.,? 2021",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "SMART: robust and efficient fine-tuning for pretrained natural language models through principled regularized optimization",
+      "author" : [ "Haoming Jiang", "Pengcheng He", "Weizhu Chen", "Xiaodong Liu", "Jianfeng Gao", "Tuo Zhao." ],
+      "venue" : "ACL, pages 2177–2190.",
+      "citeRegEx" : "Jiang et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Self-guided contrastive learning for BERT sentence representations",
+      "author" : [ "Taeuk Kim", "Kang Min Yoo", "Sang-goo Lee." ],
+      "venue" : "ACL, pages 2528–2540.",
+      "citeRegEx" : "Kim et al\\.,? 2021",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Skip-thought vectors",
+      "author" : [ "Ryan Kiros", "Yukun Zhu", "Ruslan Salakhutdinov", "Richard S. Zemel", "Raquel Urtasun", "Antonio Torralba", "Sanja Fidler." ],
+      "venue" : "Advances in Neural Information Processing Systems 28: Annual Conference on Neural Information Process-",
+      "citeRegEx" : "Kiros et al\\.,? 2015",
+      "shortCiteRegEx" : "Kiros et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Adversarial examples in the physical world",
+      "author" : [ "Alexey Kurakin", "Ian J. Goodfellow", "Samy Bengio." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Kurakin et al\\.,? 2017",
+      "shortCiteRegEx" : "Kurakin et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Distributed representations of sentences and documents",
+      "author" : [ "Quoc V. Le", "Tomás Mikolov." ],
+      "venue" : "ICML, volume 32 of JMLR Workshop and Conference Proceedings, pages 1188–1196.",
+      "citeRegEx" : "Le and Mikolov.,? 2014",
+      "shortCiteRegEx" : "Le and Mikolov.",
+      "year" : 2014
+    }, {
+      "title" : "On the sentence embeddings from pre-trained language models",
+      "author" : [ "Bohan Li", "Hao Zhou", "Junxian He", "Mingxuan Wang", "Yiming Yang", "Lei Li." ],
+      "venue" : "EMNLP, pages 9119–9130.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "CoRR, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Towards deep learning models resistant to adversarial attacks",
+      "author" : [ "Aleksander Madry", "Aleksandar Makelov", "Ludwig Schmidt", "Dimitris Tsipras", "Adrian Vladu." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Madry et al\\.,? 2018",
+      "shortCiteRegEx" : "Madry et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A SICK cure for the evaluation of compositional distributional semantic models",
+      "author" : [ "Marco Marelli", "Stefano Menini", "Marco Baroni", "Luisa Bentivogli", "Raffaella Bernardi", "Roberto Zamparelli." ],
+      "venue" : "LREC, pages 216–223.",
+      "citeRegEx" : "Marelli et al\\.,? 2014",
+      "shortCiteRegEx" : "Marelli et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Distributed representations of words and phrases and their compositionality",
+      "author" : [ "Tomás Mikolov", "Ilya Sutskever", "Kai Chen", "Gregory S. Corrado", "Jeffrey Dean." ],
+      "venue" : "Advances in Neural Information Processing Systems 26: 27th Annual Conference on Neural",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Adversarial training methods for semisupervised text classification",
+      "author" : [ "Takeru Miyato", "Andrew M. Dai", "Ian J. Goodfellow." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Miyato et al\\.,? 2017",
+      "shortCiteRegEx" : "Miyato et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Virtual adversarial training: A regularization method for supervised and semisupervised learning",
+      "author" : [ "Takeru Miyato", "Shin-ichi Maeda", "Masanori Koyama", "Shin Ishii." ],
+      "venue" : "IEEE Trans. Pattern Anal. Mach. Intell., 41(8):1979–1993.",
+      "citeRegEx" : "Miyato et al\\.,? 2019",
+      "shortCiteRegEx" : "Miyato et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Glove: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher D. Manning." ],
+      "venue" : "EMNLP, pages 1532–1543.",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Less is more: zero-shot learning from online textual documents with noise suppression",
+      "author" : [ "Ruizhi Qiao", "Lingqiao Liu", "Chunhua Shen", "Anton Van Den Hengel." ],
+      "venue" : "CVPR, pages 2249–2257.",
+      "citeRegEx" : "Qiao et al\\.,? 2016",
+      "shortCiteRegEx" : "Qiao et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adversarial robustness through local linearization",
+      "author" : [ "Chongli Qin", "James Martens", "Sven Gowal", "Dilip Krishnan", "Krishnamurthy Dvijotham", "Alhussein Fawzi", "Soham De", "Robert Stanforth", "Pushmeet Kohli." ],
+      "venue" : "NeurIPS, pages 13824–13833.",
+      "citeRegEx" : "Qin et al\\.,? 2019",
+      "shortCiteRegEx" : "Qin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Sentence-bert: Sentence embeddings using siamese bert-networks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "EMNLP-IJCNLP, pages 3980–3990.",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "Whitening sentence representations for better semantics and faster retrieval",
+      "author" : [ "Jianlin Su", "Jiarun Cao", "Weijie Liu", "Yangyiwen Ou." ],
+      "venue" : "CoRR, abs/2103.15316.",
+      "citeRegEx" : "Su et al\\.,? 2021",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Robust unsupervised neural machine translation with adversarial denoising training",
+      "author" : [ "Haipeng Sun", "Rui Wang", "Kehai Chen", "Xugang Lu", "Masao Utiyama", "Eiichiro Sumita", "Tiejun Zhao." ],
+      "venue" : "COLING, pages 4239–4250.",
+      "citeRegEx" : "Sun et al\\.,? 2020",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A broad-coverage challenge corpus for sentence understanding through inference",
+      "author" : [ "Adina Williams", "Nikita Nangia", "Samuel R. Bowman." ],
+      "venue" : "NAACL-HLT, pages 1112–1122.",
+      "citeRegEx" : "Williams et al\\.,? 2018",
+      "shortCiteRegEx" : "Williams et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander M. Rush." ],
+      "venue" : "EMNLP - Demos, pages 38–45.",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "CLEAR: contrastive learning for sentence representation",
+      "author" : [ "Zhuofeng Wu", "Sinong Wang", "Jiatao Gu", "Madian Khabsa", "Fei Sun", "Hao Ma." ],
+      "venue" : "CoRR, abs/2012.15466.",
+      "citeRegEx" : "Wu et al\\.,? 2020",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Consert: A contrastive framework for self-supervised sentence representation transfer",
+      "author" : [ "Yuanmeng Yan", "Rumei Li", "Sirui Wang", "Fuzheng Zhang", "Wei Wu", "Weiran Xu." ],
+      "venue" : "ACL/IJCNLP, pages 5065– 5075.",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Freelb: Enhanced adversarial training for natural language understanding",
+      "author" : [ "Chen Zhu", "Yu Cheng", "Zhe Gan", "Siqi Sun", "Tom Goldstein", "Jingjing Liu." ],
+      "venue" : "ICLR. 10",
+      "citeRegEx" : "Zhu et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 23,
+      "context" : "As a fundamental task in the natural language processing (NLP) field, unsupervised sentence representation learning (Kiros et al., 2015; Hill et al., 2016) aims to derive high-quality sentence representations that can benefit various downstream tasks, especially for low-resourced domains or computationally expensive tasks, e.",
+      "startOffset" : 116,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 17,
+      "context" : "As a fundamental task in the natural language processing (NLP) field, unsupervised sentence representation learning (Kiros et al., 2015; Hill et al., 2016) aims to derive high-quality sentence representations that can benefit various downstream tasks, especially for low-resourced domains or computationally expensive tasks, e.",
+      "startOffset" : 116,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 34,
+      "context" : ", zero-shot text semantic match (Qiao et al., 2016), large-scale semantic similarity comparison (Agirre et al.",
+      "startOffset" : 32,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2016), large-scale semantic similarity comparison (Agirre et al., 2015), and document retrieval (Le and Mikolov, 2014).",
+      "startOffset" : 52,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 11,
+      "context" : "As a widely used semantic representation approach, pre-trained language models (PLMs) (Devlin et al., 2019) have achieved remarkable performance on various NLP tasks.",
+      "startOffset" : 86,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 14,
+      "context" : "It is evaluated by the SimCSE model (Gao et al., 2021).",
+      "startOffset" : 36,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 12,
+      "context" : "cupy a narrow cone in the vector space (Ethayarajh, 2019), which largely limits their expressiveness.",
+      "startOffset" : 39,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 42,
+      "context" : "For positive examples, previous works apply data augmentation strategies (Yan et al., 2021) on the original sentence to generate highly similar variations.",
+      "startOffset" : 73,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 14,
+      "context" : ", inbatch negatives (Gao et al., 2021)), due to the lack of ground-truth negatives.",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 14,
+      "context" : "7 with the original sentence based on the SimCSE model (Gao et al., 2021).",
+      "startOffset" : 55,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 12,
+      "context" : "Second, due to the anisotropy problem (Ethayarajh, 2019), the sampled negatives are from the narrow representation cone spanned by PLMs, which cannot fully reflect the overall semantics of the representation space.",
+      "startOffset" : 38,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 14,
+      "context" : "Finally, we augment the positive examples via dropout (Gao et al., 2021) and combine it with the negatives for contrastive learning.",
+      "startOffset" : 54,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 11,
+      "context" : "We demonstrate that our DCLR outperforms competitive baselines on semantic textual similarity (STS) tasks using BERT (Devlin et al., 2019) and RoBERTa (Liu et al.",
+      "startOffset" : 117,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 23,
+      "context" : "Sentence Representation Learning Learning sentence representations (Kiros et al., 2015; Hill et al., 2016) is to generate universal sentence representa-",
+      "startOffset" : 67,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 17,
+      "context" : "Sentence Representation Learning Learning sentence representations (Kiros et al., 2015; Hill et al., 2016) is to generate universal sentence representa-",
+      "startOffset" : 67,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 10,
+      "context" : "Previous works can be categorized into supervised (Conneau et al., 2017; Cer et al., 2018) and unsupervised approaches (Hill et al.",
+      "startOffset" : 50,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 6,
+      "context" : "Previous works can be categorized into supervised (Conneau et al., 2017; Cer et al., 2018) and unsupervised approaches (Hill et al.",
+      "startOffset" : 50,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2018) and unsupervised approaches (Hill et al., 2016; Li et al., 2020).",
+      "startOffset" : 36,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2018) and unsupervised approaches (Hill et al., 2016; Li et al., 2020).",
+      "startOffset" : 36,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2018)) to train the sentence encoder (Cer et al., 2018; Reimers and Gurevych, 2019).",
+      "startOffset" : 39,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2018)) to train the sentence encoder (Cer et al., 2018; Reimers and Gurevych, 2019).",
+      "startOffset" : 39,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 30,
+      "context" : "ing word2vec embeddings (Mikolov et al., 2013) has been widely used.",
+      "startOffset" : 24,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 11,
+      "context" : "Recently, to leverage the strong potential of PLMs (Devlin et al., 2019), several works propose to alleviate the anisotropy problem (Ethayarajh, 2019; Li et al.",
+      "startOffset" : 51,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2019), several works propose to alleviate the anisotropy problem (Ethayarajh, 2019; Li et al., 2020) of PLMs via special strategies, e.",
+      "startOffset" : 67,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2019), several works propose to alleviate the anisotropy problem (Ethayarajh, 2019; Li et al., 2020) of PLMs via special strategies, e.",
+      "startOffset" : 67,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 41,
+      "context" : "Besides, recent works (Wu et al., 2020; Gao et al., 2021) adopt contrastive learning to refine the representations of PLMs.",
+      "startOffset" : 22,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 14,
+      "context" : "Besides, recent works (Wu et al., 2020; Gao et al., 2021) adopt contrastive learning to refine the representations of PLMs.",
+      "startOffset" : 22,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 15,
+      "context" : "Contrastive Learning Contrastive learning has been popular in the computer vision area with solid performance (Hadsell et al., 2006; He et al., 2020).",
+      "startOffset" : 110,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 16,
+      "context" : "Contrastive Learning Contrastive learning has been popular in the computer vision area with solid performance (Hadsell et al., 2006; He et al., 2020).",
+      "startOffset" : 110,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 8,
+      "context" : ", random cropping and image rotation (Chen et al., 2020; Yan et al., 2021) to produce a set of semantically related positive examples for learning, and randomly samples negatives from the batch or whole dataset.",
+      "startOffset" : 37,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 42,
+      "context" : ", random cropping and image rotation (Chen et al., 2020; Yan et al., 2021) to produce a set of semantically related positive examples for learning, and randomly samples negatives from the batch or whole dataset.",
+      "startOffset" : 37,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 13,
+      "context" : "Several works adopt back translation (Fang and Xie, 2020), token shuffle (Yan et al.",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 42,
+      "context" : "Several works adopt back translation (Fang and Xie, 2020), token shuffle (Yan et al., 2021) and dropout (Gao et al.",
+      "startOffset" : 73,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2021) and dropout (Gao et al., 2021) to augment positive examples for sentence representation learning.",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 32,
+      "context" : "training (VAT) (Miyato et al., 2019; Kurakin et al., 2017) perturbs a given input with learnable noise to maximize the divergence of the model’s prediction with the original input, then utilizes the perturbed examples to improve the generalization (Miyato et al.",
+      "startOffset" : 15,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 24,
+      "context" : "training (VAT) (Miyato et al., 2019; Kurakin et al., 2017) perturbs a given input with learnable noise to maximize the divergence of the model’s prediction with the original input, then utilizes the perturbed examples to improve the generalization (Miyato et al.",
+      "startOffset" : 15,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2017) perturbs a given input with learnable noise to maximize the divergence of the model’s prediction with the original input, then utilizes the perturbed examples to improve the generalization (Miyato et al., 2017; Madry et al., 2018).",
+      "startOffset" : 197,
+      "endOffset" : 238
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2017) perturbs a given input with learnable noise to maximize the divergence of the model’s prediction with the original input, then utilizes the perturbed examples to improve the generalization (Miyato et al., 2017; Madry et al., 2018).",
+      "startOffset" : 197,
+      "endOffset" : 238
+    }, {
+      "referenceID" : 35,
+      "context" : "problem, which can be achieved by multiple projected gradient ascent steps (Qin et al., 2019).",
+      "startOffset" : 75,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 31,
+      "context" : "In the NLP field, several works apply adversarial perturbations in the embedding layer, and report its effectiveness on text classification (Miyato et al., 2017), machine translation (Sun et al.",
+      "startOffset" : 140,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2017), machine translation (Sun et al., 2020), and NLU (Jiang et al.",
+      "startOffset" : 29,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 0,
+      "context" : ", semantic textual similarity task (Agirre et al., 2015).",
+      "startOffset" : 35,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 11,
+      "context" : "In this work, we mainly focus on using BERTbased PLMs (Devlin et al., 2019; Liu et al., 2019)",
+      "startOffset" : 54,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 27,
+      "context" : "In this work, we mainly focus on using BERTbased PLMs (Devlin et al., 2019; Liu et al., 2019)",
+      "startOffset" : 54,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 26,
+      "context" : "Following existing works (Li et al., 2020; Yan et al., 2021), we fine-tune the PLMs on the unlabeled corpus via our proposed unsupervised learning method.",
+      "startOffset" : 25,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 42,
+      "context" : "Following existing works (Li et al., 2020; Yan et al., 2021), we fine-tune the PLMs on the unlabeled corpus via our proposed unsupervised learning method.",
+      "startOffset" : 25,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 12,
+      "context" : "We aim to generate new negatives beyond the immediate sentence representation space, to alleviate the bias derived from the anisotropy problem of PLMs (Ethayarajh, 2019).",
+      "startOffset" : 151,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 42,
+      "context" : "Despite the above noise-based negatives, we also follow existing works (Yan et al., 2021; Gao et al., 2021) that adopt other in-batch representations as negatives {h̃−}.",
+      "startOffset" : 71,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 14,
+      "context" : "Despite the above noise-based negatives, we also follow existing works (Yan et al., 2021; Gao et al., 2021) that adopt other in-batch representations as negatives {h̃−}.",
+      "startOffset" : 71,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 14,
+      "context" : "In this paper, we adopt the state-of-the-art SimCSE (Gao et al., 2021) as the complementary model.",
+      "startOffset" : 52,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 14,
+      "context" : "In our framework, we follow SimCSE (Gao et al., 2021) that utilizes dropout to augment positive examples hi .",
+      "startOffset" : 35,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 42,
+      "context" : "Compared with traditional contrastive learning methods (Yan et al., 2021; Gao et al., 2021), our proposed DCLR expands the negative set by introducing noise-based",
+      "startOffset" : 55,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 14,
+      "context" : "Compared with traditional contrastive learning methods (Yan et al., 2021; Gao et al., 2021), our proposed DCLR expands the negative set by introducing noise-based",
+      "startOffset" : 55,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 9,
+      "context" : "For all these tasks, we use the SentEval toolkit (Conneau and Kiela, 2018) for evaluation.",
+      "startOffset" : 49,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 7,
+      "context" : "2013, 2014, 2015, 2016), STS Benchmark (Cer et al., 2017) and SICK-Relatedness (Marelli et al.",
+      "startOffset" : 39,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 14,
+      "context" : "Following the suggestions from previous works (Gao et al., 2021; Reimers and Gurevych, 2019), we directly compute the cosine similarity between sentence embeddings for all STS tasks.",
+      "startOffset" : 46,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 36,
+      "context" : "Following the suggestions from previous works (Gao et al., 2021; Reimers and Gurevych, 2019), we directly compute the cosine similarity between sentence embeddings for all STS tasks.",
+      "startOffset" : 46,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 33,
+      "context" : "Baseline Methods We compare DCLR with competitive unsupervised sentence representation learning methods, consisting of non-BERT and BERTbased methods: (1) GloVe (Pennington et al., 2014) averages GloVe embeddings of words as the representation.",
+      "startOffset" : 161,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 11,
+      "context" : "(3) CLS, Mean and First-Last AVG (Devlin et al., 2019) adopt the [CLS] embedding, mean pooling of token representations, average representations of the first and last layers as sentence representations, respectively.",
+      "startOffset" : 33,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 26,
+      "context" : "(4) Flow (Li et al., 2020) applies mean pooling on the layer representations and maps the outputs to the Gaussian space as sentence representations.",
+      "startOffset" : 9,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 37,
+      "context" : "(5) Whitening (Su et al., 2021) uses the whitening operation to refine representations and reduce dimensionality.",
+      "startOffset" : 14,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 13,
+      "context" : "(6) Contrastive (BT) (Fang and Xie, 2020) uses contrastive learning with back-translation as data augmentation to enhance sentence representations.",
+      "startOffset" : 21,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 42,
+      "context" : "(7) ConSERT (Yan et al., 2021) explores various text augmentation strategies for contrastive learning on sentence representation learning.",
+      "startOffset" : 12,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 14,
+      "context" : "(9) SimCSE (Gao et al., 2021) proposes a simple contrastive learning framework that utilizes dropout as perturbation for data augmentation.",
+      "startOffset" : 11,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 11,
+      "context" : "We start from pre-trained checkpoints of BERT (Devlin et al., 2019) or RoBERTa (Liu et al.",
+      "startOffset" : 46,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 42,
+      "context" : "Thus, in this part, we conduct experiments to examine whether our framework can bring improvements with the following positive data augmentation strategies: (1) Token Shuffling that randomly shuffles the order of the tokens in the input sequences; (2) Feature/Token/Span Cutoff (Yan et al., 2021) that randomly erase features/tokens/token spans in the input; (3) Dropout that is similar to SimCSE (Gao et al.",
+      "startOffset" : 278,
+      "endOffset" : 296
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2021) that randomly erase features/tokens/token spans in the input; (3) Dropout that is similar to SimCSE (Gao et al., 2021).",
+      "startOffset" : 108,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 18,
+      "context" : "(1) Random Noise directly generates noisebased negatives without gradient-based optimization; (2) Knowledge Distillation (Hinton et al., 2015) utilizes SimCSE as the teacher model to distill knowledge into the student model during training; (3) Self Instance Weighting adopts the model itself as the complementary model.",
+      "startOffset" : 121,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 14,
+      "context" : "Following SimCSE (Gao et al., 2021), we utilize the following function to evaluate the uniformity:",
+      "startOffset" : 17,
+      "endOffset" : 35
+    } ],
+    "year" : 0,
+    "abstractText" : "Recently, contrastive learning has shown effectiveness in fine-tuning pre-trained language models (PLM) to derive sentence representations, which pulls augmented positive examples together to improve the alignment while pushing apart irrelevant negatives for the uniformity of the whole representation space. However, previous works mostly sample negatives from the batch or training data at random. It may cause sampling bias that improper negatives (e.g., false negatives and anisotropy representations) will be learned by sentence representations, and hurt the uniformity of the representation space. To solve it, we present a new framework DCLR to alleviate the influence of sampling bias. In DCLR, we design an instance weighting method to punish false negatives and generate noise-based negatives to guarantee the uniformity of the representation space. Experiments on 7 semantic textual similarity tasks show that our approach is more effective than competitive baselines. Our codes and data will be released to reproduce all the experiments.",
+    "creator" : null
+  }
+}

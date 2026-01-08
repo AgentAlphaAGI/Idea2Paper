@@ -1,0 +1,638 @@
+{
+  "name" : "ARR_2022_352_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Compression of Generative Pre-trained Language Models via Quantization",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Transformer-based generative pre-trained language models (PLMs) show strong abilities of multitask and few-shot learning, and achieve remarkable performances on various tasks (Radford and Narasimhan, 2018; Brown et al., 2020; Lewis et al., 2020; Raffel et al., 2020). However, they are usually expensive in terms of both computation and memory due to a large number of parameters, and the token-by-token generation process. Many methods have been proposed to compress PLMs, but mostly focus on understanding tasks like sentence classification with BERT models (Lan et al., 2019; Sun et al., 2020b; Jiao et al., 2019; Shen et al., 2020; Hou et al., 2020). Recent works attempt to compress GPT-2 using tensor decomposition (Edalati et al., 2021), and knowledge distillation (Song et al., 2020), but the compression ratio achieved is much\nsmaller than that of BERT. Yet the underlying difficulty remains unclear.\nIn this paper, we firstly explore compressing generative PLMs by quantizing the parameters from full-precision to lower bits. We find that directly applying previous quantization methods designed for BERT or computer vision tasks to generative PLMs lead to poor performance. Figure 1 shows that the performance drops sharply as the weight bit-width decreases. To investigate the difficulty of quantizing generative PLMs, we find that the learned embeddings tend to be homogeneous and hard to distinguish due to the reduced capacity caused by quantization, while the weight distributions also vary significantly across different modules and different Transformer layers. These problems are further magnified due to the nature of sequential left-to-right prediction of generative PLMs, as the quantization error will accumulate across time.\nTo alleviate the above problems, we propose a token-level contrastive distillation to contrast on tokens and make the word embedding distinguishable. Besides, we propose a module-wise dynamic scaling for the quantizer to better adapt to different modules. Empirical results on language modeling, next utterance prediction and summarization show that compared to the full-precision baseline, our quantized GPT and BART (abbreviated as QuantGPT and QuantBART) achieve comparable performance for 8/4-bit weight, and have only a slight drop for 2-bit weight, while being over 13× smaller. QuantGPT also clearly outperforms previous GPT compression methods on language modeling.\nTo summarize, our main contributions are: 1) We find that generative PLMs are hard to quantize due to homogeneous word embedding and varied weight distribution. 2) We then propose the tokenlevel contrastive distillation and module-wise dynamic scaling, to make the word embedding more distinguishable and make quantizers adapt to different modules, respectively. 3) Empirical results on various tasks show the efficacy of our method."
+    }, {
+      "heading" : "2 Difficulty of Qunatizing Generative Pre-trained Language Models",
+      "text" : "In this section, we show that it is challenging to train a low-bit generative pre-trained model with conventional quantization approaches directly. Before diving into details, we first review the necessary backgrounds of quantization."
+    }, {
+      "heading" : "2.1 Network Quantization",
+      "text" : "In this paper, we apply the quantization-aware training (Courbariaux et al., 2015) to generative PLMs. Specifically, denote the vectorized full-precision weight as w, each forward propagation first clips the weight by a positive clipping factor α, and then quantizes the clipped weight to b-bit as\nwq = α ·Q(clip(w,−α, α)/α), (1)\nwhere Q is the quantization function that maps each entry in clip(w,−α, α)/α to its closest quantized value in the set of uniform discrete values {−1,−n−1n , · · · ,− 1 n , 0, 1 n , · · · , n−1 n , 1} with n = 2b−1 − 1. Then we compute the loss `(wq) with wq. During back propagation, we use the gradient with regard to the quantized weight ∇`(wq) as the Straight-Through-Estimator (Bengio et al., 2013) to update full-precision weights w due to the non-differentiability of Q(·).\nA good clipping factor is expected to take the majority of full-precision weight into account via clipping, i.e., quantizing the range where data are densely distributed to reduce quantization error. To solve this problem, PACT (Choi et al., 2018) learns a parameterized clipping factor and achieves better results than setting a fixed clipping factor. Instead of learning the clipping factor, LSQ (Esser et al., 2020) learns the step size α/n, but requires a careful initialization and gradient update.\nIn practice, following previous works on BERT quantization (Zhang et al., 2020; Bai et al., 2021), we use layer-wise quantization (i.e., one clipping factor for elements in each weight matrix) for all\nweight matrices in the Transformer layers and rowwise quantization (i.e., one clipping factor for each word embedding) for the embedding layer. We use asymmetric uniform quantization for activations after self-attention and GeLU function whose elements are mostly positive, and symmetric uniform quantization for other activations. We do not quantize layer-normalization layers, skip connections, biases due to small computational overhead."
+    }, {
+      "heading" : "2.2 Difficulty Analysis",
+      "text" : "We compare the following representative quantization methods including (i) LAQ (Zhang et al., 2020) for BERT; (ii) PACT (Choi et al., 2018) and LSQ (Esser et al., 2020)) for computer vision tasks, to generative pre-trained model, GPT-2. Figure 1 shows the performance under different weight bitwidths, and the performance drops sharply as the bit-width decreases, especially for PACT and LSQ. In the following, we study the potential reasons behind the difficulty of quantizing generative PLMs, by empirically investigating the properties of the word embedding and model parameters.\nHomogeneous Word Embedding. We first study the difficulty from the learned word embeddings of different models. In Figure 2, we visually compare the distributions of the word embeddings of the fullprecision and quantized models under the same scale. As can be seen, the word embeddings of the full-precision model are scattered distinguishable, while those in previous quantization methods PACT, LSQ and LAQ learn homogeneous word embeddings which are clustered and less distinguishable, especially for PACT and LSQ. We speculate this is caused by the sequential computation nature of GPT. Specifically, unlike BERT which computes the representation of all tokens in parallel, GPT computes each token in left-to-right order, and the quantization error incurred in the previous tokens will pass on to future tokens, making the learning signal noisier over time, and finally less informative word embeddings.\nA direct consequence of the homogeneous word embedding can be reflected in Figure 3. By comparing Figure 2 and Figure 3, we can find that the higher degree of homogeneity in the word embedding of a quantized model, the fewer dependencies among different tokens are kept.\nAs will be discussed in Section 3.1, we propose a token-level contrastive learning to alleviate this problem. Compared with PACT, LSQ and LAQ,\nour method not only aligns the token representations between the quantized and full-precision networks (i.e., diagonal boxes), but also captures the dependencies among different tokens (nondiagonal boxes). More visualizations are available in Appendix C.4. The non-distinguishable word embeddings and poor ability to capture contextualized dependencies also make methods like PACT and LSQ more likely to generate incorrect tokens, e.g. illogical and repeated text ( Section 4.4).\nVaried Distribution of Weights. Besides the learned word embeddings, we also study the difficulty of quantizing a generative pre-trained model through the distribution of the weights in the fullprecision model. Figure 4 shows that the weight\ndistributions of a 12-layer full-precision GPT-2 are highly skewed with outliers. This causes difficulty in estimating the clipping factor α of the quantizer by heuristic methods, or even by PACT which learns the α through gradient descent. Specifically, in PACT, the approximated gradient of α only relies on the weights whose absolute values are larger than α. This solution ignores the effect of weights within [−α, α] and depends heavily on the initialization of α. Figure 4 shows that an improper initialization together with the inaccurate gradient estimation of the clipping factor often make the learned α of PACT too large, and can not provide fine resolution to the majority of weights within the clipping range. The quantization error accumulated over time makes this problem more severe.\nAs will be discussed in Section 3.2, we propose a module-wise dynamic scaling to reduce the clipping factor’s sensitivity to initialization, and an improved gradient estimation that also considers the weights within [−α, α]. Figure 4 shows that the clipping factor learned by our method gives finer resolutions to the majority of the weights."
+    }, {
+      "heading" : "3 Proposed Method",
+      "text" : "Based on the observations in Section 2.2, we propose a quantization method which utilizes tokenlevel contrastive distillation to make the word embedding distinguishable (Section 3.1) and a modulewise dynamic scaling adjustment to learn better clipping factors (Section 3.2)."
+    }, {
+      "heading" : "3.1 Token-level Contrastive Distillation",
+      "text" : "The proposed token-level contrastive distillation contrast among tokens instead of sequences sequence, to learn distinguishable representations for each token. Inspired by Baevski et al. (2020), which uses in-utterance representation at different positions of the same utterance as negatives for speech feature learning, for each token of the quantized network, we use the representation of the same token from the full-precision teacher network as its positive, while representations of other tokens in the same sequence as negatives (Figure 5). Inspired by He et al. (2020) which uses a momentum encoder for more consistent representation, we build a memory bank to store momentum token representations from the quantized network. When computing the contrastive distillation loss, we load the representations of negative samples from the memory bank with cheap indexing operations.\nSpecifically, we use superscripts s and t to denote the quantized student network and fullprecision teacher network, respectively. Denote the length-n input sequence of tokens as (t1, t2, · · · , tn). For the i-th token ti, suppose its hidden states of the last Transformer layer from the quantized and full-precision network are linearly projected to (hsi ,h t i) ∈ Rd, and qsi is the smoothed representation of hsi in the memory bank. Denote Si as the indices of the sampled negatives for token i, the token-level contrastive distillation loss for the length-n sequence can be formulated as\nLcont=− n∑ i=1 log exp(s(qsti ,h t ti)/τ)∑ j∈Si exp(s(q s ti ,httj )/τ) , (2)\nwhere s(x,y) = x >y\n‖x‖‖y‖ computes the cosine similarity, and τ is a fixed temperature parameter.\nThen we update the representation of token ti in the memory bank with the moving-average of token representations from the quantized network:\nqsti ← mq s ti + (1−m)h s ti , (3)\nwhere m ∈ [0, 1) it the momentum coefficient that controls the smoothness of the token represenation.\nBesides, we use an additional distillation loss Ldist over the logits. For the i-th token ti, suppose the logits of the quantized and full-precision network are zsti , z t ti ∈ R\n|V |, where |V | is the vocabulary size. Ldist is computed with the soft crossentropy loss:\nLdist = − n∑ i=1 ztti log(z s ti). (4)\nThus the total training loss is\nL = λLcont + Ldist, (5)\nwhere λ is a trade-off factor set as 0.1 by default. Intuitively, for each token in the quantized network, Ldist only encourages it to mimic its corresponding token of the teacher network, while Lcont not only pulls it close to its positive, but also pushes it away from its negatives. In this way, Lcont helps the student to capture more information from the teacher’s representation, as is also theoretically discussed in Tian et al. (2019).\nThe proposed token-level contrastive distillation is crucial to the performance, and outperforms the sequence-level counterpart (as will be shown empirically in Section 5.1.1). We conjecture this is because (i) token-level contrast alleviates the problem of homogeneous word embedding (Figure 2) in the low-bit quantization; and (ii) similar to speech, the\norder of natural language is also sequential instead of spatial like images; and (iii) the self-attention mechanism allows other tokens to learn representations contextualized on the studied token, and these in-sequence negatives are harder than those from in-batch sequences, allowing more efficient representation learning."
+    }, {
+      "heading" : "3.2 Module-dependent Dynamic Scaling",
+      "text" : "Based on the observation of varied weight distribution in Section 2.2, we propose a simple-yeteffective dynamic scaling according to the statistics of each module weight. Specifically, instead of directly learning the original clipping factor α as PACT, we turn to learn a new scaling factor γ, which is multiplied with the average weight magnitude ‖w‖1n to get clipping factor α:\nα = γ · ‖w‖1 n , (6)\nwhere ‖ · ‖1 denotes `1 norm. The scaling γ is initialized as 1, which not only eases the initialization but also ensures the initial clipping factor α does not deviate far from the full-precision weights, regardless of the diversity of weight distribution.\nBesides, we also design a more accurate gradient estimation of the scaling factor than PACT (Choi et al., 2018). Previous PACT only back propagates through weights whose absolute values are larger the clipping factor (i.e. |w| ≥ α). Instead, we also consider the weights inside the clipping range (i.e. |w| < α) as:\n∂` ∂γ =  ∂` ∂wq Q(u)‖w‖1n ,w < −α ∂` ∂wq [−wα +Q(u)] ‖w‖1 n ,−α≤w≤α\n∂` ∂wq Q(u)‖w‖1n ,w > α\n, (7)\nwhere ` is the total training loss and u = clip(w,−α, α)/α in Eq. (1). The detailed derivation can be found in Appendix A.\nIntuitively, the update of clipping factor should be influenced by both weights outside and inside [−α, α], since α controls the quantization error of both, i.e., a large clipping factor results in small quantization error for weights outside [−α, α], while large error for weights inside. Our new estimation of the gradient of γ in Eq. (7) balances both weights outside and inside [−α, α]. Additionally, the proposed scaling is less sensitive to the varied distribution of weight than PACT, since the gradient of scaling ∂`∂γ is proportional to the average weight magnitude ‖w‖1n ."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Setup",
+      "text" : "Tasks and Models. In this section, we evaluate the efficacy of our proposed quantization method on three kinds of generative tasks on two kinds of generative pre-training models. Specifically, we perform the proposed quantization approach on language modeling and next utterance prediction tasks on GPT-2 (Radford and Narasimhan, 2018), and abstractive summarization using BART (Lewis et al., 2020), and call the resultant models QuantGPT and QuantBART. The token-level contrastive distillation is performed on the hidden states of the last layer of GPT-2 or the BART decoder. More details about the datasets and model architectures can be found in Appendix B.1 and B.2.\nImplementation Details. For each downstream task with our proposed method, we first finetune a full-precision network using the pre-trained checkpoint from huggingface1 for both GPT-2 and BART. Then we use this fine-tuned network as the fullprecision teacher network and to initialize the quantized student network. We train each task with 8 V100 GPUs based on the Pytorch framework. The detailed hyper-parameters for each task are available in Appendix B.3.\nCompared Methods. Since there are very few attempts to compress generative PLMs, we selfimplement three baseline quantization methods PACT (Choi et al., 2018), LSQ (Esser et al., 2020) and LAQ (Hou and Kwok, 2018) for comparison. Details about these methods are in Appendix B.4."
+    }, {
+      "heading" : "4.2 Language Modeling",
+      "text" : "The task of language modeling is to predict the probability distribution over a sequence of words. For language modeling, we experiment on WikiText2 (Merity et al., 2016), Penn Treebank (PTB) (Mikolov and Zweig, 2012) and WikiText103 (Merity et al., 2016). We use perplexity (PPL) to evaluate the performance for language modeling."
+    }, {
+      "heading" : "Comparison with the Full-precision Model.",
+      "text" : "From Table 1, the performance of the proposed method with 8-bit weight is comparable to the fullprecision counterpart on PTB and WikiText103, while drops slightly on WikiText2. A slightly more severe performance drop is observed as the bitwidth decreases from 8 to 4, with a drop of around 1\n1http://huggingface.co/models\nPPL point on WikiText2 and WikiText103, and less than 0.1 PPL point on PTB. When the bit-width of weight further goes down to 2, our method has an average of 2 PPL points drop, but achieves 14.4× model size reduction."
+    }, {
+      "heading" : "Comparison with Other Quantization Methods.",
+      "text" : "From Table 1, our method outperforms PACT, LSQ and LAQ for all bit-widths and tasks. As the bitwidth decreases from 8 to 4, the PPL of LSQ greatly increases, with the average PPL of LSQ increasing by over 5 times. As the bit-width further decreases to 2, both LSQ and PACT fail on all datasets, despite their good performance on understanding tasks on BERT (Bai et al., 2021). We conjecture it is because though both PACT and LSQ have learnable parameters, the accumulated quantization error of generative PLMs makes the updates of these parameters by gradient descent less stable. On the other hand, the proposed module-wise dynamic scaling alleviates the problem."
+    }, {
+      "heading" : "Comparison with Other Compression Methods.",
+      "text" : "In Table 2, we compare our quantization method against recent GPT-2 compression methods, includ-\ning tensor decomposition method KnGPT2 (Edalati et al., 2021), as well as distillation methods DistilGPT2 2 and LightPAFF (Song et al., 2020). From the comparison, our method outperforms the others in terms of model size and performance, even when weights are compressed to only 2 bits."
+    }, {
+      "heading" : "4.3 Next Utterance Prediction",
+      "text" : "The task of next utterance prediction aims at predicting the next utterance given the dialogue context. It tests the language understanding ability of generative models. For this task, we use a largescale dialogue dataset, Persona-Chat (Zhang et al., 2018). We use accuracy (Acc) to evaluate this task following Zhang et al. (2018).\nFrom Table 1, all quantization methods incur a clear performance drop compared to the fullprecision baseline, even in the 8-bit setting. As the quantization becomes more aggressive, i.e., the bit-width gets smaller, the performance of PACT and LAQ decrease more significantly than ours. In particular, LSQ diverges for 2-bit weight and its accuracy is only 5%, which is no better than a random guess as there are 20 classes."
+    }, {
+      "heading" : "4.4 Abstractive Summarization",
+      "text" : "Abstractive summarization aims at generating a terse summary that captures the main ideas of the source article. We experiment on XSum (Narayan et al., 2018), whose ground-truth summarizations are highly abstractive and are challenging for many extractive strategies. ROUGE 1, 2, L are used to evaluate the performance of this task.\n2https://transformer.huggingface.co/ model/distil-gpt2\nTable 3 shows the results of the abstractive summarization. As can be seen, our method constantly outperforms other methods again with a clear margin. Example generated summarizations of different methods in Appendix C.3 show that the summaries generated by QuantBART are logical and terse, while those from PACT have repeated texts."
+    }, {
+      "heading" : "5 Discussion",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Ablation on Contrastive Learning",
+      "text" : ""
+    }, {
+      "heading" : "5.1.1 Choices of Negative Sampling",
+      "text" : "(a) fp+quan. (b) quan. only.\nAs shown in Figure 6, we ablate on how to choose negative samples in contrastive learning. Specifically, we compare our method with variants of token-level contrastive learning, which select negative samples of each token from (a) representations of other tokens in both the full-precision and quantized networks (fp+quan.); (b) representations of other tokens in the quantized network (quan. only); and (c) the whole vocabulary randomly for\neach training iteration (global). Besides, we compare with (d) sequence-level contrastive learning by pulling together representations of the same sequence, and pushing away representations of different ones from the teacher network (in-batch). Representation of a sequence is defined as the mean of representations of all tokens in the sequence.\nFrom Table 4, “fp+quan.” and “quan. only” performs worse than QuantGPT, which uses fullprecision representations of other tokens as negative samples. This indicates that noisy representations of tokens from the not-fully-trained quantized network may not be sufficient. “global” performs even worse, which we conjecture is because, for one token, negative tokens chosen from the same sequence are contextually related to it and more informative than random tokens. “in-batch” performs worse than all token-level variants, which may be because generative tasks make predictions in a token-wise manner and rely heavily in finergrained token-wise representations. Interestingly, contrary to in-batch negative sampling in computer vision (Chen et al., 2020), we find that reducing the number of negative samples by reducing the batch size from 32 to 16 slightly improves performance."
+    }, {
+      "heading" : "5.1.2 Number of Negative Samples",
+      "text" : "In Figure 7, we plot the PPL of 2-bit QuantGPT on the PTB dataset, with varying number of negative samples. We plot the mean results with standard deviations from 5 independent runs. As can be seen, the performance improves and converges gradually\nas the number of negative samples increases. Figure 7 also shows that using the movingaverage representations (qsti in Eq. (3)) of negative samples in the memory bank has better performance than using the immediate representations (hsti in Eq. (3)), because of a smoother and more consistent representation of tokens."
+    }, {
+      "heading" : "5.2 Ablation on Dynamic Scaling",
+      "text" : "Figure 8 shows the learned scaling γ of different modules in the 2-bit GPT-2 model. As can be seen, the scalings of different modules vary a lot, verifying the need for module-wise dynamic scaling.\nIn addition, we investigate the effect of the proposed dynamic scaling and the new estimation of the gradient in Eq. (7) with two variants: 1) Scaling only which removes the token-level contrastive learning; and 2) Ours with PACT which removes the contrastive learning, and estimates the gradient with PACT which only considers the weights whose absolute values are larger than the clipping factor α. As shown in Table 5, the performance gets worse without contrastive learning to learn the distinguishable representations of tokens. The performance drops significantly when using PACT to estimate the gradient of the proposed scaling, especially for the WikiText103 dataset, verifying the efficacy of the new gradient estimation."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "Quantization of Pre-trained Language Models.",
+      "text" : "Quantization compresses a model by representing the 32-bit floating-point parameter with a low-bit representation, and has been widely used in various domains as it does not require designing a new model architecture. There have been many attempts to quantize task-specific BERT models (Zafrir et al., 2019; Shen et al., 2020; Zadeh et al., 2020) with only negligible performance drop on natural language understanding tasks. Recent works (Zhang et al., 2020; Bai et al., 2021) even push the weight bit-width down to as low as 1-bit. Despite the success of these approaches for BERT models, at-\ntempts to quantize generative PLMs are scarce, and the underlying difficulty remains unclear.\nContrastive Learning. Contrastive learning aims at pushing the representations of similar samples together while pulling those of dissimilar ones apart. and is widely used for large-scale self-supervised learning in various domains (Chen et al., 2020; Sun et al., 2020a; Baevski et al., 2020; Anonymous, 2022), and multi-modal learning (Radford et al., 2021; Jia et al., 2021). SimCLR (Chen et al., 2020) directly uses other in-batch samples as negatives, and sufficient large batch size is required to work well. MoCo (He et al., 2020) maintains a large number of negative samples in a queue and uses a moving average key encoder to improve consistency. Contrastive learning without negative samples is also proposed in BYOL (Grill et al., 2020) and SimSiam (Chen and He, 2021). Contrastive representation distillation (Tian et al., 2019) distills the knowledge from the teacher network to the student network by maximizing the mutual information between them.\nThe closest work with our token-level contrastive distillation is Wav2vec 2.0 (Baevski et al., 2020), which use in-utterance representations at different positions as negatives in speech learning. Besides the difference in the modality and tasks, our method also differs from theirs in (1) Model: We quantize the model parameters and activations while they do not; (2) Representation: For each sample, we use the output of the full-precision and the quantized networks as its two views, while they use the quantized and the contextualized representation. (3) Loss: We calculate loss over all tokens in an auto-regressive manner, while they only calculate over the masked tokens non-autoregressively."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "This paper studies low-bit quantization of generative PLMs. We find that the difficulty of quantizing generative PLMs lies in homogeneous word embedding and varied distribution of weights. To alleviate the two problems, we propose token-level contrastive learning to learn more distinguishable token emebeddings, as well as a module-dependent dynamic scaling for more accurate quantization. Extensive experiments on language modeling, next utterance prediction and abstractive summarization demonstrate the efficacy of our proposed method. We hope our work sheds a light on the compression of generative PLMs in future exploration."
+    }, {
+      "heading" : "A Derivation of Gradient of Dynamic Scaling",
+      "text" : "In this section, we provide the derivation of the gradient of the proposed dynamic scaling γ. The quantization in the forward process can be written as\nα = ‖w‖1 n γ,\nu = clip(w,−α,+α)/α, wq = Q(u)α,\nwhere Q(·) is an uniform quantization function as described in Section 2.2. Based on the chain rule, the gradient of scaling γ w.r.t. the training loss function ` is:\n∂` ∂γ = ∂` ∂wq [ ∂wq ∂Q(u) ∂Q(u) ∂α ∂α ∂γ + ∂wq ∂α ∂α ∂γ ]\n= ∂` ∂wq [α ∂Q(u) ∂α ‖w‖1 n +Q(u) ‖w‖1 n ]\n= ∂` ∂wq [α ∂Q(u) ∂α +Q(u)] ‖w‖1 n .\n(8)\nWe use straight through estimator (STE) to estimate the gradient of uniform quantizer Q(·), i.e., ∀i, ∂Q(ui)∂ui = 1 . Thus the gradient ∂Q(u) ∂α can be written as:\n∂Q(u) ∂α = ∂Q(u) ∂u ∂u ∂α =  0,w ≤ −α\n− w α2 ,−α<w<α 0,w ≥ α . (9)\nBy combining Eq. (8) and Eq. (9), we get\n∂` ∂γ =  ∂` ∂wq Q(u)‖w‖1n ,w ≤ −α ∂` ∂wq [−wα +Q(u)] ‖w‖1 n ,−α < w < α\n∂` ∂wq Q(u)‖w‖1n ,w ≥ α\nwhere ∂`∂γ considers both the weight inside and outside the clipping value, and proportional to the weight magnitude ‖w‖1n ."
+    }, {
+      "heading" : "B More Experimental Settings",
+      "text" : ""
+    }, {
+      "heading" : "B.1 Datasets",
+      "text" : "The train/val/test splits for different datasets are shown on Table 6."
+    }, {
+      "heading" : "B.2 Model Architectures",
+      "text" : "GPT-2. The vocabulary size of GPT-2 is 50527. We use GPT-2-small with 12 decoder layers and hidden state dimension as 768, for experiments\nin Sections 2.2, 4 and 5. GeLU (Hendrycks and Gimpel, 2016) is used as the activation function. In the experiments of Appendix C.1, we adopt GPT2-base with 24 decoder layers and hidden state dimension as 1024, to evaluate the quantization ability on larger models.\nBART. The vocabulary size of BART is 50265. We use BART-base with 6 encoder layers, 6 decoder layers and hidden state dimension as 768 for experiments in Section 4. In the experiments of Appendix C.1, we adopt BART-large with 12 encoder layers, 12 decoder layers and hidden state dimension 1024, to evaluate the quantization ability on larger models."
+    }, {
+      "heading" : "B.3 Hyperparameters",
+      "text" : "Language Modeling. The sequence length is 512. The learning rate is initialized to 0.0005 (resp. 0.001) for the GPT-2 backbone parameters (resp. clipping factor γ) and then linearly decays to 0. The number of negative samples in each sequence is 64 for the PTB dataset, and 32 for the WikiText2 and WikiText103. The temperature τ and momentum coefficient m is 0.1 and 0.5 respectively. We train with the AdamW optimizer (Loshchilov and Hutter, 2017) with batch size 32. The training epochs for WikiText2, PTB and WikiText103 are set as 80, 120, 8, respectively.\nNext Utterance Prediction. The sequence length is 512. The learning rate is initialized to 0.0005 (resp. 0.001) for the GPT-2 backbone parameters (resp. clipping factor γ) and then linearly decays to 0. The number of negative samples in each sequence is 32. The temperature τ and momentum coefficient m is 0.1 and 0.5, respectively. We train with the AdamW optimizer with batch size 16, for a total of 2 epochs.\nAbstractive Summarization. We set the length of the source sequence (articles) as 512, and pad the target sequence (summaries) to 512. We use beam search to generate summaries, with beam size 6 and length penalty 1. The learning rate is\ninitialized to 0.0002 (resp. 0.001) for the BART backbone parameters (resp. clipping factor γ) and then linearly decays to 0. The number of negative samples is 32. The temperature τ and momentum coefficient m is 0.1 and 0.5, respectively. We train with the AdamW optimizer with batch size 128, for a total of 8 epochs."
+    }, {
+      "heading" : "B.4 Description of the Compared Methods",
+      "text" : "PACT. PACT (Choi et al., 2018) learns a learnable clipping factor for each module by gradient descent. To make the quantization more accurate, we adopt a flexible variant of the original PACT, with different positive and negative clipping factors [−αneg, αpos], where both αneg and αpos are initialized as 2.5.\nLSQ. LSQ (Esser et al., 2020) learns the step-size of quantizer for each module by gradient descent. We use the recommended initialization strategy of the step size as (Esser et al., 2020).\nLAQ. LAQ (Hou et al., 2017; Hou and Kwok, 2018) is a loss-aware quantization method that views quantization as an optimization problem and solve it via proximal Newton algorithm. We use the approximate solver in (Hou and Kwok, 2018) to compute the quantized weights before each forward propagation.\nFor the self-implemented methods PACT, LSQ and LAQ, we adopt the commonly-used distilla-\ntion loss adopted in (Hinton et al., 2015; Jiao et al., 2019). Note that these methods are only used for weights and embeddings, while the activations of these methods follow the same setting as our proposed method in Section 2.1. We also tried using the original language modeling loss w.r.t. the ground-truth labels, and distillation loss over the the attention as (Jiao et al., 2019). However, these two losses worsens the performance on all three methods."
+    }, {
+      "heading" : "B.5 Frameworks of Double-head GPT-2 and BART",
+      "text" : "Since we adopt double-head GPT-2 and BART for next utterance prediction and abstractive summarization, the frameworks for these tasks are slightly modified from that on language modeling due to the difference of tasks. In Figure 9 and 10, we illustrate the framework for double-head GPT-2 and BART, respectively. In the double-head GPT-2, we also quantize the final linear layer in the output head."
+    }, {
+      "heading" : "C More Experimental Results",
+      "text" : ""
+    }, {
+      "heading" : "C.1 Performance of Larger Models",
+      "text" : "In Table 7, we experiment with GPT-base and BART-large, which both have 24 Transformer layers. For all bit-widths, the training of our method converges successfully without gradient explod-\ning/vanishing problems. QuantGPT outperforms PACT by a large margin in all tasks, especially for 2-bit weight. Our quantization method on larger models also has better performance than that on 12-layer GPT-2 and 12-layer BART in Section 4."
+    }, {
+      "heading" : "C.2 Representations for the Contrastive Loss",
+      "text" : "In Table 8, we compare the different representations to perform the contrastive loss. The “decoderlast” denotes that the proposed token-level contrastive loss is performed on the hidden states from the last decoder layer after a linear transform.\nFrom Table 8, “decoder-last” perform better than “decoder-first”. We speculate it is because the hidden states of the last decoder blocks contain rich information from the previous layers Xiong et al. (2020).\nSince the experiments of abstractive summarization are conducted on BART, which has both encoder and decoder layers, we also study the con-\ntrastive loss on the “encoder-last” and “encoderfirst”. In the ablation on the encoder, the contrastive loss Lcont are computed on the source input (articles), instead of target input (summaries). From Table 8, “decoder-last” also has better ROUGE 1, 2, L values than other counterparts."
+    }, {
+      "heading" : "C.3 Examples of Summarizations",
+      "text" : "In Table 9, we provide the example summarizations on the XSum dataset. By comparing the articles, references and generations, the generated summaries by our quantized model are more logical and terse than PACT, LSQ and LAQ, which face problems of homogeneous word embeddings to some extent as discussed in Section 2.2."
+    }, {
+      "heading" : "C.4 More Visualizations for the Token Representations",
+      "text" : "In Figure 11, we provide the visualizations of token representations on more samples. The observations are similar to those in Section 2.2."
+    } ],
+    "references" : [ {
+      "title" : "SPIRAL: Self-supervised perturbation-invariant representation learning for speech pre-training",
+      "author" : [ "Anonymous." ],
+      "venue" : "Submitted to The Tenth International Conference on Learning Representations. Under review.",
+      "citeRegEx" : "Anonymous.,? 2022",
+      "shortCiteRegEx" : "Anonymous.",
+      "year" : 2022
+    }, {
+      "title" : "wav2vec 2.0: A framework for self-supervised learning of speech representations",
+      "author" : [ "Alexei Baevski", "Henry Zhou", "Abdelrahman Mohamed", "Michael Auli" ],
+      "venue" : "In Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Baevski et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Baevski et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Binarybert: Pushing the limit of bert quantization",
+      "author" : [ "Haoli Bai", "Wei Zhang", "Lu Hou", "Lifeng Shang", "Jing Jin", "Xin Jiang", "Qun Liu", "Michael Lyu", "Irwin King." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics.",
+      "citeRegEx" : "Bai et al\\.,? 2021",
+      "shortCiteRegEx" : "Bai et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Estimating or propagating gradients through stochastic neurons for conditional computation",
+      "author" : [ "Yoshua Bengio", "Nicholas Léonard", "Aaron Courville." ],
+      "venue" : "Technical Report arXiv:1308.3432.",
+      "citeRegEx" : "Bengio et al\\.,? 2013",
+      "shortCiteRegEx" : "Bengio et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Language models are few-shot learners",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "International conference on machine learning, pages 1597–1607.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploring simple siamese representation learning",
+      "author" : [ "Xinlei Chen", "Kaiming He." ],
+      "venue" : "IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 15750–15758.",
+      "citeRegEx" : "Chen and He.,? 2021",
+      "shortCiteRegEx" : "Chen and He.",
+      "year" : 2021
+    }, {
+      "title" : "Pact: Parameterized clipping activation for quantized neural networks",
+      "author" : [ "Jungwook Choi", "Zhuo Wang", "Swagath Venkataramani", "Pierce I-Jen Chuang", "Vijayalakshmi Srinivasan", "Kailash Gopalakrishnan." ],
+      "venue" : "Preprint arXiv:1805.06085.",
+      "citeRegEx" : "Choi et al\\.,? 2018",
+      "shortCiteRegEx" : "Choi et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Binaryconnect: Training deep neural networks with binary weights during propagations",
+      "author" : [ "Matthieu Courbariaux", "Yoshua Bengio", "Jean-Pierre David." ],
+      "venue" : "Advances in neural information processing systems, pages 3123–3131.",
+      "citeRegEx" : "Courbariaux et al\\.,? 2015",
+      "shortCiteRegEx" : "Courbariaux et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Kronecker decomposition for gpt compression",
+      "author" : [ "Ali Edalati", "Marzieh Tahaei", "Ahmad Rashid", "Vahid Partovi Nia", "James J Clark", "Mehdi Rezagholizadeh." ],
+      "venue" : "Advances in Neural Information Processing Systems.",
+      "citeRegEx" : "Edalati et al\\.,? 2021",
+      "shortCiteRegEx" : "Edalati et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learned step size quantization",
+      "author" : [ "Steven K Esser", "Jeffrey L McKinstry", "Deepika Bablani", "Rathinakumar Appuswamy", "Dharmendra S. Modha." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Esser et al\\.,? 2020",
+      "shortCiteRegEx" : "Esser et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross Girshick." ],
+      "venue" : "IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 9729–9738.",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Gaussian error linear units (gelus)",
+      "author" : [ "Dan Hendrycks", "Kevin Gimpel." ],
+      "venue" : "Technical Report arXiv:1606.08415.",
+      "citeRegEx" : "Hendrycks and Gimpel.,? 2016",
+      "shortCiteRegEx" : "Hendrycks and Gimpel.",
+      "year" : 2016
+    }, {
+      "title" : "Distilling the knowledge in a neural network",
+      "author" : [ "Geoffrey Hinton", "Oriol Vinyals", "Jeff Dean." ],
+      "venue" : "Technical Report arXiv:1503.02531.",
+      "citeRegEx" : "Hinton et al\\.,? 2015",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Dynabert: Dynamic bert with adaptive width and depth",
+      "author" : [ "Lu Hou", "Zhiqi Huang", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Qun Liu." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 33.",
+      "citeRegEx" : "Hou et al\\.,? 2020",
+      "shortCiteRegEx" : "Hou et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Loss-aware weight quantization of deep networks",
+      "author" : [ "Lu Hou", "James T. Kwok." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Hou and Kwok.,? 2018",
+      "shortCiteRegEx" : "Hou and Kwok.",
+      "year" : 2018
+    }, {
+      "title" : "Loss-aware binarization of deep networks",
+      "author" : [ "Lu Hou", "Yao Quanming", "James T. Kwok." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Hou et al\\.,? 2017",
+      "shortCiteRegEx" : "Hou et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Scaling up visual and vision-language representation learning with noisy text supervision",
+      "author" : [ "Chao Jia", "Yinfei Yang", "Ye Xia", "Yi-Ting Chen", "Zarana Parekh", "Hieu Pham", "Quoc V Le", "Yunhsuan Sung", "Zhen Li", "Tom Duerig." ],
+      "venue" : "International conference",
+      "citeRegEx" : "Jia et al\\.,? 2021",
+      "shortCiteRegEx" : "Jia et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Tinybert: Distilling bert for natural language understanding",
+      "author" : [ "Xiaoqi Jiao", "Yichun Yin", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Linlin Li", "Fang Wang", "Qun Liu." ],
+      "venue" : "Preprint arXiv:1909.10351.",
+      "citeRegEx" : "Jiao et al\\.,? 2019",
+      "shortCiteRegEx" : "Jiao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Albert: A lite bert for self-supervised learning of language representations",
+      "author" : [ "Zhenzhong Lan", "Mingda Chen", "Sebastian Goodman", "Kevin Gimpel", "Piyush Sharma", "Radu Soricut." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Lan et al\\.,? 2019",
+      "shortCiteRegEx" : "Lan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BART: Denoising sequence-to-sequence pre-training for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Decoupled weight decay regularization",
+      "author" : [ "Ilya Loshchilov", "Frank Hutter." ],
+      "venue" : "arXiv preprint arXiv:1711.05101.",
+      "citeRegEx" : "Loshchilov and Hutter.,? 2017",
+      "shortCiteRegEx" : "Loshchilov and Hutter.",
+      "year" : 2017
+    }, {
+      "title" : "Pointer sentinel mixture models",
+      "author" : [ "Stephen Merity", "Caiming Xiong", "James Bradbury", "Richard Socher." ],
+      "venue" : "arXiv preprint arXiv:1609.07843.",
+      "citeRegEx" : "Merity et al\\.,? 2016",
+      "shortCiteRegEx" : "Merity et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Context dependent recurrent neural network language model",
+      "author" : [ "Tomas Mikolov", "Geoffrey Zweig." ],
+      "venue" : "IEEE Spoken Language Technology Workshop, pages 234–239. IEEE.",
+      "citeRegEx" : "Mikolov and Zweig.,? 2012",
+      "shortCiteRegEx" : "Mikolov and Zweig.",
+      "year" : 2012
+    }, {
+      "title" : "Don’t give me the details, just the summary! topic-aware convolutional neural networks for extreme summarization",
+      "author" : [ "Shashi Narayan", "Shay B Cohen", "Mirella Lapata." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing, pages",
+      "citeRegEx" : "Narayan et al\\.,? 2018",
+      "shortCiteRegEx" : "Narayan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Learning transferable visual models from natural language",
+      "author" : [ "Alec Radford", "Jong Wook Kim", "Chris Hallacy", "Aditya Ramesh", "Gabriel Goh", "Sandhini Agarwal", "Girish Sastry", "Amanda Askell", "Pamela Mishkin", "Jack Clark", "Gretchen Krueger", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving language understanding by generative pretraining",
+      "author" : [ "Alec Radford", "Karthik Narasimhan" ],
+      "venue" : null,
+      "citeRegEx" : "Radford and Narasimhan.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Radford and Narasimhan.",
+      "year" : 2018
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "Journal of Machine Learning Research, 21:1–",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Q-bert: Hessian based ultra low precision quantization of bert",
+      "author" : [ "Sheng Shen", "Zhen Dong", "Jiayu Ye", "Linjian Ma", "Zhewei Yao", "Amir Gholami", "Michael W Mahoney", "Kurt Keutzer." ],
+      "venue" : "AAAI Conference on Artificial Intelligence.",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lightpaff: A two-stage distillation framework for pre-training and fine-tuning",
+      "author" : [ "Kaitao Song", "Hao Sun", "Xu Tan", "Tao Qin", "Jianfeng Lu", "Hongzhi Liu", "Tie-Yan Liu." ],
+      "venue" : "Preprint arXiv:2004.12817.",
+      "citeRegEx" : "Song et al\\.,? 2020",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Contrastive distillation on intermediate representations for language model compression",
+      "author" : [ "Siqi Sun", "Zhe Gan", "Yuwei Fang", "Yu Cheng", "Shuohang Wang", "Jingjing Liu." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing, pages 498–",
+      "citeRegEx" : "Sun et al\\.,? 2020a",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Mobilebert: a compact task-agnostic bert for resource-limited devices",
+      "author" : [ "Zhiqing Sun", "Hongkun Yu", "Xiaodan Song", "Renjie Liu", "Yiming Yang", "Denny Zhou." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics, pages 2158–2170.",
+      "citeRegEx" : "Sun et al\\.,? 2020b",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Contrastive representation distillation",
+      "author" : [ "Yonglong Tian", "Dilip Krishnan", "Phillip Isola." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Tian et al\\.,? 2019",
+      "shortCiteRegEx" : "Tian et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Gobo: Quantizing attention-based nlp models for low latency and energy efficient inference",
+      "author" : [ "Ali Hadi Zadeh", "Isak Edo", "Omar Mohamed Awad", "Andreas Moshovos." ],
+      "venue" : "IEEE/ACM International Symposium on Microarchitecture (MICRO), pages",
+      "citeRegEx" : "Zadeh et al\\.,? 2020",
+      "shortCiteRegEx" : "Zadeh et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Q8bert: Quantized 8bit bert",
+      "author" : [ "Ofir Zafrir", "Guy Boudoukh", "Peter Izsak", "Moshe Wasserblat." ],
+      "venue" : "Preprint arXiv:1910.06188.",
+      "citeRegEx" : "Zafrir et al\\.,? 2019",
+      "shortCiteRegEx" : "Zafrir et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Personalizing dialogue agents: I have a dog, do you have pets too? In Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
+      "author" : [ "Saizheng Zhang", "Emily Dinan", "Jack Urbanek", "Arthur Szlam", "Douwe Kiela", "Jason Weston" ],
+      "venue" : null,
+      "citeRegEx" : "Zhang et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Ternarybert: Distillation-aware ultra-low bit bert",
+      "author" : [ "Wei Zhang", "Lu Hou", "Yichun Yin", "Lifeng Shang", "Xiao Chen", "Xin Jiang", "Qun Liu." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "2020) learns the step-size of quantizer for each module by gradient descent. We use the recommended initialization strategy of the step size as (Esser",
+      "author" : [ "LSQ. LSQ (Esser" ],
+      "venue" : null,
+      "citeRegEx" : ".Esser,? \\Q2020\\E",
+      "shortCiteRegEx" : ".Esser",
+      "year" : 2020
+    }, {
+      "title" : "2018) is a loss-aware quantization method that views quantization as an optimization problem and solve it via proximal Newton algorithm. We use the approximate solver in (Hou and Kwok, 2018",
+      "author" : [ "LAQ. LAQ (Hou et al", "Hou", "Kwok" ],
+      "venue" : null,
+      "citeRegEx" : "2017 et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "2017 et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 26,
+      "context" : "Transformer-based generative pre-trained language models (PLMs) show strong abilities of multitask and few-shot learning, and achieve remarkable performances on various tasks (Radford and Narasimhan, 2018; Brown et al., 2020; Lewis et al., 2020; Raffel et al., 2020).",
+      "startOffset" : 175,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 4,
+      "context" : "Transformer-based generative pre-trained language models (PLMs) show strong abilities of multitask and few-shot learning, and achieve remarkable performances on various tasks (Radford and Narasimhan, 2018; Brown et al., 2020; Lewis et al., 2020; Raffel et al., 2020).",
+      "startOffset" : 175,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 20,
+      "context" : "Transformer-based generative pre-trained language models (PLMs) show strong abilities of multitask and few-shot learning, and achieve remarkable performances on various tasks (Radford and Narasimhan, 2018; Brown et al., 2020; Lewis et al., 2020; Raffel et al., 2020).",
+      "startOffset" : 175,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 27,
+      "context" : "Transformer-based generative pre-trained language models (PLMs) show strong abilities of multitask and few-shot learning, and achieve remarkable performances on various tasks (Radford and Narasimhan, 2018; Brown et al., 2020; Lewis et al., 2020; Raffel et al., 2020).",
+      "startOffset" : 175,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 19,
+      "context" : "Many methods have been proposed to compress PLMs, but mostly focus on understanding tasks like sentence classification with BERT models (Lan et al., 2019; Sun et al., 2020b; Jiao et al., 2019; Shen et al., 2020; Hou et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 31,
+      "context" : "Many methods have been proposed to compress PLMs, but mostly focus on understanding tasks like sentence classification with BERT models (Lan et al., 2019; Sun et al., 2020b; Jiao et al., 2019; Shen et al., 2020; Hou et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 18,
+      "context" : "Many methods have been proposed to compress PLMs, but mostly focus on understanding tasks like sentence classification with BERT models (Lan et al., 2019; Sun et al., 2020b; Jiao et al., 2019; Shen et al., 2020; Hou et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 28,
+      "context" : "Many methods have been proposed to compress PLMs, but mostly focus on understanding tasks like sentence classification with BERT models (Lan et al., 2019; Sun et al., 2020b; Jiao et al., 2019; Shen et al., 2020; Hou et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 14,
+      "context" : "Many methods have been proposed to compress PLMs, but mostly focus on understanding tasks like sentence classification with BERT models (Lan et al., 2019; Sun et al., 2020b; Jiao et al., 2019; Shen et al., 2020; Hou et al., 2020).",
+      "startOffset" : 136,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 9,
+      "context" : "Recent works attempt to compress GPT-2 using tensor decomposition (Edalati et al., 2021), and knowledge distillation (Song et al.",
+      "startOffset" : 66,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2021), and knowledge distillation (Song et al., 2020), but the compression ratio achieved is much Figure 1: Performance of quantized GPT-2 with varying weight bit-widths and 8-bit activation, using different methods.",
+      "startOffset" : 36,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 8,
+      "context" : "In this paper, we apply the quantization-aware training (Courbariaux et al., 2015) to generative PLMs.",
+      "startOffset" : 56,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 3,
+      "context" : "During back propagation, we use the gradient with regard to the quantized weight ∇`(wq) as the Straight-Through-Estimator (Bengio et al., 2013) to update full-precision weights w due to the non-differentiability of Q(·).",
+      "startOffset" : 122,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 7,
+      "context" : "To solve this problem, PACT (Choi et al., 2018) learns a parameterized clipping factor and achieves better results than setting a fixed clipping factor.",
+      "startOffset" : 28,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 10,
+      "context" : "Instead of learning the clipping factor, LSQ (Esser et al., 2020) learns the step size α/n, but requires a careful initialization and gradient update.",
+      "startOffset" : 45,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 36,
+      "context" : "In practice, following previous works on BERT quantization (Zhang et al., 2020; Bai et al., 2021), we use layer-wise quantization (i.",
+      "startOffset" : 59,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 2,
+      "context" : "In practice, following previous works on BERT quantization (Zhang et al., 2020; Bai et al., 2021), we use layer-wise quantization (i.",
+      "startOffset" : 59,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 36,
+      "context" : "We compare the following representative quantization methods including (i) LAQ (Zhang et al., 2020) for BERT; (ii) PACT (Choi et al.",
+      "startOffset" : 79,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020) for BERT; (ii) PACT (Choi et al., 2018) and LSQ (Esser et al.",
+      "startOffset" : 28,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2018) and LSQ (Esser et al., 2020)) for computer vision tasks, to generative pre-trained model, GPT-2.",
+      "startOffset" : 16,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 7,
+      "context" : "Besides, we also design a more accurate gradient estimation of the scaling factor than PACT (Choi et al., 2018).",
+      "startOffset" : 92,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 26,
+      "context" : "Specifically, we perform the proposed quantization approach on language modeling and next utterance prediction tasks on GPT-2 (Radford and Narasimhan, 2018), and abstractive summarization using BART (Lewis et al.",
+      "startOffset" : 126,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 20,
+      "context" : "Specifically, we perform the proposed quantization approach on language modeling and next utterance prediction tasks on GPT-2 (Radford and Narasimhan, 2018), and abstractive summarization using BART (Lewis et al., 2020), and call the resultant models QuantGPT and QuantBART.",
+      "startOffset" : 199,
+      "endOffset" : 219
+    }, {
+      "referenceID" : 7,
+      "context" : "Since there are very few attempts to compress generative PLMs, we selfimplement three baseline quantization methods PACT (Choi et al., 2018), LSQ (Esser et al.",
+      "startOffset" : 121,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2018), LSQ (Esser et al., 2020) and LAQ (Hou and Kwok, 2018) for comparison.",
+      "startOffset" : 13,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 22,
+      "context" : "For language modeling, we experiment on WikiText2 (Merity et al., 2016), Penn Treebank (PTB) (Mikolov and Zweig, 2012) and WikiText103 (Merity et al.",
+      "startOffset" : 50,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2016), Penn Treebank (PTB) (Mikolov and Zweig, 2012) and WikiText103 (Merity et al.",
+      "startOffset" : 29,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2016), Penn Treebank (PTB) (Mikolov and Zweig, 2012) and WikiText103 (Merity et al., 2016).",
+      "startOffset" : 71,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 2,
+      "context" : "As the bit-width further decreases to 2, both LSQ and PACT fail on all datasets, despite their good performance on understanding tasks on BERT (Bai et al., 2021).",
+      "startOffset" : 143,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 9,
+      "context" : "In Table 2, we compare our quantization method against recent GPT-2 compression methods, including tensor decomposition method KnGPT2 (Edalati et al., 2021), as well as distillation methods DistilGPT2 2 and LightPAFF (Song et al.",
+      "startOffset" : 134,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2021), as well as distillation methods DistilGPT2 2 and LightPAFF (Song et al., 2020).",
+      "startOffset" : 68,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 35,
+      "context" : "For this task, we use a largescale dialogue dataset, Persona-Chat (Zhang et al., 2018).",
+      "startOffset" : 66,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 24,
+      "context" : "We experiment on XSum (Narayan et al., 2018), whose ground-truth summarizations are highly abstractive and are challenging for many extractive strategies.",
+      "startOffset" : 22,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 5,
+      "context" : "Interestingly, contrary to in-batch negative sampling in computer vision (Chen et al., 2020), we find that reducing the number of negative samples by reducing the batch size from 32 to 16 slightly improves performance.",
+      "startOffset" : 73,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 34,
+      "context" : "There have been many attempts to quantize task-specific BERT models (Zafrir et al., 2019; Shen et al., 2020; Zadeh et al., 2020) with only negligible performance drop on natural language understanding tasks.",
+      "startOffset" : 68,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 28,
+      "context" : "There have been many attempts to quantize task-specific BERT models (Zafrir et al., 2019; Shen et al., 2020; Zadeh et al., 2020) with only negligible performance drop on natural language understanding tasks.",
+      "startOffset" : 68,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 33,
+      "context" : "There have been many attempts to quantize task-specific BERT models (Zafrir et al., 2019; Shen et al., 2020; Zadeh et al., 2020) with only negligible performance drop on natural language understanding tasks.",
+      "startOffset" : 68,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 36,
+      "context" : "Recent works (Zhang et al., 2020; Bai et al., 2021) even push the weight bit-width down to as low as 1-bit.",
+      "startOffset" : 13,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 2,
+      "context" : "Recent works (Zhang et al., 2020; Bai et al., 2021) even push the weight bit-width down to as low as 1-bit.",
+      "startOffset" : 13,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 5,
+      "context" : "and is widely used for large-scale self-supervised learning in various domains (Chen et al., 2020; Sun et al., 2020a; Baevski et al., 2020; Anonymous, 2022), and multi-modal learning (Radford et al.",
+      "startOffset" : 79,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 30,
+      "context" : "and is widely used for large-scale self-supervised learning in various domains (Chen et al., 2020; Sun et al., 2020a; Baevski et al., 2020; Anonymous, 2022), and multi-modal learning (Radford et al.",
+      "startOffset" : 79,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 1,
+      "context" : "and is widely used for large-scale self-supervised learning in various domains (Chen et al., 2020; Sun et al., 2020a; Baevski et al., 2020; Anonymous, 2022), and multi-modal learning (Radford et al.",
+      "startOffset" : 79,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 0,
+      "context" : "and is widely used for large-scale self-supervised learning in various domains (Chen et al., 2020; Sun et al., 2020a; Baevski et al., 2020; Anonymous, 2022), and multi-modal learning (Radford et al.",
+      "startOffset" : 79,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2020; Anonymous, 2022), and multi-modal learning (Radford et al., 2021; Jia et al., 2021).",
+      "startOffset" : 51,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2020; Anonymous, 2022), and multi-modal learning (Radford et al., 2021; Jia et al., 2021).",
+      "startOffset" : 51,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 5,
+      "context" : "SimCLR (Chen et al., 2020) directly uses other in-batch samples as negatives, and sufficient large batch size is required to work well.",
+      "startOffset" : 7,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 11,
+      "context" : "MoCo (He et al., 2020) maintains a large number of negative samples in a queue and uses a moving average key encoder to improve consistency.",
+      "startOffset" : 5,
+      "endOffset" : 22
+    }, {
+      "referenceID" : 32,
+      "context" : "Contrastive representation distillation (Tian et al., 2019) distills the knowledge from the teacher network to the student network by maximizing the mutual information between them.",
+      "startOffset" : 40,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 1,
+      "context" : "0 (Baevski et al., 2020), which use in-utterance representations at different positions as negatives in speech learning.",
+      "startOffset" : 2,
+      "endOffset" : 24
+    } ],
+    "year" : 0,
+    "abstractText" : "The increasing size of generative Pre-trained Language Models (PLMs) have greatly increased the demand for model compression. Despite various methods to compress BERT or its variants, there are few attempts to compress generative PLMs, and the underlying difficulty remains unclear. In this paper, we compress generative PLMs by quantization. We find that previous quantization methods fail on generative tasks due to the homogeneous word embeddings caused by reduced capacity, and varied distribution of weights. Correspondingly, we propose a token-level contrastive distillation to learn distinguishable word embeddings, and a module-wise dynamic scaling to make quantizers adaptive to different modules. Empirical results on various tasks show that our proposed method outperforms the stateof-the-art compression methods on generative PLMs by a clear margin. With comparable performance with the full-precision models, we achieve 14.4× and 13.4× compression rates on GPT-2 and BART, respectively.",
+    "creator" : null
+  }
+}

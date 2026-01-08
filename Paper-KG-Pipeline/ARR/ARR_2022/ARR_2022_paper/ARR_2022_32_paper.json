@@ -1,0 +1,407 @@
+{
+  "name" : "ARR_2022_32_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Should We Trust This Summary? Bayesian Abstractive Summarization to The Rescue",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "State-of-the-art text summarization methods have achieved remarkable performance in various benchmarks (Song et al., 2019; Dong et al., 2019; Lewis et al., 2019; Zhang et al., 2020). The majority of these methods use very large Transformer models pre-trained on language generation tasks.\nAlthough such methods can generate high quality summaries for texts similar to their training set, they suffer from a couple of issues when the inputs lie far from the training data distribution. They are prone to generating particularly bad outputs (Xu et al., 2020; Kryściński et al., 2020) and are usually fairly confident about them (Gal and Ghahramani, 2016; Xiao et al., 2020). These shortcomings are bound to cause problems once a summarization model is deployed to solve a practical problem.\nSince the output of automatic summarization models is usually expected to be consumed by humans, it is very important to know when such an output is of good enough quality to be served to users. In most cases, it is very much preferable to not serve an output at all, instead of serving a bad output. This will in turn increase users’ trust to automated summarization systems.\nModel uncertainty is one way of detecting when a model’s output is likely to be poor on the grounds of predicting far away from it’s training distribution. Recent summarization methods have focused heavily on improving the overall performance, but model uncertainty has been explored very little (Xu et al., 2020).\nIn addition to improving user experience, the development of uncertainty measures for summarization can pave the way for active learning approaches (Gal et al., 2017; Houlsby et al., 2011; Liu et al., 2020; Lyu et al., 2020). The value of active learning stems from the fact that obtaining labeled samples for training is hard, but it is relatively easy to obtain large amounts of unlabeled samples. Summarization is no different in this perspective, since creating good quality target summaries for training can be very costly.\nThis work explores uncertainty estimation for state-of-the-art text summarization models, from a Bayesian perspective. We extend the BART (Lewis et al., 2019) and PEGASUS (Zhang et al., 2020) summarization models with Monte Carlo dropout (Gal and Ghahramani, 2016), in order to create corresponding Variational Bayesian PEGASUS (VarPEGASUS) and BART (VarBART) models. Sampling multiple summaries from those models allows us to approximate Bayesian inference in a practical way, which in turn enables us to estimate summarization uncertainty. To the best of our knowledge this is the first attempt to apply Bayesian summary generation with large Transformer models.\nBased on Bayesian approximation, we adapt the Monte Carlo BLEU variance metric (Xiao et al., 2020) to the summarization task, and investigate its efficacy as a measure of summarization uncertainty. Our findings suggest that this uncertainty metric correlates well with the quality of the generated summaries and can be effective at identifying cases of questionable quality.\nFinally, we take the summarization uncertainty study one step further, and select the summary with the lowest disagreement out of multiple summaries sampled from our Variational models. Experiments across multiple benchmark datasets show that this method consistently improves summarization performance (see Table 4), and by using it our VarPEGASUS and VarBART models achieve better ROUGE F-scores compared to their original deterministic counterparts.\nThe rest of this paper is structured as follows. Section 2 discusses related work on Bayesian deep learning and uncertainty estimation methods. Section 3 presents our approach. Section 4 describes our experimental setup, while Section 5 presents and discusses the results. Finally, Section 6 concludes our work and considers its broader impact."
+    }, {
+      "heading" : "2 Related work",
+      "text" : "Uncertainty estimation in deep learning is a topic that has been studied extensively. Bayesian deep learning includes a family of methods that attempt to capture the notion of uncertainty in deep neural networks. Such methods have gained increased popularity in the deep learning literature and there exist multiple applications in subfields such as Computer Vision (Kendall and Gal, 2017; Litjens et al., 2017; Gal et al., 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al., 2020; Lyu et al., 2020; Xiao et al., 2020).\nDespite their obvious advantage of modeling uncertainty, the main problem with Bayesian deep learning methods is the computational cost of full Bayesian inference. To tackle this problem, Gal and Ghahramani (2016) propose using standard dropout (Srivastava et al., 2014) as a practical approximation of Bayesian inference in deep neural networks and call this method Monte Carlo dropout. Gal et al. (2017) use a convolutional neural network with Monte Carlo dropout in order to obtain an uncertainty estimate for active learning in the task of image classification. Houlsby et al. (2011) sample many networks with Monte Carlo simulation\nand propose an objective function that takes into account the disagreement and confidence of the predictions coming from these networks.\nSimilar methods have also been applied to NLP. In machine translation, Xiao et al. (2020) extend the Transformer architecture with MC dropout to get a Variational Transformer, and use it to sample multiple translations from the approximate posterior distribution. They also introduce BLEUVar, an uncertainty metric based on the BLEU score (Papineni et al., 2002) between pairs of the generated translations. Lyu et al. (2020) extend the work of Xiao et al. (2020) to question answering and propose an active learning approach based on a modified BLEUVar version. Similarly, Liu et al. (2020) use a conditional random field to obtain uncertainty estimates for active learning and apply their method to named entity recognition.\nAlthough summarization is a prominent NLP task, summarization uncertainty has not been widely studied. Xu et al. (2020) is the only work that focuses on uncertainty for summarization, but their work does not make use of Bayesian methods. They define a generated summary’s uncertainty based on the entropy of each token generated by the model during the decoding phase. Their study includes experiments on CNN/DM and XSum using the PEGASUS and BART summarization models. Their main focus is on understanding different properties of uncertainty during the decoding phase, and their work is not directly comparable to ours."
+    }, {
+      "heading" : "3 Methods",
+      "text" : "We first introduce Bayesian inference, in the context of deep neural networks and show how it can be used to measure uncertainty. Subsequently, we show how Bayesian inference can be applied to summarization in order to estimate the uncertainty of a summary generated for a given input. Finally, we show how Bayesian inference can be employed for producing better summaries."
+    }, {
+      "heading" : "3.1 Monte Carlo dropout",
+      "text" : "Contrary to standard neural networks, Bayesian probabilistic models capture the uncertainty notion explicitly. The goal of such models is to derive the entire posterior distribution of model parameters θ given training data X and Y (Equation 1).\nP (θ|X,Y ) = P (Y |X, θ)P (θ) P (Y |X)\n(1)\nAt test time, given some input x, a prediction ŷ can be made by integrating over all possible θ values (Equation 2). The predictive distribution’s variance can then be used as a measure of the model’s uncertainty.\nP (ŷ|x,X, Y ) = ∫ P (ŷ|x, θ)P (θ|X,Y )dθ (2)\nIn practice, integrating over all possible parameter values for a deep neural network is intractable, and therefore Variational methods are used to approximate Bayesian inference. A neural network trained with dropout can be interpreted as a Variational Bayesian neural network (Gal and Ghahramani, 2016), and as a result making stochastic forward passes with dropout turned on at test time is equivalent to drawing from the model’s predictive distribution. This Monte Carlo (MC) dropout method can be easily applied to any neural network that has been trained with dropout."
+    }, {
+      "heading" : "3.2 Summary uncertainty",
+      "text" : "MC dropout is a simple yet effective method that requires no adjustment to the underlying model. It is possible to convert any state-of-the-art summarization model to a Variational Bayesian model, with the use of MC dropout. For Transformer based models in particular, the Transformer blocks that make up the encoder and decoder are usually trained with dropout, and therefore the conversion is trivial by simply turning dropout on at test time.\nIn Variational models, the variance of the predictive distribution can be used to measure the model’s uncertainty. For a text summarization model, we can approximate the variance of this distribution, by measuring the dissimilarity ofN stochastic summaries y1, y2 . . . yN , generated with MC dropout.\nThe BLEU metric (Papineni et al., 2002) is commonly used for measuring the similarity between a pair of texts. As in Xiao et al. (2020), we approximate the model’s predictive variance with the BLEU Variance (BLEUVar) metric over the N summaries generated with MC dropout as shown in Equation 3. BLEUVar is computed by summing the squared complement of BLEU among all pairs of summaries (twice as BLEU is asymmetric) generated for the same input with different dropout masks.\nBLEUVar = N∑ i=1 N∑ j 6=i (1− BLEU(yi, yj))2 (3)\nBecause we sum over all pairs of N samples twice, scores that are computed with different N values are not directly comparable. To alleviate this issue we propose a normalized version of the metric, BLEUVarN, where we divide BLEUVar by N(N − 1) (Equation 4). This allows for comparisons between scores computed with different N values.\nBLEUVarN =\n∑N i=1 ∑N j 6=i(1− BLEU(yi, yj)) 2\nN(N − 1) (4)\nBy running multiple stochastic forward passes for the same input, we essentially create an ensemble of models with different parameters. Making predictions with this ensemble has the following effects. For inputs close to the learned distribution the summaries generated by all models in the ensemble will be similar to one another, and as a result BLEUVarN will be low. On the other hand, for inputs lying away from the learned distribution, the generated summaries will differ wildly and BLEUVarN will be high, indicating high uncertainty."
+    }, {
+      "heading" : "3.3 Bayesian summary generation",
+      "text" : "Inspired by the fact that making multiple predictions with MC dropout is equivalent to ensembling multiple stochastic models, we propose a novel Bayesian approach to summary generation. Instead of generating a single deterministic summary without dropout, as is commonly the case with modern summarization approaches, we consider using the predictive mean of multiple predictions made with MC dropout. Because the predictions in our case are summaries their predictive mean is not well defined, so instead we opt for selecting one of the N summaries.\nWe assume that the predictive mean of the N summaries generated with MC dropout should be the one having the lowest disagreement with the rest of the N − 1 summaries. Since the pairwise complement of BLEU between all pairs of the sampled summaries has already been computed when estimating BLEUVarN uncertainty, it can be further used to help us find the lowest disagreement summary. In practice, we select the summary µ̂ that maximizes the sum of symmetric BLEU similarity with the rest of the summaries (Equation 5) (Xiao et al., 2020). This summary could be seen as the median of all the summaries generated with MC dropout, although this is not a mathematically\ncorrect expression.\nµ̂ = argmax yi N∑ j 6=i [BLEU(yi, yj) + BLEU(yj , yi)] (5)\nThe intuition behind this approach is based on the following assumption. We expect the median summary to integrate the key concepts that all individual summaries agree on. Consequently, for inputs close to the model’s learned distribution, the individual summaries will be similar to one another and as a result the median summary will be the best choice. On the other hand, for out-of-distribution inputs, the median out of a number of very different summaries will result in a more robust and overall better final summary. In practice, even for well trained models, we expect to have a fairly large number of inputs that are not close to the models’ learned distribution, and therefore we expect to benefit from the positive effects of ensembling multiple outputs."
+    }, {
+      "heading" : "4 Experimental Setup",
+      "text" : "We first present the three datasets that are involved in our experiments, their main statistics and the reasons for including them in our empirical study. Then we present the two summarization models that we employed, along with their parameters and details on stochastic summary generation."
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "In order to verify the effectiveness of our Bayesian abstractive summarization approach, we conducted a series of experiments on three well-known summarization benchmarks:\n• XSum (Narayan et al., 2018) is a dataset of 227k BBC articles on a wide variety of topics. Each article is accompanied by a human written, single-sentence summary.\n• CNN/DailyMail (Hermann et al., 2015) is a dataset containing a total of 93k articles from the CNN, and 220k articles from the Daily Mail newspapers. All articles are paired with bullet point summaries. The version used is the non-anonymized variant similar to (See et al., 2017).\n• AESLC (Zhang and Tetreault, 2020) is a dataset of 18k emails from the Enron corpus (Klimt and Yang, 2004). The body of each\nThe main criteria for selecting these datasets are the availability of recent, open source models trained on them and their relatively short texts that would allow us to run a number of different experiments quickly. Since our methods do not involve training, we will only focus on the validation and test set of each dataset. All datasets are obtained from the Hugging Face datasets repository1. Table 1 presents some basic statistics for these datasets."
+    }, {
+      "heading" : "4.2 Models",
+      "text" : "BART (Lewis et al., 2019) and PEGASUS (Zhang et al., 2020) are Transformer based sequence-tosequence models, pre-trained on massive corpora of unsupervised data (Web and news articles). Since our experiments do not involve training, we utilize open-source models fine-tuned on the training set of each dataset. These models can be found in the Hugging Face models repository2.\nOur BART models follow the BARTLARGE architecture with 12 Transformer blocks for the encoder and the decoder. BART is pre-trained as a denoising autoencoder, where the text is corrupted and the model learns to reconstruct the original text. Opensource fine-tuned BART models are only available for XSum and CNN/DM. Our PEGASUS models follow the PEGASUSLARGE architecture and have 16 Transformer blocks for the encoder and the decoder. PEGASUS is pre-trained on the C4 and HugeNews datasets, on a sentence infilling task. Open-source fine-tuned PEGASUS models exist for all three datasets considered in our experiments.\nIn order to convert BART and PEGASUS to Variational models, we enable dropout for all Transformer blocks of the encoder and decoder. For each sample, we generate N summaries using beam\n1https://huggingface.co/datasets 2https://huggingface.co/models\nsearch decoding with 8 beams. We experimented with N equal to 10 (MC-10) and 20 (MC-20). The rest of the hyper-parameters used were identical to the original papers."
+    }, {
+      "heading" : "5 Results",
+      "text" : "Our main experiment evaluates BLEUVarN’s effectiveness in quantifying uncertainty for summarization models. A second experiment investigates the potential of the Bayesian summarization method proposed in Section 3.3 as a way of improving summarization performance at test time."
+    }, {
+      "heading" : "5.1 Evaluating Bayesian uncertainty",
+      "text" : "We here evaluate the effectiveness of BLEUVarN in measuring the model’s uncertainty. The performance versus data retention curve (Filos et al., 2019) measures how well a model would perform if we completely removed the k% most uncertain outputs from the test set. In the x-axis we have the fraction of data from the test set that are removed, while in the y-axis we have the performance metrics. An effective uncertainty measure should show a consistent improvement in performance as we discard more samples based on high uncertainty. In this experiment, we arrange samples by decreasing BLEUVarN score and gradually remove the samples with the highest score.\nFigure 1 shows, for each dataset, the performance of our Variational models in terms of ROUGE-1 F-score versus the fraction of data discarded based on BLEUVarN. ROUGE-2 and ROUGE-L F-scores follow similar patterns and can be found in the Appendix A. For reference, we are also plotting the performance of the deterministic models using all data as straight lines.\nAll ROUGE F-scores improve as we gradually discard samples with high BLEUVarN, an observation that is consistent across all test datasets and models. More specifically, we notice that the increase is linear for the first 80% of the data, but then becomes almost exponential. From these observations we can draw two conclusions. First, models indeed perform significantly worse on samples with high uncertainty. Second, BLEUVarN is effective at quantifying uncertainty and can be used to identify high uncertainty samples.\nTo further illustrate how BLEUVarN behaves across different parts of the data, Figure 2 shows the decrease in the average BLEUVarN of all Variational models as we gradually discard samples with\nlow ROUGE-1 scores from each dataset. We observe that for the samples with the highest ROUGE performance BLEUVarN becomes almost zero. This observation further supports our argument that model uncertainty has a significant impact on model performance."
+    }, {
+      "heading" : "5.1.1 MC-10 vs MC-20",
+      "text" : "From Figure 1 we can see that MC dropout with 20 samples performs better than 10 samples, resulting in higher performance. In more detail, for highly uncertain data, both MC-10 and MC-20 converge to similar BLEUVarN values (Figure 2) as well as ROUGE scores (Figure 1). On the other side of the spectrum, for low uncertainty data, using 20 samples leads to bigger performance increase along with a little higher BLEUVarN scores.\nBased on these observations, we conclude that MC dropout with 20 samples is generally better in terms of performance. This comes at the cost of increased computational overhead because it requires running twice as many stochastic passes with MC dropout. However, this computation is embarrassingly parallelizable in modern hardware, and can be easily optimized by batching MC dropout generations with different dropout masks for each sample within the batch."
+    }, {
+      "heading" : "5.1.2 VarBART vs VarPEGASUS",
+      "text" : "Out of the two models, VarPEGASUS is consistently showing the biggest increase in performance as more uncertain samples are dropped from the dataset. It should be noted here, that the decline in performance as data uncertainty increases, is much steeper for VarBART than it is for VarPEGASUS on both the XSum and the CNN/DM dataset. This coincides with the fact that VarPEGASUS also has much higher BLEUVarN uncertainty as shown in Figure 2, which hints us that the PEGASUS model is in general less confident about the outputs it generates. Anecdotally, we can say here that PEGASUS is more aware of the things it does not know, and as a result it seems to benefit more from the uncertainty estimates."
+    }, {
+      "heading" : "5.2 Bayesian vs deterministic summarization",
+      "text" : "The next experiment focuses on the Bayesian summarization method proposed in Section 3.3. We compare the performance of Bayesian summarization using the VarBART and VarPEGASUS models against the standard summarization paradigm using the deterministic BART and PEGASUS mod-\nels. Our goal is to verify the efficacy of Bayesian summarization as a post-hoc way of improving summarization performance.\nTable 2 reports the ROUGE-1, ROUGE-2 and ROUGE-L F-scores of our VarBART and VarPEGASUS models along with the deterministic BART and PEGASUS models on all benchmark datasets, re-evaluated for consistency. The results show that Bayesian summarization is effective, with both VarBART and VarPEGASUS outperforming their deterministic counterparts on all datasets. Furthermore, increasing the number, N , of samples generated during the Bayesian inference, improves performance for all datasets except for AESLC, at the cost of increased computational complexity as discussed in Section 5.1.\nNote that our goal in this work was not to compete with other state-of-the-art models. What we\nwant to show is that relying on the agreement between multiple Bayesian summaries for the same input, is an effective way to boost the summarization performance of deterministic models. Also, this is a post-hoc method and does not involve training new models, which makes it easily applicable to many different scenarios.\nFigure 3 plots the difference in ROUGE-1 of each Variational model with its deterministic counterpart versus the fraction of the data discarded due to high uncertainty. Similar plots for ROUGE2 and ROUGE-L can be found in Appendix A. Positive values indicate that the Variational model achieves a higher score than the deterministic one. These plots give us a better view of how the Variational models fare against the deterministic ones for different levels of uncertainty. As far as we know, this is the first study to directly compare\nVariational and deterministic models on data with varying levels of uncertainty.\nLooking at the curves, we clearly see that the differences are positive for most uncertainty levels but start decreasing as more data with high uncertainty are discarded. For the top 10% − 20% most certain samples we start seeing a fluctuation between positive and negative values. This pattern is in line with the observations made in Figure 1, and leads us to believe that there is a significant gap between the deterministic model’s performance on the 20% most certain samples and the rest of the data.\nThese observations lead us to the following conclusions. For samples of very low uncertainty, we can expect both Variational and deterministic models to converge to equally good outputs. In contrast, as uncertainty becomes higher, we observe a clear advantage of the Variational summaries over the deterministic ones. This pattern is consistent across all models and datasets, and underpins our case that Bayesian summarization is beneficial for the majority of inputs."
+    }, {
+      "heading" : "5.3 Qualitative analysis",
+      "text" : "In order to better illustrate our findings in this work, we present a couple of real examples from VarPEGASUS-10 on XSum. For each example, we show the 10 sample summaries generated with MC dropout for the same input, as well as the corresponding BLEUVarN score. We have highlighted the median summary in bold typeface and for the sake of comparison we also show the summary generated by the deterministic PEGASUS model.\nThe first example (Table 3) is a case of high uncertainty from the XSum dataset. We can see that all 10 samples are considerably different from one another, which leads to a high BLEUVarN score. In contrast, the second example (Table 4) has much lower uncertainty. In this case all 10 samples seem to mostly agree on the main points and as a result BLEUVarN is fairly low. Here, the median summary is the one that represents better this agreement. We can also see that the median Bayesian summary is close but slightly better than\nDeterministic summary: When Choe Swee Swee was appointed chief executive of one of Singaporeś biggest property firms, he told the BBC he wanted to \"make the world a better place\". Target summary: On the first day in his new job, Choe Peng Sum was given a fairly simple brief: \"Just go make us a lot of money.\" BLEU variance: 0.96\nthe deterministic summary in terms of ROUGE."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "This work explored Bayesian methods in the context of text summarization. We extended state-ofthe-art summarization models with MC dropout to approximate Bayesian inference, and demonstrated how BLEUVarN can be used to quantify model uncertainty. This allows us to effectively identify high uncertainty summaries at prediction time, which can be a significant advantage.\nFurthermore, we show that ensembling multiple stochastic summaries generated by Variational Bayesian models can lead to improved performance compared to similar deterministic models. This\nDeterministic summary: Torquay United have signed defender Myles Anderson and striker Ruairi Keating until the end of the season. (R1: 52.63) Target summary: Torquay United have signed Barrow defender Myles Anderson on a permanent deal, and Irish forward Ruairi Keating on non-contract terms. BLEU variance: 0.38\nfinding is verified by experiments for two different models and across 3 benchmark datasets.\nOur work can have a broader impact in several ways. To the research community, being the first work to study Bayesian uncertainty for abstractive summarization and paving the way for other similar methods. To the industry, because it improves automatic summarization systems and can be paired nicely with active learning and humanin-the-loop approaches. Finally, to the end users, improving their experience and building up confidence towards automatic summarization systems."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "Figures 4 and 5 show the performance versus data retention curves of our Variational models in terms of ROUGE-2 and ROUGE-L F-score respectively. The observations here are similar to Figure 1.\nTable 5 quantifies the percentage increase in ROUGE F-scores as we discard different fractions of the full test datasets based on BLEUVarN.\nFigures 6 and 7 show the differences in ROUGE2 and ROUGE-L performance of the Variational models versus the deterministic ones. What we see here is in aggreement with Figure 3."
+    } ],
+    "references" : [ {
+      "title" : "Unified language model pre-training for natural language understanding and generation",
+      "author" : [ "Li Dong", "Nan Yang", "Wenhui Wang", "Furu Wei", "Xiaodong Liu", "Yu Wang", "Jianfeng Gao", "Ming Zhou", "Hsiao-Wuen Hon." ],
+      "venue" : "Advances in Neural Informa-",
+      "citeRegEx" : "Dong et al\\.,? 2019",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A systematic comparison of Bayesian deep learning robustness in diabetic retinopathy",
+      "author" : [ "Angelos Filos", "Sebastian Farquhar", "Aidan N. Gomez", "Tim G.J. Rudner", "Zachary Kenton", "Lewis Smith", "Milad Alizadeh", "Arnoud De Kroon", "Yarin Gal" ],
+      "venue" : null,
+      "citeRegEx" : "Filos et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Filos et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Dropout as a Bayesian approximation: Representing model uncertainty in deep learning",
+      "author" : [ "Yarin Gal", "Zoubin Ghahramani." ],
+      "venue" : "33rd International Conference on Machine Learning, ICML 2016, volume 3, pages 1050–1059. PMLR.",
+      "citeRegEx" : "Gal and Ghahramani.,? 2016",
+      "shortCiteRegEx" : "Gal and Ghahramani.",
+      "year" : 2016
+    }, {
+      "title" : "Deep Bayesian active learning with image data",
+      "author" : [ "Yarin Gal", "Riashat Islam", "Zoubin Ghahramani." ],
+      "venue" : "34th International Conference on Machine Learning, ICML 2017, volume 3, pages 1183–1192. PMLR.",
+      "citeRegEx" : "Gal et al\\.,? 2017",
+      "shortCiteRegEx" : "Gal et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomas Kocisky", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Advances in Neural Information Processing Systems, pages 1693–1701. Curran",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Bayesian active learning for classification and preference learning",
+      "author" : [ "Neil Houlsby", "Ferenc Huszar", "Zoubin Ghahramani", "Mate Lengyel" ],
+      "venue" : null,
+      "citeRegEx" : "Houlsby et al\\.,? \\Q2011\\E",
+      "shortCiteRegEx" : "Houlsby et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "What uncertainties do we need in Bayesian deep learning for computer vision? In Advances in Neural Information Processing Systems, volume 2017-December, pages 5580– 5590",
+      "author" : [ "Alex Kendall", "Yarin Gal." ],
+      "venue" : "Curran Associates, Inc.",
+      "citeRegEx" : "Kendall and Gal.,? 2017",
+      "shortCiteRegEx" : "Kendall and Gal.",
+      "year" : 2017
+    }, {
+      "title" : "The enron corpus: A new dataset for email classification research",
+      "author" : [ "Bryan Klimt", "Yiming Yang." ],
+      "venue" : "Lecture Notes in Artificial Intelligence (Subseries of Lecture Notes in Computer Science), volume 3201, pages 217–226, Berlin, Heidelberg.",
+      "citeRegEx" : "Klimt and Yang.,? 2004",
+      "shortCiteRegEx" : "Klimt and Yang.",
+      "year" : 2004
+    }, {
+      "title" : "Evaluating the factual consistency of abstractive text summarization",
+      "author" : [ "Wojciech Kryściński", "Bryan McCann", "Caiming Xiong", "Richard Socher." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing, EMNLP",
+      "citeRegEx" : "Kryściński et al\\.,? 2020",
+      "shortCiteRegEx" : "Kryściński et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BART: Denoising sequence-to-sequence pretraining for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Ves Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A survey on deep learning in medical image analysis",
+      "author" : [ "Geert Litjens", "Thijs Kooi", "Babak Ehteshami Bejnordi", "Arnaud Arindra Adiyoso Setio", "Francesco Ciompi", "Mohsen Ghafoorian", "Jeroen A.W.M. van der Laak", "Bram van Ginneken", "Clara I. Sánchez" ],
+      "venue" : null,
+      "citeRegEx" : "Litjens et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Litjens et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "LTP: a new active learning strategy for BERT-CRF based named entity recognition",
+      "author" : [ "Mingyi Liu", "Zhongjie Wang", "Zhiying Tu", "Xiaofei Xu" ],
+      "venue" : null,
+      "citeRegEx" : "Liu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "You Need Only Uncertain Answers: Data Efficient Multilingual Question Answering",
+      "author" : [ "Zhihao Lyu", "Danier Duolikun", "Bowei Dai", "Yuan Yao", "Pasquale Minervini", "Tim Z Xiao", "Yarin Gal." ],
+      "venue" : "Workshop on Uncertainty and Robustness in Deep Learn-",
+      "citeRegEx" : "Lyu et al\\.,? 2020",
+      "shortCiteRegEx" : "Lyu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Don’t give me the details, just the summary! Topic-aware convolutional neural networks for extreme summarization",
+      "author" : [ "Shashi Narayan", "Shay B. Cohen", "Mirella Lapata." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Lan-",
+      "citeRegEx" : "Narayan et al\\.,? 2018",
+      "shortCiteRegEx" : "Narayan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "BLEU: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th annual meeting on association for computational linguistics, pages 311–318. Association for",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Get To The Point: Summarization with Pointer-Generator Networks",
+      "author" : [ "Abigail See", "Peter J Liu", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 2017 Annual Meeting of the Association for Computational Linguistics, pages 1073–1083. Association",
+      "citeRegEx" : "See et al\\.,? 2017",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep Bayesian active learning for natural language processing: Results of a large-scale empirical study",
+      "author" : [ "Aditya Siddhant", "Zachary C. Lipton." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, EMNLP",
+      "citeRegEx" : "Siddhant and Lipton.,? 2020",
+      "shortCiteRegEx" : "Siddhant and Lipton.",
+      "year" : 2020
+    }, {
+      "title" : "MASS: Masked sequence to sequence pre-training for language generation",
+      "author" : [ "Kaitao Song", "Xu Tan", "Tao Qin", "Jianfeng Lu", "Tie Yan Liu." ],
+      "venue" : "Proceedings of the 2019 International Conference on Machine Learning, pages 5926–5936. PMLR.",
+      "citeRegEx" : "Song et al\\.,? 2019",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Dropout: A simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "Journal of Machine Learning Research, 15:1929–1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Wat zei je? Detecting out-of-distribution translations with variational transformers",
+      "author" : [ "Tim Z. Xiao", "Aidan N. Gomez", "Yarin Gal" ],
+      "venue" : null,
+      "citeRegEx" : "Xiao et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Xiao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding Neural Abstractive Summarization Models via Uncertainty",
+      "author" : [ "Jiacheng Xu", "Shrey Desai", "Greg Durrett." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing, pages 6275–6281. Association",
+      "citeRegEx" : "Xu et al\\.,? 2020",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "PEGASUS: Pre-training with Extracted Gap-sentences for Abstractive Summarization",
+      "author" : [ "Jingqing Zhang", "Yao Zhao", "Mohammad Saleh", "Peter J Liu." ],
+      "venue" : "37th International Conference on Machine Learning, ICML 2020, pages 11328–11339. PMLR.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "This email could save your life: Introducing the task of email subject line generation",
+      "author" : [ "Rui Zhang", "Joel Tetreault." ],
+      "venue" : "ACL 2019 - 57th Annual Meeting of the Association for Computational Linguistics, Proceedings of the Conference, pages 446–456. As-",
+      "citeRegEx" : "Zhang and Tetreault.,? 2020",
+      "shortCiteRegEx" : "Zhang and Tetreault.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "State-of-the-art text summarization methods have achieved remarkable performance in various benchmarks (Song et al., 2019; Dong et al., 2019; Lewis et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 0,
+      "context" : "State-of-the-art text summarization methods have achieved remarkable performance in various benchmarks (Song et al., 2019; Dong et al., 2019; Lewis et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 9,
+      "context" : "State-of-the-art text summarization methods have achieved remarkable performance in various benchmarks (Song et al., 2019; Dong et al., 2019; Lewis et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 21,
+      "context" : "State-of-the-art text summarization methods have achieved remarkable performance in various benchmarks (Song et al., 2019; Dong et al., 2019; Lewis et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 20,
+      "context" : "They are prone to generating particularly bad outputs (Xu et al., 2020; Kryściński et al., 2020) and are usually fairly confident about them (Gal and Ghahramani, 2016; Xiao et al.",
+      "startOffset" : 54,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 8,
+      "context" : "They are prone to generating particularly bad outputs (Xu et al., 2020; Kryściński et al., 2020) and are usually fairly confident about them (Gal and Ghahramani, 2016; Xiao et al.",
+      "startOffset" : 54,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2020) and are usually fairly confident about them (Gal and Ghahramani, 2016; Xiao et al., 2020).",
+      "startOffset" : 52,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2020) and are usually fairly confident about them (Gal and Ghahramani, 2016; Xiao et al., 2020).",
+      "startOffset" : 52,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 20,
+      "context" : "Recent summarization methods have focused heavily on improving the overall performance, but model uncertainty has been explored very little (Xu et al., 2020).",
+      "startOffset" : 140,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 3,
+      "context" : "In addition to improving user experience, the development of uncertainty measures for summarization can pave the way for active learning approaches (Gal et al., 2017; Houlsby et al., 2011; Liu et al., 2020; Lyu et al., 2020).",
+      "startOffset" : 148,
+      "endOffset" : 224
+    }, {
+      "referenceID" : 5,
+      "context" : "In addition to improving user experience, the development of uncertainty measures for summarization can pave the way for active learning approaches (Gal et al., 2017; Houlsby et al., 2011; Liu et al., 2020; Lyu et al., 2020).",
+      "startOffset" : 148,
+      "endOffset" : 224
+    }, {
+      "referenceID" : 11,
+      "context" : "In addition to improving user experience, the development of uncertainty measures for summarization can pave the way for active learning approaches (Gal et al., 2017; Houlsby et al., 2011; Liu et al., 2020; Lyu et al., 2020).",
+      "startOffset" : 148,
+      "endOffset" : 224
+    }, {
+      "referenceID" : 12,
+      "context" : "In addition to improving user experience, the development of uncertainty measures for summarization can pave the way for active learning approaches (Gal et al., 2017; Houlsby et al., 2011; Liu et al., 2020; Lyu et al., 2020).",
+      "startOffset" : 148,
+      "endOffset" : 224
+    }, {
+      "referenceID" : 9,
+      "context" : "We extend the BART (Lewis et al., 2019) and PEGASUS (Zhang et al.",
+      "startOffset" : 19,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2019) and PEGASUS (Zhang et al., 2020) summarization models with Monte Carlo dropout (Gal and Ghahramani, 2016), in order to create corresponding Variational Bayesian PEGASUS (VarPEGASUS) and BART (VarBART) models.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2020) summarization models with Monte Carlo dropout (Gal and Ghahramani, 2016), in order to create corresponding Variational Bayesian PEGASUS (VarPEGASUS) and BART (VarBART) models.",
+      "startOffset" : 54,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 19,
+      "context" : "Based on Bayesian approximation, we adapt the Monte Carlo BLEU variance metric (Xiao et al., 2020) to the summarization task, and investigate its efficacy as a measure of summarization uncertainty.",
+      "startOffset" : 79,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 6,
+      "context" : "Such methods have gained increased popularity in the deep learning literature and there exist multiple applications in subfields such as Computer Vision (Kendall and Gal, 2017; Litjens et al., 2017; Gal et al., 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al.",
+      "startOffset" : 153,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 10,
+      "context" : "Such methods have gained increased popularity in the deep learning literature and there exist multiple applications in subfields such as Computer Vision (Kendall and Gal, 2017; Litjens et al., 2017; Gal et al., 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al.",
+      "startOffset" : 153,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 3,
+      "context" : "Such methods have gained increased popularity in the deep learning literature and there exist multiple applications in subfields such as Computer Vision (Kendall and Gal, 2017; Litjens et al., 2017; Gal et al., 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al.",
+      "startOffset" : 153,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al., 2020; Lyu et al., 2020; Xiao et al., 2020).",
+      "startOffset" : 46,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al., 2020; Lyu et al., 2020; Xiao et al., 2020).",
+      "startOffset" : 46,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al., 2020; Lyu et al., 2020; Xiao et al., 2020).",
+      "startOffset" : 46,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2017) and Natural Language Processing (NLP) (Siddhant and Lipton, 2020; Liu et al., 2020; Lyu et al., 2020; Xiao et al., 2020).",
+      "startOffset" : 46,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 18,
+      "context" : "To tackle this problem, Gal and Ghahramani (2016) propose using standard dropout (Srivastava et al., 2014) as a practical approximation of Bayesian inference in deep neural networks and call this method Monte Carlo dropout.",
+      "startOffset" : 81,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 14,
+      "context" : "They also introduce BLEUVar, an uncertainty metric based on the BLEU score (Papineni et al., 2002) between pairs of the generated translations.",
+      "startOffset" : 75,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 2,
+      "context" : "A neural network trained with dropout can be interpreted as a Variational Bayesian neural network (Gal and Ghahramani, 2016), and as a result making stochastic forward passes with dropout turned on at test time is equivalent to drawing from the model’s predictive distribution.",
+      "startOffset" : 98,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 14,
+      "context" : "The BLEU metric (Papineni et al., 2002) is commonly used for measuring the similarity between a pair of texts.",
+      "startOffset" : 16,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 19,
+      "context" : "In practice, we select the summary μ̂ that maximizes the sum of symmetric BLEU similarity with the rest of the summaries (Equation 5) (Xiao et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 13,
+      "context" : "• XSum (Narayan et al., 2018) is a dataset of 227k BBC articles on a wide variety of topics.",
+      "startOffset" : 7,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 4,
+      "context" : "• CNN/DailyMail (Hermann et al., 2015) is a dataset containing a total of 93k articles from the CNN, and 220k articles from the Daily Mail newspapers.",
+      "startOffset" : 16,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 15,
+      "context" : "The version used is the non-anonymized variant similar to (See et al., 2017).",
+      "startOffset" : 58,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 22,
+      "context" : "• AESLC (Zhang and Tetreault, 2020) is a dataset of 18k emails from the Enron corpus (Klimt and Yang, 2004).",
+      "startOffset" : 8,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 7,
+      "context" : "• AESLC (Zhang and Tetreault, 2020) is a dataset of 18k emails from the Enron corpus (Klimt and Yang, 2004).",
+      "startOffset" : 85,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2019) and PEGASUS (Zhang et al., 2020) are Transformer based sequence-tosequence models, pre-trained on massive corpora of unsupervised data (Web and news articles).",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 1,
+      "context" : "The performance versus data retention curve (Filos et al., 2019) measures how well a model would perform if we completely removed the k% most uncertain outputs from the test set.",
+      "startOffset" : 44,
+      "endOffset" : 64
+    } ],
+    "year" : 0,
+    "abstractText" : "We explore the notion of uncertainty in the context of modern abstractive summarization models, using the tools of Bayesian Deep Learning. Our approach approximates Bayesian inference by first extending stateof-the-art summarization models with Monte Carlo dropout and then using them to perform multiple stochastic forward passes. Based on Bayesian inference we are able to effectively quantify uncertainty at prediction time. Having a reliable uncertainty measure, we can improve the experience of the end user by filtering out generated summaries of high uncertainty. Furthermore, uncertainty estimation could be used as a criterion for selecting samples for annotation, and can be paired nicely with active learning and human-in-the-loop approaches. Finally, Bayesian inference enables us to find a Bayesian summary which performs better than a deterministic one and is more robust to uncertainty. In practice, we show that our Variational Bayesian equivalents of BART and PEGASUS can outperform their deterministic counterparts on multiple benchmark datasets.",
+    "creator" : null
+  }
+}

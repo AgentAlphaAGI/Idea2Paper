@@ -1,0 +1,327 @@
+{
+  "name" : "ARR_2022_143_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Efficient Cluster-based k-Nearest-Neighbor Machine Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Recently, non-parametric approaches (Khandelwal et al., 2021; Zheng et al., 2021a,b; Jiang et al., 2021) have been successfully applied to neural machine translation (NMT) for domain adaptation with retrieval pipelines. Given an advanced MT model, they generally involve two steps: 1. It builds a cached memory, usually called datastore, in advance by extracting the context\nrepresentations of the penultimate layer of the given NMT model corresponding to each target token from in-domain corpora. 2. At inference, it retrieves the k nearest neighbors of the context representation for each generated token from the constructed datastore and then integrates external kNN translation probabilities derived from these retrievals to adjust the translation.\nThe accessibility of any provided datastore during translation makes them interpretable. Meanwhile, the reliability of these approaches gives the credit to the datastore quality. In spite of the significant translation improvement, analyses on the datastore behavior have not been fully explored yet. We empirically observe that the construction of datastore is not optimal for retrieval from two aspects: retrieval latency and semantic distribution. Retrieval Latency. As shown in Table 1, we compare both translation performance and speed be-\ntween a pre-trained NMT model (Ng et al., 2019) and the adaptive kNN-MT (Zheng et al., 2021a) system originated from the former, where the later is the most advanced retrieval-based NMT model so far. It indicates that the heavy computation of retrieval within a datastore causes serious latency increasing and makes it less practical in the realtime scenario. To address this problem, we propose an efficient pruning strategy to decrease the datastore redundancy so as to deal with the trade-off between the speed and the quality.\nSemantic Distribution. For robust token-to-token retrieval, tokens with similar context are expected to be distributed close to form separable and compact semantic clusters, otherwise semantic noise may hurt the retrieval effectiveness. To explore the potential of k-nearest retrieval, we visualize the feature distribution of a datastore built on the IT-domain corpus (Koehn and Knowles, 2017) in Figure 1. For the datastore constructed in the traditional way, we have 2 important findings. One is that the majority tokens are distributed in the overlapped area regardless of frequency. The other is that even the overall distribution shows a clustering effect, only a few small clusters are correctly classified with respect to frequency. Intuitively, these findings will directly and negatively affect the distance-based retrieval.\nMoreover, as (Zhang et al., 2021) claimed, the dimension is highly related to retrieval speed. Preliminary studies on kNN-LM (He et al., 2021) indicate that traditional feature reduction algorithms could only maintain the original performance until the context feature dimension is reduced to a minimum required size (e.g., for feature dimension 1024, PCA requires at least 512). For NMT model, it is still challenging to reduce the feature dimension to its 10% (e.g., from 1024 to <100). To tackle this problem, we design a cluster-based training strategy where an external light-weight feature reduction network is learnt in a contrastive training manner to maximize the margin between context semantic clusters. In our experiments, we can even cut out 93.75% of the original feature size.\nIn summary, our main contributions are two-fold. (1) We propose a cluster-based Compact Network to reduce the dimension of the semantic representations and improve the translation performance by making different tokens separable to refine the retrieval results. (2) We further propose a clusterbased pruning strategy by filtering redundant rep-\nresentations in the datastore so that our proposed methods could significantly decrease the translation latency during inference. Experiments on multidomain machine translation benchmarks indicate that our proposed methods are superior to existing retrieval-based machine translation systems from the perspectives of both the speed and the quality."
+    }, {
+      "heading" : "2 Related Work and Background",
+      "text" : "In this section, we will briefly introduce the background of adaptive kNN-MT (Zheng et al., 2021a). Adaptive kNN-MT is derived from kNNMT (Khandelwal et al., 2021) by inserting a lightweight Meta-k Network that fuses kNN retrievals with various k to alleviate the possible noise induced by a single k. Formally, it is formulated as two steps: target-side datastore creation and Metak Network predictions. Target-side Datastore Creation. The datastore constists of a set of key-value pairs. Given a bilingual sentence pair (s, t) in a corpus (S, T ), a pretrained general domain NMT model autoregressively extracts the context representation hi of the i-th target token conditioned on both source and target context (s, t<i), denoted as hi = f(s, t<i). The datastore is finally constructed by taking hi as keys and ti as values:\n(K,V) = ⋃\n(s,t)∈(S,T )\n{(hi, ti),∀ ti ∈ t}.\nMeta-k Network Prediction. Meta-k Network (fβ) is a two-layer feed-forward network followed by a non-linear activation function. Based on the constructed datastore, it considers a set of various ks that are smaller than an upper bound K, the standard setting is k ∈ Q where Q = {0} ∪ {2j |j ∈ N, 2j ≤ K}. K nearest neighbors of the current context query ĥi from the datastore are first retrieved at the i-th decoding step. Then the l2 distance from ĥi to each neighbor (hj , vj) is denoted as di = ‖hj , ĥi‖2. And the count of distinct values in top j neighbors are denoted as cj . The normalized weights of each available k are obtained: pβ(k) = softmax(fβ([d1, ..., dk; c1, ..., ck])), where fβ denotes the Meta-k Network. The ultimate prediction probability is ensembled:\np(ti|s, t̂<i) = ∑ kj∈S pβ(kj) · pkjNN(ti|s, t̂<i),\nNote that a validation set is usually required to study the Meta-k Network before predicting on test\nsets. During training, only the parameters of the Meta-k Network need to update."
+    }, {
+      "heading" : "3 Our Approach",
+      "text" : "As shown in Figure 2, our proposed approach focuses on datastore reconstruction from the perspectives of feature compression and size pruning by utilizing cluster-based signals."
+    }, {
+      "heading" : "3.1 Cluster-based Feature Compression",
+      "text" : "From Figure 1, we observe that spatially close context representations may have noisy and different semantics. During inference, it leads to unreliable neighbors for retrieval-based NMT due to the entanglements from these noisy context space. We hypothesize that the reason may lie in three perspectives. First, the pre-trained NMT model on general domain lacks target domain-specific knowledge. Second, the high dimensional semantic space is too sparse and may contain some noisy underlying components. Third, the likelihood-maximization objective from the logits by dot-production enforces the alignment of vector directions, which is inconsistent with the spatially close expectation\nfor the sake of both direction and length. To address these issues, we propose a one-plusone (fα+fθ) Compact Network on top of the pretrained NMT model. The first “one\" module is to transform the coarse-grained semantics of the pretrained NMT into the fine-grained semantic clusters. The second “one\" module is used to calculate our designed loss function.\nTo obtain coarse-grained semantic clusters, we first follow the Target-side Datastore Creation to create the in-domain datastore. For context representations (keys) with the same target token (value), we conduct target-side clustering for the representations, shown as the left clusters in Figure 3. We denote the resulted clusters from the same value as the cluster family for the corresponding target token. Due to the distance based clustering, it is guaranteed that clusters within each cluster family are not overlapped at all. However, different cluster families will have large overlapped space according to Figure 1. Therefore, our main purpose is to construct a transform that can make the cluster families separable as well.\nThe proposed light-weight Compact Network in Figure 3 is desired to fulfill above purpose and compress the feature dimension. The first two-layer perceptron is applied for representation compression: fα(·) = FFN2(σ (FFN1(·))), where σ(·) denotes the Sigmoid function. The last layer fθ is attached for transferring the compressed representations into classification logits where the output dimension depends on the number of designed categories. Note that the fθ layer is discarded at inference.\nIn order to obtain the separable cluster families\nafter fα, we are motivated to consider several candidate contrastive regularizations to train the Compact Network. Triplet Noise-Contrastive Estimation (NCE). For each cluster in one particular cluster family, two semantic representations are randomly sampled, one as the pivot example v∗ and the other as the positive example v+. From the cluster in a different cluster family, another semantic representation is randomly selected as the negative example v−. Then we conduct NCE (Gutmann and Hyvärinen, 2010) with binary classification on {pivot, positive} and {pivot, negative} to predict which pair belongs to the same cluster.\nmin− log(σ(fθ([fα(v+); fα(v∗)]))) − log(1− σ(fθ([fα(v−); fα(v∗)])))\nwhere the output dimension of fθ is 1. Triplet Distance Ranking. Similar as Triplet NCE but we remove the fθ layer and the objective is modified as a ranking loss by minimizing the l2 distance between the pivot and positive examples as well as maximizing the distance between the pivot and negative ones.\nmin ‖fα(v+)−fα(v∗)‖2+1/‖fα(v−)−fα(v∗)‖2\nWord Prediction Loss. To compensate the loss of linguistic information that NCE may ignore, the word prediction NMT loss is also considered to train the Compact Network. In this scenario, the output dimension of fθ is the vocabulary size of the corresponding target language.\nIn addition, we find that dynamic pivot selection leads to unstable training as the compressed representations are forced to update toward various directions. For each cluster, we modify the dynamic pivot as a static pivot, by fixing it as the centroid. After the training converges, we can construct a new feature-compressed datastore with the output of fα, which is used for query retrieval during the kNN-MT inference."
+    }, {
+      "heading" : "3.2 Cluster-based Pruning",
+      "text" : "Apart from feature reduction, the number of keyvalue pairs in the compressed datastore is crucial for the translation latency as well, hence redundant tokens are encouraged to be pruned. In literature, phrase-level pruning strategies have proved efficient for statistical machine translation (SMT) (Ling et al., 2012; Zens et al., 2012). Each record in the phrase table reflects a similar semantic unit,\nhence one could prune parts of the records that share similar statistics, e.g., translation quality, translation cost, etc.\nEnlightened by SMT, we propose an efficient pruning strategy based on N-gram metrics on the original semantic representation space. Intuitively, the entry of a key-value pair in the datastore is redundant if there are other key-value pairs (with the same value) that have similar translation costs (an example is represented in Figure 4).\nTo make it concrete, we decrible the translation cost as follows. For a given N -gram phrase (ti−N+1, ti−N+2, ..., ti) in the translation with the corresponding token-level translation probability p(tj |s, t<j) ∀j ∈ {i, i − 1, ..., i − N + 1}, we quantify the translation cost of its last token (desired value in datastore) as the perplexity (PPL) of the N -gram phrase. However, when N is fixed, N - gram phrases are not always meaningful because some translations are independent of its previous target-side context (Ling et al., 2012). Hence we do not directly adopt the naive PPL as a stable translation cost but truncate it in a heuristic way. We search for the minimal PPL among all consecutive sub-sequences ending with that last token. Formally, given a bilingual sentence pair (s, t), we define the translation cost for each target token ti:\ncti = min {PPL(p(ti−n+1|s, t<i−n+1), ..., p(ti−1|s, t<i−1), p(ti|s, t<i)),∀n ∈ {1, 2, ..., N}}\nThen we can add the translation cost into the feature-compressed datastore.\n((K, C),V) = ⋃\n(s,t)∈(S,T )\n{((fα(hi), cti), ti),∀ ti ∈ t}.\nFor above augmented datastore, we only apply propagation-based clustering (Ester et al., 1996;\nAlgorithm 1 Cluster-based pruning Input:\nThe expected pruning rate r. The translation cost threshold . A preprocessed datastore ((K, C), V).\nOutput: A new pruned datastore (Knew,Vnew). 1. Greedy Clustering On Translation Costs. G← ∅. For each vi in set(V) do\nget collection (Kvi , Cvi) paired with vi splitCvi ← cluster(Cvi) Ksplit ← map(splitCvi ,Kvi) G.extend( zip(Ksplit,Vvi) )\n2. Uniform Pruning. Dnew ← {}. For each (k, v) in G do k∗, v∗ = sample_by_rate((k, v), r) Dnew.update(k∗, v∗)\nreturn Dnew\nZhang et al., 1996) upon the translation cost cti to get cost-similar groups, and partition the semantic representations in accordance to these groups. To get pruned datastore, we adopt uniform sampling on each group and collect them into a small key-value paired datastore. This algorithm is summarized in Algorithm 1.\nIn brief, our efficient cluster-based k-nearest neighbor machine translation can be concluded into the following steps. 1. We adopt the original datastore to train Compact Network while the parameters of NMT are frozen. 2. We adopt the validation set to train the Meta-k Network while the parameters of NMT and Compact Network are fixed. 3. We reconstruct the feature-compressed datastore and prune it into a small datastore using our proposed N-gram pruning algorithm that will be eventually used for testing."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "We followed (Zheng et al., 2021a) to conduct all experiments on five widely used machine translation benchmarks of unique domains, including IT, Koran, Medical, Law and Subtitles. The first four domains were also used by (Zheng et al., 2021a) while the last Subtitles dataset contains a large number of target tokens, which is hence suitable to ex-\nplore our pruning strategy. The statistics of these datasets are shown in Table 2. We tokenized sentences using Moses1 and split words into subword units (Sennrich et al., 2016) with the bpe-codes provided by (Ng et al., 2019). We applied the product quantizer with inverted file system using the Faiss implementation2 to quantize the datastores and conduct retrieval. The hyper-parameters of the Faiss implement are provided in Appendix C."
+    }, {
+      "heading" : "4.2 Baselines",
+      "text" : "We adopted the following models as our baselines. 1. Base NMT. This is the winner model (Vaswani et al., 2017) of WMT’19 German-English News translation task3 provided by (Ng et al., 2019), which is also used in (Zheng et al., 2021a). It is a Transformer model (Vaswani et al., 2017) with hidden size 1024. 2. Adaptive kNN-MT (Zheng et al., 2021a). This is the benchmark model of our work.\nIn our modifications, as expected to reduce the dimension to <10% of its original size, we did greedy searching in [16, 32, 64, 128] to obtain the optimal 64 as fα’s output dimension on the IT domain validation set and then used this setting in all experiments. The detailed dimension related analysis can be found in Appendix B. Similarly we used grid search and selected bigram in clusteringbased pruning algorithm."
+    }, {
+      "heading" : "4.3 Evaluation",
+      "text" : "All experiments were conducted on 18 cores Intel(R) Xeon(R) Gold 6240 CPU @ 2.60GHz with a P100-16GB GPU except for the experiments in Subsection 4.4.2 where we used 2 GPU cards to load a larger datastore. All translation results are calculated in case-sensitive detokenized BLEU with SacreBLEU (Post, 2018)."
+    }, {
+      "heading" : "4.4 Results",
+      "text" : "For simplicity, we refer to the base NMT model equipped with the proposed Compact Network as CKMT and further equipped with the pruned datastore as PCKMT in this section."
+    }, {
+      "heading" : "4.4.1 Performance of the Compact Network",
+      "text" : "On IT domain, we first evaluated the mentioned compact layer settings in Section 3, as well as two traditional feature reduction algorithms: Principal\n1https://github.com/moses-smt/ mosesdecoder 2https://github.com/facebookresearch/faiss/ 3http://www.statmt.org/wmt19/\nComponent Analysis (PCA) as used by (He et al., 2021) and Singular Value Decomposition (SVD). We applied the PCA solution to learn feature-wise linear projection while the SVD solution to learn matrix-wise projection that decomposes the weight (W ) of the last layer of the base NMT model into three matrices:\nW1024∗vocab_size = S1024∗64U64∗64V64∗vocab_size\nthen fα can be replaced as an FFN layer with the weight S1024∗64U64∗64 but without bias.\nAs shown in Table 3, the best CKMT solution is equipped with the Compact Network trained using NCE+CL+DR, it outperforms adaptive kNN-MT by 0.74 BLEU. Being consistent with (He et al., 2021), the 1024-to-64 feature-wise PCA is difficult to maintain the translation performance with such a low dimension. Basically, the distance ranking loss causes serious performance degradation. We assume that the distance minimization restraint is too\nstrict to optimize a small datastore since both the direction and the length of a semantic vector have already been optimized. Though the word prediction (WP) can recover the semantic information, its fθ has too many parameters to optimize with limited IT domain datastet compared with NCE alone. Besides, we attribute the improvement obtained by the clustering (CL) to the introduced semantic disambiguation. Finally, the static pivot selection (ST) achieves an improvement of 0.46 BLEU against the dynamic method.\nWe name the best setting [ST] CKMT+NCE+CL as CKMT*, and report the results against adaptive kNN-MT on various domains in Table 4. CKMT* gains an average improvement of 0.70 BLEU over adaptive kNN-MT which indicates that our proposed Compact Network refines the retrieval for machine translation. The Compact Network Training with Limited Data. It is unclear on the amount of data that are adequate at training-stage I, therefore we gradu-\nally reduce the number of key-value pairs in the datastore to train the Compact Network as shown in Table 5. As the number decreases, the performance degraded slowly. When we use only 40% of the datastore for training, CKMT still outperforms adaptive kNN-MT. It indicates that our proposed Compact Network is efficient and requires a small amount of key-value pairs to compress the semantic representations with contrastive loss. Cross Domain Generalization. Is there a general Compact Network that is capable to generalize to different domains? If so, we will save the cost to train an unique Compact Network for various target domains. To explore this, we trained the Compact Network in a general domain with Wikimatrix Corpus (Schwenk et al., 2019) compiled by Facebook Research and evaluated its behavior on various target domains. As the last row of Table 4 shows, it is interesting that the general CKMT* drops only 0.39 BLEU compared with 4 domain-specific datastores, and it still outperforms adaptive kNN-MT by 0.31 BLEU. Overall speaking, the Compact Network generalized well across different domains."
+    }, {
+      "heading" : "4.4.2 Performance of Pruning Methods",
+      "text" : "We test our language-wise PPL-based pruning methods with several pruning strategies as follows. 1. Spatially Pruning by Distance (SP). It is a naive pruning strategy using distance-wise solution by cutting off nodes with low probability according to the distance from each node to its cluster center. 2. Low Translation Probability Pruning (LTP). Tokens translated with low probabilities tend to have poor translation quality, and will be pruned for datastore stability. 3. High Translation Probability Pruning (HTP). As the kNN probabilities are beneficial for hart-totranslate words that NMT cannot handle, it would be more encouraged to restore the tokens wrongly translated by the base NMT. In this sense, tokens paired with high confidence will be pruned. 4. Random Pruning (RP). We also perform the random pruning strategy alone for the target-side clusters, as the step 2 introduced in Algorithm 1.\nThe results on 4 different domains are shown in Table 6. Our cluster based pruning strategy generally achieves the weakest degradation. Though other strategies obtain impressive results on a few domains (e.g., 10% pruned CKMT*+HTP outperforms non-pruned CKMT* by 0.18 BLEU on the Koran test set), our cluster based pruning strategy performs the most stably on average. Note that\nthe random pruning strategy is simple yet effective, which coincides with (He et al., 2021).\nHowever, we find that the in-domain corpora of the tested domains have limited redundancy since the average frequency of 2-grams is too low (e.g., more than 0.4M unique 2-grams were collected from the 3.6M IT domain datastore, on average each 2-grams only has no more than 9 appearances in the datastore). Therefore, even 10% pruning rate can lead to about 1 BLEU loss in Table 6.\nTo further explore the potential of the pruning methods on large datastore, we conducted pruning experiments on Subtitles domain containing 154M keys. We test the random pruning strategy as well, because it is the second competitive pruning strategy. As Figure 5 illustrates, the proposed PCKMT*+Ours with pruning rate 30% can even outperform the non-pruned CKMT*. As the pruning rate increases, PCKMT*+Ours generally outperforms PCMKT*+RP for the same k. The performance of PCKMT*+RP drops seriously (more than 1 BLEU point) when the pruning rate ≥ 50%, but\nPCKMT*+Ours sees a clear drop until the pruning rate ≥ 70%. When the pruning rate increases to 80+%, PCKMT*+RP even perform worse than the base NMT, but PCKMT*+Ours still outperform it by a large margin. These results suggest that the proposed cluster-based pruning algorithm is effective for datastore reduction.\nIn Table 7, we further evaluate the computation of CKMT* with the same BLEU performance as adaptive kNN-MT. With the same k and the batch size, PCKMT* requires 27%~57% less speed latency compared with adaptive kNN-MT. In addition, we compare our optimally performed model with baselines in Table 8. PCKMT (k=8) equipped with pruning rate 30% has the optimal performance, which obtains an improvement of 0.36 BLEU and 1.56x translation speed over adaptive kNN-MT.\nCluster Visualization. We visualize the IT domain datastore in Figure 6 to verify our assumption that our Compact Network maps the original semantic representations to a separable distribution with less overlaps. The token represented by purple dots becomes more distinguishable with our method."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this paper, we propose a cluster-based Compact Network for feature reduction in a contrastive learning manner to reduce 90+% context feature dimension, and suggest a cluster based pruning strategy to prune 10%~40% redundant keys in datastore while the translation quality is remained. Our proposed methods achieve better or comparable performances while reducing at most 57% inference latency against the advanced non-parametric MT model on several benchmarks. For future work, it is promising to design effective feature reduction algorithms and pruning strategies based on more linguistic and cross-lingual information."
+    }, {
+      "heading" : "A Clustering Algorithm Selection",
+      "text" : "The determination of clustering algorithms depends on computation complexity and clustering effectiveness.\n• As semantic clusters in a large datastore are vague and it is hard to determine the prior quantity of clusters existing in a large datastore, clustering algorithms that hold a static cluster quantity in advance (e.g., k-Means (Hartigan and Wong, 1979)) are not fit for dataset partitioning.\n• Besides, clustering complexity is not tolerant in practice when it increases up to O(N2) (e.g., Affinity Propagation (Frey and Dueck, 2007)) since N is usually extremely large for a high-quality datastore.\nWe eventually chose two classical clustering algorithms from candidates for exploration in our experiments: DBSCAN (Ester et al., 1996) and Birch (Zhang et al., 1996). DBSCAN was applied for clustering datastore with 100M- nodes while BIRCH was applied for clustering datastore with 100M+ nodes for the sake of computation-andquality trade-off. In our experiments, We adopted the scikit-learn clustering implements.4"
+    }, {
+      "heading" : "B The Decision on the Compact Feature Dimension",
+      "text" : "The output dimension of the first FFN in fα was empirically set as 4 times of the output dimension of the whole fα. We then conducted greedy search on the IT domain validation set to obtain the optimal output dimension of fα in our Compact Network. As shown in Table 9, 64d was the optimal setting superior to adaptive kNN-MT.\n4https://scikit-learn.org/stable/modules/clustering.html"
+    }, {
+      "heading" : "C Hyper-parameters of Faiss",
+      "text" : "We followed the default implementation setting of (Zheng et al., 2021a). To be concrete, we adopted the FP16 precision to store the keys. The number of quantization centroids was set 1024 while the probe was set 32. The code size was set 64 except for CKMT with 16d/32d compact dimension in Table 9 because the code size could not be larger than the dimension of the input features for quantization."
+    }, {
+      "heading" : "D Analysis on Parameter Comparison",
+      "text" : "We compare the overall parameters of different systems in Table 10. It can be seen that our optimal CKMT* only requires 0.1% more parameters while it significantly decreases the latency at the same time, hence CKMT* achieves an important speedand-quality trade-off."
+    }, {
+      "heading" : "E Case Analysis",
+      "text" : "In this subsection, we analyze translations generated by different models on the test sets.\nBased on the translations generated by different models in Table 11, it can be seen that CMKT* translates more adequate sentences especially for tokens with ambiguous semantics because the Compact Network turns different tokens separable in the compressed semantic representation space. In this way, CKMT* tends to predict accurate words that describe the source sentence rather than tokens of high frequency (e.g., ‘insert’ objects rather ‘paste’ objects). On the other hand, adaptive kNN-MT translates ‘VolumeControl’ as ‘api.op’ by mistake while the base NMT model could correctly translate it, which exposures that adaptive kNN-MT could surfer from noisy retrievals from the original semantic space. It can also be seen that PCKMT* makes predictions without performance degradation to CKMT*, although PCKMT* is equipped with a smaller datastore."
+    } ],
+    "references" : [ {
+      "title" : "A density-based algorithm for discovering clusters in large spatial databases with noise",
+      "author" : [ "Martin Ester", "Hans-Peter Kriegel", "Jörg Sander", "Xiaowei Xu" ],
+      "venue" : "In kdd,",
+      "citeRegEx" : "Ester et al\\.,? \\Q1996\\E",
+      "shortCiteRegEx" : "Ester et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "Clustering by passing messages between data points",
+      "author" : [ "Brendan J Frey", "Delbert Dueck." ],
+      "venue" : "science, 315(5814):972–976.",
+      "citeRegEx" : "Frey and Dueck.,? 2007",
+      "shortCiteRegEx" : "Frey and Dueck.",
+      "year" : 2007
+    }, {
+      "title" : "Noisecontrastive estimation: A new estimation principle for unnormalized statistical models",
+      "author" : [ "Michael Gutmann", "Aapo Hyvärinen." ],
+      "venue" : "Journal of Machine Learning Research, 9:297–304.",
+      "citeRegEx" : "Gutmann and Hyvärinen.,? 2010",
+      "shortCiteRegEx" : "Gutmann and Hyvärinen.",
+      "year" : 2010
+    }, {
+      "title" : "Algorithm as 136: A k-means clustering algorithm",
+      "author" : [ "John A Hartigan", "Manchek A Wong." ],
+      "venue" : "Journal of the royal statistical society. series c (applied statistics), 28(1):100–108.",
+      "citeRegEx" : "Hartigan and Wong.,? 1979",
+      "shortCiteRegEx" : "Hartigan and Wong.",
+      "year" : 1979
+    }, {
+      "title" : "Efficient nearest neighbor language models",
+      "author" : [ "Junxian He", "Graham Neubig", "Taylor BergKirkpatrick" ],
+      "venue" : null,
+      "citeRegEx" : "He et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning kernel-smoothed machine translation with retrieved examples",
+      "author" : [ "Qingnan Jiang", "Mingxuan Wang", "Jun Cao", "Shanbo Cheng", "Shujian Huang", "Lei Li" ],
+      "venue" : null,
+      "citeRegEx" : "Jiang et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Nearest neighbor machine translation",
+      "author" : [ "Urvashi Khandelwal", "Angela Fan", "Dan Jurafsky", "Luke Zettlemoyer", "Mike Lewis." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Khandelwal et al\\.,? 2021",
+      "shortCiteRegEx" : "Khandelwal et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Six challenges for neural machine translation",
+      "author" : [ "Philipp Koehn", "Rebecca Knowles." ],
+      "venue" : "arXiv preprint arXiv:1706.03872.",
+      "citeRegEx" : "Koehn and Knowles.,? 2017",
+      "shortCiteRegEx" : "Koehn and Knowles.",
+      "year" : 2017
+    }, {
+      "title" : "Entropy-based pruning for phrasebased machine translation",
+      "author" : [ "Wang Ling", "João Graça", "Isabel Trancoso", "Alan Black." ],
+      "venue" : "Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natu-",
+      "citeRegEx" : "Ling et al\\.,? 2012",
+      "shortCiteRegEx" : "Ling et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Facebook FAIR’s WMT19 news translation task submission",
+      "author" : [ "Nathan Ng", "Kyra Yee", "Alexei Baevski", "Myle Ott", "Michael Auli", "Sergey Edunov." ],
+      "venue" : "Proceedings of the Fourth Conference on Machine Translation (Volume 2: Shared Task Papers,",
+      "citeRegEx" : "Ng et al\\.,? 2019",
+      "shortCiteRegEx" : "Ng et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A call for clarity in reporting bleu scores",
+      "author" : [ "Matt Post." ],
+      "venue" : "arXiv preprint arXiv:1804.08771.",
+      "citeRegEx" : "Post.,? 2018",
+      "shortCiteRegEx" : "Post.",
+      "year" : 2018
+    }, {
+      "title" : "Wikimatrix: Mining 135m parallel sentences in 1620 language pairs from wikipedia",
+      "author" : [ "Holger Schwenk", "Vishrav Chaudhary", "Shuo Sun", "Hongyu Gong", "Francisco Guzmán" ],
+      "venue" : null,
+      "citeRegEx" : "Schwenk et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Schwenk et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Proceedings of the 31st International Conference on Neural Information Processing Sys-",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A systematic comparison of phrase table pruning techniques",
+      "author" : [ "Richard Zens", "Daisy Stanton", "Peng Xu." ],
+      "venue" : "Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural Language Learning,",
+      "citeRegEx" : "Zens et al\\.,? 2012",
+      "shortCiteRegEx" : "Zens et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Compression network with transformer for approximate nearest neighbor search",
+      "author" : [ "Haokui Zhang", "Wenze Hu", "Buzhou Tang", "Xiaoyu Wang" ],
+      "venue" : null,
+      "citeRegEx" : "Zhang et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Birch: An efficient data clustering method for very large databases",
+      "author" : [ "Tian Zhang", "Raghu Ramakrishnan", "Miron Livny." ],
+      "venue" : "Proceedings of the 1996 ACM SIGMOD International Conference on Management of Data, SIGMOD ’96, page 103–114, New",
+      "citeRegEx" : "Zhang et al\\.,? 1996",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "Adaptive nearest neighbor machine translation",
+      "author" : [ "Xin Zheng", "Zhirui Zhang", "Junliang Guo", "Shujian Huang", "Boxing Chen", "Weihua Luo", "Jiajun Chen." ],
+      "venue" : "arXiv preprint arXiv:2105.13022.",
+      "citeRegEx" : "Zheng et al\\.,? 2021a",
+      "shortCiteRegEx" : "Zheng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Non-parametric unsupervised domain adaptation for neural machine translation",
+      "author" : [ "Xin Zheng", "Zhirui Zhang", "Shujian Huang", "Boxing Chen", "Jun Xie", "Weihua Luo", "Jiajun Chen" ],
+      "venue" : null,
+      "citeRegEx" : "Zheng et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Zheng et al\\.",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "Recently, non-parametric approaches (Khandelwal et al., 2021; Zheng et al., 2021a,b; Jiang et al., 2021) have been successfully applied to neural machine translation (NMT) for domain adaptation with retrieval pipelines.",
+      "startOffset" : 36,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 5,
+      "context" : "Recently, non-parametric approaches (Khandelwal et al., 2021; Zheng et al., 2021a,b; Jiang et al., 2021) have been successfully applied to neural machine translation (NMT) for domain adaptation with retrieval pipelines.",
+      "startOffset" : 36,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 9,
+      "context" : "tween a pre-trained NMT model (Ng et al., 2019) and the adaptive kNN-MT (Zheng et al.",
+      "startOffset" : 30,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2019) and the adaptive kNN-MT (Zheng et al., 2021a) system originated from the former, where the later is the most advanced retrieval-based NMT model so far.",
+      "startOffset" : 32,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 7,
+      "context" : "the feature distribution of a datastore built on the IT-domain corpus (Koehn and Knowles, 2017) in Figure 1.",
+      "startOffset" : 70,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 15,
+      "context" : "Moreover, as (Zhang et al., 2021) claimed, the dimension is highly related to retrieval speed.",
+      "startOffset" : 13,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 4,
+      "context" : "Preliminary studies on kNN-LM (He et al., 2021) indicate that traditional feature reduction algorithms could only maintain the original performance un-",
+      "startOffset" : 30,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 17,
+      "context" : "In this section, we will briefly introduce the background of adaptive kNN-MT (Zheng et al., 2021a).",
+      "startOffset" : 77,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 6,
+      "context" : "Adaptive kNN-MT is derived from kNNMT (Khandelwal et al., 2021) by inserting a lightweight Meta-k Network that fuses kNN retrievals with various k to alleviate the possible noise in-",
+      "startOffset" : 38,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 2,
+      "context" : "Then we conduct NCE (Gutmann and Hyvärinen, 2010) with binary classification on {pivot, positive} and {pivot, negative} to predict which pair belongs to the same cluster.",
+      "startOffset" : 20,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 8,
+      "context" : "In literature, phrase-level pruning strategies have proved efficient for statistical machine translation (SMT) (Ling et al., 2012; Zens et al., 2012).",
+      "startOffset" : 111,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 14,
+      "context" : "In literature, phrase-level pruning strategies have proved efficient for statistical machine translation (SMT) (Ling et al., 2012; Zens et al., 2012).",
+      "startOffset" : 111,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 8,
+      "context" : "However, when N is fixed, N gram phrases are not always meaningful because some translations are independent of its previous target-side context (Ling et al., 2012).",
+      "startOffset" : 145,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 17,
+      "context" : "We followed (Zheng et al., 2021a) to conduct all experiments on five widely used machine translation benchmarks of unique domains, including IT, Koran, Medical, Law and Subtitles.",
+      "startOffset" : 12,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 17,
+      "context" : "The first four domains were also used by (Zheng et al., 2021a) while the last Subtitles dataset contains a large number of target tokens, which is hence suitable to explore our pruning strategy.",
+      "startOffset" : 41,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 12,
+      "context" : "We tokenized sentences using Moses1 and split words into subword units (Sennrich et al., 2016) with the bpe-codes provided by (Ng et al.",
+      "startOffset" : 71,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2016) with the bpe-codes provided by (Ng et al., 2019).",
+      "startOffset" : 39,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 13,
+      "context" : "This is the winner model (Vaswani et al., 2017) of WMT’19 German-English News translation task3 provided by (Ng et al.",
+      "startOffset" : 25,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2017) of WMT’19 German-English News translation task3 provided by (Ng et al., 2019), which is also used in (Zheng et al.",
+      "startOffset" : 68,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 13,
+      "context" : "It is a Transformer model (Vaswani et al., 2017) with hidden size 1024.",
+      "startOffset" : 26,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 10,
+      "context" : "All translation results are calculated in case-sensitive detokenized BLEU with SacreBLEU (Post, 2018).",
+      "startOffset" : 89,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 4,
+      "context" : "Component Analysis (PCA) as used by (He et al., 2021) and Singular Value Decomposition (SVD).",
+      "startOffset" : 36,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 4,
+      "context" : "Being consistent with (He et al., 2021), the 1024-to-64 feature-wise PCA is difficult to maintain the translation performance with such a low dimension.",
+      "startOffset" : 22,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 11,
+      "context" : "To explore this, we trained the Compact Network in a general domain with Wikimatrix Corpus (Schwenk et al., 2019) compiled by Facebook Research and evaluated its behavior on various target domains.",
+      "startOffset" : 91,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 4,
+      "context" : "the random pruning strategy is simple yet effective, which coincides with (He et al., 2021).",
+      "startOffset" : 74,
+      "endOffset" : 91
+    } ],
+    "year" : 0,
+    "abstractText" : "k-Nearest-Neighbor Machine Translation (kNN-MT) has been recently proposed as a non-parameter solution for domain adaptation in machine translation. It aims to alleviate the performance degradation of advanced MT systems when translating out-of-domain sentences, by coordinating with an additional token-level feature-based retrieval module constructed from in-domain corpora. In spite of its success, the kNN retrieval is at the expense of high latency, in particular for large scale datastores. To make it practical, in this paper, we explore a more efficient kNN-MT and propose to use clustering that serves as useful signals to improve the retrieval efficiency. Concretely, we first propose a cluster-based Compact Network for feature reduction in a contrastive learning manner to compress context features into 90+% lower dimensional vectors. We then suggest a cluster-based pruning solution to filter out 10%~40% redundant nodes in the large datastore while remaining the translation performance. Our proposed methods achieve better or comparable performances while reducing at most 57% inference latency against the advanced non-parameter MT model on several machine translation benchmarks. Experimental results indicate that the proposed methods maintain the most useful information of the original datastore and the Compact Network shows good generalization on unseen domains.",
+    "creator" : null
+  }
+}

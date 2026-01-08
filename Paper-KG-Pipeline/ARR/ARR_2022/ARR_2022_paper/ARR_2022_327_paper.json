@@ -1,0 +1,780 @@
+{
+  "name" : "ARR_2022_327_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Graph Neural Networks for Multiparallel Word Alignment",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Word alignments are crucial for statistical machine translation (Koehn et al., 2003) and useful for many other multilingual tasks such as neural machine translation (Alkhouli and Ney, 2017; Alkhouli et al., 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al., 2014; Huck et al., 2019). The rise of deep learning initially led to a temporary plateau, but interest in word alignments is now increasing, demonstrated by several recent publications (Jalili Sabet et al., 2020; Chen et al., 2020; Dou and Neubig, 2021)\nMultiparallel corpora contain sentence level parallel text in more than two languages, e.g., JW300 (Agić and Vulić, 2019), PBC (Mayer and Cysouw, 2014) and Tatoeba.1 While the amount of data provided by multiparallel corpora is less than bilingual corpora, this type of corpus is essential to study very low-resource languages. There are thousands of languages in the world a very small portion of which is covered by language technologies (Joshi et al., 2020). Recent work (Bird, 2020) suggests a number of approaches to develop technologies for indigenous languages. Multiparallel corpora are a valuable (and arguably complementary) resource for this aim. We use the PBC corpus since it covers more than 1300 languages.\nMost prior work on word alignment uses bitext, with one notable exception: (Imani et al., 2021).\n1https://tatoeba.org\nThey introduce MPWA (MultiParallel Word Alignment), a framework that utilizes the synergy between multiple language pairs to improve bilingual word alignments. The rationale is that some of the missing alignment edges between a source and a target language can be recovered using their alignments with words in other languages.\nThe first step in MPWA is to create bilingual alignments for all language pairs in a multiparallel corpus using a bilingual word aligner. Then the bilingual alignments for a multiparallel sentence are represented as a graph where words are nodes and initial word alignments are edges. Figure 1 gives an example: a multiparallel alignment graph for a 12-way multiparallel corpus. MPWA infers missing alignment links based on the graph structure in a postprocessing step, casting the word alignment task as an edge prediction problem. They use two traditional graph algorithms, Adamic-Adar and non-negative matrix factorization, for edge prediction. However, these standard graph algorithms are applied to individual multiparallel sentences independently and therefore cannot accumulate knowledge from multiple sentences. Moreover, their edge predictions are solely based on the structure of the graph and do not take advantage of other beneficial signals such as a word’s language, relative position and word meaning. Another limitation is that it only adds links and does not remove any, which is important to improve precision.\nIn this paper, we propose to use graph neural networks (GNNs) to exploit the graph structure of multiparallel word alignments and address the limitations of prior work. GNNs were proposed to extend the powerful current generation of neural network models to processing graph-structured data (Scarselli et al., 2009) and they have gained increasing popularity in many domains (Wu et al., 2020; Sanchez-Gonzalez et al., 2018; He et al., 2020). In contrast to other graph algorithms, GNNs can incorporate heterogeneous sources of signal in the form of node and edge features.\nSince the nodes in the graph are words that are translations of each other, we expect them to create densely connected regions or communities. Our analysis of the structure of the multiparallel alignment graph confirms this intuition; see Figure 1. We use community detection algorithms to find communities. We show that pruning inter-community edges and adding intracommunity edges is helpful. We use community\ninformation as node features for our GNN. We enable the removal of alignment edges from initial alignments by inferring alignments from the alignment probability matrix. Our method predicts new alignment links independently of initial edges. Therefore it is not limited to adding edges wrt initial bilingual alignments, it can also remove them.\nFor our experiments, we follow the setup of Imani et al. (2021). We train a GNN model with a link prediction objective. We show improved results for three language pairs on word alignment (English-French, Finnish-Hebrew and Finnish-Greek). As a demonstration of the importance of high-quality alignments, we use our word alignments to project annotations from highresource to low-resource languages. We improve a part-of-speech tagger for Yoruba by training it over a high-quality dataset, which is created using annotation projection. We show that our model is especially helpful for distant languages.\nContributions: i) We propose a graph neural network model that incorporates a diverse set of features for word alignments in multiparallel corpora and an elegant way of training it efficiently and effectively. ii) We show that community detection improves multiparallel word alignment. iii) We show that the improved alignments improve performance on a downstream task for a low resource language. iv) We propose a new method to infer alignments from the alignment probability matrix. v) We will make our code publicly available."
+    }, {
+      "heading" : "2 Graph Analysis with Community Detection (CD)",
+      "text" : "The nodes in the alignment graph are words that are translations of each other. If the initial bilingual alignments are of good quality, we expect these translated words to form densely connected regions or communities; see Figure 1. We expect these communities to be genarally disconnected, each corresponding to a distinct connected component. In other words, ideally, words representing a concept should be densely connected, but there should be no links between different concepts. Clearly, this intuition will not be true for all concepts between all possible language pairs. Nonetheless, we hypothesize that identifying distinct concepts in a multiparallel word alignment graph can provide useful information.\nTo examine to what extent this expectation is met, we count the components in the original\nEflomal-generated (Östling and Tiedemann, 2016) graph. Table 1 shows that the average number of components per sentence is less than three (“Eflomal intersection”, columns #CC). But intuitively, the number of components should roughly correspond to sentence length (i.e., the number of content words). This indicates that there are many links that incorrectly connect different concepts. To detect such links, we use community detection (CD) algorithms.\nCD algorithms find subnetworks of nodes that form tightly knit groups that are only loosely connected with a small number of links (Girvan and Newman, 2002). CD algorithms maximize the modularity measure (Newman and Girvan, 2004). Modularity measures how beneficial a division of a community into two communities is, in the sense that there are many links within communities and only a few between them. Given a graph G with n nodes and m edges and G’s adjacency matrix A ∈ Rn×n, modularity is defined as:\nmod = 1\n2m ∑ ij ( Aij − γ didj 2m ) I(ci, cj) (1)\ndi is the degree of node i. I(ci, cj) is 1 if nodes i and j are in the same community, 0 otherwise.\nWe experiment with two CD algorithms:\n• Greedy modularity communities (GMC). This method uses Clauset-Newman-Moore greedy modularity maximization (Clauset et al., 2004). GMC begins with each node in its own community and greedily joins the pair of communities that most increases modularity until no such pair exists.\n• Label propagation communities (LPC). This method finds communities in a graph using label propagation (Cordasco and Gargano, 2010). It begins by giving a label to each node of the network. Then each node’s label is updated by the most frequent label among its neighbors in each iteration. It performs label propagation on a portion of nodes at each step and quickly converges to a stable labeling.\nAfter detecting communities, we link all nodes inside a community and remove all intercommunity links. GMC (LPC) on average removes 3% (7%) of the edges. Table 1 reports the average number of graph components per sentence before and after runing GMC and LPC, as well as the corresponding F1 for word alignment. We see that the\nnumber of communities found is lower for GMC than for LPC; therefore, LPC identifies more candidate links for deletion.2 Comparing the number of communities detected with the average sentence length, GMC seems to have failed to detect enough communities to split different concepts properly. The F1 scores confirm this observation and show that LPC performs well at detecting the communities we are looking for.\nThese results indicate that CD algorithms can provide valuable information. To exploit this in our GNN model, we add a node’s community information as a GNN node feature; see §3.1.2."
+    }, {
+      "heading" : "3 Methods",
+      "text" : ""
+    }, {
+      "heading" : "3.1 GNN in MPWA",
+      "text" : "GNNs can be used in transductive or inductive settings. Transductively, the final model can only be used for inference over the same graph that it is trained on. In an inductive setting, which we use here, nodes are represented as feature vectors, and the final model has the advantage of being applicable to a different graph in inference."
+    }, {
+      "heading" : "3.1.1 Model Architecture",
+      "text" : "Our model is inspired by the Graph Auto Encoder (GAE) model of Kipf and Welling (2016b) for link prediction. The architecture consists of an encoder and a decoder. We make changes to this model to improve the model’s quality and reduce its computation cost. We use GATConv layers (Veličković et al., 2018) for encoder instead of GCNConv (Kipf and Welling, 2016a)and a more sophisticated decoder instead of simple dot product for a stronger model. We also introduce a more efficient training procedure.\nThe encoder is a graph attention network (GAT) (Veličković et al., 2018) with two GATConv layers\n2LPC may detect more communities than average sentence length because of null words: words that have no translation in the other languages, giving rise to separate communities.\nfollowed by a fully connected layer. Layers are connected by RELU non-linearities. A GATConv layer computes its output x′i for a node i from its input xi as\nx′i = αi,iWxi + ∑\nj∈N (i)\nαi,jWxj , (2)\nwhere W is a weight matrix, N (i) is some neighborhood of node i in the graph, and αi,j is the attention coefficient indicating the importance of node j’s features to node i. αi,j is computed as\nαi,j = exp\n( g ( a>[Wxi ‖Wxj ] ))∑ k∈N (i)∪{i} exp (g (a\n>[Wxi ‖Wxk])) (3)\nwhere ‖ is concatanation, g is LeakyReLU, and a is a weight vector. Given the features for the nodes and their alignment edges, the encoder creates a contextualized hidden representation for each node.\nBased on the hidden representations of two nodes, the decoder predicts whether a link connects them. The decoder architecture consists of a fully connected layer, a RELU non-linearity and a sigmoid layer.\nTraining. By default, GAE models are trained using full batches with random negative samples. This approach requires at least tens of epochs over training dataset to converge and a lot of GPU memory for graphs as big as ours. We train our model using mini-batches and an adversarial loss to decrease memory requirements and improve the performance. Using our training approach the model converges after one epoch. The negative samples are selected more elegantly, as described below. Figure 2 displays our GNN model and the training\nprocess. The outer loop iterates over the multiparallel sentences in the training set. The training set contains one graph for each sentence; the graph is constructed using the bilingual alignment edges between all language pairs.\nEach graph is divided into multiple batches. Each batch contains a random subset of the graph’s edges as positive samples. The negative samples are created as follows. Given a sentence u1u2 . . . un in language U and its translation v1v2 . . . vm in language V , for each alignment edge ui:vj in the current batch, two negative edges ui:v′j and u′i:vj (j\n′ 6= j, i′ 6= i) are randomly sampled. For each training batch, the encoder takes the batch’s whole graph (i.e., node features for all graph nodes and all graph edges) as input and computes hidden representations for the nodes. On the decoder side, for each link of the batch, the hidden representations of the attached nodes are concatenated to create the decoder’s input. The decoder’s target is the link’s class: 1 (resp. 0) for positive (resp. negative) links. We train with a binary classification objective:\nL = −1 b b∑ i=1 log(p+i ) + 1 2b 2b∑ i=1 log(p−i ) (4)\nwhere b is the batch size and p+i and p − i are the model predictions for the ith positive and negative samples within the batch. Parameters of the encoder and decoder as well as the node-embedding feature layer are updated after each training step."
+    }, {
+      "heading" : "3.1.2 Node Features",
+      "text" : "We use three main types of node features: (i) graph structural features, (ii) community-based features and (iii) word content features.\nGraph structural features. We use degree, closeness (Freeman, 1978) , betweenness (Brandes, 2001) , load (Newman, 2001) and harmonic centrality (Boldi and Vigna, 2014) features as additional information about the graph structure. These features are continuous numbers, providing information about the position and connectivity of the nodes within the graph. We standardize (i.e., zscore) each feature across all nodes, and train an embedding of size four for each feature.3\nCommunity-based features. One way to incorporate community information into our model is to train the model based on the refined edges after the community detection step. This approach hobbles the GNN model by making decisions about many of the edges before the GNN gets to see them. Our initial experiments also confirmed that training the GNN over CD refined edges does not help. Therefore, we add community information as node features and let the GNN use them to improve its decisions. We use the community detection algorithms GMC and LPC (see §2) to identify communities in the graph. Then we take the community membership information of the nodes as one-hot vectors and learn an embedding of size 32 for each of the two algorithms.\nWord content features. We train embeddings for word position (size 32) and word language (size 20). We learn 100-dimensional multilingual word embeddings using Levy et al. (2017)’s sentenceID method on the 84 PBC languages selected by Imani et al. (2021). Word embeddings serve as initialization and are updated during GNN training.\nAfter concatenating these features, each node is represented by a 236 dimensional vector that is then fed to the encoder."
+    }, {
+      "heading" : "3.1.3 Inducing Alignment Edges",
+      "text" : "When our trained GNN model is used to predict alignment edges between a source sentence x̂ = x1, x2, . . . , xm in language X and a target sentence ŷ = y1, y2, . . . , yl in language Y , it produces a symmetric alignment probability matrix S4 of size m× l where Sij is the predicted alignment probability between words xi and yj . Using these values directly to infer alignment edges is usually suboptimal; therefore, more sophisticated methods\n3Learning a size-four embedding instead of a single number gives the feature a weight similar to other features – which have a feature vector of about the same size.\n4For inference, we feed all possible alignment links between source and target to the decoder.\nhave been suggested (Ayan and Dorr, 2006; Liang et al., 2006). Here we propose a new approach: it combines Koehn et al. (2005)’s Grow-Diag-FinalAnd (GDFA) with Dou and Neubig (2021)’s probability thresholding. We modify the latter to account for the variable size of the probability matrix (i.e., length of source/target sentences). Our method is not limited to adding new edges to some initial bilingual alignments, a limitation of prior work. As we predict each edge independently, some initial links can be discarded from the final alignment.\nWe start by creating a set of forward (sourceto-target) alignment edges and a set of backward (target-to-source) alignment edges. To this end, first, inspired by probability thresholding (Dou and Neubig, 2021), we apply softmax to S, and zero out probabilities below a threshold to get a sourceto-target probability matrix SXY :\nSXY = S ∗ (softmax(S) > α l ) (5)\nAnalogously, we compute the target-to-source probability matrix SY X :\nSY X = S> ∗ (softmax(S>) > α m ) (6)\nwhere α is a sensitivity hyperparameter, e.g., α = 1 means that we pick edges with a probability higher than average. We experimentally set α = 2. Next, from each row of SXY (SY X ), we pick the cell with the highest value (if any exists) and add this edge to the forward (backward) set.\nWe create the final set of alignment edges by applying the GDFA symmetrization method (Koehn et al., 2005) to forward and backward sets. The gist of GDFA is to use the intersection of forward and backward as initial alignment edges and add more edges from the union of forward and backward based on a number of heuristics. We call this method TGDFA (Thresholding GDFA).\nWe also experiment with combining TGDFA with the original bilingual GDFA alignments. We do so by adding bilingual GDFA edges to the union of forward and backward before performing the GDFA heuristics. We refer to these alignments as TGDFA+orig.\nWe evaluate the resulting alignments using F1 score and alignment error rate (AER), the standard evaluation measures in the word alignment literature."
+    }, {
+      "heading" : "3.2 Annotation Projection",
+      "text" : "Annotation projection automatically creates linguistically annotated corpora for low-resource languages. A model trained on data with “annotationprojected” labels can perform better than full unsupervision. Here, we focus on universal part-ofspeech (UPOS) tagging (Petrov et al., 2012) for the low resource target language Yoruba; this language only has a small set of annotated sentences in Universal Dependencies (Nivre et al., 2020) and has poor POS results in unsupervised settings (Kondratyuk and Straka, 2019).\nThe quality of the target annotated corpus depends on the quality of the annotations in the source languages and the quality of the word alignments between sources and target. We use the Flair (Akbik et al., 2019) POS taggers for three high resource languages, English, German and French (Akbik et al., 2018), to annotate 30K verses whose Yoruba translations are available in PBC. We then transfer the POS tags from source to target using three different approaches: (i) We directly transfer annotations from English to the target. (ii) For each word in the target, we get its alignments in the three source languages and predict the majority POS to annotate the target word. (iii) We repeat (ii) using alignments from our GNN (TGDFA) model instead of the original bilingual alignments. In all three approaches, we discard any target sentence from the POS tagger training data if more than 50% of its words are annotated with the \"X\" (other) tag.\nWe train a Flair SequenceTagger model on the target annotated data using mBERT embeddings (Devlin et al., 2019) and evaluate on Yoruba test from Universal Dependencies.5\n5https://universaldependencies.org/"
+    }, {
+      "heading" : "4 Experimental Setup",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Word Alignment Datasets",
+      "text" : "Following Imani et al. (2021), we use PBC, a multiparallel corpus of 1758 sentence-aligned editions of the Bible in 1334 languages.\nEvaluation data. For our main evaluation, we use the two word alignment gold datasets for PBC published by Imani et al. (2021): Blinker (Melamed, 1998) and HELFI (Yli-Jyrä et al., 2020). The HELFI dataset contains the Hebrew Bible, Greek New Testament and their translations into Finnish. For HELFI, we use Imani et al. (2021)’s train/dev/test splits. The Blinker dataset provides word level alignments between English and French for 250 Bible verses.\nTraining data. The graph algorithms used by Imani et al. (2021) operate on each multiparallel sentence separately. In contrast, our approach allows for an inductive setting where a model is trained on a training set and then evaluated on a separate test set. We combine the verses in the training sets of Finnish-Hebrew and Finnish-Greek for a combined train set size of 24,159."
+    }, {
+      "heading" : "4.2 Initial Word Alignments",
+      "text" : "We use the Eflomal statistical word aligner to obtain bilingual alignments. We train it for every language pair in our experiments. We do not consider SimAlign (Jalili Sabet et al., 2020) since it is shown to perform poorly for languages whose representations in the multilingual pretrained language model are of low quality. We use Eflomal asymmetrical alignments post-processed with the intersection heuristic to get high precision bilingual alignments as input to the GNN. We use the same subset of 84 languages as Imani et al. (2021)."
+    }, {
+      "heading" : "4.3 Training Details",
+      "text" : "We use PyTorch Geometric6 to construct and train the GNN. The model’s hidden layer size is 512 for both GATConv and Linear layers. We train for one epoch on the train set – a small portion of the train set is enough to learn good embeddings (see §5.1.1). For training, we use a batch size of 400 and learning rate of .001 with AdamW (Loshchilov and Hutter, 2017). The whole training process takes less than 4 hours on a GeForce GTX 1080 Ti and the inference time is on the order of milliseconds per sentence."
+    }, {
+      "heading" : "5 Experiments and Results",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Multiparallel corpus results",
+      "text" : "Table 2 shows results on Blinker and HELFI for our GNNs and the baselines: bilingual alignments and the traditional graph algorithms WAdAd and NMF from Imani et al. (2021). Our GNNs provide a better trade-off between precision and recall, most likely thanks to their ability to remove edges, and achieve the best F1 and AER on all three datasets, outperforming WAdAd and NMF.\nGNN (TGDFA) achieves the best results on HELFI (FIN-HEB, FIN-GRC) while GNN (TGDFA+orig) is best on Blinker (ENG-FRA). As argued in Imani et al. (2021), this is mostly due to the different ways these two datasets were annotated. Most HELFI alignments are one-to-one, while many Blinker alignments are many-to-many: phrase-level alignments where every word in a source phrase is aligned with every word in a target phrase. This suggests that one can choose between GNN (TGDFA) and GNN (TGDFA+orig) based on the characteristics of the desired alignments."
+    }, {
+      "heading" : "5.1.1 Effect of Training Set Size",
+      "text" : "To investigate the effect of training set size, we train the GNN on subsets of our training data with increasing sizes. Figure 3 shows results. Performance improves fast until around 2,000 verses; then it stays mostly constant. Indeed, using more than 6,400 samples does not change the performance at all. Therefore, in the other experiments we use 6,400 randomly sampled verses from the training set to train GNNs."
+    }, {
+      "heading" : "5.1.2 Ablation Experiments",
+      "text" : "To examine the importance of node features, we ablate language, position, centrality, community\n6pytorch-geometric.readthedocs.io\nand word embedding features. Table 3 shows that removal of graph structural features drastically reduces performance. Community features and language information are also important. Removal of word position information and word embeddings – which store semantic information about words – has the least effect. Based on these results, it can be argued that the lexical information contained in the initial alignments and in the community features provides a strong signal regarding word relatedness. The novel information that is crucial is about the overall graph structure which goes beyond the local word associations that are captured by word position and word embeddings."
+    }, {
+      "heading" : "5.1.3 Effect of Word Frequency",
+      "text" : "We investigate the effect of word frequency on alignment performance where frequency is calculated based on the source word in the PBC; the first bin has the highest frequency. Figure 4 shows that the performance of Eflomal drops with frequency and it struggles to align very rare words. In contrast, GNN is not affected by word frequency as severely and its performance gains are even greater for rare words. WAdad which is the multilingual baseline from (Imani et al., 2021) has the same trend as GNN method, but GNN is more robust."
+    }, {
+      "heading" : "5.2 Annotation Projection",
+      "text" : "Table 4 presents accuracies for POS tagging in Yoruba. Unsupervised baseline performance is 50.86%. Supervised training using pseudo-labels mostly outperforms the unsupervised baseline. Projecting the majority POS labels to Yoruba improves over projecting English labels. Using the GNN model to project labels works best and outperforms\nEflomal-GDFA-majority (the unsupervised baseline) by 5% (15%) absolute improvement."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Bilingual Word Aligners. Much work on bilingual word alignment is based on probabilistic models, mostly implementing variants of the IBM models of Brown et al. (1993): e.g., Giza++ (Och and Ney, 2003), fast-align (Dyer et al., 2013) and Eflomal (Östling and Tiedemann, 2016). More recent work, including SimAlign (Jalili Sabet et al., 2020) and SHIFT-ATT/SHIFT-AET (Chen et al., 2020), uses pretrained neural language and machine translation models. Although neural models achieve superior performance compared to statistical aligners, they are only applicable for less than two hundred high-resource languages that are supported by multilingual language models like BERT (Devlin et al., 2019) and XLM-R (Conneau et al., 2020). This makes statistical models the only option for the majority of the world’s languages.\nMultiparallel Corpora. Prior applications of using multiparallel corpora include reliable translations from small datasets (Cohn and Lapata, 2007), and phrase-based machine translation (PBMT) (Kumar et al., 2007). Multiparallel corpora are also used for language comparison (Mayer and Cysouw, 2012), typological studies (Östling, 2015; Asgari\nand Schütze, 2017) and PBMT (Nakov and Ng, 2012; Bertoldi et al., 2008; Dyer et al., 2013).\nTo the best of our knowledge Östling (2014)7 is the only word alignment method designed for multiparallel corpora. However, this method is outperformed by Eflomal (Östling and Tiedemann, 2016), a “biparallel” method from the same author. Recently, Imani et al. (2021) proposed MPWA, which we use as our baseline.\nGraph Neural Networks (GNNs) have been used to address many problems that are inherently graph-like such as traffic networks, social networks, and physical and biological systems (Liu and Zhou, 2020). GNNs achieve impressive performance in many domains, including social networks (Wu et al., 2020) and natural science (Sanchez-Gonzalez et al., 2018) as well as NLP tasks like sentence classification (Huang et al., 2020), question generation (Pan et al., 2020), and summarization (Fernandes et al., 2019)."
+    }, {
+      "heading" : "7 Conclusion and Future Work",
+      "text" : "We introduced graph neural networks and community detection algorithms for multiparallel word alignment. By incorporating signals from diverse sources as node features, including community features, our GNN model outperformed the baselines and prior work, establishing new state-of-the-art results on three PBC gold standard datasets. We also showed that our GNN model improves downstream task performance in low-resource languages through annotation projection.\nWe have only used node features to provide signals to GNNs. In the future, other signals can be added in the form of edge features to further boost the performance.\n7github.com/robertostling/eflomal"
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Languages"
+    } ],
+    "references" : [ {
+      "title" : "Jw300: A widecoverage parallel corpus for low-resource languages",
+      "author" : [ "Željko Agić", "Ivan Vulić." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 3204–3210.",
+      "citeRegEx" : "Agić and Vulić.,? 2019",
+      "shortCiteRegEx" : "Agić and Vulić.",
+      "year" : 2019
+    }, {
+      "title" : "FLAIR: An easy-to-use framework for state-of-theart NLP",
+      "author" : [ "Alan Akbik", "Tanja Bergmann", "Duncan Blythe", "Kashif Rasul", "Stefan Schweter", "Roland Vollgraf." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Akbik et al\\.,? 2019",
+      "shortCiteRegEx" : "Akbik et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Contextual string embeddings for sequence labeling",
+      "author" : [ "Alan Akbik", "Duncan Blythe", "Roland Vollgraf." ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics, pages 1638–1649, Santa Fe, New Mexico, USA. Associ-",
+      "citeRegEx" : "Akbik et al\\.,? 2018",
+      "shortCiteRegEx" : "Akbik et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Alignment-based neural machine translation",
+      "author" : [ "Tamer Alkhouli", "Gabriel Bretschner", "Jan-Thorsten Peter", "Mohammed Hethnawi", "Andreas Guta", "Hermann Ney." ],
+      "venue" : "Proceedings of the First Conference on Machine Translation: Volume 1, Research Pa-",
+      "citeRegEx" : "Alkhouli et al\\.,? 2016",
+      "shortCiteRegEx" : "Alkhouli et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Biasing attention-based recurrent neural networks using external alignment information",
+      "author" : [ "Tamer Alkhouli", "Hermann Ney." ],
+      "venue" : "Proceedings of the Second Conference on Machine Translation, pages 108–117, Copenhagen, Denmark. Association for",
+      "citeRegEx" : "Alkhouli and Ney.,? 2017",
+      "shortCiteRegEx" : "Alkhouli and Ney.",
+      "year" : 2017
+    }, {
+      "title" : "Past, present, future: A computational investigation of the typology of tense in 1000 languages",
+      "author" : [ "Ehsaneddin Asgari", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages 113–124,",
+      "citeRegEx" : "Asgari and Schütze.,? 2017",
+      "shortCiteRegEx" : "Asgari and Schütze.",
+      "year" : 2017
+    }, {
+      "title" : "A maximum entropy approach to combining word alignments",
+      "author" : [ "Necip Fazil Ayan", "Bonnie J. Dorr." ],
+      "venue" : "Proceedings of the Human Language Technology Conference of the NAACL, Main Conference, pages 96–103, New York City, USA. Associa-",
+      "citeRegEx" : "Ayan and Dorr.,? 2006",
+      "shortCiteRegEx" : "Ayan and Dorr.",
+      "year" : 2006
+    }, {
+      "title" : "Phrase-based statistical machine translation with pivot languages",
+      "author" : [ "Nicola Bertoldi", "Madalina Barbaiani", "Marcello Federico", "Roldano Cattoni." ],
+      "venue" : "International Workshop on Spoken Language Translation (IWSLT) 2008.",
+      "citeRegEx" : "Bertoldi et al\\.,? 2008",
+      "shortCiteRegEx" : "Bertoldi et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Decolonising speech and language technology",
+      "author" : [ "Steven Bird." ],
+      "venue" : "Proceedings of the 28th International Conference on Computational Linguistics, pages 3504–3519.",
+      "citeRegEx" : "Bird.,? 2020",
+      "shortCiteRegEx" : "Bird.",
+      "year" : 2020
+    }, {
+      "title" : "Axioms for centrality",
+      "author" : [ "Paolo Boldi", "Sebastiano Vigna." ],
+      "venue" : "Internet Mathematics, 10(3-4):222–262.",
+      "citeRegEx" : "Boldi and Vigna.,? 2014",
+      "shortCiteRegEx" : "Boldi and Vigna.",
+      "year" : 2014
+    }, {
+      "title" : "A faster algorithm for betweenness centrality",
+      "author" : [ "Ulrik Brandes." ],
+      "venue" : "Journal of mathematical sociology, 25(2):163–177.",
+      "citeRegEx" : "Brandes.,? 2001",
+      "shortCiteRegEx" : "Brandes.",
+      "year" : 2001
+    }, {
+      "title" : "The mathematics of statistical machine translation: Parameter estimation",
+      "author" : [ "Peter F. Brown", "Stephen A. Della Pietra", "Vincent J. Della Pietra", "Robert L. Mercer." ],
+      "venue" : "Computational Linguistics, 19(2):263– 311.",
+      "citeRegEx" : "Brown et al\\.,? 1993",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Accurate word alignment induction from neural machine translation",
+      "author" : [ "Yun Chen", "Yang Liu", "Guanhua Chen", "Xin Jiang", "Qun Liu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 566–576,",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Finding community structure in very large networks",
+      "author" : [ "Aaron Clauset", "Mark EJ Newman", "Cristopher Moore." ],
+      "venue" : "Physical review E, 70(6):066111.",
+      "citeRegEx" : "Clauset et al\\.,? 2004",
+      "shortCiteRegEx" : "Clauset et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Machine translation by triangulation: Making effective use of multi-parallel corpora",
+      "author" : [ "Trevor Cohn", "Mirella Lapata." ],
+      "venue" : "Proceedings of the 45th Annual Meeting of the Association of Computational Linguistics, pages 728–735, Prague, Czech Repub-",
+      "citeRegEx" : "Cohn and Lapata.,? 2007",
+      "shortCiteRegEx" : "Cohn and Lapata.",
+      "year" : 2007
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "In",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Community detection via semi-synchronous label propagation algorithms",
+      "author" : [ "Gennaro Cordasco", "Luisa Gargano." ],
+      "venue" : "2010 IEEE international workshop on: business applications of social network analysis (BASNA), pages 1–8. IEEE.",
+      "citeRegEx" : "Cordasco and Gargano.,? 2010",
+      "shortCiteRegEx" : "Cordasco and Gargano.",
+      "year" : 2010
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Word alignment by fine-tuning embeddings on parallel corpora",
+      "author" : [ "Zi-Yi Dou", "Graham Neubig." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main Volume, pages 2112–2128, Online.",
+      "citeRegEx" : "Dou and Neubig.,? 2021",
+      "shortCiteRegEx" : "Dou and Neubig.",
+      "year" : 2021
+    }, {
+      "title" : "A simple, fast, and effective reparameterization of IBM model 2",
+      "author" : [ "Chris Dyer", "Victor Chahuneau", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 2013 Conference of the North American Chapter of the Association for Computational Linguistics: Hu-",
+      "citeRegEx" : "Dyer et al\\.,? 2013",
+      "shortCiteRegEx" : "Dyer et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Structured neural summarization",
+      "author" : [ "Patrick Fernandes", "Miltiadis Allamanis", "Marc Brockschmidt." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net.",
+      "citeRegEx" : "Fernandes et al\\.,? 2019",
+      "shortCiteRegEx" : "Fernandes et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatically inducing a part-of-speech tagger by projecting from multiple source languages across aligned corpora",
+      "author" : [ "Victoria Fossum", "Steven Abney." ],
+      "venue" : "Second International Joint Conference on Natural Language Processing: Full Papers.",
+      "citeRegEx" : "Fossum and Abney.,? 2005",
+      "shortCiteRegEx" : "Fossum and Abney.",
+      "year" : 2005
+    }, {
+      "title" : "Centrality in social networks conceptual clarification",
+      "author" : [ "Linton C Freeman." ],
+      "venue" : "Social networks, 1(3):215– 239.",
+      "citeRegEx" : "Freeman.,? 1978",
+      "shortCiteRegEx" : "Freeman.",
+      "year" : 1978
+    }, {
+      "title" : "Community structure in social and biological networks",
+      "author" : [ "Michelle Girvan", "Mark EJ Newman." ],
+      "venue" : "Proceedings of the national academy of sciences, 99(12):7821–7826.",
+      "citeRegEx" : "Girvan and Newman.,? 2002",
+      "shortCiteRegEx" : "Girvan and Newman.",
+      "year" : 2002
+    }, {
+      "title" : "LightGCN: Simplifying and Powering Graph Convolution Network for Recommendation, page 639–648",
+      "author" : [ "Xiangnan He", "Kuan Deng", "Xiang Wang", "Yan Li", "YongDong Zhang", "Meng Wang." ],
+      "venue" : "Association for Computing Machinery, New York, NY,",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Syntax-aware graph attention network for aspect-level sentiment classification",
+      "author" : [ "Lianzhe Huang", "Xin Sun", "Sujian Li", "Linhao Zhang", "Houfeng Wang." ],
+      "venue" : "Proceedings of the 28th International Conference on Computational Linguistics, pages 799–",
+      "citeRegEx" : "Huang et al\\.,? 2020",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Cross-lingual annotation projection is effective for neural part-of-speech tagging",
+      "author" : [ "Matthias Huck", "Diana Dutka", "Alexander Fraser." ],
+      "venue" : "Proceedings of the Sixth Workshop on NLP for Similar Languages, Varieties and Dialects, pages 223–",
+      "citeRegEx" : "Huck et al\\.,? 2019",
+      "shortCiteRegEx" : "Huck et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Graph algorithms for multiparallel word alignment",
+      "author" : [ "Ayyoob Imani", "Masoud Jalili Sabet", "Lütfi Kerem Şenel", "Philipp Dufter", "François Yvon", "Hinrich Schütze" ],
+      "venue" : null,
+      "citeRegEx" : "Imani et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Imani et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "SimAlign: High quality word alignments without parallel training data using static and contextualized embeddings",
+      "author" : [ "Masoud Jalili Sabet", "Philipp Dufter", "François Yvon", "Hinrich Schütze." ],
+      "venue" : "Findings of the Association for Computational Linguis-",
+      "citeRegEx" : "Sabet et al\\.,? 2020",
+      "shortCiteRegEx" : "Sabet et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The state and fate of linguistic diversity and inclusion in the nlp world",
+      "author" : [ "Pratik Joshi", "Sebastin Santy", "Amar Budhiraja", "Kalika Bali", "Monojit Choudhury." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Joshi et al\\.,? 2020",
+      "shortCiteRegEx" : "Joshi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Semisupervised classification with graph convolutional networks",
+      "author" : [ "Thomas N Kipf", "Max Welling." ],
+      "venue" : "arXiv preprint arXiv:1609.02907.",
+      "citeRegEx" : "Kipf and Welling.,? 2016a",
+      "shortCiteRegEx" : "Kipf and Welling.",
+      "year" : 2016
+    }, {
+      "title" : "Variational graph auto-encoders",
+      "author" : [ "Thomas N Kipf", "Max Welling." ],
+      "venue" : "arXiv preprint arXiv:1611.07308.",
+      "citeRegEx" : "Kipf and Welling.,? 2016b",
+      "shortCiteRegEx" : "Kipf and Welling.",
+      "year" : 2016
+    }, {
+      "title" : "Edinburgh system description for the 2005 iwslt speech translation evaluation",
+      "author" : [ "Philipp Koehn", "Amittai Axelrod", "Alexandra Birch", "Chris Callison-Burch", "Miles Osborne", "David Talbot." ],
+      "venue" : "International Workshop on Spoken Language Translation.",
+      "citeRegEx" : "Koehn et al\\.,? 2005",
+      "shortCiteRegEx" : "Koehn et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "Statistical phrase-based translation",
+      "author" : [ "Philipp Koehn", "Franz J Och", "Daniel Marcu." ],
+      "venue" : "Technical report, UNIVERSITY OF SOUTHERN CALIFORNIA MARINA DEL REY INFORMATION SCIENCES INST.",
+      "citeRegEx" : "Koehn et al\\.,? 2003",
+      "shortCiteRegEx" : "Koehn et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "75 languages, 1 model: Parsing Universal Dependencies universally",
+      "author" : [ "Dan Kondratyuk", "Milan Straka." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Confer-",
+      "citeRegEx" : "Kondratyuk and Straka.,? 2019",
+      "shortCiteRegEx" : "Kondratyuk and Straka.",
+      "year" : 2019
+    }, {
+      "title" : "Improving word alignment with bridge languages",
+      "author" : [ "Shankar Kumar", "Franz J. Och", "Wolfgang Macherey." ],
+      "venue" : "Proceedings of the 2007 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natural Language",
+      "citeRegEx" : "Kumar et al\\.,? 2007",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "A strong baseline for learning cross-lingual word embeddings from sentence alignments",
+      "author" : [ "Omer Levy", "Anders Søgaard", "Yoav Goldberg." ],
+      "venue" : "Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics:",
+      "citeRegEx" : "Levy et al\\.,? 2017",
+      "shortCiteRegEx" : "Levy et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Automatically identifying computationally relevant typological features",
+      "author" : [ "William D. Lewis", "Fei Xia." ],
+      "venue" : "Proceedings of the Third International Joint Conference on Natural Language Processing: Volume-II.",
+      "citeRegEx" : "Lewis and Xia.,? 2008",
+      "shortCiteRegEx" : "Lewis and Xia.",
+      "year" : 2008
+    }, {
+      "title" : "Alignment by agreement",
+      "author" : [ "Percy Liang", "Ben Taskar", "Dan Klein." ],
+      "venue" : "Proceedings of the Human Language Technology Conference of the NAACL, Main Conference, pages 104–111, New York City, USA. Association for Computational Linguistics.",
+      "citeRegEx" : "Liang et al\\.,? 2006",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Introduction to graph neural networks",
+      "author" : [ "Zhiyuan Liu", "Jie Zhou." ],
+      "venue" : "Synthesis Lectures on Artificial Intelligence and Machine Learning, 14(2):1–127.",
+      "citeRegEx" : "Liu and Zhou.,? 2020",
+      "shortCiteRegEx" : "Liu and Zhou.",
+      "year" : 2020
+    }, {
+      "title" : "Decoupled weight decay regularization",
+      "author" : [ "Ilya Loshchilov", "Frank Hutter." ],
+      "venue" : "arXiv preprint arXiv:1711.05101.",
+      "citeRegEx" : "Loshchilov and Hutter.,? 2017",
+      "shortCiteRegEx" : "Loshchilov and Hutter.",
+      "year" : 2017
+    }, {
+      "title" : "Language comparison through sparse multilingual word alignment",
+      "author" : [ "Thomas Mayer", "Michael Cysouw." ],
+      "venue" : "Proceedings of the EACL 2012 Joint Workshop of LINGVIS & UNCLH, pages 54–62, Avignon, France. Association for Computational Linguistics.",
+      "citeRegEx" : "Mayer and Cysouw.,? 2012",
+      "shortCiteRegEx" : "Mayer and Cysouw.",
+      "year" : 2012
+    }, {
+      "title" : "Creating a massively parallel bible corpus",
+      "author" : [ "Thomas Mayer", "Michael Cysouw." ],
+      "venue" : "Proceedings of the Ninth International Conference on Language Resources and Evaluation (LREC’14), pages 3158– 3163.",
+      "citeRegEx" : "Mayer and Cysouw.,? 2014",
+      "shortCiteRegEx" : "Mayer and Cysouw.",
+      "year" : 2014
+    }, {
+      "title" : "Manual annotation of translational equivalence: The blinker project",
+      "author" : [ "I. Dan Melamed." ],
+      "venue" : "CoRR, cmplg/9805005.",
+      "citeRegEx" : "Melamed.,? 1998",
+      "shortCiteRegEx" : "Melamed.",
+      "year" : 1998
+    }, {
+      "title" : "Improving statistical machine translation for a resource-poor language using related resource-rich languages",
+      "author" : [ "Preslav Nakov", "Hwee Tou Ng." ],
+      "venue" : "Journal of Artificial Intelligence Research, 44:179–222.",
+      "citeRegEx" : "Nakov and Ng.,? 2012",
+      "shortCiteRegEx" : "Nakov and Ng.",
+      "year" : 2012
+    }, {
+      "title" : "Scientific collaboration networks",
+      "author" : [ "Mark EJ Newman." ],
+      "venue" : "ii. shortest paths, weighted networks, and centrality. Physical review E, 64(1):016132.",
+      "citeRegEx" : "Newman.,? 2001",
+      "shortCiteRegEx" : "Newman.",
+      "year" : 2001
+    }, {
+      "title" : "Finding and evaluating community structure in networks",
+      "author" : [ "Mark EJ Newman", "Michelle Girvan." ],
+      "venue" : "Physical review E, 69(2):026113.",
+      "citeRegEx" : "Newman and Girvan.,? 2004",
+      "shortCiteRegEx" : "Newman and Girvan.",
+      "year" : 2004
+    }, {
+      "title" : "Universal Dependencies v2: An evergrowing multilingual treebank collection",
+      "author" : [ "Joakim Nivre", "Marie-Catherine de Marneffe", "Filip Ginter", "Jan Hajič", "Christopher D. Manning", "Sampo Pyysalo", "Sebastian Schuster", "Francis Tyers", "Daniel Zeman" ],
+      "venue" : null,
+      "citeRegEx" : "Nivre et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Nivre et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A systematic comparison of various statistical alignment models",
+      "author" : [ "Franz Josef Och", "Hermann Ney." ],
+      "venue" : "Computational Linguistics, 29(1):19–51.",
+      "citeRegEx" : "Och and Ney.,? 2003",
+      "shortCiteRegEx" : "Och and Ney.",
+      "year" : 2003
+    }, {
+      "title" : "Bayesian word alignment for massively parallel texts",
+      "author" : [ "Robert Östling." ],
+      "venue" : "Proceedings of the 14th Conference of the European Chapter of the Association for Computational Linguistics, volume 2: Short Papers, pages 123–127, Gothenburg, Sweden. Asso-",
+      "citeRegEx" : "Östling.,? 2014",
+      "shortCiteRegEx" : "Östling.",
+      "year" : 2014
+    }, {
+      "title" : "Word order typology through multilingual word alignment",
+      "author" : [ "Robert Östling." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on Natural Language Processing (Vol-",
+      "citeRegEx" : "Östling.,? 2015",
+      "shortCiteRegEx" : "Östling.",
+      "year" : 2015
+    }, {
+      "title" : "Efficient word alignment with Markov Chain Monte Carlo",
+      "author" : [ "Robert Östling", "Jörg Tiedemann." ],
+      "venue" : "The Prague Bulletin of Mathematical Linguistics, 106(1).",
+      "citeRegEx" : "Östling and Tiedemann.,? 2016",
+      "shortCiteRegEx" : "Östling and Tiedemann.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic graphs for generating deep questions",
+      "author" : [ "Liangming Pan", "Yuxi Xie", "Yansong Feng", "Tat-Seng Chua", "Min-Yen Kan." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 1463–1475, Online. As-",
+      "citeRegEx" : "Pan et al\\.,? 2020",
+      "shortCiteRegEx" : "Pan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A universal part-of-speech tagset",
+      "author" : [ "Slav Petrov", "Dipanjan Das", "Ryan McDonald." ],
+      "venue" : "Proceedings of the Eighth International Conference on Language Resources and Evaluation (LREC’12), pages 2089– 2096, Istanbul, Turkey. European Language Re-",
+      "citeRegEx" : "Petrov et al\\.,? 2012",
+      "shortCiteRegEx" : "Petrov et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Graph networks as learnable physics engines for inference and control",
+      "author" : [ "Alvaro Sanchez-Gonzalez", "Nicolas Heess", "Jost Tobias Springenberg", "Josh Merel", "Martin Riedmiller", "Raia Hadsell", "Peter Battaglia." ],
+      "venue" : "Proceedings of the 35th International",
+      "citeRegEx" : "Sanchez.Gonzalez et al\\.,? 2018",
+      "shortCiteRegEx" : "Sanchez.Gonzalez et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The graph neural network model",
+      "author" : [ "Franco Scarselli", "Marco Gori", "Ah Chung Tsoi", "Markus Hagenbuchner", "Gabriele Monfardini." ],
+      "venue" : "IEEE Transactions on Neural Networks, 20(1):61–80.",
+      "citeRegEx" : "Scarselli et al\\.,? 2009",
+      "shortCiteRegEx" : "Scarselli et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Graph attention networks",
+      "author" : [ "Petar Veličković", "Guillem Cucurull", "Arantxa Casanova", "Adriana Romero", "Pietro Liò", "Yoshua Bengio." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Veličković et al\\.,? 2018",
+      "shortCiteRegEx" : "Veličković et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Crosslingual part-of-speech tagging through ambiguous learning",
+      "author" : [ "Guillaume Wisniewski", "Nicolas Pécheux", "Souhir Gahbiche-Braham", "François Yvon." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Wisniewski et al\\.,? 2014",
+      "shortCiteRegEx" : "Wisniewski et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Graph convolutional networks with markov random field reasoning for social spammer detection",
+      "author" : [ "Yongji Wu", "Defu Lian", "Yiheng Xu", "Le Wu", "Enhong Chen." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 34(01):1054–1061.",
+      "citeRegEx" : "Wu et al\\.,? 2020",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Inducing multilingual POS taggers and NP bracketers via robust projection across aligned corpora",
+      "author" : [ "David Yarowsky", "Grace Ngai." ],
+      "venue" : "Second Meeting of the North American Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Yarowsky and Ngai.,? 2001",
+      "shortCiteRegEx" : "Yarowsky and Ngai.",
+      "year" : 2001
+    }, {
+      "title" : "HELFI: a Hebrew-Greek-Finnish parallel Bible corpus with cross-lingual morpheme alignment",
+      "author" : [ "Anssi Yli-Jyrä", "Josi Purhonen", "Matti Liljeqvist", "Arto Antturi", "Pekka Nieminen", "Kari M. Räntilä", "Valtter Luoto." ],
+      "venue" : "Proceedings of the 12th Language",
+      "citeRegEx" : "Yli.Jyrä et al\\.,? 2020",
+      "shortCiteRegEx" : "Yli.Jyrä et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 33,
+      "context" : "Word alignments are crucial for statistical machine translation (Koehn et al., 2003) and useful for many other multilingual tasks such as neural machine translation (Alkhouli and Ney, 2017; Alkhouli et al.",
+      "startOffset" : 64,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2003) and useful for many other multilingual tasks such as neural machine translation (Alkhouli and Ney, 2017; Alkhouli et al., 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al.",
+      "startOffset" : 88,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2003) and useful for many other multilingual tasks such as neural machine translation (Alkhouli and Ney, 2017; Alkhouli et al., 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al.",
+      "startOffset" : 88,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al.",
+      "startOffset" : 30,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 50,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al.",
+      "startOffset" : 30,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al.",
+      "startOffset" : 30,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 59,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al., 2014; Huck et al., 2019).",
+      "startOffset" : 116,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al., 2014; Huck et al., 2019).",
+      "startOffset" : 116,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 57,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al., 2014; Huck et al., 2019).",
+      "startOffset" : 116,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2016), typological analysis (Lewis and Xia, 2008; Östling, 2015; Asgari and Schütze, 2017), annotation projection (Yarowsky and Ngai, 2001; Fossum and Abney, 2005; Wisniewski et al., 2014; Huck et al., 2019).",
+      "startOffset" : 116,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 12,
+      "context" : "The rise of deep learning initially led to a temporary plateau, but interest in word alignments is now increasing, demonstrated by several recent publications (Jalili Sabet et al., 2020; Chen et al., 2020; Dou and Neubig, 2021) eat",
+      "startOffset" : 159,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 18,
+      "context" : "The rise of deep learning initially led to a temporary plateau, but interest in word alignments is now increasing, demonstrated by several recent publications (Jalili Sabet et al., 2020; Chen et al., 2020; Dou and Neubig, 2021) eat",
+      "startOffset" : 159,
+      "endOffset" : 227
+    }, {
+      "referenceID" : 0,
+      "context" : ", JW300 (Agić and Vulić, 2019), PBC (Mayer and Cysouw, 2014) and Tatoeba.",
+      "startOffset" : 8,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 42,
+      "context" : ", JW300 (Agić and Vulić, 2019), PBC (Mayer and Cysouw, 2014) and Tatoeba.",
+      "startOffset" : 36,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 29,
+      "context" : "There are thousands of languages in the world a very small portion of which is covered by language technologies (Joshi et al., 2020).",
+      "startOffset" : 112,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 8,
+      "context" : "Recent work (Bird, 2020) suggests a number of approaches to develop technologies for indigenous languages.",
+      "startOffset" : 12,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 27,
+      "context" : "Most prior work on word alignment uses bitext, with one notable exception: (Imani et al., 2021).",
+      "startOffset" : 75,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 55,
+      "context" : "GNNs were proposed to extend the powerful current generation of neural network models to processing graph-structured data (Scarselli et al., 2009) and they have gained increasing popularity in many domains (Wu et al.",
+      "startOffset" : 122,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 58,
+      "context" : ", 2009) and they have gained increasing popularity in many domains (Wu et al., 2020; Sanchez-Gonzalez et al., 2018; He et al., 2020).",
+      "startOffset" : 67,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 54,
+      "context" : ", 2009) and they have gained increasing popularity in many domains (Wu et al., 2020; Sanchez-Gonzalez et al., 2018; He et al., 2020).",
+      "startOffset" : 67,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2009) and they have gained increasing popularity in many domains (Wu et al., 2020; Sanchez-Gonzalez et al., 2018; He et al., 2020).",
+      "startOffset" : 67,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 23,
+      "context" : "CD algorithms find subnetworks of nodes that form tightly knit groups that are only loosely connected with a small number of links (Girvan and Newman, 2002).",
+      "startOffset" : 131,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 46,
+      "context" : "CD algorithms maximize the modularity measure (Newman and Girvan, 2004).",
+      "startOffset" : 46,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 13,
+      "context" : "This method uses Clauset-Newman-Moore greedy modularity maximization (Clauset et al., 2004).",
+      "startOffset" : 69,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 16,
+      "context" : "This method finds communities in a graph using label propagation (Cordasco and Gargano, 2010).",
+      "startOffset" : 65,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 56,
+      "context" : "We use GATConv layers (Veličković et al., 2018) for encoder instead of GCNConv (Kipf and Welling, 2016a)and a more sophisticated decoder instead of simple dot product for a stronger model.",
+      "startOffset" : 22,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2018) for encoder instead of GCNConv (Kipf and Welling, 2016a)and a more sophisticated decoder instead of simple dot product for a stronger model.",
+      "startOffset" : 39,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 56,
+      "context" : "The encoder is a graph attention network (GAT) (Veličković et al., 2018) with two GATConv layers",
+      "startOffset" : 47,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 22,
+      "context" : "We use degree, closeness (Freeman, 1978) , betweenness (Brandes, 2001) , load (Newman, 2001) and harmonic centrality (Boldi and Vigna, 2014) features as additional information about the graph structure.",
+      "startOffset" : 25,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 10,
+      "context" : "We use degree, closeness (Freeman, 1978) , betweenness (Brandes, 2001) , load (Newman, 2001) and harmonic centrality (Boldi and Vigna, 2014) features as additional information about the graph structure.",
+      "startOffset" : 55,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 45,
+      "context" : "We use degree, closeness (Freeman, 1978) , betweenness (Brandes, 2001) , load (Newman, 2001) and harmonic centrality (Boldi and Vigna, 2014) features as additional information about the graph structure.",
+      "startOffset" : 78,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 9,
+      "context" : "We use degree, closeness (Freeman, 1978) , betweenness (Brandes, 2001) , load (Newman, 2001) and harmonic centrality (Boldi and Vigna, 2014) features as additional information about the graph structure.",
+      "startOffset" : 117,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 18,
+      "context" : "To this end, first, inspired by probability thresholding (Dou and Neubig, 2021), we apply softmax to S, and zero out probabilities below a threshold to get a sourceto-target probability matrix SXY :",
+      "startOffset" : 57,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 32,
+      "context" : "We create the final set of alignment edges by applying the GDFA symmetrization method (Koehn et al., 2005) to forward and backward sets.",
+      "startOffset" : 86,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 53,
+      "context" : "Here, we focus on universal part-ofspeech (UPOS) tagging (Petrov et al., 2012) for the low resource target language Yoruba; this language only has a small set of annotated sentences in Universal Dependencies (Nivre et al.",
+      "startOffset" : 57,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 47,
+      "context" : ", 2012) for the low resource target language Yoruba; this language only has a small set of annotated sentences in Universal Dependencies (Nivre et al., 2020) and has poor POS results in unsupervised settings (Kondratyuk and Straka, 2019).",
+      "startOffset" : 137,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2020) and has poor POS results in unsupervised settings (Kondratyuk and Straka, 2019).",
+      "startOffset" : 58,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 1,
+      "context" : "We use the Flair (Akbik et al., 2019) POS taggers for three high resource languages, English, German and French (Akbik et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2019) POS taggers for three high resource languages, English, German and French (Akbik et al., 2018), to annotate 30K verses whose Yoruba translations are available in PBC.",
+      "startOffset" : 82,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 17,
+      "context" : "We train a Flair SequenceTagger model on the target annotated data using mBERT embeddings (Devlin et al., 2019) and evaluate on Yoruba test from Universal Dependencies.",
+      "startOffset" : 90,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 43,
+      "context" : "(2021): Blinker (Melamed, 1998) and HELFI (Yli-Jyrä et al.",
+      "startOffset" : 16,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 60,
+      "context" : "(2021): Blinker (Melamed, 1998) and HELFI (Yli-Jyrä et al., 2020).",
+      "startOffset" : 42,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 27,
+      "context" : "WAdad which is the multilingual baseline from (Imani et al., 2021) has the same trend as GNN method, but GNN is more robust.",
+      "startOffset" : 46,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 19,
+      "context" : ", Giza++ (Och and Ney, 2003), fast-align (Dyer et al., 2013) and Eflomal (Östling and Tiedemann, 2016).",
+      "startOffset" : 41,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2020) and SHIFT-ATT/SHIFT-AET (Chen et al., 2020), uses pretrained neural language and machine translation models.",
+      "startOffset" : 32,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 17,
+      "context" : "Although neural models achieve superior performance compared to statistical aligners, they are only applicable for less than two hundred high-resource languages that are supported by multilingual language models like BERT (Devlin et al., 2019) and XLM-R (Conneau et al.",
+      "startOffset" : 222,
+      "endOffset" : 243
+    }, {
+      "referenceID" : 14,
+      "context" : "Prior applications of using multiparallel corpora include reliable translations from small datasets (Cohn and Lapata, 2007), and phrase-based machine translation (PBMT) (Kumar et al.",
+      "startOffset" : 100,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 35,
+      "context" : "Prior applications of using multiparallel corpora include reliable translations from small datasets (Cohn and Lapata, 2007), and phrase-based machine translation (PBMT) (Kumar et al., 2007).",
+      "startOffset" : 169,
+      "endOffset" : 189
+    }, {
+      "referenceID" : 41,
+      "context" : "Multiparallel corpora are also used for language comparison (Mayer and Cysouw, 2012), typological studies (Östling, 2015; Asgari Model Yoruba YTB",
+      "startOffset" : 60,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 51,
+      "context" : "However, this method is outperformed by Eflomal (Östling and Tiedemann, 2016), a “biparallel” method from the same author.",
+      "startOffset" : 48,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 39,
+      "context" : "Graph Neural Networks (GNNs) have been used to address many problems that are inherently graph-like such as traffic networks, social networks, and physical and biological systems (Liu and Zhou, 2020).",
+      "startOffset" : 179,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 58,
+      "context" : "GNNs achieve impressive performance in many domains, including social networks (Wu et al., 2020) and natural science (Sanchez-Gonzalez et al.",
+      "startOffset" : 79,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 54,
+      "context" : ", 2020) and natural science (Sanchez-Gonzalez et al., 2018) as well as NLP tasks like sentence classification (Huang et al.",
+      "startOffset" : 28,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2018) as well as NLP tasks like sentence classification (Huang et al., 2020), question generation (Pan et al.",
+      "startOffset" : 58,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 52,
+      "context" : ", 2020), question generation (Pan et al., 2020), and summarization (Fernandes et al.",
+      "startOffset" : 29,
+      "endOffset" : 47
+    } ],
+    "year" : 0,
+    "abstractText" : "After a period of decrease, interest in word alignments is increasing again for their usefulness in domains such as typological research, cross-lingual annotation projection and machine translation. Generally, alignment algorithms only use bitext and do not make use of the fact that many parallel corpora are multiparallel. Here, we compute high-quality word alignments between multiple language pairs by considering all language pairs together. First, we create a multiparallel word alignment graph, joining all bilingual word alignment pairs in one graph. Next, we use graph neural networks (GNNs) and community detection algorithms to exploit the graph structure. Our GNN approach (i) utilizes information about the meaning, position and language of the input words, (ii) incorporates information from multiple parallel sentences, (iii) adds and removes edges from the initial alignments, and (iv) provides a prediction model that can generalize beyond the sentences it is trained on. We show that community detection provides valuable information for multiparallel word alignment. Our method outperforms previous work on three word alignment datasets and on a downstream task.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,575 @@
+{
+  "name" : "ACL_2017_636_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Fast and Accurate Sequence Labeling with Iterated Dilated Convolutions",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "1 000\n011\n012\n013\n014\n015\n016\n017\n018\n019\n020\n021\n022\n023\n024\n025\n026\n027\n028\n029\n030\n031\n032\n033\n034\n035\n036\n037\n038\n039\n040\n041\n042\n043\n044\n045\n046\n047\n048\n049\n061\n062\n063\n064\n065\n066\n067\n068\n069\n070\n071\n072\n073\n074\n075\n076\n077\n078\n079\n080\n081\n082\n083\n084\n085\n086\n087\n088\n089\n090\n091\n092\n093\n094\n095\n096\n097\n098\n099"
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "In order to democratize large-scale NLP and information extraction, we require fast, resource-\nefficient methods for sequence tagging tasks such as part-of-speech tagging and named entity recognition (NER). Speed is not sufficient of course: they must also be expressive enough to tolerate the tremendous lexical variation in input data.\nThe massively parallel computation facilitated by GPU hardware has led to a surge of successful neural network architectures for sequence labeling (Ling et al., 2015; Ma and Hovy, 2016; Chiu and Nichols, 2016; Lample et al., 2016). While these models are expressive and accurate, they fail to fully exploit the parallelism opportunities of a GPU, and thus their speed is limited. Specifically, they employ either recurrent neural networks (RNNs) for feature extraction, or Viterbi inference in a structured output model, both of which require sequential computation across the length of the input.\nInstead, parallelized runtime independent of the length of the sequence saves time and energy costs, maximizing GPU resource usage and minimizing the amount of time it takes to train and evaluate models. Convolutional neural networks (CNNs) provide exactly this property (Kim, 2014; Kalchbrenner et al., 2014). Rather than composing representations incrementally over each token in a sequence, they apply filters in parallel across the entire sequence at once. Their computational cost grows with the number of layers, but not the input size, up to the memory and threading limitations of the hardware. This provides, for example, audio generation models that can be trained in parallel (van den Oord et al., 2016).\nDespite the clear computational advantages of CNNs, RNNs have become the standard method for composing deep representations of text. This is because a token encoded by a bidirectional RNN will incorporate evidence from the entire input sequence, but the CNN’s representation is limited by the receptive field of the architecture. Specifi-\n2\n101\n102\n103\n104\n105\n106\n107\n108\n109\n110\n111\n112\n113\n114\n115\n116\n117\n118\n119\n120\n121\n122\n123\n124\n125\n126\n127\n128\n129\n130\n131\n132\n133\n134\n135\n136\n137\n138\n139\n140\n141\n142\n143\n144\n145\n146\n147\n148\n149\n150\n151\n152\n153\n154\n155\n156\n157\n158\n159\n160\n161\n162\n163\n164\n165\n166\n167\n168\n169\n170\n171\n172\n173\n174\n175\n176\n177\n178\n179\n180\n181\n182\n183\n184\n185\n186\n187\n188\n189\n190\n191\n192\n193\n194\n195\n196\n197\n198\n199\ncally, in a network composed of a series of stacked convolutional layers of convolution width w, the number r of context tokens incorporated into a token’s representation at a given layer l, is given by r = 2l(w 1)+1. The number of layers required to incorporate the entire input context grows linearly with the length of the sequence. To avoid this scaling, one could pool representations across the sequence, but this is not appropriate for sequence labeling, since it reduces the output resolution of the representation.\nIn response, this paper presents an application of dilated convolutions (Yu and Koltun, 2016) for sequence labeling (Figure 1). For dilated convolutions, the receptive field can grow exponentially with the depth, with no loss in resolution at each layer and with a modest number of parameters to estimate. Like typical CNN layers, dilated convolutions operate on a sliding window of context over the sequence, but unlike conventional convolutions, the context need not be consecutive; the dilated window skips over every dilation width d inputs. By stacking layers of dilated convolutions of exponentially increasing dilation width, we can expand the size of the receptive field to cover the entire length of most sequences using only a few layers: The size of the receptive field for a token at layer l is now given by 2l+1 1. More concretely, just four stacked dilated convolutions of width 3 produces token representations with a receptive field of 31 tokens – longer than the average sentence length (23) in the Penn TreeBank.\nOur overall iterated dilated CNN architecture (ID-CNN) repeatedly applies the same block of dilated convolutions to token-wise representations. This parameter sharing prevents overfitting and also provides opportunities to inject supervision on intermediate activations of the network. Similar to models that use RNN features, the ID-CNN provides two methods for performing prediction: we can predict each token’s label independently, or by running Viterbi inference in a chain structured graphical model.\nIn experiments on CoNLL 2003 and Ontonotes 5.0 English NER, we demonstrate significant speed gains of our ID-CNNs over various recurrent models, while maintaining similar F1 performance. When performing prediction using independent classification, the ID-CNN consistently outperforms a bidirectional LSTM (Bi-LSTM), and performs on par with inference in a CRF\nFigure 1: A dilated CNN block with maximum dilation width 4 and filter width 3. Neurons contributing to a single highlighted neuron in the last layer are also highlighted.\nwith features extracted by a Bi-LSTM (Bi-LSTMCRF). As a feature extractor for a CRF, our model out-performs the Bi-LSTM-CRF. We also apply ID-CNNs to entire documents, where independent token classification is more accurate than the Bi-LSTM-CRF while decoding almost 8⇥ faster. The clear accuracy gains resulting from incorporating broader context suggest that these models could similarly benefit many other contextsensitive NLP tasks which have until now been limited by the computational complexity of existing context-rich models.1"
+    }, {
+      "heading" : "2 Background",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Conditional Probability Models for Tagging",
+      "text" : "Let x = [x1, . . . , xT ] be our input text and y = [y1, . . . , yT ] be per-token output tags. Let D be the domain size of each y\ni . We predict the most likely y, given a conditional model P (y|x).\nThis paper considers two factorizations of the conditional distribution. First, we have\nP (y|x) = TY\nt=1\nP (y t\n|F (x)), (1)\nwhere the tags are conditionally independent given some features for x. Given these features, O(D) prediction is simple and parallelizable across the length of the sequence. However, feature extraction may not necessarily be parallelizable. For example, RNN-based features require iterative passes along the length of x.\nWe also consider a linear-chain CRF model that couples all of y together:\nP (y|x) = 1 Z x\nTY\nt=1\nt (y t |F (x)) p (y t , y t 1), (2)\n1Our implementation in TensorFlow (Abadi et al., 2015) is available at: https://github.com/anonymized\n3\n201\n202\n203\n204\n205\n206\n207\n208\n209\n210\n211\n212\n213\n214\n215\n216\n217\n218\n219\n220\n221\n222\n223\n224\n225\n226\n227\n228\n229\n230\n231\n232\n233\n234\n235\n236\n237\n238\n239\n240\n241\n242\n243\n244\n245\n246\n247\n248\n249\n250\n251\n252\n253\n254\n255\n256\n257\n258\n259\n260\n261\n262\n263\n264\n265\n266\n267\n268\n269\n270\n271\n272\n273\n274\n275\n276\n277\n278\n279\n280\n281\n282\n283\n284\n285\n286\n287\n288\n289\n290\n291\n292\n293\n294\n295\n296\n297\n298\n299\nwhere t is a local factor, p is a pairwise factor that scores consecutive tags, and Z\nx is the partition function (Lafferty et al., 2001). To avoid overfitting,\np does not depend on the timestep t or the input x in our experiments. Prediction in this model requires global search using the O(D2T ) Viterbi algorithm.\nCRF prediction explicitly reasons about interactions among neighboring output tags, whereas prediction in the first model compiles this reasoning into the feature extraction step (Liang et al., 2008). The suitability of such compilation depends on the properties and quantity of the data. While CRF prediction requires non-trivial search in output space, it can guarantee that certain output constraints, such as for IOB tagging (Ramshaw and Marcus, 1999), will always be satisfied. It may also have better sample complexity, as it imposes more prior knowledge about the structure of the interactions among the tags (London et al., 2016). However, it has worse computational complexity than independent prediction."
+    }, {
+      "heading" : "3 Dilated Convolutions",
+      "text" : "CNNs in NLP are typically one-dimensional, applied to a sequence of vectors representing tokens rather than to a two-dimensional grid of vectors representing pixels. In this setting, a convolutional neural network layer is equivalent to applying an affine transformation, W\nc to a sliding window of width r tokens on either side of each token in the sequence. Here, and throughout the paper, we do not explicitly write the bias terms in affine transformations. The sliding-window representation c\nt\nfor each token x t is:\nc t =\nrM\nk=0\nx t±k, (3)\nwhere is vector concatenation. Dilated convolutions perform the same operation, except rather than transforming adjacent inputs, the convolution is defined over a wider receptive field by skipping over inputs at a time, where is the dilation width. We define the dilated convolution operator:\nc t =\nrM\nk=0\nx t±k . (4)\nA dilated convolution of width 1 is equivalent to a simple convolution. Using the same number of\nparameters as a simple convolution with the same radius, the > 1 dilated convolution incorporates broader context into the representation of a token than a simple convolution.\nFinally, Lei et al. (2015) present a CNN variant where convolutions adaptively skip neighboring words. While the flexibility of this model is powerful, its adaptive behavior is not well-suited to GPU acceleration."
+    }, {
+      "heading" : "3.1 Multi-Scale Context Aggregation",
+      "text" : "We can leverage the ability of dilated convolutions to incorporate global context without losing important local information by stacking dilated convolutions of increasing width. First described for pixel classification in computer vision, Yu and Koltun (2016) achieve state-of-the-art results on image segmentation benchmarks by stacking dilated convolutions with exponentially increasing rates of dilation, a technique they refer to as multiscale context aggregation. By feeding the outputs of each dilated convolution as the input to the next, increasingly non-local information is incorporated into each pixel’s representation. Performing a dilation-1 convolution in the first layer ensures that no pixels within the receptive field of any pixel are excluded. By doubling the dilation width at each layer, the size of the receptive field grows exponentially while the number of parameters grows only linearly with the number of layers, so a pixel representation quickly incorporates rich global evidence from the entire image."
+    }, {
+      "heading" : "4 Iterated Dilated CNNs",
+      "text" : "Stacked dilated CNNs can easily incorporate global information from a whole sentence or document. For example, with a radius of 1 and 4 layers of dilated convolutions, the receptive field of each token is width 31, which exceeds the average sentence length (23) in the Penn TreeBank corpus. With a radius of size 2 and 8 layers of dilated convolutions, the receptive field exceeds 1,000 tokens, long enough to encode an many full documents.\nUnfortunately, simply increasing the depth of stacked dilated CNNs causes considerable overfitting in our experiments. In response, we present Iterated Dilated CNNs (ID-CNNs), which instead iterate a small series of dilated convolutions. Repeatedly employing the same parameters in a recurrent fashion provides both broad receptive fields and desirable generalization capabil-\n4\n301\n302\n303\n304\n305\n306\n307\n308\n309\n310\n311\n312\n313\n314\n315\n316\n317\n318\n319\n320\n321\n322\n323\n324\n325\n326\n327\n328\n329\n330\n331\n332\n333\n334\n335\n336\n337\n338\n339\n340\n341\n342\n343\n344\n345\n346\n347\n348\n349\n350\n351\n352\n353\n354\n355\n356\n357\n358\n359\n360\n361\n362\n363\n364\n365\n366\n367\n368\n369\n370\n371\n372\n373\n374\n375\n376\n377\n378\n379\n380\n381\n382\n383\n384\n385\n386\n387\n388\n389\n390\n391\n392\n393\n394\n395\n396\n397\n398\n399\nities. We also obtain significant accuracy gains with a training objective that strives for accurate labeling after each iterate, allowing follow-on iterates to observe and resolve dependency violations."
+    }, {
+      "heading" : "4.1 Model Architecture",
+      "text" : "ID-CNNs contain repeated blocks of several convolutional layers. The network takes as input a sequence of T vectors xt of dimension dw, and outputs a sequence of per-class scores ht, which serve either as the local conditional distributions of the model (1) or the local factors\nt of model (2). The first layer in the network is a dilation-1 convolution D(1)1 that transforms the input to a representation it of dimension dc:\nit = D (0) 1 xt (5)\nNext, L c 1 layers of dilated convolutions of exponentially increasing dilation width are applied to it, folding in increasingly broader context into the embedded representation of xt at each layer, followed by a dilation-1 convolution. Let r() denote a ReLU activation function (Glorot et al., 2011). Beginning with ct(0) = it we define the stack of layers with the following recurrence:\nct (Lc 1) = r ⇣ D(1)\n2Lc 2 ct\n(Lc 2) ⌘\nct (Lc) = r ⇣ D(3)1 ct (Lc 1) ⌘\n(6)\nWe refer to this stack of dilated convolutions as a block B, which has output resolution equal to the input resolution. To incorporate even broader context without over-fitting, we avoid making B deeper, and instead iteratively apply B L\nb times, which introduces no extra parameters. Starting with bt(1) = B (it):\nbt (Lb) = B ⇣ bt (Lb 1) ⌘\n(7)\nWe apply a simple affine transformation W c to this final representation to obtain per-class scores for each token xt:\nht = Wcbt (Lb) (8)"
+    }, {
+      "heading" : "4.2 Training",
+      "text" : "Our main focus is to apply the ID-CNN as feature extraction for the first conditional model described in Sec. 2.1, where tags are conditionally independent given deep features, since this will enable prediction that is parallelizable across the length\nof the input sequence. Here, maximum likelihood training is straightforward because the likelihood decouples into the sum of the likelihoods of independent logistic regression problems for every tag, with natural parameters given by (8):\n1\nT\nTX\nt=1\nlogP (y t | ht) (9)\nWe can also use the ID-CNN as input features for the CRF model (2), where the partition function and its gradient are computed using the forward-backward algorithm.\nWe next present an alternative training method that helps bridge the gap between these two techniques. Sec. 2.1 identifies that the CRF has preferable sample complexity and accuracy since prediction directly reasons in the space of structured outputs. In response, we compile some of this reasoning in output space into ID-CNN feature extraction. Instead of explicit reasoning over output labels during inference, we train the network such that each block is predictive of output labels. Subsequent blocks learn to correct dependency violations of their predecessors, refining the final sequence prediction.\nTo do so, we first define predictions of the model after each of the L\nb applications of the block. Let hbt be the result of applying the matrix W\nc from (8) to the output of the block b, or the initial word embeddings in the case of b = 0. We minimize the average of the losses for each application of the block:\n1\nB\nBX\nb=0\n1\nT\nTX\nt=1\nlogP (y t | hbt ). (10)\nBy rewarding accurate predictions after each application of the block, we learn a model where later blocks are used to refine initial predictions. The loss also helps reduce the vanishing gradient problem (Hochreiter, 1998) for deep architectures. Such an approach has been applied in a variety of contexts for training very deep networks in computer vision (Romero et al., 2014; Szegedy et al., 2015; Lee et al., 2015; Gülçehre and Bengio, 2016), but not to our knowledge in NLP.\nWe apply dropout (Srivastava et al., 2014) to the raw inputs xt and to each block’s output bt(b) to help prevent overfitting. The version of dropout typically used in practice has the undesirable property that the randomized predictor used at train\n5\n401\n402\n403\n404\n405\n406\n407\n408\n409\n410\n411\n412\n413\n414\n415\n416\n417\n418\n419\n420\n421\n422\n423\n424\n425\n426\n427\n428\n429\n430\n431\n432\n433\n434\n435\n436\n437\n438\n439\n440\n441\n442\n443\n444\n445\n446\n447\n448\n449\n450\n451\n452\n453\n454\n455\n456\n457\n458\n459\n460\n461\n462\n463\n464\n465\n466\n467\n468\n469\n470\n471\n472\n473\n474\n475\n476\n477\n478\n479\n480\n481\n482\n483\n484\n485\n486\n487\n488\n489\n490\n491\n492\n493\n494\n495\n496\n497\n498\n499\ntime differs from the fixed one used at test time. Ma et al. (2017) present dropout with expectationlinear regularization, which explicitly regularizes these two predictors to behave similarly. All of our best reported results include such regularization. This is the first investigation of the technique’s effectiveness for NLP, including for RNNs. We encourage its further application."
+    }, {
+      "heading" : "5 Related work",
+      "text" : "The state-of-the art models for sequence labeling include an inference step that searches the space of possible output sequences of a chain-structured graphical model, or approximates this search with a beam (Collobert et al., 2011; Weiss et al., 2015; Lample et al., 2016; Ma and Hovy, 2016; Chiu and Nichols, 2016). These outperform similar systems that use the same features, but independent local predictions. On the other hand, the greedy sequential prediction (Daumé III et al., 2009) approach of Ratinov and Roth (2009), which employs lexicalized features, gazetteers, and word clusters, outperforms CRFs with similar features.\nLSTMs (Hochreiter and Schmidhuber, 1997) were used for NER as early as the CoNLL shared task in 2003 (Hammerton, 2003; Tjong Kim Sang and De Meulder, 2003). More recently, a wide variety of neural network architectures for NER have been proposed. Collobert et al. (2011) employ a one-layer CNN with pre-trained word embeddings, capitalization and lexicon features, and CRF-based prediction. Huang et al. (2015) achieved state-of-the-art accuracy on partof-speech, chunking and NER using a Bi-LSTMCRF. Lample et al. (2016) proposed two models which incorporated Bi-LSTM-composed character embeddings alongside words: a Bi-LSTMCRF, and a greedy stack LSTM which uses a simple shift-reduce grammar to compose words into labeled entities. Their Bi-LSTM-CRF obtained the state-of-the-art on four languages without word shape or lexicon features. Ma and Hovy (2016) use CNNs rather than LSTMs to compose characters in a Bi-LSTM-CRF, achieving state-ofthe-art performance on part-of-speech tagging and CoNLL NER without lexicons. Chiu and Nichols (2016) evaluate a similar network but propose a novel method for encoding lexicon matches, presenting results on CoNLL and OntoNotes NER. Yang et al. (2016) use GRU-CRFs with GRUcomposed character embeddings of words to train\na single network on many tasks and languages. In general, distributed representations for text can provide useful generalization capabilities for NER systems, since they can leverage unsupervised pre-training of distributed word representations (Turian et al., 2010; Collobert et al., 2011; Passos et al., 2014). Though our models would also likely benefit from additional features such as character representations and and lexicons, we focus on simpler models which use wordembeddings alone, leaving more elaborate input representations to future work.\nIn these NER approaches, CNNs were used for low-level mapping feature extraction that feeds into alternative architectures. Overall, end-to-end CNNs have mainly been used in NLP for sentence classification, where the output representation is lower resolution is lower than that of the input Kim (2014); Kalchbrenner et al. (2014); Zhang et al. (2015); Toutanova et al. (2015).\nOur work draws on the use of dilated convolutions for image segmentation in the computer vision community (Yu and Koltun, 2016; Chen et al., 2015). Similar to our block, Yu and Koltun (2016) employ a context-module of stacked dilated convolutions of exponentially increasing dilation width. Dilated convolutions were recently applied to the task of speech generation (van den Oord et al., 2016), and concurrent with this work, Kalchbrenner et al. (2016) posted a pre-print describing a network for machine translation that uses dilated convolutions in the encoder and decoder components. We are the first to use dilated convolutions for sequence labeling.\nThe broad receptive field of the ID-CNN helps aggregate document-level context. Ratinov and Roth (2009) incorporate document context in their greedy model by adding features based on tagged entities within a large, fixed window of tokens. Prior work has also posed a structured model that couples predictions across the whole document (Bunescu and Mooney, 2004; Sutton and McCallum, 2004; Finkel et al., 2005)."
+    }, {
+      "heading" : "6 Experimental Results",
+      "text" : "We describe experiments on two benchmark English named entity recognition datasets. On CoNLL-2003 English NER, our ID-CNN outperforms a Bi-LSTM as a feature extractor for a CRF, and with greedy decoding performs on-par with the Bi-LSTM-CRF while running at more\n6\n501\n502\n503\n504\n505\n506\n507\n508\n509\n510\n511\n512\n513\n514\n515\n516\n517\n518\n519\n520\n521\n522\n523\n524\n525\n526\n527\n528\n529\n530\n531\n532\n533\n534\n535\n536\n537\n538\n539\n540\n541\n542\n543\n544\n545\n546\n547\n548\n549\n564\n565\n566\n567\n568\n569\n570\n571\n572\n573\n574\n575\n576\n577\n578\n579\n580\n581\n582\n583\n584\n585\n586\n587\n588\n589\n590\n591\n592\n593\n594\n595\n596\n597\n598\n599\nthan 14 times the speed. We also observe a performance boost in almost all models when broadening the context to incorporate entire documents, achieving an average F1 of 90.65 on CoNLL2003, out-performing the Bi-LSTM-CRF while decoding at nearly 8 times the speed."
+    }, {
+      "heading" : "6.1 Data and Evaluation",
+      "text" : "We evaluate using labeled data from the CoNLL2003 shared task (Tjong Kim Sang and De Meulder, 2003) and OntoNotes 5.0 (Hovy et al., 2006; Pradhan et al., 2006). Following previous work, we use the same OntoNotes data split used for co-reference resolution in the CoNLL-2012 shared task (Pradhan et al., 2012). For both datasets, we convert the IOB boundary encoding to BILOU as previous work found this encoding to result in improved performance (Ratinov and Roth, 2009). As in previous work we evaluate the performance of our models using segment-level micro-averaged F1 score. Hyperparameters that resulted in the best performance on the validation set were selected via grid search. A more detailed description of the data, evaluation, optimization and data pre-processing can be found in the Appendix."
+    }, {
+      "heading" : "6.2 Baselines",
+      "text" : "We compare our ID-CNN against strong LSTM and CNN baselines: a Bi-LSTM with local decoding, and one with CRF decoding (Bi-LSTMCRF). We also compare against a non-dilated CNN architecture with the same number of convolutional layers as our dilated network (4-layer CNN) and one with enough layers to incorporate a receptive field of the same size as that of the dilated network (5-layer CNN) to demonstrate that the dilated convolutions more effectively aggregate contextual information than simple convolutions (i.e. using fewer parameters). We also compare our document-level ID-CNNs to a baseline which does not share parameters between blocks (noshare) and one that computes loss only at the last block, rather than after every iterated block of dilated convolutions (1-loss).\nWe do not compare with deeper or more elaborate CNN architectures for a number of reasons: 1) Fast train and test performance are highly desirable for NLP practitioners, and deeper models require more computation time 2) more complicated models tend to over-fit on this relatively small dataset and 3) most accurate deep CNN architectures repeatedly up-sample and down-sample the\ninputs. We do not compare to stacked LSTMs for similar reasons — a single LSTM is already slower than a 4-layer CNN. Since our task is sequence labeling, we desire a model that maintains the token-level resolution of the input, making dilated convolutions an elegant solution."
+    }, {
+      "heading" : "6.3 CoNLL-2003 English NER",
+      "text" : ""
+    }, {
+      "heading" : "6.3.1 Sentence-level prediction",
+      "text" : "Table 1 lists F1 scores of models predicting with sentence-level context on CoNLL-2003. The Viterbi-decoding Bi-LSTM-CRF and ID-CNNCRF obtain the highest average scores, with the ID-CNN-CRF outperforming the Bi-LSTM-CRF by 0.11 points of F1 on average, and the BiLSTM-CRF out-performing the greedy ID-CNN by 0.11 as well. Our greedy ID-CNN outperforms all other greedy models, including the 4- layer CNN which uses the same number of parameters as the ID-CNN, and the 5-layer CNN which uses more parameters but covers the same size receptive field. All CNN models out-perform the Bi-LSTM when paired with greedy decoding, suggesting that CNNs are better feature extractors than Bi-LSTMs for independent logistic regression. When paired with Viterbi decoding, our ID-CNN out-performs the Bi-LSTM as a feature extractor, showing that the D-CNN is also a better feature extractor for Viterbi inference.\nOur ID-CNN is not only a better feature extractor than the Bi-LSTM but it is also faster. Table 2 lists relative decoding times on the CoNLL de-\n7\n601\n602\n603\n604\n605\n606\n607\n608\n609\n610\n611\n612\n613\n614\n615\n616\n617\n618\n619\n620\n621\n622\n623\n624\n625\n626\n627\n628\n629\n630\n631\n632\n633\n634\n635\n636\n637\n638\n639\n640\n641\n642\n643\n644\n645\n646\n647\n648\n649\n657\n658\n669\n670\n671\n672\n673\n674\n675\n676\n677\n678\n679\n680\n681\n682\n683\n684\n685\n686\n687\n688\n689\n690\n691\n692\n693\n694\n695\n696\n697\n698\n699\nModel b = 1 Fastest (b) Bi-LSTM-CRF 1⇥ 1⇥ (1024) ID-CNN-CRF 4.55⇥ 1.28⇥ (32) Bi-LSTM 1.01⇥ 9.92⇥ (2048) 5-layer CNN 6.56⇥ 12.38⇥ (2048) ID-CNN 6.00⇥ 14.10⇥ (128)\nTable 2: Relative test-time speed of sentence models, using batch size b = 1, and the fastest batch size (b) for each model.4\nvelopment set, compared to the Bi-LSTM-CRF. We report decoding times for batch size 1, giving Viterbi-decoding algorithms the advantage since much of their computational overhead comes from single-thread decoding on the CPU, and with the fastest batch size for each model.2\nThe D-CNN model is about 6 times faster than the Bi-LSTM when decoding one sentence at a time, and with larger batch sizes is nearly 50% faster. With Viterbi decoding, the gap closes somewhat but the ID-CNN-CRF still comes out ahead, about 30% faster than the Bi-LSTM-CRF. The most vast speed improvements come when comparing the greedy ID-CNN to the Bi-LSTMCRF – our ID-CNN is more than 14 times faster than the Bi-LSTM-CRF at test time, but only 0.11 F1 points less accurate. The 5-layer CNN, which observes the same size receptive field as the IDCNN but with more parameters, performs at about the same speed as the ID-CNN while making less accurate predictions. With a better implementation of dilated convolutions than currently included in TensorFlow, we would expect the DCNN to be notably faster than the 5-layer CNN.\nWe emphasize the importance of the dropout regularizer of Ma et al. (2017) in Table 3, where we observe increased F1 for every model trained with expectation-linear dropout regularization. Dropout is important for training neural network models that generalize well, especially on relatively small NLP datasets such as CoNLL2003. We recommend this regularizer as a simple and helpful tool for practitioners training neural networks for NLP.\n2At scale, speed should increase with batch size, as we could compose each batch of as many sentences of the same length as would fit in GPU memory, requiring no padding and giving CNNs and D-CNNs even more of a speed advantage.\n4Our D-CNN could see up to 18⇥ speed-up with a less naive implementation than is included in TensorFlow as of this writing."
+    }, {
+      "heading" : "6.3.2 Document-level prediction",
+      "text" : "In Table 4 we show that adding documentlevel context improves every model on CoNLL2003. When incorporating document-level context, our greedy ID-CNN model out-performs the Bi-LSTM-CRF, attaining 90.65 average F1. We believe this model out-performs the Bi-LSTMCRF due to the ID-CNN learning a feature function better suited for representing broad context, in contrast with the Bi-LSTM which, though better than a simple RNN at encoding long memories of sequences, may reach its limit when provided with sequences more than 1,000 tokens long such as entire documents.\nWe also note that our combination of training objective (Eqn. 10) and tied parameters (Eqn. 7) more effectively learns to aggregate this broad context than a vanilla cross-entropy loss or deep CNN back-propagated from the final neural network layer. Table 5 compares models trained to incorporate entire document context using the document baselines described in Section 6.2.\nIn Table 6 we show that, in addition to being more accurate, our ID-CNN model is also much faster than the Bi-LSTM-CRF when incorporating context from entire documents, decoding at almost 8 times the speed. On these long sequences, it also\n8\n701\n702\n703\n704\n705\n706\n707\n708\n709\n710\n711\n712\n713\n714\n715\n716\n717\n718\n719\n720\n721\n722\n723\n724\n725\n726\n727\n728\n729\n730\n731\n732\n733\n734\n735\n736\n737\n738\n739\n740\n741\n742\n743\n744\n745\n746\n747\n748\n749\n750\n751\n752\n753\n754\n755\n756\n757\n758\n759\n760\n761\n762\n763\n764\n765\n766\n767\n768\n769\n770\n771\n772\n773\n774\n775\n776\n777\n778\n779\n780\n781\n782\n783\n784\n785\n786\n787\n788\n789\n790\n791\n792\n793\n794\n795\n796\n797\n798\n799\nModel F1-avg F1-max ID-CNN noshare 89.81 ± 0.19 89.75 ID-CNN 1-loss 90.06 ± 0.19 90.15 ID-CNN 90.65 ± 0.15 90.66\nTable 5: Comparing ID-CNNs with 1) backpropagating loss only from the final layer (1-loss) and 2) untied parameters across blocks (noshare)\nModel b = 1 Fastest (b) Bi-LSTM-CRF 1⇥ 1⇥ (1024) Bi-LSTM 1.05⇥ 4.60⇥ (1024) ID-CNN 40.83⇥ 7.96⇥ (32)\nTable 6: Relative test-time speed of document models, using batch size b = 1, and the fastest batch size (b) for each model.\ntags at more than 4.5 times the speed of the greedy Bi-LSTM, demonstrative of the benefit of our IDCNNs context-aggregating computation that does not depend on the length of the sequence."
+    }, {
+      "heading" : "6.4 OntoNotes 5.0 English NER",
+      "text" : "We observe similar patterns on OntoNotes as we do on CoNLL. Table 7 lists overall F1 scores of our models compared to those in the existing literature. The greedy Bi-LSTM out-performs the lexicalized greedy model of Ratinov and Roth (2009), and our ID-CNN out-performs the Bi-LSTM as well as the more complex model of Durrett and Klein (2014) which leverages the parallel coreference annotation available in the OntoNotes corpus to predict named entities jointly with entity linking and co-reference. Our greedy model is out-performed by the Bi-LSTM-CRF reported in Chiu and Nichols (2016) as well as our own re-implementation, which appears to be the new state-of-the-art on this dataset.\nModel F1 Ratinov and Roth (2009)5 83.45 Durrett and Klein (2014) 84.04 Chiu and Nichols (2016) 86.19 ± 0.25 Bi-LSTM 83.76 ± 0.10 ID-CNN 84.23 ± 0.30 Bi-LSTM-CRF 86.99 ± 0.22 Bi-LSTM-CRF (doc) 86.81 ± 0.18 ID-CNN (doc) 85.76 ± 0.13\nTable 7: F1 score of sentence and document models on OntoNotes.\nThe gap between our greedy model and those using Viterbi decoding is wider than on CoNLL. We believe this is due to the more diverse set of entities in OntoNotes, which also tend to be much longer – the average length of a multi-token named entity segment in CoNLL is about one token shorter than in OntoNotes. These long entities benefit more from explicit structured constraints enforced in Viterbi decoding. Still, our ID-CNN outperforms all other greedy methods, achieving our goal of learning a better feature extractor for structured prediction.\nIncorporating greater context significantly boosts the score of our greedy model on OntoNotes, whereas the Bi-LSTM-CRF performs more poorly. In Table 7, we also list the F1 of our ID-CNN model and the Bi-LSTM-CRF model trained on entire document context. For the first time, we see the score decrease when more context is added to the Bi-LSTM-CRF model, though the ID-CNN, whose sentence model has a much lower score than that of the Bi-LSTM-CRF, sees an increase of more than 1.5 F1 points. We believe the decrease in the Bi-LSTM-CRF model occurs because of the nature of the OntoNotes dataset compared to CoNLL-2003: CoNLL-2003 contains a particularly high proportion of ambiguous entities,6 perhaps leading to more benefit from document context that helps with disambiguation. In this scenario, adding the wider context may just add noise to the high-scoring Bi-LSTM-CRF model, whereas the less accurate dilated model can still benefit from the refined predictions of the iterated dilated convolutions."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "We present iterated dilated convolutional neural networks, fast feature extractors that efficiently aggregate broad context without losing resolution. These provide impressive speed improvements for sequence labeling, particularly when processing entire documents at a time. In the future we hope to extend this work to NLP tasks with richer structured output, such as parsing.\n5Results as reported in Durrett and Klein (2014) as this data split did not exist at the time of publication.\n6According to the ACL Wiki page on CoNLL-2003: “The corpus contains a very high ratio of metonymic references (city names standing for sport teams)”\n9\n801\n802\n803\n804\n805\n806\n807\n808\n809\n810\n811\n812\n813\n814\n815\n816\n817\n818\n819\n820\n821\n822\n823\n824\n825\n826\n827\n828\n829\n830\n831\n832\n833\n834\n835\n836\n837\n838\n839\n840\n841\n842\n843\n844\n845\n846\n847\n848\n849\n850\n851\n852\n853\n854\n855\n856\n857\n858\n859\n860\n861\n862\n863\n864\n865\n866\n867\n868\n869\n870\n871\n872\n873\n874\n875\n876\n877\n878\n879\n880\n881\n882\n883\n884\n885\n886\n887\n888\n889\n890\n891\n892\n893\n894\n895\n896\n897\n898\n899"
+    } ],
+    "references" : [ {
+      "title" : "Collective information extraction with relational markov networks",
+      "author" : [ "Razvan Bunescu", "Raymond J. Mooney." ],
+      "venue" : "ACL. pages 439–446.",
+      "citeRegEx" : "Bunescu and Mooney.,? 2004",
+      "shortCiteRegEx" : "Bunescu and Mooney.",
+      "year" : 2004
+    }, {
+      "title" : "Semantic image segmentation with deep convolutional nets and fully connected crfs",
+      "author" : [ "Liang-Chieh Chen", "George Papandreou", "Iasonas Kokkinos", "Kevin Murphy", "Alan L. Yuille." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Chen et al\\.,? 2015",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Named entity recognition with bidirectional lstm-cnns",
+      "author" : [ "Jason PC Chiu", "Eric Nichols." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 4:357–370.",
+      "citeRegEx" : "Chiu and Nichols.,? 2016",
+      "shortCiteRegEx" : "Chiu and Nichols.",
+      "year" : 2016
+    }, {
+      "title" : "Natural language processing (almost) from scratch",
+      "author" : [ "Ronan Collobert", "Jason Weston", "Léon Bottou", "Michael Karlen", "Koray Kavukcuoglu", "Pavel Kuksa." ],
+      "venue" : "Journal of Machine Learning Research 12(Aug):2493–2537.",
+      "citeRegEx" : "Collobert et al\\.,? 2011",
+      "shortCiteRegEx" : "Collobert et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Semisupervised sequence learning",
+      "author" : [ "Andrew M. Dai", "Quoc V. Le." ],
+      "venue" : "Advances in Neural Information Processing Systems 28 (NIPS).",
+      "citeRegEx" : "Dai and Le.,? 2015",
+      "shortCiteRegEx" : "Dai and Le.",
+      "year" : 2015
+    }, {
+      "title" : "Search-based structured prediction",
+      "author" : [ "Hal Daumé III", "John Langford", "Daniel Marcu." ],
+      "venue" : "Machine Learning 75(3):297–325.",
+      "citeRegEx" : "III et al\\.,? 2009",
+      "shortCiteRegEx" : "III et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "A joint model for entity analysis: Coreference, typing and linking",
+      "author" : [ "Greg Durrett", "Dan Klein." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 2:477–490.",
+      "citeRegEx" : "Durrett and Klein.,? 2014",
+      "shortCiteRegEx" : "Durrett and Klein.",
+      "year" : 2014
+    }, {
+      "title" : "Incorporating non-local information into information extraction systems by gibbs sampling",
+      "author" : [ "Jenny Rose Finkel", "Trond Grenager", "Christopher Manning." ],
+      "venue" : "ACL. pages 363–370.",
+      "citeRegEx" : "Finkel et al\\.,? 2005",
+      "shortCiteRegEx" : "Finkel et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "Understanding the difficulty of training deep feedforward neural networks",
+      "author" : [ "Xavier Glorot", "Yoshua Bengio." ],
+      "venue" : "AISTATS.",
+      "citeRegEx" : "Glorot and Bengio.,? 2010",
+      "shortCiteRegEx" : "Glorot and Bengio.",
+      "year" : 2010
+    }, {
+      "title" : "Deep sparse rectifier neural networks",
+      "author" : [ "Xavier Glorot", "Antoine Bordes", "Yoshua Bengio." ],
+      "venue" : "AISTATS.",
+      "citeRegEx" : "Glorot et al\\.,? 2011",
+      "shortCiteRegEx" : "Glorot et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Knowledge matters: Importance of prior information for optimization",
+      "author" : [ "Çalar Gülçehre", "Yoshua Bengio." ],
+      "venue" : "Journal of Machine Learning Research 17(8):1–32.",
+      "citeRegEx" : "Gülçehre and Bengio.,? 2016",
+      "shortCiteRegEx" : "Gülçehre and Bengio.",
+      "year" : 2016
+    }, {
+      "title" : "Named entity recognition with long short-term memory",
+      "author" : [ "James Hammerton." ],
+      "venue" : "Proceedings of the Seventh Conference on Natural Language Learning at HLT-NAACL. Association for Computational Linguistics, pages 172–175.",
+      "citeRegEx" : "Hammerton.,? 2003",
+      "shortCiteRegEx" : "Hammerton.",
+      "year" : 2003
+    }, {
+      "title" : "The vanishing gradient problem during learning recurrent neural nets and problem solutions",
+      "author" : [ "Sepp Hochreiter." ],
+      "venue" : "International Journal of Uncertainty, Fuzziness and Knowledge-Based Systems 6(02):107–116.",
+      "citeRegEx" : "Hochreiter.,? 1998",
+      "shortCiteRegEx" : "Hochreiter.",
+      "year" : 1998
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "J urgen Schmidhuber." ],
+      "venue" : "Neural Computation 9(8):1735–1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Ontonotes: the 90% solution",
+      "author" : [ "Eduard Hovy", "Mitchell Marcus", "Martha Palmer", "Lance Ramshaw", "Ralph Weischedel." ],
+      "venue" : "Proceedings of the Human Language Technology Conference of the NAACL, Companion Volume: Short Papers. pages 57–60.",
+      "citeRegEx" : "Hovy et al\\.,? 2006",
+      "shortCiteRegEx" : "Hovy et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Bidirectional lstm-crf models for sequence tagging",
+      "author" : [ "Zhiheng Huang", "Wei Xu", "Kai Yu." ],
+      "venue" : "arXiv preprint arXiv:1508.01991 .",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Neural machine translation in linear time",
+      "author" : [ "Nal Kalchbrenner", "Lasse Espeholt", "Karen Simonyan", "Aaron van den Oord", "Alex Graves", "Koray Kavukcuoglu." ],
+      "venue" : "arXiv preprint arXiv:1610.10099 .",
+      "citeRegEx" : "Kalchbrenner et al\\.,? 2016",
+      "shortCiteRegEx" : "Kalchbrenner et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A convolutional neural network for modelling sentences",
+      "author" : [ "Nal Kalchbrenner", "Edward Grefenstette", "Phil Blunsom." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics.",
+      "citeRegEx" : "Kalchbrenner et al\\.,? 2014",
+      "shortCiteRegEx" : "Kalchbrenner et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Convolutional neural networks for sentence classification",
+      "author" : [ "Yoon Kim." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Kim.,? 2014",
+      "shortCiteRegEx" : "Kim.",
+      "year" : 2014
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba." ],
+      "venue" : "International Conference for Learning Representations (ICLR).",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Conditional random fields: Probabilistic models for segmenting and labeling sequence data",
+      "author" : [ "John D. Lafferty", "Andrew McCallum", "Fernando C.N. Pereira." ],
+      "venue" : "Proceedings of the Eighteenth International Conference on Machine Learning (ICML).",
+      "citeRegEx" : "Lafferty et al\\.,? 2001",
+      "shortCiteRegEx" : "Lafferty et al\\.",
+      "year" : 2001
+    }, {
+      "title" : "Neural architectures for named entity recognition",
+      "author" : [ "Guillaume Lample", "Miguel Ballesteros", "Sandeep Subramanian", "Kazuya Kawakami", "Chris Dyer." ],
+      "venue" : "NAACL.",
+      "citeRegEx" : "Lample et al\\.,? 2016",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A simple way to initialize recurrent networks of rectified linear units",
+      "author" : [ "Quoc V Le", "Navdeep Jaitly", "Geoffrey E Hinton." ],
+      "venue" : "arXiv preprint arXiv:1504.00941 .",
+      "citeRegEx" : "Le et al\\.,? 2015",
+      "shortCiteRegEx" : "Le et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Deeplysupervised nets",
+      "author" : [ "Chen-Yu Lee", "Saining Xie", "Patrick W Gallagher", "Zhengyou Zhang", "Zhuowen Tu." ],
+      "venue" : "AISTATS. volume 2, page 5.",
+      "citeRegEx" : "Lee et al\\.,? 2015",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Molding cnns for text: non-linear, non-consecutive convolutions",
+      "author" : [ "Tao Lei", "Regina Barzilay", "Tommi Jaakkola." ],
+      "venue" : "Empirical Methods in Natural Language Processing .",
+      "citeRegEx" : "Lei et al\\.,? 2015",
+      "shortCiteRegEx" : "Lei et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Structure compilation: trading structure for features",
+      "author" : [ "Percy Liang", "Hal Daumé III", "Dan Klein." ],
+      "venue" : "Proceedings of the 25th international conference on Machine learning. ACM, pages 592–599.",
+      "citeRegEx" : "Liang et al\\.,? 2008",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Not all contexts are created equal: Better word representations with variable attention",
+      "author" : [ "Wang Ling", "Lin Chu-Cheng", "Yulia Tsvetkov", "Silvio Amir." ],
+      "venue" : "EMNLP. Association for Computational Linguistics.",
+      "citeRegEx" : "Ling et al\\.,? 2013",
+      "shortCiteRegEx" : "Ling et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Finding Function in Form: Compositional Character Models for Open Vocabulary Word Representation",
+      "author" : [ "Wang Ling", "Tiago Luı́s", "Luı́s Marujo", "Ramón Fernandez Astudillo", "Silvio Amir", "Chris Dyer", "Alan W Black", "Isabel Trancoso" ],
+      "venue" : "In EMNLP",
+      "citeRegEx" : "Ling et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Ling et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Stability and generalization in structured prediction",
+      "author" : [ "Ben London", "Bert Huang", "Lise Getoor." ],
+      "venue" : "Journal of Machine Learning Research 17(222):1–",
+      "citeRegEx" : "London et al\\.,? 2016",
+      "shortCiteRegEx" : "London et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dropout with expectation-linear regularization",
+      "author" : [ "Xuezhe Ma", "Yingkai Gaom", "Zhiting Hu", "Yaoliang Yu", "Yuntian Deng", "Eduard Hovy." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Ma et al\\.,? 2017",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "End-to-end sequence labeling via bi-directional lstm-cnns-crf",
+      "author" : [ "Xuezhe Ma", "Eduard Hovy." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics. page 10641074.",
+      "citeRegEx" : "Ma and Hovy.,? 2016",
+      "shortCiteRegEx" : "Ma and Hovy.",
+      "year" : 2016
+    }, {
+      "title" : "Lexicon infused phrase embeddings for named entity resolution",
+      "author" : [ "Alexandre Passos", "Vineet Kumar", "Andrew McCallum." ],
+      "venue" : "CoNLL.",
+      "citeRegEx" : "Passos et al\\.,? 2014",
+      "shortCiteRegEx" : "Passos et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Towards robust linguistic analysis using ontonotes",
+      "author" : [ "Sameer Pradhan", "Alessandro Moschitti", "Nianwen Xue", "Hwee Tou Ng", "Anders Bj orkelund", "Olga Uryupina", "Yuchen Zhang", "Zhi Zhong." ],
+      "venue" : "Proceedings of the Seventeenth Conference on Computa-",
+      "citeRegEx" : "Pradhan et al\\.,? 2006",
+      "shortCiteRegEx" : "Pradhan et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Conll2012 shared task: Modeling multilingual unrestricted coreference in ontonotes",
+      "author" : [ "Sameer Pradhan", "Alessandro Moschitti", "Nianwen Xue", "Olga Uryupina", "Yuchen Zhang." ],
+      "venue" : "Proceedings of the Joint Conference on EMNLP and CoNLL:",
+      "citeRegEx" : "Pradhan et al\\.,? 2012",
+      "shortCiteRegEx" : "Pradhan et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Text chunking using transformation-based learning",
+      "author" : [ "Lance A Ramshaw", "Mitchell P Marcus." ],
+      "venue" : "Natural language processing using very large corpora, Springer, pages 157–176.",
+      "citeRegEx" : "Ramshaw and Marcus.,? 1999",
+      "shortCiteRegEx" : "Ramshaw and Marcus.",
+      "year" : 1999
+    }, {
+      "title" : "Design challenges and misconceptions in named entity recognition",
+      "author" : [ "Lev Ratinov", "Dan Roth." ],
+      "venue" : "Proceedings of the Thirteenth Conference on Computational Natural Language Learning. Association for Computational Linguistics, pages 147–155.",
+      "citeRegEx" : "Ratinov and Roth.,? 2009",
+      "shortCiteRegEx" : "Ratinov and Roth.",
+      "year" : 2009
+    }, {
+      "title" : "Fitnets: Hints for thin deep nets",
+      "author" : [ "Adriana Romero", "Nicolas Ballas", "Samira Ebrahimi Kahou", "Antoine Chassang", "Carlo Gatta", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1412.6550 .",
+      "citeRegEx" : "Romero et al\\.,? 2014",
+      "shortCiteRegEx" : "Romero et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Dropout: a simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey E Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "Journal of Machine Learning Research 15(1):1929–1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Collective segmentation and labeling of distant entities in information extraction",
+      "author" : [ "Charles Sutton", "Andrew McCallum." ],
+      "venue" : "ICML Workshop on Statistical Relational Learning.",
+      "citeRegEx" : "Sutton and McCallum.,? 2004",
+      "shortCiteRegEx" : "Sutton and McCallum.",
+      "year" : 2004
+    }, {
+      "title" : "Going deeper with convolutions",
+      "author" : [ "Christian Szegedy", "Wei Liu", "Yangqing Jia", "Pierre Sermanet", "Scott Reed", "Dragomir Anguelov", "Dumitru Erhan", "Vincent Vanhoucke", "Andrew Rabinovich." ],
+      "venue" : "Proceedings of the IEEE Conference on Computer",
+      "citeRegEx" : "Szegedy et al\\.,? 2015",
+      "shortCiteRegEx" : "Szegedy et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Introduction to the CoNLL-2003 shared task: Language-independent named entity recognition",
+      "author" : [ "Erik F Tjong Kim Sang", "Fien De Meulder." ],
+      "venue" : "Proceedings of the seventh conference on Natural language learning at HLT-NAACL 2003-Volume 4.",
+      "citeRegEx" : "Sang and Meulder.,? 2003",
+      "shortCiteRegEx" : "Sang and Meulder.",
+      "year" : 2003
+    }, {
+      "title" : "Representing text for joint embedding of text and knowledge bases",
+      "author" : [ "Kristina Toutanova", "Danqi Chen", "Patrick Pantel", "Hoifung Poon", "Pallavi Choudhury", "Michael Gamon." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Lan-",
+      "citeRegEx" : "Toutanova et al\\.,? 2015",
+      "shortCiteRegEx" : "Toutanova et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Word representations: a simple and general method for semi-supervised learning",
+      "author" : [ "Joseph Turian", "Lev Ratinov", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the 48th annual meeting of the association for computational linguistics. Association for Computational",
+      "citeRegEx" : "Turian et al\\.,? 2010",
+      "shortCiteRegEx" : "Turian et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Wavenet: A generative model for raw audio",
+      "author" : [ "Aaron van den Oord", "Sander Dieleman", "Heiga Zen", "Karen Simonyan", "Oriol Vinyals", "Alex Graves", "Nal Kalchbrenner", "Andrew Senior", "Koray Kavukcuoglu." ],
+      "venue" : "arXiv preprint arXiv:1609.03499 .",
+      "citeRegEx" : "Oord et al\\.,? 2016",
+      "shortCiteRegEx" : "Oord et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Structured training for neural network transition-based parsing",
+      "author" : [ "David Weiss", "Chris Alberti", "Michael Collins", "Slav Petrov" ],
+      "venue" : "In Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Weiss et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Weiss et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Multi-task cross-lingual sequence tagging from scratch",
+      "author" : [ "Zhilin Yang", "Ruslan Salakhutdinov", "William Cohen." ],
+      "venue" : "arXiv preprint arXiv:1603.06270.",
+      "citeRegEx" : "Yang et al\\.,? 2016",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Multi-scale context aggregation by dilated convolutions",
+      "author" : [ "Fisher Yu", "Vladlen Koltun." ],
+      "venue" : "International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Yu and Koltun.,? 2016",
+      "shortCiteRegEx" : "Yu and Koltun.",
+      "year" : 2016
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Zhao", "Yann LeCun." ],
+      "venue" : "Advances in Neural Information Processing Systems 28 (NIPS).",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 27,
+      "context" : "The massively parallel computation facilitated by GPU hardware has led to a surge of successful neural network architectures for sequence labeling (Ling et al., 2015; Ma and Hovy, 2016; Chiu and Nichols, 2016; Lample et al., 2016).",
+      "startOffset" : 147,
+      "endOffset" : 230
+    }, {
+      "referenceID" : 30,
+      "context" : "The massively parallel computation facilitated by GPU hardware has led to a surge of successful neural network architectures for sequence labeling (Ling et al., 2015; Ma and Hovy, 2016; Chiu and Nichols, 2016; Lample et al., 2016).",
+      "startOffset" : 147,
+      "endOffset" : 230
+    }, {
+      "referenceID" : 2,
+      "context" : "The massively parallel computation facilitated by GPU hardware has led to a surge of successful neural network architectures for sequence labeling (Ling et al., 2015; Ma and Hovy, 2016; Chiu and Nichols, 2016; Lample et al., 2016).",
+      "startOffset" : 147,
+      "endOffset" : 230
+    }, {
+      "referenceID" : 21,
+      "context" : "The massively parallel computation facilitated by GPU hardware has led to a surge of successful neural network architectures for sequence labeling (Ling et al., 2015; Ma and Hovy, 2016; Chiu and Nichols, 2016; Lample et al., 2016).",
+      "startOffset" : 147,
+      "endOffset" : 230
+    }, {
+      "referenceID" : 18,
+      "context" : "Convolutional neural networks (CNNs) provide exactly this property (Kim, 2014; Kalchbrenner et al., 2014).",
+      "startOffset" : 67,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 17,
+      "context" : "Convolutional neural networks (CNNs) provide exactly this property (Kim, 2014; Kalchbrenner et al., 2014).",
+      "startOffset" : 67,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 46,
+      "context" : "In response, this paper presents an application of dilated convolutions (Yu and Koltun, 2016) for sequence labeling (Figure 1).",
+      "startOffset" : 72,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 25,
+      "context" : "CRF prediction explicitly reasons about interactions among neighboring output tags, whereas prediction in the first model compiles this reasoning into the feature extraction step (Liang et al., 2008).",
+      "startOffset" : 179,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 34,
+      "context" : "While CRF prediction requires non-trivial search in output space, it can guarantee that certain output constraints, such as for IOB tagging (Ramshaw and Marcus, 1999), will always be satisfied.",
+      "startOffset" : 140,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 28,
+      "context" : "It may also have better sample complexity, as it imposes more prior knowledge about the structure of the interactions among the tags (London et al., 2016).",
+      "startOffset" : 133,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 9,
+      "context" : "Let r() denote a ReLU activation function (Glorot et al., 2011).",
+      "startOffset" : 42,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 12,
+      "context" : "The loss also helps reduce the vanishing gradient problem (Hochreiter, 1998) for deep architectures.",
+      "startOffset" : 58,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 36,
+      "context" : "Such an approach has been applied in a variety of contexts for training very deep networks in computer vision (Romero et al., 2014; Szegedy et al., 2015; Lee et al., 2015; Gülçehre and Bengio, 2016), but not to our knowledge in NLP.",
+      "startOffset" : 110,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 39,
+      "context" : "Such an approach has been applied in a variety of contexts for training very deep networks in computer vision (Romero et al., 2014; Szegedy et al., 2015; Lee et al., 2015; Gülçehre and Bengio, 2016), but not to our knowledge in NLP.",
+      "startOffset" : 110,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 23,
+      "context" : "Such an approach has been applied in a variety of contexts for training very deep networks in computer vision (Romero et al., 2014; Szegedy et al., 2015; Lee et al., 2015; Gülçehre and Bengio, 2016), but not to our knowledge in NLP.",
+      "startOffset" : 110,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 10,
+      "context" : "Such an approach has been applied in a variety of contexts for training very deep networks in computer vision (Romero et al., 2014; Szegedy et al., 2015; Lee et al., 2015; Gülçehre and Bengio, 2016), but not to our knowledge in NLP.",
+      "startOffset" : 110,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 37,
+      "context" : "We apply dropout (Srivastava et al., 2014) to the raw inputs xt and to each block’s output bt to help prevent overfitting.",
+      "startOffset" : 17,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 3,
+      "context" : "The state-of-the art models for sequence labeling include an inference step that searches the space of possible output sequences of a chain-structured graphical model, or approximates this search with a beam (Collobert et al., 2011; Weiss et al., 2015; Lample et al., 2016; Ma and Hovy, 2016; Chiu and Nichols, 2016).",
+      "startOffset" : 208,
+      "endOffset" : 316
+    }, {
+      "referenceID" : 44,
+      "context" : "The state-of-the art models for sequence labeling include an inference step that searches the space of possible output sequences of a chain-structured graphical model, or approximates this search with a beam (Collobert et al., 2011; Weiss et al., 2015; Lample et al., 2016; Ma and Hovy, 2016; Chiu and Nichols, 2016).",
+      "startOffset" : 208,
+      "endOffset" : 316
+    }, {
+      "referenceID" : 21,
+      "context" : "The state-of-the art models for sequence labeling include an inference step that searches the space of possible output sequences of a chain-structured graphical model, or approximates this search with a beam (Collobert et al., 2011; Weiss et al., 2015; Lample et al., 2016; Ma and Hovy, 2016; Chiu and Nichols, 2016).",
+      "startOffset" : 208,
+      "endOffset" : 316
+    }, {
+      "referenceID" : 30,
+      "context" : "The state-of-the art models for sequence labeling include an inference step that searches the space of possible output sequences of a chain-structured graphical model, or approximates this search with a beam (Collobert et al., 2011; Weiss et al., 2015; Lample et al., 2016; Ma and Hovy, 2016; Chiu and Nichols, 2016).",
+      "startOffset" : 208,
+      "endOffset" : 316
+    }, {
+      "referenceID" : 2,
+      "context" : "The state-of-the art models for sequence labeling include an inference step that searches the space of possible output sequences of a chain-structured graphical model, or approximates this search with a beam (Collobert et al., 2011; Weiss et al., 2015; Lample et al., 2016; Ma and Hovy, 2016; Chiu and Nichols, 2016).",
+      "startOffset" : 208,
+      "endOffset" : 316
+    }, {
+      "referenceID" : 13,
+      "context" : "LSTMs (Hochreiter and Schmidhuber, 1997) were used for NER as early as the CoNLL shared task in 2003 (Hammerton, 2003; Tjong Kim Sang and De Meulder, 2003).",
+      "startOffset" : 6,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 11,
+      "context" : "LSTMs (Hochreiter and Schmidhuber, 1997) were used for NER as early as the CoNLL shared task in 2003 (Hammerton, 2003; Tjong Kim Sang and De Meulder, 2003).",
+      "startOffset" : 101,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 42,
+      "context" : "In general, distributed representations for text can provide useful generalization capabilities for NER systems, since they can leverage unsupervised pre-training of distributed word representations (Turian et al., 2010; Collobert et al., 2011; Passos et al., 2014).",
+      "startOffset" : 199,
+      "endOffset" : 265
+    }, {
+      "referenceID" : 3,
+      "context" : "In general, distributed representations for text can provide useful generalization capabilities for NER systems, since they can leverage unsupervised pre-training of distributed word representations (Turian et al., 2010; Collobert et al., 2011; Passos et al., 2014).",
+      "startOffset" : 199,
+      "endOffset" : 265
+    }, {
+      "referenceID" : 31,
+      "context" : "In general, distributed representations for text can provide useful generalization capabilities for NER systems, since they can leverage unsupervised pre-training of distributed word representations (Turian et al., 2010; Collobert et al., 2011; Passos et al., 2014).",
+      "startOffset" : 199,
+      "endOffset" : 265
+    }, {
+      "referenceID" : 46,
+      "context" : "Our work draws on the use of dilated convolutions for image segmentation in the computer vision community (Yu and Koltun, 2016; Chen et al., 2015).",
+      "startOffset" : 106,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 1,
+      "context" : "Our work draws on the use of dilated convolutions for image segmentation in the computer vision community (Yu and Koltun, 2016; Chen et al., 2015).",
+      "startOffset" : 106,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 0,
+      "context" : "Prior work has also posed a structured model that couples predictions across the whole document (Bunescu and Mooney, 2004; Sutton and McCallum, 2004; Finkel et al., 2005).",
+      "startOffset" : 96,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 38,
+      "context" : "Prior work has also posed a structured model that couples predictions across the whole document (Bunescu and Mooney, 2004; Sutton and McCallum, 2004; Finkel et al., 2005).",
+      "startOffset" : 96,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 7,
+      "context" : "Prior work has also posed a structured model that couples predictions across the whole document (Bunescu and Mooney, 2004; Sutton and McCallum, 2004; Finkel et al., 2005).",
+      "startOffset" : 96,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 33,
+      "context" : "Following previous work, we use the same OntoNotes data split used for co-reference resolution in the CoNLL-2012 shared task (Pradhan et al., 2012).",
+      "startOffset" : 125,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 35,
+      "context" : "For both datasets, we convert the IOB boundary encoding to BILOU as previous work found this encoding to result in improved performance (Ratinov and Roth, 2009).",
+      "startOffset" : 136,
+      "endOffset" : 160
+    } ],
+    "year" : 0,
+    "abstractText" : "Bi-directional LSTMs have emerged as a standard method for obtaining per-token vector representations serving as input to various token labeling tasks (whether followed by Viterbi prediction or independent classification). This paper proposes an alternative to Bi-LSTMs for this purpose: iterated dilated convolutional neural networks (ID-CNNs), which have better capacity than traditional CNNs for large context and structured prediction. We describe a distinct combination of network structure, parameter sharing and training procedures that is not only more accurate than Bi-LSTM-CRFs, but also 8x faster at test time on long sequences. Moreover, ID-CNNs with independent classification enable a dramatic 14x testtime speedup, while still attaining accuracy comparable to the Bi-LSTM-CRF. We further demonstrate the ability of IDCNNs to combine evidence over long sequences by demonstrating their improved accuracy on whole-document (rather than per-sentence) inference. Unlike LSTMs whose sequential processing on sentences of length N requires O(N) time even in the face of parallelism, IDCNNs permit fixed-depth convolutions to run in parallel across entire documents. Today when many companies run basic NLP on the entire web and large-volume traffic, faster methods are paramount to saving time and energy costs.",
+    "creator" : null
+  }
+}

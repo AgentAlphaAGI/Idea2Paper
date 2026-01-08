@@ -1,0 +1,549 @@
+{
+  "name" : "ARR_2022_261_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "RCL: Relation Contrastive Learning for Zero-Shot Relation Extraction",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Relation extraction is a fundamental problem in natural language processing, which aims to identify the semantic relation between a pair of entities mentioned in the text. Recent progress in supervised relation extraction has achieved great successes (Zeng et al., 2014; Zhou et al., 2016; Soares et al., 2019), but these approaches usually require large-scale labeled data. While in practice, human annotation is time-consuming and labor-intensive.\n1We will release our code after blind review.\nTo alleviate the human annotation efforts in relation extraction, some recent studies use distant supervision to generate labeled data for training (Mintz et al., 2009; Lin et al., 2016). However, in the real-world setting, the relations of instances are not always included in the training data, and existing supervised methods cannot well recognize unobserved relations due to weak generalization ability.\nTo address the aforementioned limitations, zeroshot relation extraction has been proposed to extract relational facts where the target relations cannot be observed at the training stage. The challenge of zero-shot relation extraction models is how to learn effective representations based on seen relations at the training stage and well generalize to unseen relations at the test stage. Two studies (Levy et al., 2017; Obamuyide and Vlachos, 2018) treat zero-shot relation extraction as a different task (i.e., question answering and textual entailment), but they both need human annotation auxiliary in-\nformation for input, i.e., pre-defining question templates and relation descriptions. ZS-BERT (Chen and Li, 2021) predicts unseen relations with attribute representation learning. Despite promising improvements on directly predicting unseen relations, ZS-BERT still makes wrong predictions due to similar relations or similar entities. The same problem arises in supervised methods under the zero-shot settings.\nAs shown in Figure 1, there are two types of similar errors: Similar Relations and Similar Entities. For similar relations (seeZ1 andZ2), existing methods predict wrongly results because the unseen relations possess similar semantics and data points belong to two relations in the representation space are overlapped. For similar entities (i.e., 2014 contest and 2002 Contest), since entities are the context of relation and relation representations are derived from entities, the relation representations containing similar entities are close (see f(Z3) and f(Z4)) and baselines wrongly consider f(Z4) belongs to follows in the representation space, even if two unseen relations are not related. Recently, Instancewise Contrastive Learning (Instance-CL) (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021; Zhang et al., 2021) has achieved remarkable success in representation learning. Instance-CL is used to learn an effective representation by pulling together the instances from the same class, while pushing apart instances from different classes. Inspired by Instance-CL, we attempt to use InstanceCL on seen relations to learn the difference between similar relations and the divergence of relation representations derived from similar entities.\nIn this paper, we propose a novel Relation Contrastive Learning framework (RCL) to solve the above-mentioned problems. Figure 1 depicts the overview of the proposed model, which consists of four steps: (i) The input for RCL is a batch of sentences containing the pair of target entities and each sentence is sent into input sentence encoder to generate the contextual sentence embeddings2. (ii) Taking the sentence embeddings as input, relation augmentation layer is designed to obtain the relation representations f(Xi) and their corresponding augmented views f(X̂i). (iii) By jointly optimizing a contrastive loss and a relation classification loss on seen relations, RCL can learn subtle difference between instances and achieve better separation\n2The words, \"embeddings\", and \"representations\", are used interchangeably throughout this paper.\nbetween relations in the representation space simultaneously to obtain an effective projection function f . (iv) With the learned f , the whole test set Z can be projected for unseen relation representations in the representation space and zero-shot prediction is performed on unseen relation representations by K-Means.\nTo summarize, the major contributions of our work are as follows: (i) We propose a novel framework based on contrastive learning for zero-shot relation extraction. It effectively mitigates two types of similar problems: similar relations and similar entities by learning representations jointly optimized with contrastive loss and classification loss. (ii) We explore various data augmentation strategies in relation augmentation to minimize semantic impact for contrastive instance learning and experimental results show dropout noise as minimal data augmentation can help RCL learn the difference between similar instances better. (iii) We conduct experiments on two well-known datasets. Experimental results show that RCL can advance stateof-the-art performance by a large margin. Besides, even if the number of seen relations is insufficient, RCL can also achieve comparable results with the model trained on the full training set."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Relation Extraction. Relation extraction aims at extracting relation between entities within a given sentence. Many relation extraction methods (Qian et al., 2008; Zeng et al., 2014; Zhou et al., 2016) are supervised model. Recently, some studies focus on pre-training language model (Devlin et al., 2019; Liu et al., 2019; Lan et al., 2020) because of its powerful capability of semantic representation. Wu and He (2019) propose R-BERT that uses BERT to extract relation features and incorporates entity information to perform relation extraction. Soares et al. (2019) propose a relation representation learning method based on BERT and have shown promising results. However, these models require labeled data. Unsupervised relation extraction (Yu et al., 2017; Saha et al., 2018; Stanovsky et al., 2018) can discover semantic relation feature from data without human annotations. One representative work is Open relation extraction. Wu et al. (2019) propose a novel model to learn a similarity metric of relations from labeled data, and identify unseen relations by transferring knowledge learned from seen relations. While OpenRE method can\nidentify novel relation without annotations and external resources, it cannot effectively discard irrelevant information and severely suffers from the instability. Zero-shot Relation Extraction. Zero-shot relation extraction aims to identify novel relation without training instances. Existing zero-shot relation extraction methods are few and most rely on human annotation auxiliary information for input. Levy et al. (2017) reduce zero-shot relation extraction to a question answering task. They use 10 predefining question templates to represent relations, and then train a reading comprehension model to infer which relation satisfies the given sentence and question. Obamuyide and Vlachos (2018) treat zero-shot relation extraction as a textual entailment task, which requires the model to input descriptions of relations. They train a textual entailment model to predict whether the input sentence containing two entities matches the description of a given relation, identifying novel relations by generalizing from the descriptions of seen relations at the training stage to those of unseen relations at test time. Chen and Li (2021) propose ZS-BERT to tackle zero-shot relation extraction task with attribute representation learning. ZS-BERT learns the representations of relations based on their descriptions during the training time, and generates the prediction of unseen relation for new sentence by nearest neighbor search. However, ZS-BERT suffers from similar relation error and similar entity error, and it needs human annotation auxiliary information for input, i.e., relation descriptions. In this paper, we do not require any human annotation auxiliary information for input. Contrastive Learning. In the field of image and natural language processing, many recent successes are inspired by contrastive learning (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021). Contrastive learning regards the input data and corresponding augmented views as an independent class. The goal of contrastive learning is to pull together representations from the same class, while keeping representations from different classes away. Therefore, the representations learned from contrastive learning are better separated and good for clustering. Gao et al. (2021) propose a novel sentence embeddings learning framework based on contrastive learning to produce superior sentence embeddings and show that dropout is an effective data augmentation. SCCL (Zhang et al., 2021) jointly optimizes a contrastive loss and a clustering loss to disperse overlap categories in the representation space. Inspired by contrastive learning, we leverage contrastive learning to help the model learn an effective representation."
+    }, {
+      "heading" : "3 Proposed Model",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Model Overview",
+      "text" : "As illustrated in Figure 2, the proposed model RCL consists of three components: input sentence encoder, contrastive learning module and relation classification module. Given a batch of sentences containing two entities, the sentence representations are generated by input sentence encoder and then are sent to relation classification module and contrastive learning module. For contrastive learning module, the relation representations and their corresponding augmented views generated by a relation augmentation layer are used to perform contrastive instance learning to learn difference between instances. For relation classification module, the relation representations generated by the\nconcat layer are used to identify seen relations to achieve better separation between relations. We train RCL under a multi-task learning structure with contrastive learning module and relation classification module to learn effective representations for unseen relations. At the test stage, we obtain the unseen relation representations by input sentence encoder and concat layer, and then send them into K-Means to predict the unseen relations."
+    }, {
+      "heading" : "3.2 Input Sentence Encoder",
+      "text" : "Input Sentence Encoder aims to generate the contextual representation of each token. In this work, we assume entities contained in the sentence have been recognized before input. For a sentence Xi = [ x1i , .., x L i ] where two entities e1 and e2 are mentioned, we use the ENTITY MARKERS (Soares et al., 2019) to augment Xi to better extract relation features from context. Specifically, we introduce four special tokens to mark the beginning and the end of each entity mentioned in the sentence. The input token sequence Xi for input sentence encoder is as follows:\nXi = [x 1 i , . . . , < e1 >, x i i, . . . , x j−1 i , < /e1 >,\n. . . , < e2 >, x k i , . . . , x l−1 i , < /e2 >, . . . , x L i ] (1) where < e1 >,< /e1 >,< e2 >,< /e2 > are four special tokens to mark the beginning and the end of each entity mentioned in the sentence, L is the length of sentence. Then we use BERT (Devlin et al., 2019) to obtain the sentence embeddings hi ∈ RL×d:\nhi = [h 1 i , . . . ,h <e1> i , . . . ,h </e1> i ,\n. . . ,h<e2>i , . . . ,h </e2> i , . . . ,h L i ]\n(2)\nwhere d is the hidden dimension."
+    }, {
+      "heading" : "3.3 Contrastive Learning Module",
+      "text" : "Contrastive Learning Module aims at learning the difference between a batch of instances to better represent relations. Contrastive Instance Learning. After we obtained H = {h1, . . . ,hN} from N input sentences using input sentence encoder, relation augmentation layer is used to generate relation representations and their augmented views. More specifically, the relation augmentation layer consists of data augmentation and a concat layer. For each sentence embeddings hi, a transformation T (·) is applied to generate its augmented view: ĥi = T (hi), where ĥi ∈ RL×d.\nAfter obtaining sentence embeddings hi and its augmentation ĥi, we obtain relation representations and its augmentation by a concat layer. Specifically, we use the token embeddings corresponding to < e1 >,< e2 > positions as the entity representation and concatenate them to derive a contextualized relation representation and its augmented view ri, r̂i ∈ R2·d:\nri = h <e1> i ⊕ h <e2> i r̂i = ĥ <e1> i ⊕ ĥ <e2> i\n(3)\nwhere ⊕ is the concatenation operator and ri, r̂i are both fixed-length vector.\nTo better learn effective relation representations, we optimizes a contrastive objective, which disperses different relation of instances apart while implicitly bringing the same relation of instances together. Let R = {r1, . . . , rN} and R̂ = {r̂1, . . . , r̂N} denote a mini-batch of relation representations and its augmented views respectively. We regard (ri, r̂i) as a positive pair and otherN−1 augmented views as negative instances. For a minibatch with N pairs, we follow the contrastive framework in SimCSE (Gao et al., 2021) and take a crossentropy objective with in-batch negatives (Chen et al., 2017) and the training objective for (ri, r̂i) is:\n`cli = − log esim(ri ,̂ri)/τ∑N j=1 e sim(ri ,̂rj)/τ (4)\nwhere ri ∈ R, r̂i ∈ R̂, sim (r1, r2) is the cosine similarity r > 1 r2\n‖r1‖·‖r2‖ ,and τ is a temperature hyperparameter. Data Augmentation Strategies. To amplify the semantic difference between similar instances without breaking the semantic of relation representations, we explore five different data augmentations T (·) for contrastive instance learning, including feature cutoff (Shen et al., 2020), random mask (Hinton et al., 2012), dropout (Gao et al., 2021), composition of dropout and feature cutoff and composition of dropout and random mask.\nFeature cutoff is a simple and efficient data augmentation strategy to introduce minimal semantic impact for relation instances. Specifically, we randomly erase some feature dimensions in the sentence embeddings produced by input sentence encoder.\nRandom mask is proved its effectiveness as an augmentation strategy (Yan et al., 2021). In our experiments, we randomly drop elements in the\nsentence embeddings by a specific probability and sets their values to zero.\nDropout has been shown its effectiveness as minimal data augmentation by SimCSE (Gao et al., 2021). Thus, similar to SimCSE, we augment sentence embeddings by feeding the same input sentence to BERT again.\nComposition of augmentations is an effective strategy in image domain (Chen et al., 2020). Based on dropout, we explore two strategies of composition of data augmentations. Composition of dropout and feature cutoff is a strategy that we first use dropout to obtain augmented view and then send it into feature cutoff to obtain the final augmented view. Similarly, composition of dropout and random mask is a strategy that dropout first and then random mask. We present the experimental results of these strategies and analyze their effects for contrastive learning in Section 4.4."
+    }, {
+      "heading" : "3.4 Relation Classification Module",
+      "text" : "Relation Classification Module aims to identify seen relations. With sentence embeddings hi from input sentence encoder, we obtain relation representation ri by the concat layer, following the way same as Equation (3). Let n denotes the number of seen relations and Ys denotes the set of seen relations. By transforming the relation representation ri, along with a softmax layer, we generate the ndimensional classification probability distribution of the i-th sample over seen relations:\np (yi | Xi, θ) = softmax (W (tanh (ri)) + b) (5) where Xi is the input sentence containing two entities, yi ∈ Ys is the seen relation, θ is the model parameter, W ∈ Rn×2·d, and b ∈ Rn. Note that we use the relation representation ri produced intermediately for predicting unseen relations under the zero-shot settings instead of the probability distribution. For each data point Xi, we use crossentropy to calculate classification loss:\n`rci = CrossEntropy(p(yi | Xi, θ), ŷi) (6)\nwhere ŷi is the ground-truth label of the i-th sample."
+    }, {
+      "heading" : "3.5 Train and Test",
+      "text" : "At the training stage, We train the model with two objectives under the multi-task learning structure. The first is to minimize the distance between the relation representation and its augmented view, while keeping the relation representation distant from\nother augmented relation representations in a minibatch. The second objective is to bring high prediction accuracy of seen relations. For a mini-batch of input sentences, the training objective of RCL is as follows:\nLCL = − 1\nN N∑ i=1 `cli ,LRC = − 1 N N∑ i=1 `rci\nLjoint = LRC + αLCL\n(7)\nwhere N is the number of input sentences, α is a hyper-parameter to balance two objectives.\nAt the test stage, we send the new-coming sentences into input sentence encoder and concat layer to generate unseen relation representations, and the prediction on unseen relations can be achieved by K-Means."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "Two datasets are used to evaluate our model: SemEval2010 Task8 (Hendrickx et al., 2010) and FewRel (Han et al., 2018). SemEval2010 Task8 has been widely used in relation extraction task, which contains 9 relations and an Other relation. There are 10,717 instances in the dataset and the number of instances of each relation is not equal. Each relation has direction in the dataset, but in our experiments, we do not consider the direction of 9 relations and not use the Other relation. For each relation, we combine the instances of training set with instances of test set to obtain overall instances of each relation. FewRel is a public dataset based on Wikipedia, and it contains 80 types of relations, each with 700 instances. Although FewRel is widely used in few-shot learning setting, it is also suitable for zero-shot learning as long as we disjoint the relation labels within training and test data."
+    }, {
+      "heading" : "4.2 Evaluation Settings",
+      "text" : "Zero-shot Learning Settings. Let m denotes the number of unseen relations, and Yu denotes the set of unseen relations. We randomly select m relations as unseen relations and the rest of relations n as seen relations. Note that Ys ∩ Yu = ∅. Then we split the whole dataset into training and test data. The training data only contains the instances of seen relations, in contrast to test data only with the instances of unseen relations. We repeat experiments 5 times on SemEval2010 Task8\nand FewRel and then report the average results. As for implementation details for RCL, we implement our model based on Transformers package (Wolf et al., 2020). And we use an Adam optimizer (Kingma and Ba, 2014), in which the learning rate is 5e−5. Please refer to the Appendix for more implementation details. Evaluation Metrics. We follow the setting in the previous work (Simon et al., 2019) to convert pseudo labels predicted by clustering to relation labels. In each cluster, the relation label with the largest proportion among the cluster is assigned to all samples as the prediction label. For evaluation metrics, we adopt three commonly-used metrics (Wu et al., 2019; Hu et al., 2020; Zhang et al., 2021) to measure the effectiveness of clustering : B3 (Bagga and Baldwin, 1998), Normalized Mutual Information (NMI) and Adjusted Rand Index (ARI). For B3, B3 precision and recall correspondingly measure the correct rate of putting each sentence in its cluster or clustering all samples into a single class. Then B3 F1 is computed as the harmonic mean of the B3 precision and recall:\nB3precision = E X,Y P (g(X) = g(Y ) | c(X) = c(Y )) B3recall = E X,Y P (c(X) = c(Y ) | g(X) = g(Y ))\nNMI measures the information shared between the predicted label and the ground truth. When data are partitioned perfectly, the NMI score is 1, while it becomes 0 when prediction and ground truth are independent. ARI is a metric to measure the degree of agreement between the cluster and golden distribution, which ranges in [-1,1]. The more consistent two distributions, the higher the score. Baselines. We compare RCL to previous methods consisting of CNN (Zeng et al., 2014), Attention BiLSTM (Zhou et al., 2016), RSNs (Wu et al., 2019), MTB (Soares et al., 2019), ZS-BERT (Chen and Li, 2021). For CNN, Attention BiLSTM and MTB, these methods have great success in supervised relation extraction (SRE) but fail to perform zero-shot prediction. Specifically, we consider two variations of MTB which only differ in the backbone (MTBBERT and MTB-RoBERTa). For fair comparison and zero-shot prediction, we make the relation representation from encoder become the output of the SRE model, instead of originally outputting a probability vector whose dimension is equal to the seen relations. The dimension of output vector is same as RCL. The K-Means is applied over output vector to generate zero-shot prediction. Although RSNs\nis a open relation extraction method, its Supervised RSN model also meets the setting of zero-shot. For ZS-BERT, the original relation descriptions are used for FewRel and we collect the descriptions of relations for SemEval2010 Task8 from open resources. Then we use the sentence embeddings for K-Means to predict unseen relations. Note that we set the dimension of sentence embeddings same as RCL for fair comparison."
+    }, {
+      "heading" : "4.3 Experimental Results",
+      "text" : "Results on SemEval2010 Task8. Table 1 show the comparison results on SemEval2010 Task8. RCL achieves the best performance, significantly outperforming the previous state-of-the-art with 22.31% F1, 27.79% NMI and 31.02% ARI improvements. Due to the relations of SemEval2010 Task8 dataset with high similarity, baseline models severely suffer from similar errors and the performances of baselines are poor. Another reason why baselines perform poorly is that small number of seen relations and class imbalance are more challenging for model. Moreover, SemEval2010 Task8 is much less related to the general domains on which the transformers are pretrained. However, comparing with baselines, experimental results show RCL can effectively mitigates similar problems and better use the general knowledge of the pre-training language model. Results on FewRel. For FewRel, the experimental results are shown in Table 2. From the results, we observe that our model RCL outperforms existing baselines on FewRel when targeting at different numbers of unseen relations m. Specifically, RCL achieves an average of 2.87% F1, 1.98% NMI and 2.98% ARI improvements compared to previous best results. Since relations on FewRel are class balance and sufficient, MTB-BERT and MTBRoBERTa perform well among competing models\nbut their performance is still lower than RCL. The reason is that their approaches cannot well deal with similar problems. ZS-BERT performs worse than most competing models because ZS-BERT severely relies on the unseen relation descriptions for prediction, while our approach can perform well without external resources. In addition, we find that the improvement of RCL gets larger when m is larger, especially when m = 40. It is obvious that it becomes more difficult for prediction since the number of unseen relations increases leading to more seriously similar problems.\nAblation Study. To better validate our model, we conduct an ablation study on each module by correspondingly ablating one. Note that MTB-BERT is the version of RCL without contrastive learning module. From Table 1 and Table 2, we can see that combining these two modules can result in a noticeable performance gain over two datasets. Especially in SemEval2010 Task8, RCL w/o RC outperforms existing baselines by all evaluation metrics, which prove the effectiveness of contrastive learning. However, our proposed RCL significantly outperforms RCL w/o RC with 15.57% F1, 21.36% NMI and 25.74% ARI improvements. It demonstrates that these two modules are complementary on relation representation learning: contrastive learning focuses on learning the difference between instances and implicitly obtaining some knowledge about the difference between relations while relation classification can explicitly learn the difference between relations by identifying the relations but cannot learn the difference between similar instances and suffers from similar problems. When the number of unseen relations increases on FewRel, RCL w/o RC performs worse than competing methods due to without effectively learning relation difference, which also shows that both two modules are important to the final model performance."
+    }, {
+      "heading" : "4.4 Qualitative Analysis",
+      "text" : "Effect of Data Augmentations. To study the effect of data augmentations, we consider six different data augmentation strategies for contrastive learning in our experiments, including None (i.e. doing nothing), Random Mask, Feature Cutoff, Dropout, Composition of Dropout and Feature Cutoff (Dropout+Feature Cutoff) and Composition of Dropout and Random Mask (Dropout+Random Mask).\nThe results are shown in Table 3. We can make the following observations: (a) Dropout is the most effective strategy, outperforming all competing strategies. It demonstrate that Dropout essentially acts as minimal data augmentation (Gao et al., 2021) and the noise produced by Dropout can make model learn the difference between similar instances better. (b) When compared with None, Random Mask and Feature Cutoff also improve performance across two datasets. Moreover, Dropout+Random Mask and Dropout+Feature Cutoff significantly outperform Random Mask and Feature Cutoff with roughly 6 and 2 points gain respectively while Dropout still outperforms these two composition of augmentations. It shows that different from the image domain (Chen et al., 2020), composition of augmentations is not always effective for the text domain. (c) We find that our model can improve performance on two datasets\neven without any data augmentation (None), especially for SemEval2010 Task8 (from 45.71 to 58.14). This is because None tunes the representation space by keeping each representation away from others, even if it has no effect on minimizing the distance between instance and its augmented view since the embeddings of augmented view are same with original instance. It also demonstrates that the effectiveness of the contrastive learning without external resources. Effect of Number of Seen Relations. In this section, we study the effect of the number of seen relations on FewRel which contains sufficient relations. In our experiment, we vary the number of seen relations n from 10 (insufficient) to 70 (sufficient) and consistently set the number of unseen relations m to 10. Experimental results are presented in Figure 3. As the number of seen relations increases, RCL continuously outperforms MTBBERT, which shows the effectiveness of our approach. More specifically, when n is set to 10, RCL can achieve 90% F1 score of the model trained on the full seen relations. In addition, the performance of RCL declines more slighter and smoother than MTB-BERT when seen relations gradually become insufficient (from 30 to 10), showing the robustness of our approach. Capability under Few-shot Settings. In this section, we conduct the experiment of few-shot prediction by following the setting of Chen and Li (2021) to understand the capability of RCL. We move a small fraction of sentences of each unseen relation from test data to training data. Experimental results are shown in Figure 3. As expected on two datasets, RCL achieves more F1 score improvement with more unseen relation instances available at the training stage. When the fraction is set to 4%, RCL can achieve 90% F1 score on FewRel and 80% F1 score on SemEval2010 Task8. It shows\nthe capability of few-shot learning for RCL. Visualization of Relation Representations. To intuitively show how our approach helps to learn better relation representations on seen relations, we visual the representations of unseen relations by using t-SNE (Van der Maaten and Hinton, 2008) to reduce the dimension to 2. We randomly choose 4 relations as unseen relation from SemEval2010 Task8 and the visualization results are shown in Figure 4. In each figure, relation instances are colored according to their ground-truth labels.\nAs we can see from Figure 4(a), the data points from MTB-BERT are mingled with different clusters, especially for red points. The reason is these instances possess similar relations or similar entities and MTB-BERT has not learned the corresponding knowledge to deal with similar problems. However, as illustrate in Figure 4(b), RCL effectively mitigates these two types of similar problems since our approach can learn the difference between instances and the difference between seen relations. It again exhibits the effectiveness of the contrastive loss and multi-task learning structure. We also provide a case study in the Appendix."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this paper, we propose a jointly framework for zero-shot relation extraction to mitigate two types of similar errors: Similar Relations and Similar Entities. Different from conventional zero-shot relation extraction models which require external resources for training and test, our model does not require external resources. We demonstrate the effectiveness of our framework on two datasets, and our method achieves new state-of-the-art performance. Furthermore, we compare various data augmentation strategies for contrastive learning and provide fine-grained analysis for interpreting how our approach works."
+    }, {
+      "heading" : "A Statistics of Datasets",
+      "text" : "The statistics of SemEval2010 Task8 and FewRel are shown in Table 4. For SemEval2010 Task8, we use 9 relations except the Other relaiton. Because of small number of relations, class imbalance and relations with high similarity, the experiment on SemEval2010 Task8 is more challenging and close to real world setting. For FewRel, we use the train and valid split but not test split, because the test split is not publicly available.\nB Implementation Details\nWe implement RCL based on Transformers package (Wolf et al., 2020), where we use Bertbase-uncased as backbone. We set the maximum input length to 96 for SemEval2010 Task8 and 80 for FewRel. The epoch is set to 6 for training and we use an Adam optimizer (Kingma and Ba, 2014) with a batch size of 32. The learning rate is set to 5e− 5 and the weight decay is set to 0.1. Same as SimCSE (Gao et al., 2021), the dropout probability of data augmentation is set to 0.1. The temperature τ is set to 0.05 across two datasets and we set α to 0.4 and 0.6 on SemEval2010 Task8 and FewRel respectively. The hidden size of fully-connected layer is set to 1536."
+    }, {
+      "heading" : "C More Ablation Studies",
+      "text" : "The effects of hyper-parameters are shown in Table 5 and Table 6. For hyper-parameter α, we vary α in the list of [0.0, 0.2, 0.4, 0.6, 0.8, 1.0] and find RCL can achieve the best performance when α is set to 0.4 on SemEval2010 Task8 or 0.6 on Fewrel. For temperature hyper-parameter τ , we vary τ in the list of [0.001, 0.01, 0.05, 0.1, 1.0] and find τ = 0.05 can achieve the best performance across two datasets."
+    }, {
+      "heading" : "D Different Clustering methods for Zero-shot Prediction",
+      "text" : "Figure 5 shows the results of different clustering methods for RCL, including Mini-Batch KMeans (Sculley, 2010), Gaussian Mixture Model (GMM), Hierarchical Agglomerative Clustering (HAC), Birch (Zhang et al., 1996), K-Means. We can find that the performance of K-Means is much better than other clustering methods on two datasets. Moreover, Mini-Batch K-Means still outperforms MTB-BERT on SemEval2010 Task8, even its performance is worse than other clustering methods, showing the effectiveness of our model."
+    }, {
+      "heading" : "E Case Study",
+      "text" : "To intuitively show how RCL helps to solve two types of similar problems (similar relations and similar entities), we conduct some case studies on two datasets. As shown in Figure 6, it is clear to see that RCL effectively solves these two problems under the multi-task learning structure. Specifically, RCL can better represent two sentences which have similar relations or similar entities, and then make their euclidean distance closer to the cluster corresponding to their ground truth."
+    } ],
+    "references" : [ {
+      "title" : "Entitybased cross-document coreferencing using the vector space model",
+      "author" : [ "Amit Bagga", "Breck Baldwin." ],
+      "venue" : "36th Annual Meeting of the Association for Computational Linguistics and 17th International Conference on Computational Linguis-",
+      "citeRegEx" : "Bagga and Baldwin.,? 1998",
+      "shortCiteRegEx" : "Bagga and Baldwin.",
+      "year" : 1998
+    }, {
+      "title" : "ZS-BERT: Towards zero-shot relation extraction with attribute representation learning",
+      "author" : [ "Chih-Yao Chen", "Cheng-Te Li." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human",
+      "citeRegEx" : "Chen and Li.,? 2021",
+      "shortCiteRegEx" : "Chen and Li.",
+      "year" : 2021
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "International conference on machine learning, pages 1597–1607. PMLR.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On sampling strategies for neural networkbased collaborative filtering",
+      "author" : [ "Ting Chen", "Yizhou Sun", "Yue Shi", "Liangjie Hong." ],
+      "venue" : "Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, pages 767–",
+      "citeRegEx" : "Chen et al\\.,? 2017",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SimCSE: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 6894–6910, Online and Punta Cana, Do-",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Fewrel: A large-scale supervised few-shot relation classification dataset with state-of-the-art evaluation",
+      "author" : [ "Xu Han", "Hao Zhu", "Pengfei Yu", "Ziyun Wang", "Yuan Yao", "Zhiyuan Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Meth-",
+      "citeRegEx" : "Han et al\\.,? 2018",
+      "shortCiteRegEx" : "Han et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross Girshick." ],
+      "venue" : "Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 9729–9738.",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving neural networks by preventing coadaptation of feature detectors",
+      "author" : [ "Geoffrey E Hinton", "Nitish Srivastava", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan R Salakhutdinov." ],
+      "venue" : "arXiv preprint arXiv:1207.0580.",
+      "citeRegEx" : "Hinton et al\\.,? 2012",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Selfore: Self-supervised relational feature learning for open relation extraction",
+      "author" : [ "Xuming Hu", "Lijie Wen", "Yusong Xu", "Chenwei Zhang", "S Yu Philip." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Hu et al\\.,? 2020",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Albert: A lite bert for self-supervised learning of language representations",
+      "author" : [ "Zhenzhong Lan", "Mingda Chen", "Sebastian Goodman", "Kevin Gimpel", "Piyush Sharma", "Radu Soricut." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Lan et al\\.,? 2020",
+      "shortCiteRegEx" : "Lan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Zero-shot relation extraction via reading comprehension",
+      "author" : [ "Omer Levy", "Minjoon Seo", "Eunsol Choi", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 21st Conference on Computational Natural Language Learning (CoNLL 2017), pages 333–342, Vancou-",
+      "citeRegEx" : "Levy et al\\.,? 2017",
+      "shortCiteRegEx" : "Levy et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural relation extraction with selective attention over instances",
+      "author" : [ "Yankai Lin", "Shiqi Shen", "Zhiyuan Liu", "Huanbo Luan", "Maosong Sun." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Pa-",
+      "citeRegEx" : "Lin et al\\.,? 2016",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Distant supervision for relation extraction without labeled data",
+      "author" : [ "Mike Mintz", "Steven Bills", "Rion Snow", "Daniel Jurafsky." ],
+      "venue" : "Proceedings of the Joint Conference of the 47th Annual Meeting of the ACL and the 4th International Joint Conference",
+      "citeRegEx" : "Mintz et al\\.,? 2009",
+      "shortCiteRegEx" : "Mintz et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Zeroshot relation classification as textual entailment",
+      "author" : [ "Abiola Obamuyide", "Andreas Vlachos." ],
+      "venue" : "Proceedings of the First Workshop on Fact Extraction and VERification (FEVER), pages 72–78, Brussels, Belgium. Association for Computational Lin-",
+      "citeRegEx" : "Obamuyide and Vlachos.,? 2018",
+      "shortCiteRegEx" : "Obamuyide and Vlachos.",
+      "year" : 2018
+    }, {
+      "title" : "Exploiting constituent dependencies for tree kernel-based semantic relation extraction",
+      "author" : [ "Longhua Qian", "Guodong Zhou", "Fang Kong", "Qiaoming Zhu", "Peide Qian." ],
+      "venue" : "Proceedings of the 22nd International Conference on Computational Linguis-",
+      "citeRegEx" : "Qian et al\\.,? 2008",
+      "shortCiteRegEx" : "Qian et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Open information extraction from conjunctive sentences",
+      "author" : [ "Swarnadeep Saha" ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics, pages 2288–2299.",
+      "citeRegEx" : "Saha,? 2018",
+      "shortCiteRegEx" : "Saha",
+      "year" : 2018
+    }, {
+      "title" : "Web-scale k-means clustering",
+      "author" : [ "David Sculley." ],
+      "venue" : "Proceedings of the 19th international conference on World wide web, pages 1177–1178.",
+      "citeRegEx" : "Sculley.,? 2010",
+      "shortCiteRegEx" : "Sculley.",
+      "year" : 2010
+    }, {
+      "title" : "A simple but toughto-beat data augmentation approach for natural language understanding and generation",
+      "author" : [ "Dinghan Shen", "Mingzhi Zheng", "Yelong Shen", "Yanru Qu", "Weizhu Chen." ],
+      "venue" : "arXiv preprint arXiv:2009.13818.",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unsupervised information extraction: Regularizing discriminative approaches with relation distribution losses",
+      "author" : [ "Étienne Simon", "Vincent Guigue", "Benjamin Piwowarski." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Com-",
+      "citeRegEx" : "Simon et al\\.,? 2019",
+      "shortCiteRegEx" : "Simon et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Matching the blanks: Distributional similarity for relation learning",
+      "author" : [ "Livio Baldini Soares", "Nicholas FitzGerald", "Jeffrey Ling", "Tom Kwiatkowski." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Soares et al\\.,? 2019",
+      "shortCiteRegEx" : "Soares et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Supervised open information extraction",
+      "author" : [ "Gabriel Stanovsky", "Julian Michael", "Luke Zettlemoyer", "Ido Dagan." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language",
+      "citeRegEx" : "Stanovsky et al\\.,? 2018",
+      "shortCiteRegEx" : "Stanovsky et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Visualizing data using t-sne",
+      "author" : [ "Laurens Van der Maaten", "Geoffrey Hinton." ],
+      "venue" : "Journal of machine learning research, 9(11).",
+      "citeRegEx" : "Maaten and Hinton.,? 2008",
+      "shortCiteRegEx" : "Maaten and Hinton.",
+      "year" : 2008
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing:",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Open relation extraction: Relational knowledge transfer from supervised data to unsupervised data",
+      "author" : [ "Ruidong Wu", "Yuan Yao", "Xu Han", "Ruobing Xie", "Zhiyuan Liu", "Fen Lin", "Leyu Lin", "Maosong Sun." ],
+      "venue" : "Proceedings of the 2019 Conference on",
+      "citeRegEx" : "Wu et al\\.,? 2019",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Enriching pretrained language model with entity information for relation classification",
+      "author" : [ "Shanchan Wu", "Yifan He." ],
+      "venue" : "Proceedings of the 28th ACM international conference on information and knowledge management, pages 2361–2364.",
+      "citeRegEx" : "Wu and He.,? 2019",
+      "shortCiteRegEx" : "Wu and He.",
+      "year" : 2019
+    }, {
+      "title" : "ConSERT: A contrastive framework for self-supervised sentence representation transfer",
+      "author" : [ "Yuanmeng Yan", "Rumei Li", "Sirui Wang", "Fuzheng Zhang", "Wei Wu", "Weiran Xu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Open relation extraction and grounding",
+      "author" : [ "Dian Yu", "Lifu Huang", "Heng Ji." ],
+      "venue" : "Proceedings of the Eighth International Joint Conference on Natural Language Processing (Volume 1: Long Papers), pages 854–864, Taipei, Taiwan. Asian Federation of",
+      "citeRegEx" : "Yu et al\\.,? 2017",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Relation classification via convolutional deep neural network",
+      "author" : [ "Daojian Zeng", "Kang Liu", "Siwei Lai", "Guangyou Zhou", "Jun Zhao." ],
+      "venue" : "Proceedings of COLING 2014, the 25th International Conference on Computational Linguistics: Technical Papers,",
+      "citeRegEx" : "Zeng et al\\.,? 2014",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Supporting clustering with contrastive learning",
+      "author" : [ "Dejiao Zhang", "Feng Nan", "Xiaokai Wei", "Shang-Wen Li", "Henghui Zhu", "Kathleen McKeown", "Ramesh Nallapati", "Andrew O. Arnold", "Bing Xiang." ],
+      "venue" : "Proceedings of the 2021 Conference of the North Amer-",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Birch: an efficient data clustering method for very large databases",
+      "author" : [ "Tian Zhang", "Raghu Ramakrishnan", "Miron Livny." ],
+      "venue" : "ACM sigmod record, 25(2):103–114.",
+      "citeRegEx" : "Zhang et al\\.,? 1996",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "Attention-based bidirectional long short-term memory networks for relation classification",
+      "author" : [ "Peng Zhou", "Wei Shi", "Jun Tian", "Zhenyu Qi", "Bingchen Li", "Hongwei Hao", "Bo Xu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computa-",
+      "citeRegEx" : "Zhou et al\\.,? 2016",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "2020), where we use Bertbase-uncased as backbone. We set the maximum input length to 96 for SemEval2010 Task8 and 80 for FewRel. The epoch is set to 6 for training and we use an Adam optimizer (Kingma and Ba, 2014",
+      "author" : [ "package (Wolf" ],
+      "venue" : null,
+      "citeRegEx" : ".Wolf,? \\Q2014\\E",
+      "shortCiteRegEx" : ".Wolf",
+      "year" : 2014
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 30,
+      "context" : "Recent progress in supervised relation extraction has achieved great successes (Zeng et al., 2014; Zhou et al., 2016; Soares et al., 2019), but these approaches usually require large-scale labeled data.",
+      "startOffset" : 79,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 33,
+      "context" : "Recent progress in supervised relation extraction has achieved great successes (Zeng et al., 2014; Zhou et al., 2016; Soares et al., 2019), but these approaches usually require large-scale labeled data.",
+      "startOffset" : 79,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 22,
+      "context" : "Recent progress in supervised relation extraction has achieved great successes (Zeng et al., 2014; Zhou et al., 2016; Soares et al., 2019), but these approaches usually require large-scale labeled data.",
+      "startOffset" : 79,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 15,
+      "context" : "To alleviate the human annotation efforts in relation extraction, some recent studies use distant supervision to generate labeled data for training (Mintz et al., 2009; Lin et al., 2016).",
+      "startOffset" : 148,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 13,
+      "context" : "To alleviate the human annotation efforts in relation extraction, some recent studies use distant supervision to generate labeled data for training (Mintz et al., 2009; Lin et al., 2016).",
+      "startOffset" : 148,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 12,
+      "context" : "Two studies (Levy et al., 2017; Obamuyide and Vlachos, 2018) treat zero-shot relation extraction as a different task (i.",
+      "startOffset" : 12,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 16,
+      "context" : "Two studies (Levy et al., 2017; Obamuyide and Vlachos, 2018) treat zero-shot relation extraction as a different task (i.",
+      "startOffset" : 12,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 1,
+      "context" : "ZS-BERT (Chen and Li, 2021) predicts unseen relations with attribute representation learning.",
+      "startOffset" : 8,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 7,
+      "context" : "Recently, Instancewise Contrastive Learning (Instance-CL) (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021; Zhang et al., 2021) has achieved remarkable",
+      "startOffset" : 58,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 2,
+      "context" : "Recently, Instancewise Contrastive Learning (Instance-CL) (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021; Zhang et al., 2021) has achieved remarkable",
+      "startOffset" : 58,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 28,
+      "context" : "Recently, Instancewise Contrastive Learning (Instance-CL) (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021; Zhang et al., 2021) has achieved remarkable",
+      "startOffset" : 58,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 5,
+      "context" : "Recently, Instancewise Contrastive Learning (Instance-CL) (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021; Zhang et al., 2021) has achieved remarkable",
+      "startOffset" : 58,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 31,
+      "context" : "Recently, Instancewise Contrastive Learning (Instance-CL) (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021; Zhang et al., 2021) has achieved remarkable",
+      "startOffset" : 58,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 17,
+      "context" : "Many relation extraction methods (Qian et al., 2008; Zeng et al., 2014; Zhou et al., 2016) are supervised model.",
+      "startOffset" : 33,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 30,
+      "context" : "Many relation extraction methods (Qian et al., 2008; Zeng et al., 2014; Zhou et al., 2016) are supervised model.",
+      "startOffset" : 33,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 33,
+      "context" : "Many relation extraction methods (Qian et al., 2008; Zeng et al., 2014; Zhou et al., 2016) are supervised model.",
+      "startOffset" : 33,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 4,
+      "context" : "Recently, some studies focus on pre-training language model (Devlin et al., 2019; Liu et al., 2019; Lan et al., 2020) because of its powerful capability of semantic representation.",
+      "startOffset" : 60,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 14,
+      "context" : "Recently, some studies focus on pre-training language model (Devlin et al., 2019; Liu et al., 2019; Lan et al., 2020) because of its powerful capability of semantic representation.",
+      "startOffset" : 60,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 11,
+      "context" : "Recently, some studies focus on pre-training language model (Devlin et al., 2019; Liu et al., 2019; Lan et al., 2020) because of its powerful capability of semantic representation.",
+      "startOffset" : 60,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 29,
+      "context" : "Unsupervised relation extraction (Yu et al., 2017; Saha et al., 2018; Stanovsky et al., 2018) can discover semantic relation feature from data without human annotations.",
+      "startOffset" : 33,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 23,
+      "context" : "Unsupervised relation extraction (Yu et al., 2017; Saha et al., 2018; Stanovsky et al., 2018) can discover semantic relation feature from data without human annotations.",
+      "startOffset" : 33,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 7,
+      "context" : "In the field of image and natural language processing, many recent successes are inspired by contrastive learning (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 114,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 2,
+      "context" : "In the field of image and natural language processing, many recent successes are inspired by contrastive learning (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 114,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 28,
+      "context" : "In the field of image and natural language processing, many recent successes are inspired by contrastive learning (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 114,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 5,
+      "context" : "In the field of image and natural language processing, many recent successes are inspired by contrastive learning (He et al., 2020; Chen et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 114,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 31,
+      "context" : "SCCL (Zhang et al., 2021) jointly optimizes a contrastive loss and a clustering loss to disperse overlap categories in the representation space.",
+      "startOffset" : 5,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 22,
+      "context" : ", x L i ] where two entities e1 and e2 are mentioned, we use the ENTITY MARKERS (Soares et al., 2019) to augment Xi to better extract relation features from context.",
+      "startOffset" : 80,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 4,
+      "context" : "Then we use BERT (Devlin et al., 2019) to obtain the sentence embeddings hi ∈ RL×d:",
+      "startOffset" : 17,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 5,
+      "context" : "For a minibatch with N pairs, we follow the contrastive framework in SimCSE (Gao et al., 2021) and take a crossentropy objective with in-batch negatives (Chen et al.",
+      "startOffset" : 76,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2021) and take a crossentropy objective with in-batch negatives (Chen et al., 2017) and the training objective for (ri, r̂i) is:",
+      "startOffset" : 66,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 20,
+      "context" : "To amplify the semantic difference between similar instances without breaking the semantic of relation representations, we explore five different data augmentations T (·) for contrastive instance learning, including feature cutoff (Shen et al., 2020), random mask (Hinton et al.",
+      "startOffset" : 231,
+      "endOffset" : 250
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2020), random mask (Hinton et al., 2012), dropout (Gao et al.",
+      "startOffset" : 21,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2012), dropout (Gao et al., 2021), composition of dropout and feature cutoff and composition of dropout and random mask.",
+      "startOffset" : 17,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 28,
+      "context" : "Random mask is proved its effectiveness as an augmentation strategy (Yan et al., 2021).",
+      "startOffset" : 68,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 5,
+      "context" : "Dropout has been shown its effectiveness as minimal data augmentation by SimCSE (Gao et al., 2021).",
+      "startOffset" : 80,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 2,
+      "context" : "Composition of augmentations is an effective strategy in image domain (Chen et al., 2020).",
+      "startOffset" : 70,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 10,
+      "context" : "And we use an Adam optimizer (Kingma and Ba, 2014), in which the learning rate is 5e−5.",
+      "startOffset" : 29,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 21,
+      "context" : "We follow the setting in the previous work (Simon et al., 2019) to convert pseudo labels predicted by clustering to relation labels.",
+      "startOffset" : 43,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 26,
+      "context" : "For evaluation metrics, we adopt three commonly-used metrics (Wu et al., 2019; Hu et al., 2020; Zhang et al., 2021) to measure the effectiveness of clustering : B3 (Bagga and Baldwin, 1998), Normalized Mutual Information (NMI) and Adjusted Rand Index (ARI).",
+      "startOffset" : 61,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 9,
+      "context" : "For evaluation metrics, we adopt three commonly-used metrics (Wu et al., 2019; Hu et al., 2020; Zhang et al., 2021) to measure the effectiveness of clustering : B3 (Bagga and Baldwin, 1998), Normalized Mutual Information (NMI) and Adjusted Rand Index (ARI).",
+      "startOffset" : 61,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 31,
+      "context" : "For evaluation metrics, we adopt three commonly-used metrics (Wu et al., 2019; Hu et al., 2020; Zhang et al., 2021) to measure the effectiveness of clustering : B3 (Bagga and Baldwin, 1998), Normalized Mutual Information (NMI) and Adjusted Rand Index (ARI).",
+      "startOffset" : 61,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2021) to measure the effectiveness of clustering : B3 (Bagga and Baldwin, 1998), Normalized Mutual Information (NMI) and Adjusted Rand Index (ARI).",
+      "startOffset" : 56,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 30,
+      "context" : "We compare RCL to previous methods consisting of CNN (Zeng et al., 2014), Attention BiLSTM (Zhou et al.",
+      "startOffset" : 53,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2014), Attention BiLSTM (Zhou et al., 2016), RSNs (Wu et al.",
+      "startOffset" : 26,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2019), MTB (Soares et al., 2019), ZS-BERT (Chen and Li, 2021).",
+      "startOffset" : 13,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 5,
+      "context" : "It demonstrate that Dropout essentially acts as minimal data augmentation (Gao et al., 2021) and the noise produced by Dropout can make model learn the difference between similar instances better.",
+      "startOffset" : 74,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 2,
+      "context" : "It shows that different from the image domain (Chen et al., 2020), composition of augmentations is not always effective for the text domain.",
+      "startOffset" : 46,
+      "endOffset" : 65
+    } ],
+    "year" : 0,
+    "abstractText" : "Zero-shot relation extraction aims to identify novel relations which cannot be observed at the training stage. However, it still faces some challenges since the unseen relations of instances are similar or the input sentences have similar entities, the unseen relation representations from different categories tend to overlap and lead to errors. In this paper, we propose a novel Relation Contrastive Learning framework (RCL) to mitigate above two types of similar problems: Similar Relations and Similar Entities. By jointly optimizing a contrastive instance loss with a relation classification loss on seen relations, RCL can learn subtle difference between instances and achieve better separation between different relation categories in the representation space simultaneously. Especially in contrastive instance learning, the dropout noise as data augmentation is adopted to amplify the semantic difference between similar instances without breaking relation representation, so as to promote model to learn more effective representations. Experiments conducted on two well-known datasets show that RCL can significantly outperform previous state-of-the-art methods. Moreover, if the seen relations are insufficient, RCL can also obtain comparable results with the model trained on the full training set, showing the robustness of our approach1.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,597 @@
+{
+  "name" : "ARR_2022_296_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "DEGREE: A Data-Efficient Generation-Based Event Extraction Model",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Event extraction (EE) aims to extract different types of events, each of which includes a trigger and several participants (arguments) with specific roles, from the given passage. For example, in Figure 1, a Justice:Execute event is triggered by the word “execution” and this event contains three argument roles, including an Agent (Indonesia) who carries out the execution, a Person been executed (convicts), and a Place where the event occurs (not mentioned in the passage). Prior works usually divide EE into two subtasks (Wadden et al., 2019; Lin et al., 2020; Fincke et al., 2021): (1) event\ndetection, which identifies the event triggers and their types, and (2) event argument extraction, which extracts the participants (arguments) of the event and their roles when given an event type and the corresponding event trigger.\nSeveral previous EE approaches rely on a large amount of annotated data for training (Nguyen and Grishman, 2015; Nguyen et al., 2016; Du and Cardie, 2020; Paolini et al., 2021). However, these high-quality event annotations are expensive to be obtained. For example, the ACE 2005 corpus (Doddington et al., 2004), one of the most common EE datasets, requires two rounds of annotations by linguistics experts. The high annotation costs make these models hard to be extended to new domains and new event types. Therefore, how to learn a data-efficient EE model trained with only a few annotated examples is a crucial research question.\nIn this paper, we focus on low-resource event extraction, where only a small amount of training examples are available during training. As illustrated in Figure 2, we propose DEGREE (Data-Efficient GeneRative Event Extraction), a generation-based model that takes a passage and a manually designed prompt as the input, and learns to summarize the passage into a natural sentence following a predefined template. The event triggers and arguments can then be extracted from the generated sentence by using a deterministic algorithm.\nDEGREE enjoys the following three advantages to learn well with less training data. First, the gen-\neration framework provides label semantics with the help of the designed template in the prompts. As the example in Figure 2 shows, the word “somewhere” in the prompt guides the model to predict words being similar to location for the role Place. Also, the word “attacked” in the prompt depicts the relationship between the role Attacker and the role Target. With these kinds of guidance, DEGREE can make accurate predictions without many training examples. Second, the prompts can be further extended to include additional weakly-supervised information about the task, such as the description of the event and similar keywords.1 This information facilitates DEGREE to learn under the low-resource situation. Finally, DEGREE is designed for end-toend event extraction and can solve event detection and event argument extraction at the same time. Utilizing the shared knowledge and dependencies between the two tasks makes DEGREE more dataefficient.\nPrior approaches on EE usually have only one or two above-mentioned advantages. For example, previous classification-based models (Nguyen et al., 2016; Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020) are hard to handle label semantics and utilize the weakly-supervised information. Recently proposed generation-based models solve event extraction in a pipeline fashion; therefore, they cannot leverage\n1These resources are usually readily available. In our experiments, we take the weak supervision signals from the annotation guideline, which is provided along with the dataset.\nthe shared knowledge between subtasks (Paolini et al., 2021; Li et al., 2021). In addition, their generated outputs are not natural sentences, which hinders the utilization of label semantics (Paolini et al., 2021; Lu et al., 2021). As a result, DEGREE can achieve significantly better performance than prior approaches on low-resource event extraction, as we will demonstrate in Section 3.\nOur contributions can be summarized as follows: • We propose DEGREE, a generation-based end-\nto-end event extraction model that learns well with less data by better incorporating label semantics and shared knowledge (Section 2).\n• We conduct experiments on ACE 2005 (Doddington et al., 2004) and ERE-EN (Song et al., 2015) to demonstrate the strong performance of DEGREE in the low-resource setting (Section 3).\n• We present comprehensive ablation studies in both the low-resource setting and high-resource setting to better understand the advantages and the disadvantages of our model (Section 4)."
+    }, {
+      "heading" : "2 Data-Efficient Event Extraction",
+      "text" : "We introduce DEGREE, a generation-based model for low-resource event extraction. Unlike previous works (Wadden et al., 2019; Lin et al., 2020), which separate event extraction into two pipelined tasks (event detection and event argument extraction), DEGREE is designed for the end-to-end event extraction and makes trigger predictions and argument predictions at the same time."
+    }, {
+      "heading" : "2.1 DEGREE",
+      "text" : "We formulate event extraction as a conditional generation problem. As illustrated in Figure 2, given a passage and our designed prompt, DEGREE generates an output following a particular format. The final predictions of event triggers and argument roles can be then parsed from the generated output with a deterministic algorithm. Compared to the previous classification-based models (Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020), the generation framework provides a flexible way to include additional information and guidance. By designing appropriate prompts, we encourage DEGREE to better capture the dependencies between entities and therefore reduce the number of needed training examples.\nThe desired prompt not only provides information but also defines the output format. As shown in Figure 2, it contains the following components:\n• Event type definition describes the definition for the given event type.2 For example, “The event is related to conflict and some violent physical act.” describes a Conflict:Attack event.\n• Event keywords presents some words that are semantically related to the given event type. For instance, war, attack, and terrorism are three event keywords for the Conflict:Attack event. In practice, we collect three words that appear as the triggers in the example sentences from the annotation guidelines.\n• E2E template defines the expected output format and can be separated into two parts. The first part is called ED template, which is designed as “Event trigger is <Trigger>”, where\n“<Trigger>” is a special token serving as a placeholder. The second part is the EAE template, which differs based on the given event type. For example, in Figure 2, the EAE template for the Conflict:Attack event is “some attacker attacked some facility, someone, or some organization by some way in somewhere”. Each underlined string starting with “some-” serves as a placeholder corresponding to an argument role in the Conflict:Attack event. For instance, “some way” corresponds to the role Instrument and “somewhere” corresponds to the role Place. Notice that every event type has its own EAE template. The full list of EAE templates and the constructing details can be found in Appendix A. 2The definition can be derived from the annotation guide-\nlines, which are provided along with the datasets.\nTraining. The training objective of DEGREE is to generate an output that replaces the placeholders in E2E template with the gold labels. Take Figure 2 as an example, DEGREE is expected to replace\n“<Trigger>” with the gold trigger (detonated), replace “some attacker” with the gold argument for role Attacker (Palestinian), and replace “some way” with the gold argument for role Instrument (bomb). If there are multiple arguments for the same role, they are concatenated with “and”; if there is no predicted argument for one role, the model should keep the corresponding placeholder (i.e, “some-” in the E2E template). For the case that there are multiple triggers for the given event type, DEGREE will generate the E2E template multiple times such that each E2E template corresponds to each trigger and its argument roles. We put more training details in Appendix B.\nInference. We enumerate all event types and generate an output for each event type. Then, we compare the generated output with the placeholders in E2E template to determine the predicted trigger spans and predicted argument spans. Finally, we apply string matching to convert the word spans to the offsets in the passage. If the predicted span appears in the passage multiple times, we choose all that match for trigger predictions and choose the one being closest to the given trigger span for argument predictions.\nDiscussion. Notice that the E2E template plays an important role for DEGREE. First, it serves as the control signal and defines the expected output format. Second, it provides label semantics to help DEGREE make accurate predictions. Those placeholders (words starting with “some-”) in the E2E template give DEGREE some hints about the entity types of arguments. For instance, when seeing “somewhere”, DEGREE tends to generate a location rather than a person. In addition, the words other than “some-” describe the relationships between roles. For example, DEGREE knows the relation between the role Attacker and the role Target (who is attacking and who is attacked) because of the word “attacked” in E2E template. This guidance makes DEGREE learn the dependencies between entities well with less training data.\nUnlike previous generation-based approaches (Paolini et al., 2021; Li et al., 2020), we intentionally write the E2E templates in natural sentences. This not only utilizes label semantics better but also\nmakes the model easier to leverage the knowledge from the pre-trained decoder. In Section 4, we will provide experiments to demonstrate the advantage of using natural sentences.\nWe want to point out one advantage of using generation-based models under the low-resource scenario compared to previous classification-based event extraction models — generation-based models do not require named entity annotations (Sha et al., 2018; Lin et al., 2020). The pre-trained decoder inherently identifies reasonable entity spans, which makes generation-based models become a good choice when annotations are expensive.\nCost of template constructing. DEGREE does require human effort to design the templates; however, writing those templates is much easier and more effortless than collecting complicated event annotations. As shown in Appendix A, we keep the EAE templates as simple and short as possible. Therefore, it takes only about one minute for people who are not linguistic experts to compose a template. In fact, several prior works (Liu et al., 2020; Du and Cardie, 2020; Li et al., 2020) also use constructed templates as weakly-supervised signals to improve models. In Section 4, we will study how different templates affect the performance."
+    }, {
+      "heading" : "2.2 DEGREE in Pipeline Framework",
+      "text" : "DEGREE is flexible and can be easily modified to DEGREE(PIPE), which first focuses event detection (ED) and then solves event argument extraction (EAE). DEGREE(PIPE) consists of two models: (1) DEGREE(ED), which aims to exact event triggers for the given event type, and (2) DEGREE(EAE), which identifies argument roles for the given event type and the corresponding trigger. DEGREE(ED) and DEGREE(EAE) are similar to DEGREE but with different prompts and output formats. We describe the difference as follows.\nDEGREE(ED). The prompt of DEGREE(ED) contains the following components:\n• Event type definition is the same as the ones for DEGREE.\n• Event keywords is the same as the one for DEGREE.\n• ED template is designed as “Event trigger is <Trigger>”. It is actually the first part of the E2E template.\nSimilar to DEGREE, the objective of DEGREE(ED) is to generate an output that replaces “<Trigger>”\nin the ED template with event triggers.\nDEGREE(EAE). The prompt of DEGREE(EAE) contains the following components:\n• Event type definition is the same as the one for DEGREE.\n• Query trigger is a string that indicates the trigger word for the given event type. For example,\n“The event trigger word is detonated” points out that “detonated” is the given trigger.\n• EAE template is an event-type-specific template mentioned previously. It is actually the second part of the E2E template. The full list of EAE templates can be found in Appendix A.\nSimilar to DEGREE, the goal for DEGREE(EAE) is to generate an outputs that replace the placeholders in EAE template with event arguments.\nIn Section 3, we will compare DEGREE with DEGREE(PIPE) to study the benefit of dealing with event extraction in an end-to-end manner under the low-resource setting."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : "We conduct experiments for low-resource event extraction to study how DEGREE performs."
+    }, {
+      "heading" : "3.1 Experimental Settings",
+      "text" : "Datasets. We consider ACE 2005 (Doddington et al., 2004) and follow the pre-processing in Wadden et al. (2019) and Lin et al. (2020), resulting in two variants: ACE05-E and ACE05-E+. Both contain 33 event types and 22 argument roles. In addition, we consider ERE-EN (Song et al., 2015) and adopt the pre-processing in Lin et al. (2020), which keeps 38 event types and 21 argument roles.\nData split for low-resource setting. We generate different proportions (1%, 2%, 3%, 5%, 10%, 20%, 30%, and 50%) of training data to study the influence of the size of training set and use the original dev set and test set for evaluation. Appendix C lists more details about the split generating process and the data statistics.\nEvaluation metrics. We consider the same criteria in prior works (Wadden et al., 2019; Lin et al., 2020). (1) Trigger F1-score: an trigger is correctly identified (Tri-I) if its offset matches the gold one; it is correctly classified (Tri-C) if its event type also matches the gold one. (2) Argument F1-score: an argument is correctly identified (Arg-I) if its offset\nand event type match the gold ones; it is correctly classified (Arg-C) if its role matches as well.\nCompared baselines. We consider the following classification-based models: (1) OneIE (Lin et al., 2020), the current state-of-the-art (SOTA) EE model trained with designed global features. (2) BERT_QA (Du and Cardie, 2020), which views EE tasks as a sequence of extractive question answering problems. Since it learns a classifier to indicate the position of the predicted span, we view it as a classification model. We also consider the following generation-based models: (3) TANL (Paolini et al., 2021), which treats EE tasks as translation tasks between augmented natural languages. (4) Text2Event (Lu et al., 2021), a sequence-tostructure model that convert the input passage to a tree-like event structure. Notice that the outputs of both generation-based baselines are not natural sentences. Therefore, it is more difficult for them to utilize the label semantics. All the implementation details can be found in Appendix D. It is worth noting that we train OneIE with named entity an-\nnotations, as the original papers suggest, while the other models are trained without entity annotations."
+    }, {
+      "heading" : "3.2 Main Results",
+      "text" : "Table 1 shows the trigger classification F1-scores and the argument classification F1-scores across three datasets with different proportions of training data. The results are visualized in Figure 3. Since our task is end-to-end event extraction, the argument classification F1-score is the more important metric that we considered when comparing models.\nFrom the figure and the table, we can observe that both DEGREE and DEGREE(PIPE) outperform all other baselines when using less than 10% of the training data. The performance gap becomes much more significant under the extremely low data situation. For example, when only 1% of training data is available, DEGREE and DEGREE(PIPE) achieve more than 15 points of trigger classification F1scores improvement and more than 5 points of argument classification F1-scores. This demonstrates the effectiveness of our design. The generationbased model with carefully designed prompts is able to utilize the label semantics and the additional weakly-supervised signals, thus, helps the learning under the low-resource regime.\nAnother interesting finding is that DEGREE and DEGREE(PIPE) seem to be more beneficial to argument prediction than trigger prediction. For instance, OneIE, the strongest baseline, requires 20% of training data to achieve competitive performance on trigger prediction to DEGREE and DEGREE(PIPE); however, it requires about 50% of training data to achieve competitive performance on argument prediction. The reason is that the ability to capture dependencies becomes more important for argument prediction than trigger prediction since arguments are usually strongly dependent on each other compared to triggers. Therefore, the improvements of our models for argument prediction are more significant.\nFinally, we observe that DEGREE is slightly better than DEGREE(PIPE) under the low-resource setting. We hypothesize that DEGREE jointly predicts triggers and arguments and therefore can better take advantage of the output dependencies."
+    }, {
+      "heading" : "3.3 High-Resource Event Extraction",
+      "text" : "While we focus on data-efficient learning for lowresource event extraction, to better understand the advantages and disadvantages of our model and make sure that it is indeed more data-efficient,\nrather than simply a stronger model, we additionally study DEGREE in the high-resource setting for controlled comparisons.\nCompared baselines. In addition to the previously mentioned EE models: OneIE (Lin et al., 2020), BERT_QA (Du and Cardie, 2020), TANL (Paolini et al., 2021), and Text2Event (Lu et al., 2021), we also consider the following baselines focusing on the high-resource setting. dbRNN (Sha et al., 2018) is classificationbased model that adds dependency bridges for event extraction. DyGIE++ (Wadden et al., 2019) is a classification-based model with span graph propagation technique. Joint3EE (Nguyen and Nguyen, 2019) is classification-based model jointly trained with entity, trigger, and argument annotations. MQAEE (Li et al., 2020) converts EE to a series of argument extraction question answering problems. BART-Gen (Li et al., 2021) is a generation-based model focusing on only event argument extraction.3 Appendix D shows the implementation details.\n3We follow the original paper and use TAPKEY as their event detection model.\nResults for event extraction. Table 2 shows the results of high-resource event extraction. In terms of trigger predictions (Tri-C), DEGREE and DEGREE(PIPE) outperforms all the baselines except for OneIE, the current state-of-the-art model. For argument predictions (Arg-C), our models have slightly better performance than OneIE in two out of the three datasets. When enough training examples are available, models can learn more sophisticated features from data, which do not necessarily follow the learned dependencies. Therefore, the advantage of DEGREE over DEGREE(PIPE) becomes less obvious. This result justifies our hypothesis that DEGREE has better performance for the lowresource setting because of its ability to better capture dependencies.\nResults for event argument extraction. In Table 3, we additionally study the performance for event argument extraction task, where the model makes argument predictions with the gold trigger provided. Interestingly, DEGREE(EAE) achieves pretty strong performance and outperforms other baselines with a large margin. Combining the results in Table 2, we hypothesize that event argument extraction is a more challenging task than event trigger detection and it requires more training examples to learn well. Hence, our proposed model, which takes the advantage of using label semantics to better capture dependencies, achieves a new state-of-the-art for event argument extraction."
+    }, {
+      "heading" : "4 Ablation Study",
+      "text" : "In this section, we present comprehensive ablation studies to justify our design. To better understand the contribution of each component in the designed prompt and their effects on the different tasks, we ablate DEGREE(EAE) and DEGREE(ED) for both low-resource and high-resource situations.\nImpacts of components in prompts. Table 4 lists the performance changes when removing the components in the prompts for event detection on ACE05-E. The performance decreases whenever removing any one of event type definition, event keywords, and ED template. The results suggest that three components are all necessary.\nTable 5 demonstrates how different components in prompts affect the performance of event argument extraction on ACE05-E. Removing any one of event type definition, query trigger, and EAE template leads to performance drops,\nwhich validates their necessity. We observe that query trigger plays the most important role among the three and when less training data is given, the superiority of leveraging any of these weaklysupervised signal becomes more obvious.\nEffects of different template designs. To verify the importance of using natural sentences as outputs, we study three variants of EAE templates:\n• Natural sentence. Our proposed templates described in Section 2, e.g., “somebody was born in somewhere.”, where “somebody” and “somewhere” are placeholders that can be replaced by the corresponding arguments.\n• Natural sentence with special tokens. It is similar to the natural sentence one except for using role-specific special tokens instead of “some-” words. For example, “<Person> was born in <Place>.” We consider this to study the label semantics of roles.\n• HTML-like sentence with special tokens. To study the importance of using natural sentence, we also consider HTML-like sentence, e.g., “<Person> </Person> <Place> </Place>”. The model aims to put argument predictions between the corresponding HTML tags.\nThe results of all variants of EAE templates on ACE05-E are shown in Table 6. We notice that writing templates in a natural language style get better performance, especially when only a few data is available (10% of data). This shows our design’s capability to leverage pre-trained knowledge\nin the generation process. Additionally, there are over 1 F1 score performance drops when replacing natural language placeholders with special tokens. This confirms that leveraging label semantics for different roles is beneficial.\nSensitivity to template design. Finally, we study how sensitive our model is to the template. In addition to the original design of templates for event argument extraction, we compose other two sets of templates with different constructing rules (e.g., different word choices and different orders of roles). Table 7 shows the results of using different sets of templates. We observe a performance fluctuation when using different templates, which indicates that the quality of templates does affect the performance to a certain degree. Therefore, we need to be cautious when designing templates. However, even though our model could be sensitive to the template design, it still outperforms OneIE and BART-Gen, which are the best classification-based model and the best generation-based baseline, respectively."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Fully supervised event extraction. Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020). Many of them use classification-based models and use pipeline-style frameworks to extract events (Nguyen et al., 2016; Yang et al., 2019; Wadden et al., 2019). To better leverage shared knowledge in event triggers and arguments, some works\npropose to incorporate global features to jointly decide triggers and arguments (Lin et al., 2020; Li et al., 2013; Yang and Mitchell, 2016). Recently, few generation-based event extraction models have been proposed. TANL (Paolini et al., 2021) treats event extraction as translation tasks between augmented natural languages. Their predicted target— augmented language embed labels into the input passage via using brackets and vertical bar symbols, hindering the model from fully leveraging label semantics. BART-Gen (Li et al., 2021) is also a generation-based model focusing on documentlevel event argument extraction. Yet, similar to TANL, they solve event extraction with a pipeline, which prevents knowledge sharing across subtasks. All these fully supervised methods can achieve substantial performance with a large amount of annotated data. However, their designs are not specific for low-resource scenarios, hence, these models can not enjoy all the benefits that DEGREE obtains for low-resource event extraction at the same time, as we mentioned in Section 1.\nLow-resource event extraction. It has been a rising interest in event extraction under less data scenario. Liu et al. (2020) uses a machine reading comprehension formulation to conduct event extraction in a low-resource regime. Text2Event (Lu et al., 2021), a sequence-to-structure generation paradigm, first presents events in a linearized format, and then trains a generative model to generate the linearized event sequence. Text2Event’s unnatural output format hinders the model from fully leveraging pre-trained knowledge. Hence, their model falls short on the cases with only extremely low data being available (as shown in Section 3).\nAnother thread of works are using meta-learning to deal with the less label challenge (Deng et al., 2020; Shen et al., 2021; Cong et al., 2021). However, their methods can only be applied to event detection, which differs from our main focus on studying end-to-end event extraction."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we present DEGREE, a data-efficient generation-based event extraction model. DEGREE requires less training data because it better utilizes label semantics as well as weakly-supervised information, and captures better dependencies by jointly predicting triggers and arguments. Our experimental results and ablation studies show the superiority of DEGREE for low-resource event extraction."
+    }, {
+      "heading" : "A EAE Template Constructing",
+      "text" : "Our strategy to create an EAE template is first identifying all valid argument roles for the event type,4 such as Attacker, Target, Instrument, and Place roles. Then, for each argument role, according to the semantics of the role type, we select natural and fluent words to form its placeholder (e.g., some way for Instrument). This design aims to provide a simple way to help the model learn both the roles’ label semantics and the event structure. Finally, we create a natural language sentence that connects all these placeholders. Notice that we try to keep the template as simple and short as possible. Table 8 lists all designed EAE templates for ACE05-E and ACE05-E+. The EAE templates of ERE-EN can be found in Table 9."
+    }, {
+      "heading" : "B Training Details of Proposed Model",
+      "text" : "Given a passage, its annotated event types are consider as positive event types. During training, we additionally sample m event types that are not related to the passage as the negative examples, where m is a hyper-parameter. In our experiments, m is usually set to 13 or 15.\nFor all of DEGREE, DEGREE(ED), and DEGREE(EAE), we fine-tune the pre-trained BARTlarge (Lewis et al., 2020) with Huggingface package (Wolf et al., 2020). The number of parameters is around 406 millions. We train DEGREE with our machine that equips 128 AMD EPYC 7452 32- Core Processor, 4 NVIDIA A100 GPUs, and 792G RAM. We consider AdamW optimizer (Loshchilov and Hutter, 2019) with learning rate set to 10−5 and the weight decay set to 10−5. We set the batch size to 6 for DEGREE(EAE) and 32 for DEGREE(ED) and DEGREE. The number of training epochs is 45. It takes around 2 hours, 18 hours, 22 hours to train DEGREE(EAE), DEGREE(ED), and DEGREE, respectively.\nWe do hyper-parameter search on m, the number of negative examples, from {3, 5, 7, 10, 13, 15, 18, 21}, and our preliminary trials shows that m less than 10 are usually less useful. For the learning rate and the weight decay, we tune it based on our preliminary experiment for event argument extraction from {10−5, 10−4}, while they are both fixed to 10−5 for all the experiments.\n4The valid roles for each event type are predefined in the event ontology for each dataset, or can be decided by the user of interest."
+    }, {
+      "heading" : "C Datasets",
+      "text" : "We consider ACE 20055 (Doddington et al., 2004) and ERE6 (Song et al., 2015). Both consider LDC User Agreement for Non-Members7 as the licenses. Both datasets are created for entity, relation, and event extraction while our focus is only event extraction in this paper. In the original ACE 2005 dataset, it contains data for English, Chinese, and Arabic and we only take the English data for our experiment. In the original ERE dataset, it contains data for English, and Chinese and we only take the English data for our experiment as well.\nBecause both datasets contain event like Justice:Execute and Life:Die, it is possible that some offensive words (e.g., killed) would appear in the passage. Also, some real names may appear in the passage as well (e.g., Palestinian president, Mahmoud Abbas). How to accurately identify these kinds of information is part of the goal of the task. Therefore, we do not take any changes on the datasets for protecting or anonymizing.\nWe split the training data based on documents, which is a more realistic setup compared to splitting data by instance. Table 10 lists the statistics of ACE05-E, ACE05-E+, and ERE-EN. Specifically, we try to make each proportion of data contain as many event types as possible.\nD Implementation Details\nThis section describes the implementation details for all baselines we use. We run the experiments with three different random seeds and report the best value.\n• DyGIE++: we use their released pre-trained model8 for evaluation.\n• OneIE: we use their provided code9 to train the model with default parameters.\n• BERT_QA: we use their provided code10 to train the model with default parameters.\n• TANL: we use their provided code11 to train the 5https://catalog.ldc.upenn.edu/\nLDC2006T06 6https://catalog.ldc.upenn.edu/ LDC2020T19 7https://catalog.ldc.upenn.edu/ license/ldc-non-members-agreement.pdf 8https://github.com/dwadden/dygiepp 9http://blender.cs.illinois.edu/ software/oneie/ 10https://github.com/xinyadu/eeqa 11https://github.com/amazon-research/ tanl\nmodel. We conduct the experiments with two variations: (1) using their default parameters, and (2) using their default parameters but with more training epochs. We observe that the second variant works better. As a result, we report the number obtained from the second setting. • Text2Event: we use their official code12 to train the model with the provided parameter setting.\n• dbRNN: we directly report the experimental results from their paper.\n• Joint3EE: we directly report the experimental results from their paper.\n• MQAEE: we directly report the experimental results from their paper.\n• BART-Gen: we report the experimental results from their released appendix13.\n12https://github.com/luyaojie/ Text2Event\n13https://github.com/raspberryice/ gen-arg/blob/main/NAACL_2021_Appendix. pdf"
+    }, {
+      "heading" : "E Few-Shot and Zero-Shot Event Extraction",
+      "text" : "In order to further test our models’ generaliability, we additionally conduct zero-shot and fewshot experiments on the ACE05-E dataset with DEGREE(ED) and DEGREE(EAE).\nSettings. We first select the top n common event types as “seen” types and use the rest as “unseen/rare” types, where the top common types are listed in Table 11. To simulate a zero-shot scenario, we remove all events with “unseen/rare” types from the training data. To simulate a few-shot scenario, we keep only k event examples for each “unseen/rare” type (denoted as k-shot). During the evaluation, we calculate micro F1-scores only for these “unseen/rare” types.\nCompared baselines. We consider the following baselines: (1) BERT_QA (Du and Cardie, 2020) (2) OneIE (Lin et al., 2020) (3) Matching baseline, a proposed baseline that makes trigger predictions by performing string matching between the input passage and the event keywords. (4) Lemmatization baseline, another proposed baseline that performs string matching on lemmatized input passage and the event keywords. (Note: (3) and (4) are baselines only for event detection tasks.)\nExperimental results. Figure 4, Table 12, and Table 13 show the results of n = 5 and n = 10. From the two subfigures in the left column, we see that DEGREE(ED) achieves promising results in the zero-shot setting. In fact, it performs better than BERT_QA trained in the 10-shot setting and OneIE trained in the 5-shot setting. This demonstrates the great potential of DEGREE(ED) to discover new event types. Interestingly, we observe that our two proposed baselines perform surprisingly well, suggesting that the trigger annotations in ACE05-E are actually not diverse. Despite their impressive performance, DEGREE(ED) still outperforms the matching baseline by over 4.7% absolute trigger classification F1 in both n = 5 and\nn = 10 cases in zero-shot scenario. Additionally, with only one training instance for each unseen type, DEGREE(ED) can outperform both proposed baselines.\nNext, we compare the results for the event argument extraction task. From the two middle subfigures, we observe that when given gold triggers, our model performs much better than all baselines with a large margin. Lastly, we train models for both trigger and argument extraction and report the final argument classification scores in the two right subfigures. We justify that our model has strong generalizability to unseen event types and it can outperform BERT_QA and OneIE even when they are both trained in 5-shot settings."
+    }, {
+      "heading" : "F Limitations and Potential Risks",
+      "text" : "Limitations. DEGREE assumes that some weakly-supervised information (the description of events, similar keywords, and human-written templates) is accessible and not expensive. We believe this assumption holds for most of common NLP tasks. However, for some specific domains, such as the biomedical domain, acquiring this information can be a bit difficult (e.g., needs to hire experts to write down templates), which increases the cost of training DEGREE. In addition, our proposed model is based on pre-trained language models. DEGREE performs well because it is able to leverage the prompts and the pre-trained knowledge. However, if the downstream domain is far from the pre-trained corpus, the advantage of leveraging knowledge becomes restricted.\nDue to the high cost of annotations, there are not many public datasets for event extraction. DEGREE achieves a good performance on two datasets (ACE 2005 and ERE-EN), which are more related to news-styled passages. When considering other downstream domains, it is possible that the improvement is not as significant as it is for the two datasets we use in the paper. The reason is the gap between the downstream domain knowledge and the pre-trained knowledge, as mentioned in the previous paragraph.\nPotential risks. DEGREE fine-tunes the pretrained generative language model (Lewis et al., 2020). Therefore, the generated output is potentially affected by the corpus for pre-training. Although with a low possibility, it is possible for our model to accidentally generate some malicious, counterfactual, and biased sentences, which may cause ethics concerns. We suggest carefully examining those potential issues before deploying the model in any real-world applications."
+    } ],
+    "references" : [ {
+      "title" : "The stages of event extraction",
+      "author" : [ "David Ahn." ],
+      "venue" : "Proceedings of the Workshop on Annotating and Reasoning about Time and Events.",
+      "citeRegEx" : "Ahn.,? 2006",
+      "shortCiteRegEx" : "Ahn.",
+      "year" : 2006
+    }, {
+      "title" : "Few-shot event detection with prototypical amortized conditional random field",
+      "author" : [ "Xin Cong", "Shiyao Cui", "Bowen Yu", "Tingwen Liu", "Yubin Wang", "Bin Wang." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL/IJCNLP.",
+      "citeRegEx" : "Cong et al\\.,? 2021",
+      "shortCiteRegEx" : "Cong et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Metalearning with dynamic-memory-based prototypical network for few-shot event detection",
+      "author" : [ "Shumin Deng", "Ningyu Zhang", "Jiaojian Kang", "Yichi Zhang", "Wei Zhang", "Huajun Chen." ],
+      "venue" : "The Thirteenth ACM International Conference on Web Search",
+      "citeRegEx" : "Deng et al\\.,? 2020",
+      "shortCiteRegEx" : "Deng et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The automatic content extraction (ACE) program - tasks, data, and evaluation",
+      "author" : [ "George R. Doddington", "Alexis Mitchell", "Mark A. Przybocki", "Lance A. Ramshaw", "Stephanie M. Strassel", "Ralph M. Weischedel." ],
+      "venue" : "Proceedings of the Fourth International",
+      "citeRegEx" : "Doddington et al\\.,? 2004",
+      "shortCiteRegEx" : "Doddington et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Event extraction by answering (almost) natural questions",
+      "author" : [ "Xinya Du", "Claire Cardie." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Du and Cardie.,? 2020",
+      "shortCiteRegEx" : "Du and Cardie.",
+      "year" : 2020
+    }, {
+      "title" : "Language model priming for cross-lingual event extraction",
+      "author" : [ "Steven Fincke", "Shantanu Agarwal", "Scott Miller", "Elizabeth Boschee." ],
+      "venue" : "arXiv preprint arXiv:2109.12383.",
+      "citeRegEx" : "Fincke et al\\.,? 2021",
+      "shortCiteRegEx" : "Fincke et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Refining event extraction through cross-document inference",
+      "author" : [ "Heng Ji", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 46th Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Ji and Grishman.,? 2008",
+      "shortCiteRegEx" : "Ji and Grishman.",
+      "year" : 2008
+    }, {
+      "title" : "BART: denoising sequence-to-sequence pre-training for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Event extraction as multi-turn question answering",
+      "author" : [ "Fayuan Li", "Weihua Peng", "Yuguang Chen", "Quan Wang", "Lu Pan", "Yajuan Lyu", "Yong Zhu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: Findings",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Joint event extraction via structured prediction with global features",
+      "author" : [ "Qi Li", "Heng Ji", "Liang Huang." ],
+      "venue" : "Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Li et al\\.,? 2013",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Document-level event argument extraction by conditional generation",
+      "author" : [ "Sha Li", "Heng Ji", "Jiawei Han." ],
+      "venue" : "Proceedings of the 2021 Conference of the North",
+      "citeRegEx" : "Li et al\\.,? 2021",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A joint neural model for information extraction with global features",
+      "author" : [ "Ying Lin", "Heng Ji", "Fei Huang", "Lingfei Wu." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Lin et al\\.,? 2020",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Event extraction as machine reading comprehension",
+      "author" : [ "Jian Liu", "Yubo Chen", "Kang Liu", "Wei Bi", "Xiaojiang Liu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Decoupled weight decay regularization",
+      "author" : [ "Ilya Loshchilov", "Frank Hutter." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019.",
+      "citeRegEx" : "Loshchilov and Hutter.,? 2019",
+      "shortCiteRegEx" : "Loshchilov and Hutter.",
+      "year" : 2019
+    }, {
+      "title" : "Text2event: Controllable sequence-tostructure generation for end-to-end event extraction",
+      "author" : [ "Yaojie Lu", "Hongyu Lin", "Jin Xu", "Xianpei Han", "Jialong Tang", "Annan Li", "Le Sun", "Meng Liao", "Shaoyi Chen." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the As-",
+      "citeRegEx" : "Lu et al\\.,? 2021",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Joint event extraction via recurrent neural networks",
+      "author" : [ "Thien Huu Nguyen", "Kyunghyun Cho", "Ralph Grishman." ],
+      "venue" : "The 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies",
+      "citeRegEx" : "Nguyen et al\\.,? 2016",
+      "shortCiteRegEx" : "Nguyen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Event detection and domain adaptation with convolutional neural networks",
+      "author" : [ "Thien Huu Nguyen", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Nguyen and Grishman.,? 2015",
+      "shortCiteRegEx" : "Nguyen and Grishman.",
+      "year" : 2015
+    }, {
+      "title" : "One for all: Neural joint modeling of entities and events",
+      "author" : [ "Trung Minh Nguyen", "Thien Huu Nguyen." ],
+      "venue" : "The Thirty-Third AAAI Conference on Artificial Intelligence, AAAI 2019, The Thirty-First Innovative Applications of Artificial Intelligence Con-",
+      "citeRegEx" : "Nguyen and Nguyen.,? 2019",
+      "shortCiteRegEx" : "Nguyen and Nguyen.",
+      "year" : 2019
+    }, {
+      "title" : "Structured prediction as translation between augmented natural languages",
+      "author" : [ "Giovanni Paolini", "Ben Athiwaratkun", "Jason Krone", "Jie Ma", "Alessandro Achille", "Rishita Anubhai", "Cícero Nogueira dos Santos", "Bing Xiang", "Stefano Soatto." ],
+      "venue" : "9th",
+      "citeRegEx" : "Paolini et al\\.,? 2021",
+      "shortCiteRegEx" : "Paolini et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Jointly extracting event triggers and arguments by dependency-bridge RNN and tensor-based argument interaction",
+      "author" : [ "Lei Sha", "Feng Qian", "Baobao Chang", "Zhifang Sui." ],
+      "venue" : "Proceedings of the ThirtySecond AAAI Conference on Artificial Intelligence",
+      "citeRegEx" : "Sha et al\\.,? 2018",
+      "shortCiteRegEx" : "Sha et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Adaptive knowledge-enhanced bayesian meta-learning for fewshot event detection",
+      "author" : [ "Shirong Shen", "Tongtong Wu", "Guilin Qi", "Yuan-Fang Li", "Gholamreza Haffari", "Sheng Bi." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL/IJCNLP.",
+      "citeRegEx" : "Shen et al\\.,? 2021",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "From light to rich ERE: annotation of entities, relations, and events",
+      "author" : [ "Zhiyi Song", "Ann Bies", "Stephanie M. Strassel", "Tom Riese", "Justin Mott", "Joe Ellis", "Jonathan Wright", "Seth Kulick", "Neville Ryant", "Xiaoyi Ma." ],
+      "venue" : "Proceedings of the The 3rd Workshop",
+      "citeRegEx" : "Song et al\\.,? 2015",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Entity, relation, and event extraction with contextualized span representations",
+      "author" : [ "David Wadden", "Ulme Wennberg", "Yi Luan", "Hannaneh Hajishirzi." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th",
+      "citeRegEx" : "Wadden et al\\.,? 2019",
+      "shortCiteRegEx" : "Wadden et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "HMEAE: hierarchical modular event argument extraction",
+      "author" : [ "Xiaozhi Wang", "Ziqi Wang", "Xu Han", "Zhiyuan Liu", "Juanzi Li", "Peng Li", "Maosong Sun", "Jie Zhou", "Xiang Ren." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Process-",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Huggingface’s transformers: State-of-the-art natural language processing",
+      "author" : [ "Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing:",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Joint extraction of events and entities within a document context",
+      "author" : [ "Bishan Yang", "Tom M. Mitchell." ],
+      "venue" : "The 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT).",
+      "citeRegEx" : "Yang and Mitchell.,? 2016",
+      "shortCiteRegEx" : "Yang and Mitchell.",
+      "year" : 2016
+    }, {
+      "title" : "Exploring pre-trained language models for event extraction and generation",
+      "author" : [ "Sen Yang", "Dawei Feng", "Linbo Qiao", "Zhigang Kan", "Dongsheng Li." ],
+      "venue" : "Proceedings of the 57th Conference of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 22,
+      "context" : "Prior works usually divide EE into two subtasks (Wadden et al., 2019; Lin et al., 2020; Fincke et al., 2021): (1) event Passage: Indonesia will delay the execution of six convicts including an Indian on",
+      "startOffset" : 48,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 11,
+      "context" : "Prior works usually divide EE into two subtasks (Wadden et al., 2019; Lin et al., 2020; Fincke et al., 2021): (1) event Passage: Indonesia will delay the execution of six convicts including an Indian on",
+      "startOffset" : 48,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 5,
+      "context" : "Prior works usually divide EE into two subtasks (Wadden et al., 2019; Lin et al., 2020; Fincke et al., 2021): (1) event Passage: Indonesia will delay the execution of six convicts including an Indian on",
+      "startOffset" : 48,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 16,
+      "context" : "amount of annotated data for training (Nguyen and Grishman, 2015; Nguyen et al., 2016; Du and Cardie, 2020; Paolini et al., 2021).",
+      "startOffset" : 38,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 15,
+      "context" : "amount of annotated data for training (Nguyen and Grishman, 2015; Nguyen et al., 2016; Du and Cardie, 2020; Paolini et al., 2021).",
+      "startOffset" : 38,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 4,
+      "context" : "amount of annotated data for training (Nguyen and Grishman, 2015; Nguyen et al., 2016; Du and Cardie, 2020; Paolini et al., 2021).",
+      "startOffset" : 38,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 18,
+      "context" : "amount of annotated data for training (Nguyen and Grishman, 2015; Nguyen et al., 2016; Du and Cardie, 2020; Paolini et al., 2021).",
+      "startOffset" : 38,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 15,
+      "context" : "For example, previous classification-based models (Nguyen et al., 2016; Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020) are hard to handle label semantics and utilize the weakly-supervised information.",
+      "startOffset" : 50,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 23,
+      "context" : "For example, previous classification-based models (Nguyen et al., 2016; Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020) are hard to handle label semantics and utilize the weakly-supervised information.",
+      "startOffset" : 50,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 26,
+      "context" : "For example, previous classification-based models (Nguyen et al., 2016; Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020) are hard to handle label semantics and utilize the weakly-supervised information.",
+      "startOffset" : 50,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 22,
+      "context" : "For example, previous classification-based models (Nguyen et al., 2016; Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020) are hard to handle label semantics and utilize the weakly-supervised information.",
+      "startOffset" : 50,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 11,
+      "context" : "For example, previous classification-based models (Nguyen et al., 2016; Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020) are hard to handle label semantics and utilize the weakly-supervised information.",
+      "startOffset" : 50,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 18,
+      "context" : "the shared knowledge between subtasks (Paolini et al., 2021; Li et al., 2021).",
+      "startOffset" : 38,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 10,
+      "context" : "the shared knowledge between subtasks (Paolini et al., 2021; Li et al., 2021).",
+      "startOffset" : 38,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 18,
+      "context" : "In addition, their generated outputs are not natural sentences, which hinders the utilization of label semantics (Paolini et al., 2021; Lu et al., 2021).",
+      "startOffset" : 113,
+      "endOffset" : 152
+    }, {
+      "referenceID" : 14,
+      "context" : "In addition, their generated outputs are not natural sentences, which hinders the utilization of label semantics (Paolini et al., 2021; Lu et al., 2021).",
+      "startOffset" : 113,
+      "endOffset" : 152
+    }, {
+      "referenceID" : 3,
+      "context" : "• We conduct experiments on ACE 2005 (Doddington et al., 2004) and ERE-EN (Song et al.",
+      "startOffset" : 37,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2004) and ERE-EN (Song et al., 2015) to demonstrate the strong performance of DEGREE in the low-resource setting (Section 3).",
+      "startOffset" : 19,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 22,
+      "context" : "Unlike previous works (Wadden et al., 2019; Lin et al., 2020), which separate event extraction into two pipelined tasks (event detection and event argument extraction), DEGREE is designed for the end-to-end event extraction and makes trigger predictions and argument predictions at the same time.",
+      "startOffset" : 22,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 11,
+      "context" : "Unlike previous works (Wadden et al., 2019; Lin et al., 2020), which separate event extraction into two pipelined tasks (event detection and event argument extraction), DEGREE is designed for the end-to-end event extraction and makes trigger predictions and argument predictions at the same time.",
+      "startOffset" : 22,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 23,
+      "context" : "Compared to the previous classification-based models (Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020), the generation framework provides a flexible way to include additional information",
+      "startOffset" : 53,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 26,
+      "context" : "Compared to the previous classification-based models (Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020), the generation framework provides a flexible way to include additional information",
+      "startOffset" : 53,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 22,
+      "context" : "Compared to the previous classification-based models (Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020), the generation framework provides a flexible way to include additional information",
+      "startOffset" : 53,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 11,
+      "context" : "Compared to the previous classification-based models (Wang et al., 2019; Yang et al., 2019; Wadden et al., 2019; Lin et al., 2020), the generation framework provides a flexible way to include additional information",
+      "startOffset" : 53,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 18,
+      "context" : "Unlike previous generation-based approaches (Paolini et al., 2021; Li et al., 2020), we intentionally write the E2E templates in natural sentences.",
+      "startOffset" : 44,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 8,
+      "context" : "Unlike previous generation-based approaches (Paolini et al., 2021; Li et al., 2020), we intentionally write the E2E templates in natural sentences.",
+      "startOffset" : 44,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 19,
+      "context" : "event extraction models — generation-based models do not require named entity annotations (Sha et al., 2018; Lin et al., 2020).",
+      "startOffset" : 90,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 11,
+      "context" : "event extraction models — generation-based models do not require named entity annotations (Sha et al., 2018; Lin et al., 2020).",
+      "startOffset" : 90,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 12,
+      "context" : "In fact, several prior works (Liu et al., 2020; Du and Cardie, 2020; Li et al., 2020) also use constructed templates as weakly-supervised signals to improve models.",
+      "startOffset" : 29,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 4,
+      "context" : "In fact, several prior works (Liu et al., 2020; Du and Cardie, 2020; Li et al., 2020) also use constructed templates as weakly-supervised signals to improve models.",
+      "startOffset" : 29,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 8,
+      "context" : "In fact, several prior works (Liu et al., 2020; Du and Cardie, 2020; Li et al., 2020) also use constructed templates as weakly-supervised signals to improve models.",
+      "startOffset" : 29,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 3,
+      "context" : "We consider ACE 2005 (Doddington et al., 2004) and follow the pre-processing in Wadden et al.",
+      "startOffset" : 21,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 21,
+      "context" : "In addition, we consider ERE-EN (Song et al., 2015) and adopt the pre-processing in Lin et al.",
+      "startOffset" : 32,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 22,
+      "context" : "We consider the same criteria in prior works (Wadden et al., 2019; Lin et al., 2020).",
+      "startOffset" : 45,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 11,
+      "context" : "We consider the same criteria in prior works (Wadden et al., 2019; Lin et al., 2020).",
+      "startOffset" : 45,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 11,
+      "context" : "We consider the following classification-based models: (1) OneIE (Lin et al., 2020), the current state-of-the-art (SOTA) EE model trained with designed global features.",
+      "startOffset" : 65,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 4,
+      "context" : "(2) BERT_QA (Du and Cardie, 2020), which views EE tasks as a sequence of extractive question answering problems.",
+      "startOffset" : 12,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 18,
+      "context" : "We also consider the following generation-based models: (3) TANL (Paolini et al., 2021), which treats EE tasks as translation tasks between augmented natural languages.",
+      "startOffset" : 65,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 14,
+      "context" : "(4) Text2Event (Lu et al., 2021), a sequence-tostructure model that convert the input passage to a tree-like event structure.",
+      "startOffset" : 15,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 11,
+      "context" : "In addition to the previously mentioned EE models: OneIE (Lin et al., 2020), BERT_QA (Du and Cardie, 2020), TANL (Paolini et al.",
+      "startOffset" : 57,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020), BERT_QA (Du and Cardie, 2020), TANL (Paolini et al.",
+      "startOffset" : 17,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2020), BERT_QA (Du and Cardie, 2020), TANL (Paolini et al., 2021), and Text2Event (Lu et al.",
+      "startOffset" : 45,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2021), and Text2Event (Lu et al., 2021), we also consider the following baselines focusing on the high-resource setting.",
+      "startOffset" : 24,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 19,
+      "context" : "dbRNN (Sha et al., 2018) is classificationbased model that adds dependency bridges for event extraction.",
+      "startOffset" : 6,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 22,
+      "context" : "DyGIE++ (Wadden et al., 2019) is a classification-based model with span graph propagation technique.",
+      "startOffset" : 8,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 17,
+      "context" : "Joint3EE (Nguyen and Nguyen, 2019) is classification-based model jointly trained with entity, trigger, and argument annotations.",
+      "startOffset" : 9,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 8,
+      "context" : "MQAEE (Li et al., 2020) converts EE to a series of argument extraction question answering problems.",
+      "startOffset" : 6,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 10,
+      "context" : "BART-Gen (Li et al., 2021) is a generation-based model focusing on only event argument extraction.",
+      "startOffset" : 9,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 0,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al.",
+      "startOffset" : 52,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 6,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al.",
+      "startOffset" : 52,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 15,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 19,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 17,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 26,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 11,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 12,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 8,
+      "context" : "Event extraction has been studied for over a decade (Ahn, 2006; Ji and Grishman, 2008) and most traditional event extraction works follow the fully supervised setting (Nguyen et al., 2016; Sha et al., 2018; Nguyen and Nguyen, 2019; Yang et al., 2019; Lin et al., 2020; Liu et al., 2020; Li et al., 2020).",
+      "startOffset" : 167,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 15,
+      "context" : "Many of them use classification-based models and use pipeline-style frameworks to extract events (Nguyen et al., 2016; Yang et al., 2019; Wadden et al., 2019).",
+      "startOffset" : 97,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 26,
+      "context" : "Many of them use classification-based models and use pipeline-style frameworks to extract events (Nguyen et al., 2016; Yang et al., 2019; Wadden et al., 2019).",
+      "startOffset" : 97,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 22,
+      "context" : "Many of them use classification-based models and use pipeline-style frameworks to extract events (Nguyen et al., 2016; Yang et al., 2019; Wadden et al., 2019).",
+      "startOffset" : 97,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 11,
+      "context" : "To better leverage shared knowledge in event triggers and arguments, some works propose to incorporate global features to jointly decide triggers and arguments (Lin et al., 2020; Li et al., 2013; Yang and Mitchell, 2016).",
+      "startOffset" : 160,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 9,
+      "context" : "To better leverage shared knowledge in event triggers and arguments, some works propose to incorporate global features to jointly decide triggers and arguments (Lin et al., 2020; Li et al., 2013; Yang and Mitchell, 2016).",
+      "startOffset" : 160,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 25,
+      "context" : "To better leverage shared knowledge in event triggers and arguments, some works propose to incorporate global features to jointly decide triggers and arguments (Lin et al., 2020; Li et al., 2013; Yang and Mitchell, 2016).",
+      "startOffset" : 160,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 18,
+      "context" : "TANL (Paolini et al., 2021) treats event extraction as translation tasks between augmented natural languages.",
+      "startOffset" : 5,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 10,
+      "context" : "BART-Gen (Li et al., 2021) is also a generation-based model focusing on documentlevel event argument extraction.",
+      "startOffset" : 9,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 14,
+      "context" : "Text2Event (Lu et al., 2021), a sequence-to-structure generation paradigm, first presents events in a linearized format, and then trains a generative model to generate the linearized event sequence.",
+      "startOffset" : 11,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 2,
+      "context" : "Another thread of works are using meta-learning to deal with the less label challenge (Deng et al., 2020; Shen et al., 2021; Cong et al., 2021).",
+      "startOffset" : 86,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 20,
+      "context" : "Another thread of works are using meta-learning to deal with the less label challenge (Deng et al., 2020; Shen et al., 2021; Cong et al., 2021).",
+      "startOffset" : 86,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 1,
+      "context" : "Another thread of works are using meta-learning to deal with the less label challenge (Deng et al., 2020; Shen et al., 2021; Cong et al., 2021).",
+      "startOffset" : 86,
+      "endOffset" : 143
+    } ],
+    "year" : 0,
+    "abstractText" : "Due to the high cost of human annotations, learning a data-efficient event extraction model that can be trained with only a few labeled examples has become a crucial challenge. In this paper, we focus on low-resource end-toend event extraction. We propose DEGREE, a model that formulates event extraction as a conditional generation problem. Given a passage and a manually designed prompt, DEGREE learns to summarize the event happening in the passage into a natural sentence that follows a predefined pattern. The final event structure predictions are then extracted from the generated sentence with a deterministic algorithm. DEGREE has the following advantages to learn well with less training data. First, with our design of prompts, DEGREE obtains semantic guidance by leveraging label semantics and thus better captures the argument roles. In addition, the proposed model is capable of using additional weakly-supervised information, such as the description of events. Finally, learning triggers and argument roles in an end-toend manner encourages the model to better utilize the shared knowledge and dependencies between them. Our experimental results and ablation studies demonstrate the strong performance of DEGREE for low-resource event extraction.",
+    "creator" : null
+  }
+}

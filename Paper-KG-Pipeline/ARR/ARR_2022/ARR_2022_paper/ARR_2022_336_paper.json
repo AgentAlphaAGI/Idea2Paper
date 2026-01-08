@@ -1,0 +1,434 @@
+{
+  "name" : "ARR_2022_336_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Automatic Multi-Label Prompting: Simple and Interpretable Few-Shot Classification",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Since the release of GPT-3 (Brown et al., 2020), several studies have focused on exploiting pretrained language models with only a few training examples (Brown et al., 2020; Gao et al., 2021; Shin et al., 2020). These works demonstrate the potential of using natural language prompts to encourage the model to recall similar patterns in its training corpus and thus make accurate predictions. This setting of few-shot learning is closer to how humans learn to solve a task, often without many examples as in a traditional deep learning paradigm. The use of prompts can strengthen the explicit connection between input and output, helping the model exploit the knowledge learned from pretraining in a better way. Furthermore, recent works (Schick and Schütze, 2021a,b; Gao et al., 2021) show that prompts can also help the model generalize better in fine-tuning.\nPrompt-based learning (i.e., prompting) aims to use a template to convert the original input into a prompt-based input with some unfilled masked tokens, and then use the pretrained language model to fill these masked tokens, and finally the tokens\n1We will make all code publicly available upon acceptance.\nfilled into these slots are mapped to the corresponding labels as the final output. In prompting, the design of prompts often plays an important role. Many attempts have been made in this emerging direction of prompt engineering (Shin et al., 2020; Gao et al., 2021). Meanwhile, finding a good mapping from the original task labels to tokens (i.e., label engineering) is also critical to few-shot performance, as found in Schick et al. (2020); Gao et al. (2021). However, manually assigning the label mapping requires human expertise with trial and error. One may argue that the same effort can be used to label more supervised data for a conventional deep learning pipeline. Thus, an efficient automatic label mapping method is desirable.\nIn this paper, we aim to design a method that can automatically find a good label mapping to save human effort from label engineering. We propose Automatic Multi-Label Prompting (AMuLaP), a simple yet effective method to tackle the label selection problem for few-shot classification. AMuLaP is a parameter-free statistical technique that can identify the label patterns from a few-shot training set given a prompt template. AMuLaP exploits multiple labels to suppress the noise and inherently extend the training set for prompt-based fine-tuning. Compared with a hand-crafted label mapping and previous works on automatic label mapping (Schick et al., 2020; Gao et al., 2021), AMuLaP achieves competitive performance despite being simpler and does not require access to the weights of the backbone model, or finetune an external pretrained language model for searching label mapping. We conduct extensive experiments and demonstrate the effectiveness of our method under multiple settings. Moreover, we attempt to scale AMuLaP with different sizes of the training set and find AMuLaP to work surprisingly well even with one or two shots. To understand the few-shot performance on different datasets, we investigate the relation between accuracy and inter-\nclass token distribution divergence, shedding light on the explainability of few-shot text classification."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Discrete Prompts The release of GPT-3 (Brown et al., 2020) has led to interest in prompting, a new way to leverage pretrained language models (PLM). Brown et al. (2020) proposes an intuitive in-context learning paradigm by concatenating a few input and output examples and feeding them to the language model and let the model autoregressively generate answers for new examples. Recent works (Petroni et al., 2019; Davison et al., 2019; Jiang et al., 2020) design prompts to probe the factual and commonsense knowledge encoded within a PLM. Recent works (Schick and Schütze, 2021a,b; Gao et al., 2021) demonstrate that even smaller PLMs have similar few-shot learning capacity. Le Scao and Rush (2021) analyzes the effect of prompting and concludes that a single prompt may be worth 100 training examples in fine-tuning.\nInstead of manually designing prompts (i.e., prompt engineering), some recent studies also explore automatic prompt generation. PETAL (Schick et al., 2020) augments Pattern Exploiting Training (PET, Schick and Schütze, 2021a,b) with automatically identified label words; Gao et al. (2021) uses re-ranking to find the best label words by fine-tuning a RoBERTa model on the candidates searched by RoBERTa, and using an external generation model for data augmentation of prompt templates; AutoPrompt (Shin et al., 2020) uses a gradient-based search to determine both prompts and label words. However, these methods require parameter updates with gradient descent, which is infeasible without access to the model weights (e.g., GPT-3). PET and its variants also require a large unlabeled set and need to be fine-tuned multiple times. AutoPrompt uses discretization techniques to approximately map a continuous vector back to tokens in the vocabulary (i.e., “vocablization”). These searched prompts and labels are often uninterpretable by humans. Different from these prior studies, our proposed AMuLaP is a simple and interpretable method for few-shot prompting that can work well with and without access to model weights. Concurrently to our work, Hu et al. (2021) propose a method that exploits an external knowledge base to find label mapping.\nContinuous Prompts In parallel with text-based discrete prompts, there is also a line of work focused on tuning only a fraction of parameters of an LM with the help of continuous prompts (i.e., soft prompts). Zhong et al. (2021) and Qin and Eisner (2021) propose continuous prompts for knowledge probing by tuning some trainable vectors in the input sequence while fixing the rest of the input. Li and Liang (2021) applies a similar method for natural language generation and achieves comparable performance to fine-tuning while updating only 0.1% of model parameters. Lester et al. (2021) reveals that prompt tuning is more competitive when scaled up and can achieve identical performance to conventional fine-tuning when the model is large enough. Guo et al. (2021) introduces Q-Learning to optimize the soft prompt. Notably, different from discrete prompting, these works often use all training data to update model weights. Different from these works, AMuLaP is a discrete prompting method that has better interpretability and works well in the few-shot setting."
+    }, {
+      "heading" : "3 Prompting for Few-Shot Classification",
+      "text" : "We follow the setup in LM-BFF (Gao et al., 2021) for few-shot text classification. Given a pretrained language model L, a task D and its defined label space Y , we have n training examples per class for the training set Dtrain . As pointed out in Perez et al. (2021), using the full development set may be misleading to claim a few-shot setting. Thus, we use a few-shot development set with the same size as the training set (i.e., |Dtrain | = |Ddev |), to be consistent with Gao et al. (2021) and constitute a “true few-shot” setting (Perez et al., 2021).\nFor an input example x (a single sentence or a sentence pair), we first use a task-specific template T to convert it to x′, a token sequence with a [MASK] token. We then map the original label space to a set of selected words from the vocabulary, denoted asM : Y → V ′. Some examples of T andM are shown in Table 1. Note that since we focus on automatically finding the label mapping M, we use the manual templates T from Gao et al. (2021) throughout this paper. Since L is trained to complete the [MASK] token in an input sequence, we can directly make zero-shot prediction of the probability of class y ∈ Y by the masked language modeling:\np (y|x) = p ( [MASK] =M (y) | x′ ) . (1)\nAlternately, one can further fine-tune L with supervised pairs {x′,M (y)} to achieve even better performance."
+    }, {
+      "heading" : "4 Automatic Multi-Label Prompting",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Exploiting Multiple Labels",
+      "text" : "Selecting one label word can be insufficient for some complicated tasks, as mentioned in Schick et al. (2020). We also argue that selecting only one label (especially automatically) may bring noise. This can be resolved by introducing multiple label words. Schick et al. (2020) use multiple label combinations for PET (Schick and Schütze, 2021a) and ensemble them afterwards. We instead use a straightforward sum to consider multiple label words when making predictions. This design has a similar advantage of exploiting multiple labels without training and ensembling multiple models.\nInstead of a one-to-one mapping from the original label space Y to V , we map each y ∈ Y to its label word set S(y) of k words. We denote the mapping function as M′ : Y → Vk. For class y ∈ Y , the predicted probability is calculated as:\np (y|x) = ∑\nv∈S(y)\np ( [MASK] = v | x′ ) (2)\nThen, we can simply make predictions by selecting the label with the largest likelihood.\nSimilarly, if we need to fine-tune L with supervised pairs, instead of optimizing the cross-entropy loss between the gold label and a single token,\nwe optimize the loss between the sum of the output probabilities of S(y) and the gold label with a cross-entropy loss:\nl = − ∑\nx∈Dtrain ∑ y∈Y [1 [y = ŷ] · log p (y|x)] (3)\nwhere ŷ is the ground truth label for the input x and p (y|x) is defined in Equation 2."
+    }, {
+      "heading" : "4.2 Automatic Label Selection",
+      "text" : "Finding a good label mappingM is non-trivial, especially whenM′ maps an original label to a set of label words instead of one. Selecting a good label mapping often requires significant human effort, including domain knowledge and trial-and-error. Previously, Schick and Schütze (2021a,b) both use hand-crafted label mappings while Schick et al. (2020) explores automatic label mapping searching but it still requires manual pre-filtering and significantly underperforms the manual mapping. (Gao et al., 2021) exploits a large pretrained masked language model (RoBERTa, Liu et al., 2019) to construct a pruned set of label words and then determine the final mapping by fine-tuning on all of them and selecting the best one with Ddev . We introduce a new selection algorithm for label mapping that achieves competitive results compared to previous efforts.\nWe aim to achieve two goals: (1) Selecting the most likely label mapping based on the training set. For example, in a sentiment classification task, we would like to see positive words in the label set\nof the “positive” class while negative words in the label set of the “negative” class. A simple solution is to select the k most likely tokens predicted for the [MASK] token in the training examples of each class y. However, in practice, we would find common words in more than one label set. For example, if we simply take the 10 most likely tokens for the SST-2 dataset (Socher et al., 2013), we would find “good” in both positive and negative label sets, although it is ranked second place in the positive set and ninth in the negative set. Thus, we want to make sure that (2) Each token only belongs to at most one label set where it has the highest probability. To ensure this, we have to iterate over the vocabulary and check that for every token. Then, we can truncate the candidate sets of each class and select the k most likely tokens from each set. The time complexity of this algorithm is O(k · |V| · |Y|).\nFormally, we selectM′ : Y → Vk by the following steps: 1. For each yi ∈ Y , we iterate through all training samples xj ∈ Dtrain whose ground truth label ŷj = yi. We use L to predict the token probability of the [MASK] token and take the average of the predicted probabilities of the n examples to be zi, where zi is a vector over the whole vocabulary. 2. For each yi ∈ Y , initialize an empty candidate token set S̃(yi). 3. For each v ∈ V where V is the vocabulary of the model L, we retrieve v’s probability value zvi from zi of each class. 4. We assign v to the most likely token set of the m-th class S̃(ym) where m = argmaxi zvi . 5. For yi ∈ Y , we choose the top-k tokens from S̃(yi) with the largest probability zvi and obtain the truncated word set S(yi)."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Experimental Setting",
+      "text" : "Datasets We evaluate seven classification tasks of the GLUE benchmark (Wang et al., 2019). Specifically, we test on Microsoft Research Paraphrase Matching (MRPC) (Dolan and Brockett, 2005), Quora Question Pairs (QQP)2 for Paraphrase Similarity Matching; Stanford Sentiment Treebank (SST-2) (Socher et al., 2013) for Sentiment Classification; Multi-Genre Natural Language Inference Matched (MNLI-m), Multi-Genre\n2https://www.quora.com/q/quoradata/ First-Quora-Dataset-Release-Question-Pairs\nNatural Language Inference Mismatched (MNLImm) (Williams et al., 2018), Question Natural Language Inference (QNLI) (Rajpurkar et al., 2016) and Recognizing Textual Entailment (RTE) (Wang et al., 2019) for the Natural Language Inference (NLI) task; The Corpus of Linguistic Acceptability (CoLA) (Warstadt et al., 2019) for Linguistic Acceptability. We use the manual templates in Gao et al. (2021), as listed in Table 1. The metrics for each dataset are indicated in Table 2.\nBaselines We compare our method to various baselines: (1) Majority: always predict the majority class in the test set. (2) GPT-3-style in-context learning (Brown et al., 2020): present a few examples to the language model and make it directly predict the next token as the prediction. (3) Manual prompts: we use the human-designed prompts in Gao et al. (2021). (4) PETAL-CE (Schick et al., 2020): the variant of PETAL using the crossentropy metric. (5) PETAL-LR (Schick et al., 2020): the variant of PETAL using the likelihood ratio metric. (6) Auto-L (Gao et al., 2021): the automatic label searching method with an external pretrained language model, RoBERTa-large (Liu et al., 2019). The detailed description can be found in Appendix A. Note that the results of this baseline is different from those reported in Table 3 of Gao et al. (2021) since they search for both templates and label mapping whereas we fix the templates and search for the label mapping alone, for the sake of fair comparison. We use the officially released code and same hyperparameters for this baseline.\nTask Setup We closely follow the setup in Gao et al. (2021). We sample n training examples and n development examples per class. We set k = 16 throughout all experiments. We use RoBERTalarge (Liu et al., 2019) as the backbone LM L. For each reported result, we measure average performance across 5 different randomly sampled Dtrain and Ddev splits. Following Gao et al. (2021), the original development split of each dataset is used as the test set in our experiments. We also report the standard deviation for each result. To fairly compare with different baselines, we consider the following three settings:\n• Setting 1: We only use Dtrain alone for both label selection and tuning k. The parameters of L are not updated. Ddev is not used. This setting is for fair comparison with In-context learning.\n• Setting 2: We use Dtrain for label selection and an additional Ddev for k tuning. The parameters of L are not updated. This setting is for fair comparison with Auto-L (Gao et al., 2021) and PETAL (Schick et al., 2020).\n• Setting 3: We use Dtrain and Ddev in the same way as Setting 2 but fine-tune the parameters of the language model L. This setting is for fair comparison with conventional finetuning, prompt-based fine-tuning with manual prompts, Auto-L (Gao et al., 2021) and PETAL (Schick et al., 2020).\nImplementation Details We implement AMuLaP based on Hugging Face Transformers (Wolf et al., 2020). When selecting k, if there are multiple k with identical performance (which happens occasionally given there are only 16 examples for each class in Ddev ), we always choose the largest k. For Settings 1 and 2, we search k over {1, 2, 4, . . . , 1024}. Note that for settings that do not update the parameters of L, search over k is fast, as we only need to run the model once and cache the distribution of the [MASK] token. For prompt-based fine-tuning (Setting 3), where we fine-tune the model L, we search k in a smaller space {1, 2, 4, 8, 16} due to the increased computational overhead. Following (Gao et al., 2021),\nwe grid search the learning rate from {1e-5, 2e-5, 5e-5} and batch size from {2, 4, 8}."
+    }, {
+      "heading" : "5.2 Experimental Results",
+      "text" : "We demonstrate experimental results under three settings in Table 2. Under Setting 1, AMuLaP outperforms GPT-3-style in-context learning by 4.5 in terms of the average score and outperforms zero-shot inference with manually designed labels by 2.4. Under Setting 2, compared to variants of PETAL (Schick et al., 2020), AMuLaP has an advantage of 5.8 and 8.5 in terms of the average score over CE and LR, respectively. Notably, AMuLaP even outperforms Auto-L by 1.3 without using any external model or data. Additionally, we attempt to replace the predicted token distribution of AMuLaP with the validation score of all fine-tuned assignments (Gao et al., 2021).3 With the help of many trials in automatic search, AMuLaP outperforms Auto-L by a considerable margin of 3.8 in terms of the average score, verifying the versatility of our multi-label mechanism and label selection algorithm. Under Setting 3, AMuLaP FT outperforms all baselines including Auto-L. Generally speaking, methods with parameter update (Setting 3) have\n3The validation scores of all fine-tuned assignments are obtained on Ddev , as described in Gao et al. (2021). No external data used. All of these we use are from https://github.com/princeton-nlp/ LM-BFF/tree/main/auto_label_mapping.\nbetter performance than those that do not require access to parameters. On all tasks except CoLA, AMuLaP outperforms direct few-shot fine-tuning, suggesting that prompting is a promising method for exploiting large pretrained LMs."
+    }, {
+      "heading" : "6 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "6.1 Case Study",
+      "text" : "As shown in Table 3, we list the 10 most likely label mappings output by PETAL (Schick et al., 2020), Auto-L (Gao et al., 2021) and AMuLaP for the SST-2 dataset, respectively. We shuffle the labels from each model and ask a human annotator to annotate whether they are suitable mappings. PETAL-CE suffers from incorrect mappings for “negative” while PETAL-LR occasionally outputs vague labels. AMuLaP achieves interpretability that is competitive to automatic labels obtained by a fine-tuned pretrained language model, measured by the human agreement ratio. Although AMuLaP outputs three labels that are rated not suitable by the human annotator, it should be noted that all three tokens are ranked low in the candidate set.\nThus, introducing top-k truncation can resolve the problem. Additionally, we would like to highlight that AMuLaP mainly collects common words while other methods prefer rare words. This may explain why AMuLaP works well, especially for the nonfinetuning settings."
+    }, {
+      "heading" : "6.2 Ablation Study",
+      "text" : "As shown in Table 4, we evaluate the effect of each design choice on the GLUE benchmark. For both non-finetuning and prompt-based fine-tuning settings, our deduplication algorithm can effectively improve the overall performance by 1.1 and 9.9 in terms of the GLUE average score, respectively. Notably, deduplication is especially important for prompt-based fine-tuning since if the same label maps to two classes, optimization would be difficult due to the contradiction of supervision signals. Also, our multi-label strategy is shown to be effective at improving the average GLUE scores by 3.6 and 1.1 for non-finetuning and fine-tuning settings, respectively. Moreover, a random label mapping often leads to lower performance than a la-\nbel mapping selected based on the training set. An interesting exception is that for CoLA, the random mapping outperforms all label selection methods in Table 2 (both manual and automatic) and is close to the fine-tuning baseline. We will discuss this more in Section 6.4."
+    }, {
+      "heading" : "6.3 Scaling Few-Shot Learning",
+      "text" : "Le Scao and Rush (2021) explore the scaling law of PET (Schick and Schütze, 2021a) when using more examples for training. Similarly, in this section, we aim to test how AMuLaP scales to different training set sizes n. Figure 1 illustrates how standard fine-tuning and our AMuLaP with non-finetuning and fine-tuning compare as n increases. For MNLI and SST-2 task, AMuLaP outperforms standard fine-tuning when we use no more than 16 training examples for non-finetuning and fine-tuning setting. When using more than 16 training examples, AMuLaP under fine-tuning setting still outperforms standard fine-tuning. For an easier task like SST-2, although only 32 training examples are used, the performance of our AMuLaP with\nnon-finetuning and fine-tuning is close to saturation and can be comparable to standard fine-tuning on the entire dataset. For a harder task like MNLI, although the performance of AMuLaP under nonfinetuning setting gradually becomes saturated as n increases, AMuLaP under fine-tuning settings continues to improve as n increases and continues to outperform the standard fine-tuning. For MRPC, although the performance of our AMuLaP and standard fine-tuning fluctuate as n increases, in general, AMuLaP with fine-tuning can still achieve comparable performance to standard fine-tuning. In addition, the results demonstrate the effectiveness of AMuLaP especially for extreme few-shot settings. With only one example, AMuLaP achieves decent performance while standard fine-tuning is close to random."
+    }, {
+      "heading" : "6.4 Understanding Few-Shot Performance",
+      "text" : "As shown in Table 1, AMuLaP seems to be able to find good labels for some datasets while failing on others. Intuitively, this phenomenon should correspond to classification performance. To quantitatively understand the relation between the quality of found labels and the final performance, we design a meta-experiment. For every twoclass dataset (all GLUE datasets except three-class MNLI), we calculate the JS divergence between the average predicted token probabilities z0 and z1. This metric measures how different the language model L considers the examples from two classes. This can be regarded as the “confidence” of L to distinguish between the two classes. If the model can easily distinguish examples from one class with the other, we would expect the divergence to be large, and vice versa.\nWe illustrate the relation between inter-class JS divergence and the performance of AMuLaP on each dataset in Figure 2. The correlation coeffi-\ncients r between the two variables are 0.52 and 0.54 (0.14 and 0.19 if ignoring CoLA) for AMuLaP with and without prompt-based fine-tuning, respectively. This observation suggests that the performance can degrade if the model cannot distinguish examples of different classes and thus fail to find suitable labels. As we analyze, AMuLaP fails on CoLA since the backbone model (RoBERTa) is trained on corpora that contain noisy and possibly ungrammatical text (e.g., OpenWebText) (Liu et al., 2019). Thus, it is naturally tolerant to grammatical errors that are key to distinguishing between the two classes in CoLA, the dataset for linguistic acceptability. As shown in Table 4, a random mapping can outperform all automatic and manual mappings by a large margin. This finding reveals that some tasks may be naturally unsuitable for prompting, which warrants further investigation."
+    }, {
+      "heading" : "7 Discussion",
+      "text" : "Why Does AMuLaP Work? Schick et al. (2020) argues that one single label sometimes cannot represent all examples in a class, and thus multiple labels are needed. However, we find this explanation insufficient for understanding the mechanism behind the improved performance with multiple labels. Under a few-shot setting, the limited number of training examples n and complex training procedure of the backbone model L can often bring noise to both automatic label selection and inference. One example is the meaningless </s> (end-of-sequence marker) label found by AMuLaP, as shown in Table 1. This is due to the format processing in the pretraining of L. Allowing multiple labels can resolve mishaps like this and thus improve the final performance.\nMoreover, when selecting multiple labels in finetuning, it is equivalent to training on an augmented training set, as multiple labels increase the overall size of the supervision pairs (x, ŷ). To verify this guess, we test the fine-tuning performance of a random mapping with different labels selected. We find that for random mapping, more labels (i.e., a larger k) often leads to better performance. This suggests our guess may be correct. However, we do not observe significant improvement when continuing increasing k with labels selected by AMuLaP. As we analyze, increasing k harms the overall quality of selected labels and thus overrides the benefit of a larger k. In general, we do not observe a clear law for choosing the best k for AMuLaP. As\nmentioned before, k can influence both the overall quality of labels (in both ways) and the training procedure (for fine-tuning). Thus, for the optimal performance, we find it essential to search k with a development set.\nLimitations and Future Directions In this paper, we only focus on the selection of the label mapping with a fixed prompt template. There is more to explore when considering the prompt template at the same time. Similar to our paper, previous works (Schick et al., 2020; Gao et al., 2021) separately search for a prompt template T and the label mappingM. However, these two variables are closely related and greedily search for the best template T then the best mapping under T may be suboptimal. Jointly searching for T andM could be a promising direction for future research.\nMore broadly, we would like to point out some limitation and contradictions within current fewshot prompting techniques. There is a natural contradiction between performance and access to the model weights. Brown et al. (2020) highlights few-shot prompting as a way to mitigate their decision to not release the model weights. However, as shown in our Table 2, with the same backbone model L, GPT-3-style in-context learning and other methods that do not access the model weights generally underperform those with access to the model weights by a large margin. Also, in-context learning cannot handle more training examples due to the maximum length limit of the model while AMuLaP without fine-tuning gets saturated quickly, as shown in Figure 1.\nIn addition, complicated prompting techniques are not practically useful for real-world scenarios. For most techniques, the required effort for finding good templates and label mappings, and sometimes training models outweighs the cost of simply labeling more training examples. As shown in Figure 1, 64 examples per class are enough to bring the performance of standard fine-tuning to the same level of prompting. Although recent works on automatic selection of prompts and label mappings are making meaningful contribution to the practicability of few-shot learning, we believe more work should be done to simplify the learning procedure and eliminate human effort while achieving good performance."
+    }, {
+      "heading" : "A Automatic Label Selection (Auto-L) in LM-BFF",
+      "text" : "Gao et al. (2021) proposed a method to automatically construct a label word mappingM given a fixed template T . They construct a pruned label word set Vc ∈ V of the top k words based on their conditional likehood using the pretrained language model L for each class c ∈ Y . They take Vc as\nTop-k v∈V  ∑ x∈Dctrain log p ([MASK] = v | T (x))  where Dctrain ⊂ Dtrain denotes the subset of all examples of class c. They find the top n assignments over the pruned space that maximize zero-shot accuracy on Dtrain to further narrow the search space. Then they fine-tune n assignments and re-rank to find the best label words mapping on Ddev."
+    } ],
+    "references" : [ {
+      "title" : "Language models are few-shot learners",
+      "author" : [ "Amodei." ],
+      "venue" : "NeurIPS.",
+      "citeRegEx" : "Amodei.,? 2020",
+      "shortCiteRegEx" : "Amodei.",
+      "year" : 2020
+    }, {
+      "title" : "Commonsense knowledge mining from pretrained models",
+      "author" : [ "Joe Davison", "Joshua Feldman", "Alexander M. Rush." ],
+      "venue" : "EMNLP-IJCNLP, pages 1173– 1178. Association for Computational Linguistics.",
+      "citeRegEx" : "Davison et al\\.,? 2019",
+      "shortCiteRegEx" : "Davison et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatically constructing a corpus of sentential paraphrases",
+      "author" : [ "William B. Dolan", "Chris Brockett." ],
+      "venue" : "IWP@IJCNLP.",
+      "citeRegEx" : "Dolan and Brockett.,? 2005",
+      "shortCiteRegEx" : "Dolan and Brockett.",
+      "year" : 2005
+    }, {
+      "title" : "Making pre-trained language models better few-shot learners",
+      "author" : [ "Tianyu Gao", "Adam Fisch", "Danqi Chen." ],
+      "venue" : "ACL-IJCNLP. Association for Computational Linguistics.",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Text generation with efficient (soft) q-learning",
+      "author" : [ "Han Guo", "Bowen Tan", "Zhengzhong Liu", "Eric P Xing", "Zhiting Hu." ],
+      "venue" : "arXiv preprint arXiv:2106.07704.",
+      "citeRegEx" : "Guo et al\\.,? 2021",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Knowledgeable prompt-tuning: Incorporating knowledge into prompt verbalizer for text classification",
+      "author" : [ "Shengding Hu", "Ning Ding", "Huadong Wang", "Zhiyuan Liu", "Juanzi Li", "Maosong Sun." ],
+      "venue" : "arXiv preprint arXiv:2108.02035.",
+      "citeRegEx" : "Hu et al\\.,? 2021",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "How can we know what language models know",
+      "author" : [ "Zhengbao Jiang", "Frank F. Xu", "Jun Araki", "Graham Neubig." ],
+      "venue" : "Trans. Assoc. Comput. Linguistics, 8:423–438.",
+      "citeRegEx" : "Jiang et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "How many data points is a prompt worth? In NAACLHLT, pages 2627–2636",
+      "author" : [ "Teven Le Scao", "Alexander M. Rush." ],
+      "venue" : "Association for Computational Linguistics.",
+      "citeRegEx" : "Scao and Rush.,? 2021",
+      "shortCiteRegEx" : "Scao and Rush.",
+      "year" : 2021
+    }, {
+      "title" : "The power of scale for parameter-efficient prompt tuning",
+      "author" : [ "Brian Lester", "Rami Al-Rfou", "Noah Constant." ],
+      "venue" : "arXiv preprint arXiv:2104.08691.",
+      "citeRegEx" : "Lester et al\\.,? 2021",
+      "shortCiteRegEx" : "Lester et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Prefixtuning: Optimizing continuous prompts for generation",
+      "author" : [ "Xiang Lisa Li", "Percy Liang." ],
+      "venue" : "arXiv preprint arXiv:2101.00190.",
+      "citeRegEx" : "Li and Liang.,? 2021",
+      "shortCiteRegEx" : "Li and Liang.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "True few-shot learning with language models",
+      "author" : [ "Ethan Perez", "Douwe Kiela", "Kyunghyun Cho." ],
+      "venue" : "arXiv preprint arXiv:2105.11447.",
+      "citeRegEx" : "Perez et al\\.,? 2021",
+      "shortCiteRegEx" : "Perez et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models as knowledge bases? In EMNLP-IJCNLP, pages 2463–2473",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick S.H. Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander H. Miller." ],
+      "venue" : "Association for Computational Linguis-",
+      "citeRegEx" : "Petroni et al\\.,? 2019",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning how to ask: Querying lms with mixtures of soft prompts",
+      "author" : [ "Guanghui Qin", "Jason Eisner." ],
+      "venue" : "NAACL-HLT, pages 5203–5212. Association for Computational Linguistics.",
+      "citeRegEx" : "Qin and Eisner.,? 2021",
+      "shortCiteRegEx" : "Qin and Eisner.",
+      "year" : 2021
+    }, {
+      "title" : "Squad: 100, 000+ questions for machine comprehension of text",
+      "author" : [ "Pranav Rajpurkar", "Jian Zhang", "Konstantin Lopyrev", "Percy Liang." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Rajpurkar et al\\.,? 2016",
+      "shortCiteRegEx" : "Rajpurkar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Automatically identifying words that can serve as labels for few-shot text classification",
+      "author" : [ "Timo Schick", "Helmut Schmid", "Hinrich Schütze." ],
+      "venue" : "COLING, pages 5569–5578. International Committee on Computational Linguistics.",
+      "citeRegEx" : "Schick et al\\.,? 2020",
+      "shortCiteRegEx" : "Schick et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploiting cloze-questions for few-shot text classification and natural language inference",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "EACL, pages 255– 269. Association for Computational Linguistics.",
+      "citeRegEx" : "Schick and Schütze.,? 2021a",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "It’s not just size that matters: Small language models are also few-shot learners",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "NAACL-HLT, pages 2339– 2352. Association for Computational Linguistics.",
+      "citeRegEx" : "Schick and Schütze.,? 2021b",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "Autoprompt: Eliciting knowledge from language models with automatically generated prompts",
+      "author" : [ "Taylor Shin", "Yasaman Razeghi", "Robert L. Logan IV", "Eric Wallace", "Sameer Singh." ],
+      "venue" : "EMNLP, pages 4222–4235. Association for Computational Linguis-",
+      "citeRegEx" : "Shin et al\\.,? 2020",
+      "shortCiteRegEx" : "Shin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D. Manning", "Andrew Y. Ng", "Christopher Potts." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "GLUE: A multi-task benchmark and analysis platform for natural language understanding",
+      "author" : [ "Alex Wang", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel R. Bowman." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural network acceptability judgments",
+      "author" : [ "Alex Warstadt", "Amanpreet Singh", "Samuel R. Bowman." ],
+      "venue" : "TACL.",
+      "citeRegEx" : "Warstadt et al\\.,? 2019",
+      "shortCiteRegEx" : "Warstadt et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A broad-coverage challenge corpus for sentence understanding through inference",
+      "author" : [ "Adina Williams", "Nikita Nangia", "Samuel R. Bowman." ],
+      "venue" : "NAACL-HLT.",
+      "citeRegEx" : "Williams et al\\.,? 2018",
+      "shortCiteRegEx" : "Williams et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 3,
+      "context" : ", 2020), several studies have focused on exploiting pretrained language models with only a few training examples (Brown et al., 2020; Gao et al., 2021; Shin et al., 2020).",
+      "startOffset" : 113,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2020), several studies have focused on exploiting pretrained language models with only a few training examples (Brown et al., 2020; Gao et al., 2021; Shin et al., 2020).",
+      "startOffset" : 113,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 3,
+      "context" : "Furthermore, recent works (Schick and Schütze, 2021a,b; Gao et al., 2021) show that prompts can also help the model generalize better in fine-tuning.",
+      "startOffset" : 26,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 18,
+      "context" : "Many attempts have been made in this emerging direction of prompt engineering (Shin et al., 2020; Gao et al., 2021).",
+      "startOffset" : 78,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 3,
+      "context" : "Many attempts have been made in this emerging direction of prompt engineering (Shin et al., 2020; Gao et al., 2021).",
+      "startOffset" : 78,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 15,
+      "context" : "Compared with a hand-crafted label mapping and previous works on automatic label mapping (Schick et al., 2020; Gao et al., 2021), AMuLaP achieves competitive performance despite being simpler and does not require access to the weights of the backbone model, or finetune an external pretrained language model for searching label mapping.",
+      "startOffset" : 89,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 3,
+      "context" : "Compared with a hand-crafted label mapping and previous works on automatic label mapping (Schick et al., 2020; Gao et al., 2021), AMuLaP achieves competitive performance despite being simpler and does not require access to the weights of the backbone model, or finetune an external pretrained language model for searching label mapping.",
+      "startOffset" : 89,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 12,
+      "context" : "Recent works (Petroni et al., 2019; Davison et al., 2019; Jiang et al., 2020) design prompts to probe the factual and commonsense knowledge encoded within a PLM.",
+      "startOffset" : 13,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 1,
+      "context" : "Recent works (Petroni et al., 2019; Davison et al., 2019; Jiang et al., 2020) design prompts to probe the factual and commonsense knowledge encoded within a PLM.",
+      "startOffset" : 13,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 6,
+      "context" : "Recent works (Petroni et al., 2019; Davison et al., 2019; Jiang et al., 2020) design prompts to probe the factual and commonsense knowledge encoded within a PLM.",
+      "startOffset" : 13,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 3,
+      "context" : "Recent works (Schick and Schütze, 2021a,b; Gao et al., 2021) demonstrate that even smaller PLMs have similar few-shot learning capacity.",
+      "startOffset" : 13,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 15,
+      "context" : "PETAL (Schick et al., 2020) augments Pattern Exploiting Training (PET, Schick and Schütze, 2021a,b) with automatically identified label words; Gao et al.",
+      "startOffset" : 6,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 18,
+      "context" : "(2021) uses re-ranking to find the best label words by fine-tuning a RoBERTa model on the candidates searched by RoBERTa, and using an external generation model for data augmentation of prompt templates; AutoPrompt (Shin et al., 2020) uses a gradient-based search to determine both prompts and label words.",
+      "startOffset" : 215,
+      "endOffset" : 234
+    }, {
+      "referenceID" : 3,
+      "context" : "We follow the setup in LM-BFF (Gao et al., 2021) for few-shot text classification.",
+      "startOffset" : 30,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 11,
+      "context" : "(2021) and constitute a “true few-shot” setting (Perez et al., 2021).",
+      "startOffset" : 48,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 16,
+      "context" : "(2020) use multiple label combinations for PET (Schick and Schütze, 2021a) and ensemble them afterwards.",
+      "startOffset" : 47,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 3,
+      "context" : "(Gao et al., 2021) exploits a large pretrained masked language model (RoBERTa, Liu et al.",
+      "startOffset" : 0,
+      "endOffset" : 18
+    }, {
+      "referenceID" : 19,
+      "context" : "SST-2 dataset (Socher et al., 2013), we would find “good” in both positive and negative label sets, although it is ranked second place in the positive set and ninth in the negative set.",
+      "startOffset" : 14,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 20,
+      "context" : "Datasets We evaluate seven classification tasks of the GLUE benchmark (Wang et al., 2019).",
+      "startOffset" : 70,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 2,
+      "context" : "Specifically, we test on Microsoft Research Paraphrase Matching (MRPC) (Dolan and Brockett, 2005), Quora Question Pairs (QQP)2 for Paraphrase Similarity Matching; Stanford Sentiment Treebank (SST-2) (Socher et al.",
+      "startOffset" : 71,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 19,
+      "context" : "Specifically, we test on Microsoft Research Paraphrase Matching (MRPC) (Dolan and Brockett, 2005), Quora Question Pairs (QQP)2 for Paraphrase Similarity Matching; Stanford Sentiment Treebank (SST-2) (Socher et al., 2013) for Sentiment Classification; Multi-Genre Natural Language Inference Matched (MNLI-m), Multi-Genre",
+      "startOffset" : 199,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 22,
+      "context" : "First-Quora-Dataset-Release-Question-Pairs Natural Language Inference Mismatched (MNLImm) (Williams et al., 2018), Question Natural Language Inference (QNLI) (Rajpurkar et al.",
+      "startOffset" : 90,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2018), Question Natural Language Inference (QNLI) (Rajpurkar et al., 2016) and Recognizing Textual Entailment (RTE) (Wang et al.",
+      "startOffset" : 52,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2016) and Recognizing Textual Entailment (RTE) (Wang et al., 2019) for the Natural Language Inference (NLI) task; The Corpus of Linguistic Acceptability (CoLA) (Warstadt et al.",
+      "startOffset" : 49,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2019) for the Natural Language Inference (NLI) task; The Corpus of Linguistic Acceptability (CoLA) (Warstadt et al., 2019) for Linguistic Ac-",
+      "startOffset" : 101,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 15,
+      "context" : "(4) PETAL-CE (Schick et al., 2020): the variant of PETAL using the crossentropy metric.",
+      "startOffset" : 13,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 15,
+      "context" : "(5) PETAL-LR (Schick et al., 2020): the variant of PETAL using the likelihood ratio metric.",
+      "startOffset" : 13,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 3,
+      "context" : "(6) Auto-L (Gao et al., 2021): the automatic label searching method with an external pretrained language model, RoBERTa-large (Liu et al.",
+      "startOffset" : 11,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2021): the automatic label searching method with an external pretrained language model, RoBERTa-large (Liu et al., 2019).",
+      "startOffset" : 104,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 10,
+      "context" : "We use RoBERTalarge (Liu et al., 2019) as the backbone LM L.",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 3,
+      "context" : "This setting is for fair comparison with Auto-L (Gao et al., 2021) and PETAL (Schick et al.",
+      "startOffset" : 48,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 3,
+      "context" : "This setting is for fair comparison with conventional finetuning, prompt-based fine-tuning with manual prompts, Auto-L (Gao et al., 2021) and PETAL (Schick et al.",
+      "startOffset" : 119,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 3,
+      "context" : "Following (Gao et al., 2021), we grid search the learning rate from {1e-5, 2e-5, 5e-5} and batch size from {2, 4, 8}.",
+      "startOffset" : 10,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 15,
+      "context" : "Under Setting 2, compared to variants of PETAL (Schick et al., 2020), AMuLaP has an advantage of 5.",
+      "startOffset" : 47,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 3,
+      "context" : "Additionally, we attempt to replace the predicted token distribution of AMuLaP with the validation score of all fine-tuned assignments (Gao et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 15,
+      "context" : "Class PETAL-CE (Schick et al., 2020) PETAL-LR (Schick et al.",
+      "startOffset" : 15,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 15,
+      "context" : "Table 3: Most likely label mapping for the SST-2 dataset obtained by PETAL (Schick et al., 2020), Auto-L (Gao et al.",
+      "startOffset" : 75,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 15,
+      "context" : "As shown in Table 3, we list the 10 most likely label mappings output by PETAL (Schick et al., 2020), Auto-L (Gao et al.",
+      "startOffset" : 79,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2020), Auto-L (Gao et al., 2021) and AMuLaP for the SST-2 dataset, respectively.",
+      "startOffset" : 16,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 16,
+      "context" : "Le Scao and Rush (2021) explore the scaling law of PET (Schick and Schütze, 2021a) when using more examples for training.",
+      "startOffset" : 55,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 15,
+      "context" : "vious works (Schick et al., 2020; Gao et al., 2021) separately search for a prompt template T and the label mappingM.",
+      "startOffset" : 12,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 3,
+      "context" : "vious works (Schick et al., 2020; Gao et al., 2021) separately search for a prompt template T and the label mappingM.",
+      "startOffset" : 12,
+      "endOffset" : 51
+    } ],
+    "year" : 0,
+    "abstractText" : "Prompt-based learning (i.e., prompting) is an emerging paradigm for exploiting knowledge learned by a pretrained language model. In this paper, we propose Automatic Multi-Label Prompting (AMuLaP), a simple yet effective method to automatically select label mappings for few-shot text classification with prompting. Our method exploits one-to-many label mappings and a statistics-based algorithm to select label mappings given a prompt template. Our experiments demonstrate that AMuLaP achieves competitive performance on the GLUE benchmark without human effort or external resources.1",
+    "creator" : null
+  }
+}

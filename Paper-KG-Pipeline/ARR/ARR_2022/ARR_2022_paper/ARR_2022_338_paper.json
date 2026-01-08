@@ -1,0 +1,550 @@
+{
+  "name" : "ARR_2022_338_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Flow-Adapter Architecture for Unsupervised Machine Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Recent advances in deep learning have boosted the development of neural machine translation (NMT). Typical NMT models leverage an encoder-decoder framework (Cho et al., 2014; Sutskever et al., 2014). However, NMT models have shown to be datahungry, as the number of parallel sentences significantly influences the performance (Zoph et al., 2016). Unfortunately, large-scale bilingual corpora are only limited to certain language (Al-Onaizan et al., 2002). In contrast to bilingual corpora, monolingual corpora are much easier to obtain.\nUnsupervised NMT, compared with supervised NMT, aims to train a model without parallel data. Some early works (Irvine and Callison-Burch, 2016; Sennrich et al., 2016b; Cheng et al., 2016) used monolingual corpora to boost the performance when the parallel data is not abundant. Lample et al. (2018a) and Artetxe et al. (2018) explored the possibility of training a model relying only on\nmonolingual corpora. They both leveraged an inferred bilingual dictionary for initial word-by-word translation (Lample et al., 2018b; Artetxe et al., 2017). In addition, both the works used denoising auto-encoding (Vincent et al., 2008) and iterative back-translation (Hoang et al., 2018) as learning objectives for training a robust translation model.\nMore recently, with the advance in pre-trained models (Peters et al., 2018; Devlin et al., 2019), researchers begin to explore the possibility of using pre-trained models for unsupervised NMT. Conneau and Lample (2019) extended the pre-training from a single language to multiple languages, referred to as cross-lingual pre-training. By using the pre-trained cross-language models (XLMs) to initialize the encoder and decoder, they achieved attractive unsupervised translation performance on multiple language pairs. Song et al. (2019) explored the ideas from XLMs and proposed MASS, in which they directly pre-trained a whole encoderdecoder model and then fine-tuned it on monolingual corpora for unsupervised translation task.\nCurrent NMT frameworks rely heavily on the attention mechanism (Bahdanau et al., 2015; Vaswani et al., 2017) to capture the alignments. However, due to possible inconsistency, the attention-based context vectors might fail to extract sufficient sentence-level semantics and thus result in undesirable translation or translation ambiguity (Tu et al., 2016; Zhang et al., 2016). Therefore, several variational frameworks for modelling the translation process have been proposed to tackle such an issue (Zhang et al., 2016; Setiawan et al., 2020). These approaches incorporate sentence-level latent representations into NMT and aim to implicitly model their distribution. The generation of target sentences is then based on the attention mechanism as well as the representations. In this way, when the attention mechanism learns improper alignment information, the latent representation could play a complementary role to guide the translation. How-\never, these methods focus on supervised NMT. Towards that end, we propose a flow-adapter based architecture for unsupervised NMT. Similar to variational methods, we also model the distribution of the sentence-level representations. However, unlike the variational methods which model the distribution in an implicit way, we use a pair of normalizing flows to explicitly model the distributions of the source and target language. In addition, different from some previous unsupervised NMT models which assume that the representations of source and target sentences share a common semantic space, we assume the representations are different because of language-specific characteristics. Therefore, a latent code transformation is performed to transform the source-language latent code into the target-language code, in order to enable the decoder to better capture the semantics of sentences in a certain language. The flows are directly trained by maximum likelihood estimation (MLE) of the sentence-level latent representations. In this way, we abandon the KL loss computation and give the latent representations more flexibility.\nThe main contributions of our work are:\n(1) We propose a flow-adapter based framework, using a pair of flows to explicitly model the distributions of the sentence-level representations and to perform a latent code transformation on them. To the best of our knowledge, this is the first attempt using latent variables as well as normalizing flows adapting for unsupervised NMT.\n(2) Experiments show the validity and effectiveness of the flow-adapter architecture. It can improve the multilingual unsupervised translation and enables the whole model to better model two languages simultaneously. By introducing pre-trained models into our framework, we report competitive or even better results compared with the SOTA models on some unsupervised translation tasks."
+    }, {
+      "heading" : "2 Background",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Normalizing Flows",
+      "text" : "Normalizing flows (NFs) are a special type of deep generative models. Different from generative adversarial networks (GAN) (Goodfellow et al., 2014) and variational auto-encoding (VAE) (Kingma and Welling, 2014), NFs allow for not only sampling\nbut also exact density estimation. Due to such desirable properties, in recent years, they have been successfully applied to fields as image (Ho et al., 2019; Kingma and Dhariwal, 2018), audio (Esling et al., 2019; van den Oord et al., 2018) and video generation (Kumar et al., 2019).\nNFs transform between two distributions based on change-of-variables formula:\nlog px(x) = log pz(z) + log ∣∣∣∣det ∂f(z)∂z ∣∣∣∣−1 (1)\nwhere z ∼ pz(z) and x ∼ px(x) denotes two vectors from a simple latent distribution pz(z) and a complex data distribution px(x), f is an invertible and differentiable function and det ∂f(z)∂z denotes the determinant of the Jacobian matrix of f . The idea of NFs is to learn such an f which transforms z from the latent space to x in the data space, i.e., x = f(z) and its inverse, i.e., z = f−1(x).\nConstructing a single arbitrarily complex invertible and differentiable function might be impractical. Therefore, a generally adopted approach is to stack multiple transformations fi together, i.e., f = fK ◦ · · · ◦ f1 and f−1 = f−11 ◦ · · · ◦ f −1 K , whose Jacobian matrix has a specific form and is efficiently to compute. This sequence f transforms the latent variable z step by step into the data space while f−1 transforms the data into the latent space.\nNormalizing flows are usually optimized by MLE of the parameters θ, i.e., log p(D|θ) =∑N\nn=1 log px(x (n)|θ). By applying the change-ofvariable formula in Equation (1), the objective can be reformed as follows:\nlog p(D|θ) = N∑ n=1 log pz(f −1(x(n))|θ)\n+ log ∣∣∣∣∣det ∂f−1(x(n))∂x(n) ∣∣∣∣∣\n(2)"
+    }, {
+      "heading" : "2.2 Latent-variable (variational) NMT",
+      "text" : "Compared with standard encoder-decoder based NMT models, latent-variable (variational) based approaches (Zhang et al., 2016; Setiawan et al., 2020; Shu et al., 2020) additionally leverage latent random variables. By modelling the latent variables, some useful statistical dependencies can be introduced (Setiawan et al., 2020).\nVariational NMT introduces a continuous random latent variable z for the translation modelling, i.e., p(y|z,x). With the introduction of z, the conditional probability p(y|x) can then be reformed\nas follows: p(y|x) = ∫ z p(y|z,x)p(z|x)dz (3)\nIn this way, z serves as a global semantic signal that is helpful when the model learns undesirable alignments. However, the integration of z imposes challenges during inference. To address this problem, the variational NMT takes some measures from VAE (Kingma and Welling, 2014; Rezende et al., 2014), specifically, neural approximation and reparameterization.\nNeural approximation leverages a neural network to approximate the posterior distribution p(z|x,y) with qφ(z|x,y), where φ denotes the parameters in the neural network. In most works, qφ(z|x,y) is designed as a diagonal Gaussian N (µ, diag(σ2)), where the mean µ and the variance σ2 are parameterized with neural networks.\nReparameterization means to parameterize the latent random variable z as a function of the mean µ and the variance σ2. In this way, the gradient with respect to the parameters µ and σ2 can be computed. The reparameterization of z is often carried in a location-scale way: z = µ+ σ .\nWith these two techniques, the learning objective of variational NMT is the evidence lower-bound or ELBO of the conditional probability p(y|x):\nL(θ, φ;x,y) = −KL(qφ(z|x,y)||pθ(z|x)) + Eqφ(z|x,y)[log pθ(y|z,x)] (4)\nwhere pθ(z|x) is the prior distribution modeled also by a neural network and pθ(y|z,x) is modeled by the decoder given the input source sentence x and the latent variable z."
+    }, {
+      "heading" : "3 Flow-Adapter Based Framework",
+      "text" : "Although variational NMT can employ a complex posterior distribution qφ(z|x,y), e.g., a NFs-based posterior (Setiawan et al., 2020), to model the latent variables; the KL divergence in ELBO, however, minimizes the discrepancy between such a distribution and a simple prior pθ(z|x), e.g., a diagonal Gaussian, which restricts the advantage of a complex posterior. In addition, variational NMT is aimed for supervised tasks because the construction of qφ(z|x,y) requires the parallel sentences, which are not available in unsupervised tasks. Therefore, we propose a flow-adapter based framework, which uses two NFs to directly model the distribution of the sentence-level semantic representations of the\nsource and target sentences. During the translation, a latent code transformation is performed to transform the source-language representations into the target-language space. We will first introduce the sentence-level representation as well as latent code transformation in Section 3.1, followed by the description of the flow-adapter based framework for unsupervised machine translation in Section 3.2."
+    }, {
+      "heading" : "3.1 Sentence-level Representation & Latent Code Transformation",
+      "text" : "Variational methods such as (Zhang et al., 2016; Setiawan et al., 2020) assume that the semantics of the source sentence x and target sentence y are the same and thus the generated latent variable z has no difference if considering only x or both x and y. Unsupervised NMT methods such as (Lample et al., 2018a; Conneau and Lample, 2019) also similarly assume that a shared encoder can map the source and target sentence into a shared latent space.\nIn this work, however, we diverge from this assumption. Although the semantics of a pair of sentences should theoretically be the same, the latent representations z obtained by an encoder can be different for source and target sentences, because of the language-specific characteristics. The different vocabulary and pragmatics all influence the generation of the latent representations. Therefore, we consider the latent representations from a different perspective. That is, zx and zy can be viewed as expressions of the sentence-level latent representations in two distinct languages based on the same semantics , which is truly languageirrelevant. The relation can be abstracted as a Bayesian network, as shown in Figure 1.\nUnder our assumption in the unsupervised scenario, we propose to directly model the distri-\nbutions of the sentence-level representations of both source and target sentences, i.e., p(zx|x) and p(zy|y) using NFs:\np(zx|x) = p ( ) K∏ i=1 ∣∣∣∣∣det ∂f (x)i (zi)∂zi ∣∣∣∣∣ −1\n(5)\np(zy|y) = p ( ) K∏ i=1 ∣∣∣∣∣det ∂f (y)i (zi)∂zi ∣∣∣∣∣ −1\n(6)\nwhere p ( ) is a base distribution, e.g., standard normal distribution, f (x)i and f (y) i are i\nth transformations for the source and target languages respectively. The base distribution can be viewed as the real semantic space regardless of the languages. Li et al. (2020) also transformed the BERT anisotropic sentence embedding distribution to an isotropic Gaussian distribution through NFs and reported better performance on some sentence-level tasks. For simplicity, we denote the NFs for the source and target languages as mappings G(zx→ ) and G(zy→ ). Because of the invertible property of NFs, these mappings are also invertible, and we can have G(zx→ ) = G −1 ( →zx) and G(zy→ ) = G −1 ( →zy).\nInspired by AlignFlow (Grover et al., 2020), we consider the cross-domain transformation between zx and zy. In this way, we can formulate a language-specific latent code for the decoder. The cross-language latent code transformation from the source to the target language is shown as follows:\nG(zx→zy) = G( →zy) ◦G(zx→ ) (7)\nThe target-to-source latent code transformation is then the composition of G( →zx) and G(zy→ ). As G( →zy) and G( →zx) are the inverse mappings of G(zy→ ) and G(zy→ ), we can easily obtain them with normalizing flows, such as realNVP (Dinh et al., 2017) and Glow (Kingma and Dhariwal, 2018). We also notice that G(zx→zy) and G(zy→zx) are both invertible, since they are compositions of two invertible mappings. Moreover, G(zx→zy) is actually the inverse of G(zy→zx) and vice versa (see Appendix A.1 for details)."
+    }, {
+      "heading" : "3.2 Flow-Adapter based Unsupervised Machine Translation",
+      "text" : "The general model architecture is shown in Figure 2. Transformer architecture (Vaswani et al., 2017) is used for both the encoder and the decoder. We denote the encoder and decoder for encoding and generating source-language sentences as the source encoder and the source decoder. Similarly, the target encoder and target decoder are for encoding and generating target sentences. The decoders work in an autoregressive way. The source flow and target flow are NFs for modelling the sentencelevel latent representations of the source and target language respectively, as introduced in Section 3.1.\nThe source encoder and the target encoder work in the same way and thus we only describe the procedure of encoding the source sentence for simplicity. The source encoder takes the source sentence x = {x0, · · · , xS} as input and generates the hidden representations {h0, · · · ,hS}. These hidden representations will be used as encoder-decoder cross-attentional inputs. In addition, we use the hidden representations to generate a sentence-level representation for the source sentence by using max-pooling and mean-pooling to the token-level representations. After that, we sum up the results with the first hidden representation h0, which usually encodes some sentence-level information. Finally, we use a projection matrixW to project the resulting vector to a latent space. The output is referred to as zx, i.e., the sentence-level representation of the source sentence (see Appendix A.2 for mathematical notations and illustration).\nWe hypothesize the decoder can better leverage language-specific latent representations, i.e., zx for the source decoder and zy for the target decoder. Therefore, we propose to perform a latent code transformation for cross-language translation as shown in Figure 2. If the encoder-decoder network is performing the translation in the source-totarget direction, the source flow first transforms the source latent representation zx into , which is a\nvector in the semantic base space. Then the target flow transforms back into zy, which is in the target latent representation space. Then zy is used in target decoder for generating the target sentence.\nFor auto-encoding, such a latent code transformation is not necessary, as the decoder generates sentences in the same language domain as the used latent representations. Even if we perform the transformation, the latent representation will not be changed because of the invertible property of the NFs: zx = G( →zx) ◦G(zx→ )(zx) = zx. For back-translation, however, such a latent code transformation will be performed twice. The first time is in the source-to-target translation while the second time in target-to-source, as shown in Figure 3.\nTo enable the decoder to capture the global semantics and mitigate improper alignments, we incorporate the latent representation z into the output of the last layer of the decoder {s0, · · · , sT }:\noi = (1− gi) si + gi z (8)\nwhere gi = σ([si; z]), σ(·) is the sigmoid function, denotes Hadamard product between two vectors, and oi is vector used to generate a prediction at the ith position. The values in gi controls the contribution of z to oi. In case that the dimension of the latent representation does not match the dimension of the decoder output, a linear projection is leveraged to map z to an appropriate dimension.\nOur flow-adapter framework has three learning objectives, i.e., denoising auto-encoding objective (DAE), iterative back-translation (BT) and MLE of the sentence-level latent representations. The description of DAE and BT is omitted here as they are widely introduced in related papers (Lample et al., 2018a; Artetxe et al., 2018). Our MLE learning objective for source monolingual dataset can be\nformulated as follows (similar for target dataset):\nLMLE(G(zx→ )) = Ez∼pzx [log pzx(z)] (9)\nwhere\npzx(z) = p (G(zx→ )(z)) ∣∣∣∣det ∂G(zx→ )∂zx ∣∣∣∣ zx=z\n(10) where Ez∼pzx is approximated via mini-batches of sentence-level latent representations in learning."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "Multi30K task1 dataset1 (Elliott et al., 2016, 2017): This is a multi-modal dataset that has 30,000 images annotated with captions in English, German and French. The captions for each image can be regarded as translations of each other. Similar to (Lample et al., 2018a), we only use the caption of each image. The officially provided train, validation and test sets are used. This dataset represents as a small-scale dataset for validating the effectiveness of our proposed methods.\nWMT datasets2: We consider following data sets: WMT’14 English-French, WMT’16 EnglishGerman and WMT’16 English-Romanian. We use newstest2014 en-fr, newstest2016 en-de and newstest2016 en-ro as test sets, which contain 3003, 2999 and 1999 sentences respectively."
+    }, {
+      "heading" : "4.2 Preprocessing",
+      "text" : "We tokenize the sentences with Moses script (Koehn et al., 2007). To make our datasets monolingual, we process Multi30K dataset with a procedure similar to Lample et al. (2018a). Specifically, the sentences are randomly divided into two\n1https://github.com/multi30k/dataset 2http://www.statmt.org/\nparts. The source-langauge monolingual dataset is built using the source-language sentences in the first part and target-language dataset is built from the second part. In this way, there will be no correct translations of any sentences in datasets. For WMT datasets, we use the preprocessing methods from (Conneau and Lample, 2019). For EnglishRomanian dataset, we remove the diacritics as done by Sennrich et al. (2016a) to avoid their inconsistent usage in the Romanian dataset."
+    }, {
+      "heading" : "4.3 Pre-trained Embeddings & Models",
+      "text" : "In this work, we use the pre-trained MUSE3 (Lample et al., 2018b) embeddings for part of the experiments. The embeddings are learned using fastText4 (Bojanowski et al., 2017) on Wikipedia data and then aligned in a common space by the method proposed by Lample et al. (2018b). For the models that leverage word embeddings, we share the parameters for the encoder and decoder of the source and target languages, with only swapping the word embedding layer for each language when needed.\nWe also leverage the pre-trained cross-lingual models to initialize our models. More specifically, XLMs (Conneau and Lample, 2019) are leveraged. For our own implementation, we use the pretrained language models xlm-mlm-enfr-1024, xlmmlm-ende-1024, xlm-mlm-enro-1024 from HuggingFace5 to initialize the encoder and randomly initialize the decoder(s). Moreover, we also incorporate our proposed flow-adapter architecture directly into the implementation of original XLM6. Under this case, the encoder and decoder are both initialized with the pre-trained models. It is worth noting that these pre-trained models use a single sub-word looking table for both source and target languages to increase the cross-lingual ability.\n3https://github.com/facebookresearch/MUSE 4https://github.com/facebookresearch/fastText 5https://github.com/huggingface 6https://github.com/facebookresearch/XLM"
+    }, {
+      "heading" : "4.4 Results of Multilingual Unsupervised Machine Translation on Multi30K",
+      "text" : "As Multi30K dataset provides parallel test data for English, French and German languages, we therefore first conduct experiments to show the multilingual translation ability of our proposed flow-adapter models. We use the pre-trained crosslingual word embeddings and randomly initialize a shared encoder and a shared decoder for all three languages. It is worth noting that the training objective does not contain the iterative back-translation. As we train the models for all three languages simultaneously, it’s inefficient to consider all possibilities of back-translation directions (6 in total). The baseline model is trained with only DAE loss, while the flow-adapter based models are additionally trained with MLE loss for the flows. For the translation, the flow-adapter based model performs the latent code transformation to generate a language-specific latent representation. The results are shown in Table 1. We observe great improvements over all six translation directions by using the flow-adapter architecture. Notably, our 3-scf and 3-glow model achieve 19.72 and 20.39 BLEU scores respectively on de-en task, which are 0.62 and 1.29 higher than the baseline model. Similar improvements can also be seen on fr-en and de-fr tasks, with more than 0.5 BLEU score increases. The overall improvements demonstrate that our flow-adapter based model can generate more suitable sentence-level representations by performing the latent code transformation, which is of great help for the decoder to better capture the semantic information and generate decent sentences.\nIn addition, we also find the translation performance is closely related to the language pairs. Our models perform very well on de-en, en-fr and fr-en translation tasks, with BLEU scores more than 16. In other directions, i.e., en-de, de-fr and fr-de, our models achieve BLEU scores around or even less than 10. We attribute this phenomenon to the similarity between languages. English vocabularies are\nheavily influenced by French and therefore they are similar languages in terms of words. From a linguistic perspective, German and English both belong to Germanic languages, while French belongs to Romance languages, which could explain why the results on de-fr and fr-de directions are not as good as the results on other pairs."
+    }, {
+      "heading" : "4.5 Results of Shared-decoder & Separate-decoder Models on Multi30K",
+      "text" : "We present the performance of our proposed flowadapter based models under the shared-decoder and separate-decoder settings on Multi30K. The encoder is initialized with the pre-trained XLM model and fixed, and the decoders are randomly initialized. The results are shown in Table 2. Firstly, we notice that the shared-decoder baseline model obtains very low BLEU scores. By checking the translation generated, we find the model only copies the input as translation. This phenomenon shows that the shared-decoder baseline, which does not perform the latent code transformation, cannot model two languages simultaneously well, and thus cannot generate translations in desired language domains. However, by incorporating the flow-adapter, the model will no longer have this limitation. Both shared-decoder 3-scf and 3-glow models achieve very good performance on all translation pairs. For example, the 3-scf model obtain 25.80, 28.92, 39.26 and 36.84 BLEU scores on en-de, de-en, enfr and fr-en translation pair respectively, which are much higher than the baseline which has the above mentioned copying problem.\nCompared with the shared-decoder scenario, the models under separate-decoder setting do not suffer the copying problem, because different decoders are used to specifically model and generate sentences in distinct language domains. The downside is that using multiple decoders at the same time\ncan substantially increase the number of trainable parameters. Within the separate-decoder models, the flow-adapter based models generally perform better than the baseline model, with about 1 BLEU increase on en-de and de-en pairs and relatively smaller improvements on en-fr and fr-en. The improvements demonstrate that flow-adapter based models can generate more decent translations using language-specific latent representations.\nWe also observe that the separate-decoder models generally perform better than the shareddecoder models. The separate-decoder baseline is much better than its counterpart as it avoids the copying problem. For the 3-scf flow-adapter based model, we find that the separate-decoder one outperforms the shared-decoder one by 2.44, 1.71, 0.38 on en-de, de-en and en-fr directions. However, on fr-en, the shared-decoder model achieves 0.39 BLEU better scores. Similar phenomenon can also be seen for the 3-glow model. We conjecture this is because English and French share a lot of vocabularies and thus also sub-words. In this way, some common features can be captured by a shared decoder, and thus improving its generalization.\nLastly, when compared with UNMT, our models show superiority, with more than 4 BLEU scores on each direction. We attribute the improvements to the usage of pre-trained model and incorporation of language-specific sentence-level representation obtained by the latent code transformation."
+    }, {
+      "heading" : "4.6 Results on WMT datasets",
+      "text" : "We further integrate our flow-adapter architecture into the original implementation of XLM (Conneau and Lample, 2019) and conduct experiments on WMT datasets. To fully leverage the pre-trained models, we initialize both the encoder and decoder with XLM models and set them trainable. Different from previous experiments, a single shared\ndecoder is used for this experiment, since the decoder is also initialized with the pre-trained model and has far more parameters compared with the randomly initialized transformer decoder we use in previous experiments. We report the performance of the models with proposed 5-scf and 5- glow (the ablation experiments showed that using 5-flows provides slightly better results than 3-flows for WMT datasets) for the flow-adapter as well as the performance on the SOTA models, namely XLM and MASS. The results are shown in Table 3. Noticeably, both of our proposed flowadapter based models achieve remarkable performance on all language pairs. Compared with the results XLM (EMD + EMD), which uses the pretrained cross-lingual sub-word embeddings instead of pre-trained models, our 5-scf model achieves 5.20, 5.33, 6.37 and 4.32 higher BLEU scores on en-de, de-en, en-fr and fr-en tasks respectively. On relatively low-resource language pair, i.e., en-ro, our 5-scf still outperforms the XLM (EMD + EMD) by 6.61 and 5.09 scores on en-ro and ro-en translation directions. Similar obvious superiority can also be seen on our proposed 5-glow model compared with XLM (EMD + EMD). We report more than 4 BLEU scores increase on each of the translation directions. These improvements can be contributed to (1) the usage of pre-trained models and (2) the introduction of the flow-adapter.\nWe further compare our flow-adapter based models with XLM (MLM + MLM), which also initialized with pre-trained models. We find the performance of en-x directions is consistently lower than x-en directions for all models. This is because German, Romanian and French are more complex languages compared with English. Therefore, translating in en-x directions is harder than in x-en directions. Our flow-adapter based models, though achieving similar or relatively worse BLEU scores on de-en and ro-en compared with XLM (MLM + MLM), obtain higher scores on harder translation directions, i.e., en-de and en-ro, suggesting\nthat our models are balancing the performance of two-direction translations. As English and French are similar languages in terms of vocabulary, our 5-scf achieve 2.37 and 0.42 scores better than XLM (MLM + MLM) on en-fr and fr-en respectively.\nLastly, we compare our models with MASS, which is initialized with a jointly-trained encoderdecoder model and achieves the current best published scores. The performance of the proposed models is still competitive, with less than 2.5 BLEU scores difference on each translation direction. In general, our performance demonstrates that some noticeable improvements can be obtained by introducing the flow-adapter architecture into the XLM models. Such improvements show the validity and effectiveness of our proposed flow-adapter architecture integrated into pre-trained models."
+    }, {
+      "heading" : "5 Conclusion & Future Work",
+      "text" : "In this work, we propose a novel flow-adapter based model for unsupervised machine translation. The flow-adapter employs a pair of normalizing flows to explicitly model the distributions of the sentencelevel representations. During the translation, a latent code transformation is performed, which enables the decoder to better capture the semantics of sentences in certain language domains. Through extensive experiments, we show the flow-adapter can improve the multilingual translation ability. Moreover, it can alleviate the copying problem. By integrating the flow-adapter into pre-trained XLM models, we achieve very competitive and even better results than some SOTA models on WMT datasets.\nIn the future, we would like to explore the possibility of pre-training the flow-adapter simultaneously with the pre-training the language models. In this way, the flows can learn more information. Moreover, we would like to extend the flow-adapter architecture to the language generation task. By using different flows for different languages, we could perform multilingual language generation of the same semantics."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Proof of the Invertibility\nThe following proof is based on the proof by Grover et al. (2020) and shows the source-to-target latent code transformation is the inverse of the target-tosource latent code transformation, and vice versa:\nG−1(zx→zy) = (G( →zy) ◦G(zx→ )) −1\n= G−1(zx→ ) ◦G −1 ( →zy) = G( →zx) ◦G(zy→ ) = G(zy→zx)\n(11)\nA.2 Generation of Sentence-level Representation\nThe following formula shows the process of how the sentence-level representation is generated:\nz = Linear(max-pool([h0, · · · ,hS ]) + mean-pool([h0, · · · ,hS ]) + h0) (12)\nwhere the pooling operation generates a vector that has the same dimension as h0, so the three vectors have the same shape and therefore are additive. An illustration can be seen in Figure 4.\nA.3 Hyperparameters A.3.1 Multi30K Unsupervised Machine Translation For the multilingual machine translation tasks, denosing auto-encoding is used to train the baseline model. The flow-adapter based (3-scf and 3- glow) models are additionally trained with MLE loss. We follow the denoising auto-encoding hyperparameter settings used by Lample et al. (2018a). Specifically, word drop and word shuffling are used. For word drop, every word in a sentence (except <bos> and <eos>) can be dropped with a probability pwd, which we set 0.1 in our experiments. For word shuffling, a random permutation σ is applied to the input sentence, which satisfy the condition: ∀i ∈ {1, n}, |σ(i) − i| ≤ k, where i is the index of a word in the sequence, n is the length of the sequence and k is a hyperparameter that controls the degree of the permutation which we set 3 in our experiments. The dimension of the pre-trained embedding is 300. The randomly initialized shared encoder and decoder use transformer architecture with 512 hidden units, 4 heads and 3 layers by default. We use separate embedding layers for each language and tie their weights with the output layers for each language. The size of the sentence-level latent representation is set to 100. And the weight of the MLE loss for the flows is set to 0.01. We use dropout (Srivastava et al., 2014) probability of 0.2 for the transformers and 0 for the flows. The batch size is set to 32. The whole model is trained in an end-to-end manner with Adam optimizer (Kingma and Ba, 2015) with an initial learning rate of 0.0001.\nFor the shared-decoder & separate-decoder experiments using pre-trained models, denosing autoencoding and iterative back-translation are used to\ntrain the baseline model. The flow-adapter based (3-scf and 3-glow) models are additionally trained with MLE loss. The same denoising auto-encoding hyperparameters as above are used. For iterative back-translation, greedy decoding is used to generate synthetic parallel sentences as well as the reconstructions. A single embedding layer is used for both the source and target languages and its weight is tied with the output layer. The size of the sentence-level latent representation is set to 256. The encoder is initialized with pre-trained XLM which uses 1024 as the embedding size and GELU activations (Hendrycks and Gimpel, 2016), and has 4096 hidden units, 8 heads and 6 layers. The randomly initialized decoder has 512 hidden units, 8 heads and 3 layers. The models are firstly trained with DAE loss (and MLE loss for flow-adapter models) for the first 3 epochs, then trained with all losses (including the iterative back-translation) for the rest epochs. The rest hyperparameters are the same as above.\nA.3.2 WMT Unsupervised Machine Translation\nAs we integrate our flow-adapter architecture into the original implementation of XLM (Conneau and Lample, 2019), we follow the recommended unsupervised training settings of XML. For the flowrelated hyperparameters, we use 256 as the size of the sentence-level latent representation. The weight of the MLE loss is set to 0.01."
+    } ],
+    "references" : [ {
+      "title" : "Translation with scarce bilingual resources",
+      "author" : [ "Yaser Al-Onaizan", "Ulrich Germann", "Ulf Hermjakob", "Kevin Knight", "Philipp Koehn", "Daniel Marcu", "Kenji Yamada." ],
+      "venue" : "Machine translation, 17(1):1–17.",
+      "citeRegEx" : "Al.Onaizan et al\\.,? 2002",
+      "shortCiteRegEx" : "Al.Onaizan et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Learning bilingual word embeddings with (almost) no bilingual data",
+      "author" : [ "Mikel Artetxe", "Gorka Labaka", "Eneko Agirre." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 451–462.",
+      "citeRegEx" : "Artetxe et al\\.,? 2017",
+      "shortCiteRegEx" : "Artetxe et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Unsupervised neural machine translation",
+      "author" : [ "Mikel Artetxe", "Gorka Labaka", "Eneko Agirre", "Kyunghyun Cho." ],
+      "venue" : "6th International Conference on Learning Representations, ICLR 2018, Vancouver, BC, Canada, April 30 - May 3, 2018, Confer-",
+      "citeRegEx" : "Artetxe et al\\.,? 2018",
+      "shortCiteRegEx" : "Artetxe et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015,",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Enriching word vectors with subword information",
+      "author" : [ "Piotr Bojanowski", "Edouard Grave", "Armand Joulin", "Tomas Mikolov." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 5:135–146.",
+      "citeRegEx" : "Bojanowski et al\\.,? 2017",
+      "shortCiteRegEx" : "Bojanowski et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Semisupervised learning for neural machine translation",
+      "author" : [ "Yong Cheng", "Wei Xu", "Zhongjun He", "Wei He", "Hua Wu", "Maosong Sun", "Yang Liu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume",
+      "citeRegEx" : "Cheng et al\\.,? 2016",
+      "shortCiteRegEx" : "Cheng et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Learning phrase representations using RNN encoder–decoder for statistical machine translation",
+      "author" : [ "Kyunghyun Cho", "Bart van Merriënboer", "Caglar Gulcehre", "Dzmitry Bahdanau", "Fethi Bougares", "Holger Schwenk", "Yoshua Bengio." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Cho et al\\.,? 2014",
+      "shortCiteRegEx" : "Cho et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Crosslingual language model pretraining",
+      "author" : [ "Alexis Conneau", "Guillaume Lample." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 32. Curran Associates, Inc.",
+      "citeRegEx" : "Conneau and Lample.,? 2019",
+      "shortCiteRegEx" : "Conneau and Lample.",
+      "year" : 2019
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Density estimation using real NVP",
+      "author" : [ "Laurent Dinh", "Jascha Sohl-Dickstein", "Samy Bengio." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings.",
+      "citeRegEx" : "Dinh et al\\.,? 2017",
+      "shortCiteRegEx" : "Dinh et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Findings of the second shared task on multimodal machine translation and multilingual image description",
+      "author" : [ "Desmond Elliott", "Stella Frank", "Loïc Barrault", "Fethi Bougares", "Lucia Specia." ],
+      "venue" : "Proceedings of the Second Conference on Machine Transla-",
+      "citeRegEx" : "Elliott et al\\.,? 2017",
+      "shortCiteRegEx" : "Elliott et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multi30K: Multilingual EnglishGerman image descriptions",
+      "author" : [ "Desmond Elliott", "Stella Frank", "Khalil Sima’an", "Lucia Specia" ],
+      "venue" : "In Proceedings of the 5th Workshop on Vision and Language,",
+      "citeRegEx" : "Elliott et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Elliott et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Universal audio synthesizer control with normalizing flows. arXiv preprint arXiv:1907.00971",
+      "author" : [ "Philippe Esling", "Naotake Masuda", "Adrien Bardet", "Romeo Despres" ],
+      "venue" : null,
+      "citeRegEx" : "Esling et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Esling et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Generative adversarial nets",
+      "author" : [ "Ian Goodfellow", "Jean Pouget-Abadie", "Mehdi Mirza", "Bing Xu", "David Warde-Farley", "Sherjil Ozair", "Aaron Courville", "Yoshua Bengio." ],
+      "venue" : "Advances in Neural Information Processing Systems.",
+      "citeRegEx" : "Goodfellow et al\\.,? 2014",
+      "shortCiteRegEx" : "Goodfellow et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Alignflow: Cycle consistent learning from multiple domains via normalizing flows",
+      "author" : [ "Aditya Grover", "Christopher Chute", "Rui Shu", "Zhangjie Cao", "Stefano Ermon." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The",
+      "citeRegEx" : "Grover et al\\.,? 2020",
+      "shortCiteRegEx" : "Grover et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bridging nonlinearities and stochastic regularizers with gaussian error linear units",
+      "author" : [ "Dan Hendrycks", "Kevin Gimpel." ],
+      "venue" : "arXiv preprint arXiv:1606.08415.",
+      "citeRegEx" : "Hendrycks and Gimpel.,? 2016",
+      "shortCiteRegEx" : "Hendrycks and Gimpel.",
+      "year" : 2016
+    }, {
+      "title" : "Flow++: Improving flowbased generative models with variational dequantization and architecture design",
+      "author" : [ "Jonathan Ho", "Xi Chen", "Aravind Srinivas", "Yan Duan", "Pieter Abbeel." ],
+      "venue" : "Proceedings of the 36th International Conference on Machine Learning,",
+      "citeRegEx" : "Ho et al\\.,? 2019",
+      "shortCiteRegEx" : "Ho et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Iterative backtranslation for neural machine translation",
+      "author" : [ "Cong Duy Vu Hoang", "Philipp Koehn", "Gholamreza Haffari", "Trevor Cohn." ],
+      "venue" : "Proceedings of the 2nd Workshop on Neural Machine Translation and Generation, NMT@ACL 2018, Mel-",
+      "citeRegEx" : "Hoang et al\\.,? 2018",
+      "shortCiteRegEx" : "Hoang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Endto-end statistical machine translation with zero or small parallel texts",
+      "author" : [ "Ann Irvine", "Chris Callison-Burch." ],
+      "venue" : "Natural Language Engineering, 22(4):517–548. 9",
+      "citeRegEx" : "Irvine and Callison.Burch.,? 2016",
+      "shortCiteRegEx" : "Irvine and Callison.Burch.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Glow: Generative flow with invertible 1x1 convolutions",
+      "author" : [ "Diederik P. Kingma", "Prafulla Dhariwal." ],
+      "venue" : "Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems 2018, NeurIPS 2018, De-",
+      "citeRegEx" : "Kingma and Dhariwal.,? 2018",
+      "shortCiteRegEx" : "Kingma and Dhariwal.",
+      "year" : 2018
+    }, {
+      "title" : "Autoencoding variational bayes",
+      "author" : [ "Diederik P. Kingma", "Max Welling." ],
+      "venue" : "2nd International Conference on Learning Representations, ICLR 2014, Banff, AB, Canada, April 14-16, 2014, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Welling.,? 2014",
+      "shortCiteRegEx" : "Kingma and Welling.",
+      "year" : 2014
+    }, {
+      "title" : "Videoflow: A flowbased generative model for video",
+      "author" : [ "Manoj Kumar", "Mohammad Babaeizadeh", "Dumitru Erhan", "Chelsea Finn", "Sergey Levine", "Laurent Dinh", "Durk Kingma." ],
+      "venue" : "arXiv preprint arXiv:1903.01434, 2(5).",
+      "citeRegEx" : "Kumar et al\\.,? 2019",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Unsupervised machine translation using monolingual corpora only",
+      "author" : [ "Guillaume Lample", "Alexis Conneau", "Ludovic Denoyer", "Marc’Aurelio Ranzato" ],
+      "venue" : "In 6th International Conference on Learning Representations,",
+      "citeRegEx" : "Lample et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "2018b. Word translation without parallel data",
+      "author" : [ "Guillaume Lample", "Alexis Conneau", "Marc’Aurelio Ranzato", "Ludovic Denoyer", "Hervé Jégou" ],
+      "venue" : "In 6th International Conference on Learning Representations,",
+      "citeRegEx" : "Lample et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "On the sentence embeddings from pre-trained language models",
+      "author" : [ "Bohan Li", "Hao Zhou", "Junxian He", "Mingxuan Wang", "Yiming Yang", "Lei Li." ],
+      "venue" : "arXiv preprint arXiv:2011.05864.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Stochastic backpropagation and approximate inference in deep generative models",
+      "author" : [ "Danilo Jimenez Rezende", "Shakir Mohamed", "Daan Wierstra." ],
+      "venue" : "Proceedings of the 31st International Conference on International Conference on Machine Learning",
+      "citeRegEx" : "Rezende et al\\.,? 2014",
+      "shortCiteRegEx" : "Rezende et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Edinburgh neural machine translation systems for WMT 16",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the First Conference on Machine Translation: Volume 2, Shared Task Papers, pages 371–376. Association for Com-",
+      "citeRegEx" : "Sennrich et al\\.,? 2016a",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Improving neural machine translation models with monolingual data",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages",
+      "citeRegEx" : "Sennrich et al\\.,? 2016b",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Variational neural machine translation with normalizing flows",
+      "author" : [ "Hendra Setiawan", "Matthias Sperber", "Udhyakumar Nallasamy", "Matthias Paulik." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020,",
+      "citeRegEx" : "Setiawan et al\\.,? 2020",
+      "shortCiteRegEx" : "Setiawan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Latent-variable nonautoregressive neural machine translation with deterministic inference using a delta posterior",
+      "author" : [ "Raphael Shu", "Jason Lee", "Hideki Nakayama", "Kyunghyun Cho." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelli-",
+      "citeRegEx" : "Shu et al\\.,? 2020",
+      "shortCiteRegEx" : "Shu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "MASS: masked sequence to sequence pre-training for language generation",
+      "author" : [ "Kaitao Song", "Xu Tan", "Tao Qin", "Jianfeng Lu", "TieYan Liu." ],
+      "venue" : "Proceedings of the 36th International Conference on Machine Learning, ICML 2019, 9-15 June 2019,",
+      "citeRegEx" : "Song et al\\.,? 2019",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Dropout: A simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "Journal of Machine Learning Research, 15(56):1929–1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V. Le." ],
+      "venue" : "Proceedings of the 27th International Conference on Neural Information Processing Systems - Volume 2, page 3104–3112. MIT Press.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Modeling coverage for neural machine translation",
+      "author" : [ "Zhaopeng Tu", "Zhengdong Lu", "Yang Liu", "Xiaohua Liu", "Hang Li." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 76–85.",
+      "citeRegEx" : "Tu et al\\.,? 2016",
+      "shortCiteRegEx" : "Tu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Parallel WaveNet: Fast highfidelity speech synthesis",
+      "author" : [ "Elsen", "Nal Kalchbrenner", "Heiga Zen", "Alex Graves", "Helen King", "Tom Walters", "Dan Belov", "Demis Hassabis." ],
+      "venue" : "Proceedings of the 35th International Conference on Machine Learning, vol-",
+      "citeRegEx" : "Elsen et al\\.,? 2018",
+      "shortCiteRegEx" : "Elsen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "undefinedukasz Kaiser", "Illia Polosukhin" ],
+      "venue" : "In Proceedings of the 31st International Conference on Neural Information Processing",
+      "citeRegEx" : "Vaswani et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Extracting and composing robust features with denoising autoencoders",
+      "author" : [ "Pascal Vincent", "Hugo Larochelle", "Yoshua Bengio", "Pierre-Antoine Manzagol." ],
+      "venue" : "Proceedings of the 25th international conference on Machine learning, pages 1096–1103.",
+      "citeRegEx" : "Vincent et al\\.,? 2008",
+      "shortCiteRegEx" : "Vincent et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Variational neural machine translation",
+      "author" : [ "Biao Zhang", "Deyi Xiong", "Jinsong Su", "Hong Duan", "Min Zhang." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 521–530. Association for Computational Lin-",
+      "citeRegEx" : "Zhang et al\\.,? 2016",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Transfer learning for low-resource neural machine translation",
+      "author" : [ "Barret Zoph", "Deniz Yuret", "Jonathan May", "Kevin Knight." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 1568–1575. Associa-",
+      "citeRegEx" : "Zoph et al\\.,? 2016",
+      "shortCiteRegEx" : "Zoph et al\\.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "Typical NMT models leverage an encoder-decoder framework (Cho et al., 2014; Sutskever et al., 2014).",
+      "startOffset" : 57,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 34,
+      "context" : "Typical NMT models leverage an encoder-decoder framework (Cho et al., 2014; Sutskever et al., 2014).",
+      "startOffset" : 57,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 40,
+      "context" : "However, NMT models have shown to be datahungry, as the number of parallel sentences significantly influences the performance (Zoph et al., 2016).",
+      "startOffset" : 126,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 0,
+      "context" : "Unfortunately, large-scale bilingual corpora are only limited to certain language (Al-Onaizan et al., 2002).",
+      "startOffset" : 82,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 18,
+      "context" : "Some early works (Irvine and Callison-Burch, 2016; Sennrich et al., 2016b; Cheng et al., 2016) used monolingual corpora to boost the performance when the parallel data is not abundant.",
+      "startOffset" : 17,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 29,
+      "context" : "Some early works (Irvine and Callison-Burch, 2016; Sennrich et al., 2016b; Cheng et al., 2016) used monolingual corpora to boost the performance when the parallel data is not abundant.",
+      "startOffset" : 17,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 5,
+      "context" : "Some early works (Irvine and Callison-Burch, 2016; Sennrich et al., 2016b; Cheng et al., 2016) used monolingual corpora to boost the performance when the parallel data is not abundant.",
+      "startOffset" : 17,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 1,
+      "context" : "They both leveraged an inferred bilingual dictionary for initial word-by-word translation (Lample et al., 2018b; Artetxe et al., 2017).",
+      "startOffset" : 90,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 38,
+      "context" : "In addition, both the works used denoising auto-encoding (Vincent et al., 2008) and iterative",
+      "startOffset" : 57,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 17,
+      "context" : "back-translation (Hoang et al., 2018) as learning objectives for training a robust translation model.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 26,
+      "context" : "More recently, with the advance in pre-trained models (Peters et al., 2018; Devlin et al., 2019), re-",
+      "startOffset" : 54,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 8,
+      "context" : "More recently, with the advance in pre-trained models (Peters et al., 2018; Devlin et al., 2019), re-",
+      "startOffset" : 54,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 3,
+      "context" : "Current NMT frameworks rely heavily on the attention mechanism (Bahdanau et al., 2015; Vaswani et al., 2017) to capture the alignments.",
+      "startOffset" : 63,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 37,
+      "context" : "Current NMT frameworks rely heavily on the attention mechanism (Bahdanau et al., 2015; Vaswani et al., 2017) to capture the alignments.",
+      "startOffset" : 63,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 35,
+      "context" : "However, due to possible inconsistency, the attention-based context vectors might fail to extract sufficient sentence-level semantics and thus result in undesirable translation or translation ambiguity (Tu et al., 2016; Zhang et al., 2016).",
+      "startOffset" : 202,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 39,
+      "context" : "However, due to possible inconsistency, the attention-based context vectors might fail to extract sufficient sentence-level semantics and thus result in undesirable translation or translation ambiguity (Tu et al., 2016; Zhang et al., 2016).",
+      "startOffset" : 202,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 39,
+      "context" : "Therefore, several variational frameworks for modelling the translation process have been proposed to tackle such an issue (Zhang et al., 2016; Setiawan et al., 2020).",
+      "startOffset" : 123,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 30,
+      "context" : "Therefore, several variational frameworks for modelling the translation process have been proposed to tackle such an issue (Zhang et al., 2016; Setiawan et al., 2020).",
+      "startOffset" : 123,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 13,
+      "context" : "Different from generative adversarial networks (GAN) (Goodfellow et al., 2014) and variational auto-encoding (VAE) (Kingma and Welling, 2014), NFs allow for not only sampling but also exact density estimation.",
+      "startOffset" : 53,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2014) and variational auto-encoding (VAE) (Kingma and Welling, 2014), NFs allow for not only sampling but also exact density estimation.",
+      "startOffset" : 44,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 16,
+      "context" : "successfully applied to fields as image (Ho et al., 2019; Kingma and Dhariwal, 2018), audio (Esling et al.",
+      "startOffset" : 40,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 20,
+      "context" : "successfully applied to fields as image (Ho et al., 2019; Kingma and Dhariwal, 2018), audio (Esling et al.",
+      "startOffset" : 40,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2019; Kingma and Dhariwal, 2018), audio (Esling et al., 2019; van den Oord et al., 2018) and video generation (Kumar et al.",
+      "startOffset" : 42,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 39,
+      "context" : "Compared with standard encoder-decoder based NMT models, latent-variable (variational) based approaches (Zhang et al., 2016; Setiawan et al., 2020; Shu et al., 2020) additionally leverage latent random variables.",
+      "startOffset" : 104,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 30,
+      "context" : "Compared with standard encoder-decoder based NMT models, latent-variable (variational) based approaches (Zhang et al., 2016; Setiawan et al., 2020; Shu et al., 2020) additionally leverage latent random variables.",
+      "startOffset" : 104,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 31,
+      "context" : "Compared with standard encoder-decoder based NMT models, latent-variable (variational) based approaches (Zhang et al., 2016; Setiawan et al., 2020; Shu et al., 2020) additionally leverage latent random variables.",
+      "startOffset" : 104,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 30,
+      "context" : "By modelling the latent variables, some useful statistical dependencies can be introduced (Setiawan et al., 2020).",
+      "startOffset" : 90,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 21,
+      "context" : "lem, the variational NMT takes some measures from VAE (Kingma and Welling, 2014; Rezende et al., 2014), specifically, neural approximation and reparameterization.",
+      "startOffset" : 54,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 27,
+      "context" : "lem, the variational NMT takes some measures from VAE (Kingma and Welling, 2014; Rezende et al., 2014), specifically, neural approximation and reparameterization.",
+      "startOffset" : 54,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 30,
+      "context" : ", a NFs-based posterior (Setiawan et al., 2020), to model the latent variables; the KL divergence in ELBO, however, minimizes the discrepancy between such a distribution and a simple prior pθ(z|x), e.",
+      "startOffset" : 24,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 39,
+      "context" : "Variational methods such as (Zhang et al., 2016; Setiawan et al., 2020) assume that the semantics of the source sentence x and target sentence y are the same and thus the generated latent variable z has no difference if considering only x or both x and y.",
+      "startOffset" : 28,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 30,
+      "context" : "Variational methods such as (Zhang et al., 2016; Setiawan et al., 2020) assume that the semantics of the source sentence x and target sentence y are the same and thus the generated latent variable z has no difference if considering only x or both x and y.",
+      "startOffset" : 28,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 14,
+      "context" : "Inspired by AlignFlow (Grover et al., 2020), we consider the cross-domain transformation between zx and zy.",
+      "startOffset" : 22,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 9,
+      "context" : "As G( →zy) and G( →zx) are the inverse mappings of G(zy→ ) and G(zy→ ), we can easily obtain them with normalizing flows, such as realNVP (Dinh et al., 2017) and Glow (Kingma and Dhariwal, 2018).",
+      "startOffset" : 138,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 37,
+      "context" : "Transformer architecture (Vaswani et al., 2017) is used for both the encoder and the decoder.",
+      "startOffset" : 25,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 2,
+      "context" : "The description of DAE and BT is omitted here as they are widely introduced in related papers (Lample et al., 2018a; Artetxe et al., 2018).",
+      "startOffset" : 94,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 7,
+      "context" : "For WMT datasets, we use the preprocessing methods from (Conneau and Lample, 2019).",
+      "startOffset" : 56,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 4,
+      "context" : "(Bojanowski et al., 2017) on Wikipedia data and then aligned in a common space by the method proposed by Lample et al.",
+      "startOffset" : 0,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 7,
+      "context" : "More specifically, XLMs (Conneau and Lample, 2019) are leveraged.",
+      "startOffset" : 24,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 7,
+      "context" : "We further integrate our flow-adapter architecture into the original implementation of XLM (Conneau and Lample, 2019) and conduct experiments on WMT datasets.",
+      "startOffset" : 91,
+      "endOffset" : 117
+    } ],
+    "year" : 0,
+    "abstractText" : "The latent variables often encode global semantics and can play a complementary role to the attention mechanism, thus improving the translation. Although latent-variable methods have been applied to supervised machine translation, the possibility for unsupervised scenario is not researched. In this work, we propose a flow-adapter architecture, which leverages normalizing flows to explicitly model the distribution of the sentence-level latent representations of the source and target languages in a completely unsupervised fashion. Moreover, a latent code transformation is performed while in the translation process. To the best of our knowledge, this is the first work that uses latent variables and normalizing flows for unsupervised machine translation. Our experimental results demonstrate the validity of the proposed model. We report promising and competitive results on several unsupervised machine translation benchmarks.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,521 @@
+{
+  "name" : "ARR_2022_107_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Latent Group Dropout for Multilingual and Multidomain Machine Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Multidomain and multilingual machine translation aim to develop one single model to perform translation for multiple domains and multiple language pairs, respectively.1 These paradigms are motivated by the compactness of the resulting translation system (Chu and Dabre, 2018; Dabre et al., 2020), the hypothetical positive knowledge transfer between similar domains (Pham et al., 2021) or between languages in the same family (Tan et al., 2019). However, having all the tasks use exactly the same model parameters can cause negative interference between unrelated tasks (Conneau et al., 2020; Wang et al., 2020b). Hence, the recent development of approaches relying on a partial sharing of the parameters, eg. using adapter layers as studied in (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Philip et al., 2020). If these techniques have proven effective for building strong baselines, they fail to fully take advantage of the\n1We will refer to these two situations as ’multi-task MT’ and refer to individual domains and languages as ’tasks’.\nsimilarities that exist between domains and tasks, as documented eg. in (Pham et al., 2021). This is because the partition of the parameter space between generic or task-specific subparts, and their allocation to each task, is hard-coded in the network, irrespective of the actual commonalties and differences in the data space.\nIn this work, we study and develop a new method, multi-task group dropout, aimed to take into account the similarity between tasks in a more effective way, by learning the network organization from the data. To this end, we introduce a set of latent variables in the model, to account for the unseen association between tasks and regions of the representation space and show how training can still be performed end-to-end using a variational surrogate of the log-likelihood loss function. Our experiments with multilingual and multidomain machine translation confirm that this method can automatically detect similarities in the data, meaning that related tasks use the same subparts of the network. Our results also show that this method is comparable to using adapter layers in a number of empirical comparisons; however, contrarily to adapters, these performance are obtained without any increase of the model size. Our contributions are primarily methodological and can be summarized as follows:\n1. We introduce a novel, sound mathematical formulation to the problem of jointly learning task-dependent sub-networks and the parameters of the underlying models using variational probabilistic modeling techniques;\n2. We present algorithms to train this model endto-end with very little extra parameters;\n3. We report, using an extensive set of experiments, gains for multidomain MT and very low-resourced languages in multilingual MT;\n4. We study how this method can actually exploit the similarities between tasks to learn interpretable sub-networks."
+    }, {
+      "heading" : "2 Multi-task group dropout",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Network architecture, groups and layers",
+      "text" : "Many architectures for multitask learning are based on a matching of subset of model parameters with tasks. Given the task and the input instance, only a subpart of the network will be involved in the computation of the output value, based on a predefined association between subnetworks and tasks. The adapter architecture of (Bapna and Firat, 2019) illustrates this strategy, where a task-dependent set of layers is activated for each task.\nIn our approach, we also require to know the task d ∈ [0 . . .nd − 1] for each training and test instance. The structure of our Transformer networks (Vaswani et al., 2017) is however based on the notion of groups of nodes in the computation graph. At the input of each Transformer layer l ∈ [1 . . .L], we partition all input state vectors into np groups of nodes, and zero-out a task-dependent subset of these groups. The assignment of tasks to groups will be learned from the data, under the constraint that each task only activates exactly k groups of active nodes, while the all the other values are nullified, akin to a dropout process (see Figure 1). Formally, a group dropout mask mdl is a np-dimensional binary vector containing exactly k ones: group p (∈ [0, . . . ,np-1]) is retained for task d if mdl (p) = 1 and is dropped if m d l (p) = 0. We denote ∆npk = {m ∈ {0,1}np such that | m |L1= k} the set of all admissible masks, with | m |L1 the L1 norm of vector m; #∆npk is the cardinal of ∆ np .\nGiven mdl , the mask r d l for task d in layer l is\nthen derived as:\nrdl (i) = m d l (p) if p× dk np 6 i < (p+1)× dk np ,\nwhere dk is the dimension of the hidden state. The propagation of information within the network then depends on the current task value as follows:\n∀l ∈ [0, · · · ,L−1] : h̃l = hl rdl , hl+1 = LAYERl+1(h̃l),\nwhere LAYERl() represents all the computations in Transformer layer l, is element-wise product. It is applied at all positions of each layer in the encoder and in the decoder."
+    }, {
+      "heading" : "2.2 Training with latent dropout masks",
+      "text" : "Assuming standard notation for our translation model P(y|x,d;θ) where x, y and θ respectively refer to the input, output, and parameter vector, the latent variables mdl , l ∈ [0, . . . ,L],d ∈ [0, . . . ,nd−1] are introduced as follows. We chose the prior distribution for mdl as the uniform distribution over ∆ np k : P(mdl |x,d;θ) = Unif(∆ np k ); variables for each layer are independent and collectively refered to as md . For any (variational) distribution Q(m1 . . .mnd ;Φ) with parameters Φ= {φ 1l , ...,φ nd L }, it is well-known that the log-likelihood is lower-bounded by the socalled ELBO function (hereafter denoted `), made of a summation of two terms: the distortion D and the rate R defined as follows:\nlogP(y|x,d;θ)≥`(x,y,d;θ ,Φ) `(x,y,d;θ ,Φ) =D(x,y,d;θ ,Φ)−R(x,y,d;θ ,Φ)\n(1)\nD(x,y,d;θ ,φ) =Emd∼Q(md |d,Φ) logP(y|md ,x,d;θ)\nR(x,y,d;θ ,φ) =KL(Q(md |d,Φ)||P(md |x,d;θ)), where KL is the Kullback-Leibler divergence. We use −`(x,y,d;θ ,Φ) as our surrogate training loss, as a tractable approximation of the likelihood, and try to minimize this function in θ and Φ.\nThe variational distribution Q of md is defined independently on a layerwise basis; this means that each layer only involves a subset Φdl of variational parameters. Q is computed as follows:\nIndd = {i1, · · · , ik} ∼ SRS(softmax(Φdl ),k) mdl (i) = I(i ∈ Indd),\nwhere SRS(π,k) denotes the process of sampling k times without replacement from the distribution π , and I is the indicator function. This modeling choice for the latent vector mdl is motivated by the Gumbel Top-K trick of Kool et al. (2019) that we\nuse below. Given our choices for the prior and the variational distributions, the two terms in Eq. (1) can be computed as:\nD(. . .) = Emd∼Q(md |d;Φ)logP(y|md ,x,d,θ) = Egd∼i.i.dG(0,1) [ logP(y|m̃d ,x,d,θ ,) ]\nwhere the generation process G(0,1) is a product of independent Gumbel distributions, yielding:\n∀d,gd = [gd1 , . . . ,gdL], with gdl ∈ Rnp\n∀p,gdl (p) i.i.d∼ Gumbel(0,1)\nIndd = {i1, · · · , ik}= Top-k { gdl (0)+Φdl (0), · · · , gdl (np-1)+Φ d l (np-1) }\n(2)\nm̃dl (p) = I(p ∈ Indd). For the second term, the derivation is the following:\nR = KL(Q(md |d,Φ)||P(md |x,d;θ)),\n=− L\n∑ l=1\n( H [ Q(mdl |d,Φ) ] − log(#∆npk ) ) =− L\n∑ l=1\n( H [ Q(i1, · · · , ik|d,Φ) ] − log(#∆npk ) ) 6− L\n∑ l=1\n( H [ Q(i1|d,Φdl ) ] − log(#∆npk ) ) . (3)\nWe prove inequality (3) in Appendix B. This inequality shows that an upperbound of R is ∑Ll=1(log(#∆ np k )−H(softmax(Φdl ))) since i1|Φdl ∼ softmax(Φdl ). During training, we thus maximize a sum over layers of the entropy H(softmax(Φdl )) which performs a regularization over the parameters Φd of the variational distribution.\nThanks to the Gumbel Top-K trick, we can move the parameters Φ into the objective function and get rid of policy gradients, which have been reported to be very unstable (Kingma and Welling, 2014). However, the operator Top-k, which serves to define m̃dl in Equation (2), is not differentiable. Therefore, we approximate this function by the Soft-Top-K function defined as follows:\nm̂dl (τ) = argmin 06mi61 ∀06i6nd -1\n1T .m=k\n− (gdl +Φdl )T .m− τHb(m)\n(4) in which\nHb(m) =−∑ i milog(mi)+(1−mi)log(1−mi).\nIn Appendix A, we prove that limτ→0 m̂dl (τ) = m̃dl . Furthermore, we also provide the computation of m̂dl (τ) and prove that m̂ d l (τ) is a differentiable\nfunction w.r.t Φdl and that its gradients can be computed using the implicit differentiation theorem. During training, we approximate m̃dl by m̂ d l (τ) by gradually decaying the hyper-parameter τ to 0.2. The gradient of D w.r.t Φdl is computed using the chain rule as follows:\n∂D ∂Φdl = ∂D ∂ m̂dl (τ) × ∂ m̂dl (τ) ∂Φdl\nThe gradient ∂D∂ m̂dl (τ) is computed via autograd algorithm while ∂ m̂ d l (τ)\n∂Φdl is computed via implicit differ-\nentiation, as explained in Appendix A. We jointly train the Transformer parameters θ and the parameters of the variational distribution Φ using the following multi-task loss. L (θ ,Φ) = nd\n∑ d=1\nEx∼Dds ,y∼MT d(x) [ − `(x,y,d;θ ,Φ) ] in which Dds is distribution of task d over the input space Ωds ; MTd : Ωds →Ωdt is the translation function for task d, which our multi-task model needs to learn; −`(x,y,d,θ ,Φ) is the ELBO loss, defined in Equation 1.\nFinally, during inference, we define the dropout mask for layer l and task d as follows:\nInddl = Top-k(Φ d l )\nmdl = I(i ∈ Inddl ) meaning that we simply pick the k most likely parameter groups for the task at hand, and define the state dropout mask accordingly."
+    }, {
+      "heading" : "3 Experimental settings",
+      "text" : ""
+    }, {
+      "heading" : "3.1 System design and configuration",
+      "text" : ""
+    }, {
+      "heading" : "3.1.1 Multidomain translation systems",
+      "text" : "Our systems for the multidomain experiments are designed as follows:\n• Transformer: The embedding dimension for both encoder and decoder is set as 512, and the feedforward dimension is 2048; the multihead attention mechanism contains 8 heads; 6 layers in the encoder; 6 layers in the decoder. • Adapter-based Transformer: The intermediate feedforward dimension is set to 2048; • Transformer using Latent multi-task group dropout (LaMGD Transformers): There is no change in the architecture. We group the 512 nodes in each layer into 16 groups of 32 consecutive nodes. For each domain, only 12 out of the 16 groups are selected. The number of parameters of the variational distribution is\nL× k×L×nd , which is negligible in comparison to the size of the Transformer model. • Transformer using heuristic multi-task group dropout (HMGD Transformer): we share 320 nodes for every task, and reserve 32 nodes for each task (totalling 320+32∗6 = 512 nodes).\nWe set the dropout probability to 0.1. We train the multidomain Transformer model for 200k iterations with a batch size of 12k tokens using 4 V100 GPUs. The convergence of the standard Transformer is before 200K as its validation curve became flat near the 200K-th iteration. The LaMGD Transformer converged after 300k iterations with the same batch size. The convergence of LaMGD is controlled by its validation curve. Finally, we plug adapters to the multidomain Transformer model and finetune them for 25k iterations using the same batch size as the baseline."
+    }, {
+      "heading" : "3.1.2 Multilingual translation systems",
+      "text" : "The systems used in our multilingual experiments are implemented as follows:\n• Multilingual Transformer: the embedding dimension for both encoder and decoder is set as 512, and the feedforward dimension is 1024, each multi-head attentions contains 8 heads as in (Wang et al., 2020a). • Adapter based Transformer: the intermediate feedforward dimension is set as 128 as in (Gong et al., 2021a). • LaMGD Transformer: There is no change in the architecture. We group 512 nodes in each layer into 16 groups of 32 consecutive nodes. For each language, we select 12 groups.\nWe set the dropout probability to 0.3. We train the multilingual Transformer model for 40k iterations with a batch size of 9600 tokens on 16 V100 GPUs as in Gong et al. (2021a). We train LaMGD Transformer for 50k iterations with the same batch size. The convergence of the models are controlled via their validation curves. Finally, we finetune the language-specific Adapters for 5k iterations.\nAll the translation systems are implemented with OpenNMT-tf 2 (Klein et al., 2017)."
+    }, {
+      "heading" : "3.1.3 Hyper-parameters",
+      "text" : "We choose nd = 16 so that the size of the dropout group is neither too small nor too large. The second important hyper-parameter in LaMGD is the number of selected groups in each layer, k, which we set to 12 in every experiments. By retaining 12/16\n2https://github.com/OpenNMT/OpenNMT-tf\ngroups, we share on average 75% active groups between two domains or languages. This design ensures that the percentage of sharing is in the same ballpark as what we obtain with adapter modules. In our future work, we intend to analyze how these choices affect the final performance of the model.\nThe temperature parameter τ for the Soft-Top-K operator is gradually decreased from 0.5 to 0.2 according to the following policy: τ = min{0.2,0.5∗ exp−r∗step}, in which r = 0.0001. While Gong et al. (2021b,a) fixed τ to be 0.2, we select an anneal policy for τ proposed by previous studies (Jang et al., 2017). Finally, we set the weight of the entropy term to 0.0001 in the training loss in every experiments."
+    }, {
+      "heading" : "3.1.4 Latent variables initialization",
+      "text" : "We initialize the distribution of the latent variables uniformly. More precisely, we set Φdl , which generates the probability of the masks via the softmax activation function, to 0nd ."
+    }, {
+      "heading" : "3.2 Datasets and metrics",
+      "text" : ""
+    }, {
+      "heading" : "3.2.1 Multidomain translation",
+      "text" : "We use the same data as in the recent work of Pham et al. (2021) on multidomain translation. The datasets 3 for the multidomain translation experiments are detailed in Table 1. For each domain, the size of the dev set and the test set is 1 K."
+    }, {
+      "heading" : "3.2.2 Multilingual translation",
+      "text" : "We evaluate our model on both one-to-many (O2M) and many-to-one (M2O) translation tasks borrowing the multilingual translation datasets from past studies. More precisely, we used:\n• TED8-Related. Following the setting of Wang et al. (2020a), we use a subset of translations from Qi et al. (2018) between English and eight related languages. • TED8-Diverse. The dataset consists of parallel sentences between English and eight diverse languages as in Wang et al. (2020a).\nThe languages used in the multilingual experiments are as follows (see statistics in Table 2):\n• Diverse set: bos (Bosnian), Bulgarian (bul), French (fra), ell (Greek), hin (Hindi), Korean (kor) mkd (Macedonian), mar (Marathi); • Related set: Azerbajiani (aze), Belarusian (bel), Czech (ces), Galician (glg), Portuguese\n3See https://github.com/qmpham/ experiments/tree/main/tacl20\n(por), Russian (rus), Slovak (slk), Turkish (tur). For all experiments, we report the BLEU score of Papineni et al. (2002) computed with SacreBleu (Post, 2018). Statistical significance is computed with compare-mt4 (Neubig et al., 2019). We report significant differences at the level of p = 0.05."
+    }, {
+      "heading" : "4 Results and analyses",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Multidomain translation",
+      "text" : "For these experiments, our main results are in Table 3, where we observe that the LaMGD Transformer achieves a significant improvement (+2.78) over the generic Transformer system with zero extra parameters. Moreover, LaMGD Transformer achieves performance that are equivalent on average to that of the Adapter sytems, which is finetuned and contains approximately 25M additional parameters per domain. Variational mask learned from data by LaMGD also outperforms heuristic dropout mask HMGD by 0.5 in average."
+    }, {
+      "heading" : "4.1.1 Fuzzy domain separation",
+      "text" : "For this experiment, we reuse proposal of Pham et al. (2021), who measure the efficiency of a multidomain NMT system exploiting the proximity between domains. It uses the same data as in the previous experiment; however, the domain LAW is now randomly split into two pseudo-domains LAW1 and LAW2 of equal size. A truly multidomain system should be able to automatically detect the proximity between LAW1 and LAW2, and there should be no significant difference between the performance of a system trained with the six original domains (including LAW) or with the seven domains (including LAW by LAW1 and LAW2). Pham et al. (2021) reported a large gap between the two settings when using residual adapters. We replicated this setting and report the results obtained with the LaMGD Transformer system in Table 4.\n4https://github.com/neulab/compare-mt\nThe results in Table 4 show a performance decrease for the adapter-based system when training with two pseudo-domains LAW1 and LAW2. In contrast, the LaMGD model obtains very stable results. In Section 4.3, we show that our algorithm in fact computes the same sub-network for LAW1 and LAW2, that allows a full sharing of information between these two pseudo-domains."
+    }, {
+      "heading" : "4.2 Multilingual translation",
+      "text" : "Results for the multilingual experiments are in Table 5. The LaMGD Transformer achieves an improvement of 0.42, 0.33, 0.32 in average over the multilingual Transformer in the O2M-related, M2O-related, M2O-diverse conditions, respectively. Significant gains are observed for languages BEL, GLG (both direction), HIN and BOS (O2M direction) which are very low-resource languages in our sets. However, LaMGD Transformer is outperformed by the multilingual Transformer and language Adapters for the O2M-diverse condition."
+    }, {
+      "heading" : "4.3 Similarity between dropping masks",
+      "text" : "This section compares the sub-networks learnt for each domain or language pair by computing the average similarity between the corresponding dropout masks concatenated for all the layers of the underlying model. For the multidomain experiment, we analyze the case of pseud-domain separation reported in Section 4.1.1 in Figure 2a. We see that the sub-networks for LAW1 and LAW2 are identical, yielding a full sharing between the corresponding training sets. Furthermore, we observe a large distance between REL and the other domains, which is expected given that REL is quite distinct from the other domains. REL only share around 75% its active groups with other domains, as would be obtained by chance in our setting (see Section 3.1.3). In Figure 4, we visualize the domains using their dropping masks concatenated and mapped to a 2d space using Principal Component Analysis (PCA).\nFor multilingual (TED-related) experiments,\nthe training data contains four language families: (1) Turkic, with Azerbaijani and Turkish(AZE,TUR); (2) Slavic, with Belarusian and Russian (BEL,RUS); (3) Romance, with Galician and Portuguese (GLG, POR); and (4) Czech-Slovak, with Slovak and Czech (CES, SLK). We provide in\nFigure 2b the heatmap of the similarities between the dropout masks of our objective languages. We observe that each pair of languages in the same family correspond to brightest color except the diagonal in every column or every row.\nWe also plot the languages based on their\ndropout masks in Figure 3 using a 2d PCA projection."
+    }, {
+      "heading" : "4.4 Ablation study",
+      "text" : "We discuss here the choice of the hyper-parameters k, the number of activated nodes in each layer, and its impact on the sharing level between the tasks. Table 6 shows the variance of performance when the number of activated nodes is changed, and the sharing level between tasks decreases in consequence."
+    }, {
+      "heading" : "5 Related work",
+      "text" : "Multidomain and multilingual translation systems have received considerable attention in the recent years, and a exhaustive survey is beyond the goal of this paper. Domain adaptation for neural MT is surveyed in (Chu et al., 2017), while multidomain\nMT systems are notably studied in (Saunders, 2021; Pham et al., 2021); for multilingual MT, the reader is referred eg. to (Chu and Dabre, 2018; Dabre et al., 2020). We focus on the most relevant subset of this literature below.\nLanguage similarity The methods developed by (Sen et al., 2019; Kong et al., 2021) use language proximity to design parameter sharing strategies. The authors propose a multi-decoder model sharing the same encoder among languages and routing languages in different families to different decoders. These approaches share the same interest in expressing the proximity between tasks in the selection of task-specific parameters as our approach. However, our method learn the selection from a latent commonality in data instead of using a predefined selection such as \"One language family per decoder\" in (Kong et al., 2021).\nLanguage-specific sub-networks. Frankle and Carbin (2019); Liu et al. (2019) study techniques to identify the most important parameters for the current task, so that masking the less important parameters during training does not hurt performance. Lin et al. (2021) adapts this idea for multilingual NMT, trying to identify language dependent subsets of parameters by pruning a fine-tuned model. Our approach also aims to map sub-networks to tasks: we do so by masking the output of each layer, rather than masking parameters. Furthermore, Lin et al. (2021) computes the masks via a heuristic selection; while our approach learns the masks with variational techniques.\nSparse Transformer The idea of adaptive sparsity is studied in several works. For instance, Li et al. (2020) propose to use a variable depth for different tasks. The authors aimed to match the depth of the sub-network to the complexity of the task. Gong et al. (2021b,a) also take an interest in the adaptive sparse Transformers, in which differ each task triggers the selection of specific heads in multihead attention, layers, and blocks in feedforward matrices. Mixture-of-experts (MoE) constitute another effective approach to achieve sparsity. Using the Transformer architecture, the GShard model replaces a single feedforward (FFN) sub-layer with an MoE module consisting of multiple FFN sublayers (Lepikhin et al., 2021; Fedus et al., 2021).\nAdapter modules Adapters have proven to be very efficient for multi-task NLP (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Pfeiffer et al., 2020). In a nutshell, this technique\nconsists in plugging several so-called adapter modules to the intermediate layers of a pretrained Transformer and finetuning these adapters on the downstream tasks. Adapters can also be trained without supervision for multilingual translation (Philip et al., 2020). However, the hard-coded separation between the domains of different tasks may lead to a catastrophic forgetting effect (Pfeiffer et al., 2021), which is a common problem in multi-task modeling using neural networks (McCloskey and Cohen, 1989). In multidomain translation, Pham et al. (2021) recently demonstrated the brittleness of adapters against fuzzy domain separations, outof-domain distributions, and erroneous domain tags. Several subsequent studies have aimed to mitigate this weakness through a mixture of expert mechanism (e.g. (Pfeiffer et al., 2021)).\nZhang et al. (2021) propose to learn to route between shared and language-specific representations with a conditional language-specific routing while training the parameters of the underlying Transformer. This method is related to the FusionAdapters of Pfeiffer et al. (2021). Both approaches aim to select between shared and task-specific representations. The proximity between tasks is not taken into account in the routing mechanism. We propose a different approach to the problem of multi-task routing in the underlying network."
+    }, {
+      "heading" : "6 Conclusions and outlook",
+      "text" : "In this work, we have presented a novel method for multdomain and multilingual translation. It allows us to jointly search for an optimal assignment\nof sub-networks to tasks and to learn the parameters of the underlying network. Our method relies on a sound mathematical framework and an end-to-end optimization procedure; it only adds a small number of extra parameters. The additional training cost is also reasonable, amounting to 100k iterations in the multidomain setting, given the observed gains in performance. Experimentally, we achieve a large improvement over a Transformer baseline; our performance are also comparable to that of a strong a multi-task baseline using residual adapter modules which rely on a large number of extra parameters. For multilingual translation, our model outperforms multilingual Transformer and Language Adapters in 3 our of 4 settings. Besides, we provided an thorough analysis of the similarities between learned sub-networks and demonstrate a strong correlation between the learned similarities and the proximity of the corresponding tasks (domain or language).\nThere are several ways in which our methodology can be improved. In future work, we would first like to provide an complete variational framework to model both the number of groups, k and the selection of the dropout masks. Second, we also intend to dispense with the domain information during inference: this would mean replacing the dependency on d in the variational distribution by a dependency on the input x. Adressing these two questions will allow to us replace heuristic choices in the architecture design with an increased dependency on the training data."
+    }, {
+      "heading" : "A Appendix A",
+      "text" : "This section explains how to compute m̂dl (τ) by solving the optimization problem (4) and then how to compute the gradients ∂ m̂ d l (τ)\n∂Φdl .\nFirst, to solve (4) we follow the same approach as in (Amos et al., 2019; Amos and Yarats, 2020) by applying the Karush–Kuhn–Tucker (KKT) conditions to (4). The solution of (4) will have the following form:\nm̂dl (τ) = σ( gdl +Φ d l + ν̄\nτ ) (5)\nin which σ(.) is the sigmoid function and ν̄ is the solution of the following equation:\nnp\n∑ i=1\nσ( gdl (i)+Φ d l (i)+ν\nτ ) = k (6)\nBecause sigmoid is monotonically increasing, equation (6) has a unique solution. Furthermore, because of the smoothness of g(ν ,Φdl ) = np ∑ i=1 σ( gdl (i)+Φ d l (i)+ν τ ) w.r.t ν and Φdl , we can perform the implicit differentiation of its solution ν̄ w.r.t Φdl as below, even though the solution of (6) does not have an explicit form.\n∂g ∂ ν̄ × ∂ ν̄\n∂Φdl + ∂g ∂Φdl = 0\n⇒ ∂ ν̄ ∂Φdl\n=− ( ∂g ∂ ν̄ )−1× ∂g\n∂Φdl Because the differentiation of sigmoid has exact\nforms, ∂g∂ν and ∂g\n∂Φdl also have exact form. Therefore,\nwe do not need autograd to compute the implicit gradient ∂ν∂Φdl . The gradient of m̂dl (τ) w.r.t Φ d l is computed as follows:\n∂ m̂dl (τ) ∂Φdl = ∂ m̂dl (τ) ∂ν × ∂ν ∂Φdl + 1 τ\nexp(g d l (i)+Φ d l (i)+ν\nτ )\n(1+ exp(g d l (i)+Φ d l (i)+ν\nτ )) 2\n(7) In our algorithm, we solve (6) by binary search. The convergence of binary search is extremely fast and assured by the monotonicity of g(ν ,Φdl ). In our experiments, we set the search range to [−100,100].\nFinally, we need prove that limτ→0 m̂dl (τ) = m̃ d l .\nWe assume gdl (i1) + Φ d l (i1) > g d l (i2) + Φ d l (i2) > · · ·> gdl (inp)+Φdl (inp). Because:\nlim τ→0\nσ( gdl (i)+Φ d l (i)+ν\nτ ) =  1, if τ >−(gdl (i)+Φdl (i)), 0, if τ <−(gdl (i)+Φdl (i)), 1 2 otherwise\nand\nnp\n∑ i=1\nσ( gdl (i)+Φ d l (i)+ν\nτ ) = k\nthere exist ε such that ∀τ < ε , the solution ν̄ of (6) satisfies−(gdl (ik+1)+Φdl (ik+1))> ν̄ >−(gdl (ik)+ Φdl (ik)). Furthermore, because sigmoid is monotonically increasing,\nσ( gdl (i)+Φ d l (i)− (gdl (ik)+Φdl (ik))\nτ )< m̂dl (τ)(i)\n< σ( gdl (i)+Φ d l (i)− (gdl (ik+1)+Φdl (ik+1))\nτ )\nBy taking the limit on both sides, we get the following results:\nlim τ→0\nm̂dl (τ)(iu) = { 1, if u > k 0, if u < k\nAnd, because np\n∑ u=1 m̂dl (τ)(iu) = k, by tak-\ning the limit on both sides, we will have limτ→0 m̂dl (τ)(ik) = 1. Finally, we have\nlim τ→0\nm̂dl (τ)(iu) = { 1, if u > k 0, if u < k\nwhich is equivalent to limτ→0 m̂dl (τ) = m̃ d l ."
+    }, {
+      "heading" : "B Appendix B",
+      "text" : "In this section, we give a simple proof of inequality (3). In fact, we only need to prove H [ P(i1, · · · , ik|Φdl ) ] > H [ P(i1|Φdl ) ] . The proof is as follows:\nH [ P(i1, · · · , ik|Φdl ) ] =− E\ni1,··· ,ik|Φdl\n[ logP(i1, · · · , ik|Φdl ) ] =− E\ni1,··· ,ik|Φdl [ k ∑ j=2 logP(i j|i1, · · · , j j−1,Φdl )+ logP(i1|Φdl ) ]\n>− E i1,··· ,ik|Φdl\n[ logP(i1|Φdl ) ] =− E\ni1|Φdl\n[ logP(i1|Φdl ) ] =H [ P(i1|Φdl ) ]"
+    }, {
+      "heading" : "C Appendix C",
+      "text" : ""
+    }, {
+      "heading" : "D Appendix D",
+      "text" : "Algorithm 1 Training LaMGD Require:\n• nd corpora Cd ,d ∈ [1, . . . ,nd ] for nd domains equiped by an empirical distribution Dd(x) • number of groups: np; number of retained groups: k\n• i = 0; iter_num 1: repeat 2: Pick a batch from domain d 3: Sample ∀l,∀p : gdl (p)\ni.i.d∼ Gumbel(0,1) 4: Solve the equation ∀l\nnp\n∑ i=1\nσ( gdl (i)+Φ d l (i)+ν\nτ ) = k\nusing binary search 5: Compute mask of each layer\n∀l, m̂dl (τ) = σ( gdl +Φ d l + ν̄\nτ )\n6: Apply masks to their corresponding layer\n∀l ∈ [0, · · · ,L−1] : h̃l = hl rdl , hl+1 = LAYERl+1(h̃l),"
+    } ],
+    "references" : [ {
+      "title" : "The limited multi-label projection layer",
+      "author" : [ "Brandon Amos", "Vladlen Koltun", "J. Zico Kolter." ],
+      "venue" : "CoRR, abs/1906.08707.",
+      "citeRegEx" : "Amos et al\\.,? 2019",
+      "shortCiteRegEx" : "Amos et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The differentiable cross-entropy method",
+      "author" : [ "Brandon Amos", "Denis Yarats." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pages 291–302. PMLR.",
+      "citeRegEx" : "Amos and Yarats.,? 2020",
+      "shortCiteRegEx" : "Amos and Yarats.",
+      "year" : 2020
+    }, {
+      "title" : "Simple, scalable adaptation for neural machine translation",
+      "author" : [ "Ankur Bapna", "Orhan Firat." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Lan-",
+      "citeRegEx" : "Bapna and Firat.,? 2019",
+      "shortCiteRegEx" : "Bapna and Firat.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual and multi-domain adaptation for neural machine translation",
+      "author" : [ "Chenhui Chu", "Raj Dabre." ],
+      "venue" : "Proceedings of the 24st Annual Meeting of the Association for Natural Language Processing (NLP 2018), pages 909––912, Okayama, Japan.",
+      "citeRegEx" : "Chu and Dabre.,? 2018",
+      "shortCiteRegEx" : "Chu and Dabre.",
+      "year" : 2018
+    }, {
+      "title" : "An empirical comparison of domain adaptation methods for neural machine translation",
+      "author" : [ "Chenhui Chu", "Raj Dabre", "Sadao Kurohashi." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Pa-",
+      "citeRegEx" : "Chu et al\\.,? 2017",
+      "shortCiteRegEx" : "Chu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "In",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A survey of multilingual neural machine translation",
+      "author" : [ "Raj Dabre", "Chenhui Chu", "Anoop Kunchukuttan." ],
+      "venue" : "ACM Comput. Surv., 53(5).",
+      "citeRegEx" : "Dabre et al\\.,? 2020",
+      "shortCiteRegEx" : "Dabre et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity",
+      "author" : [ "William Fedus", "Barret Zoph", "Noam Shazeer." ],
+      "venue" : "CoRR, abs/2101.03961.",
+      "citeRegEx" : "Fedus et al\\.,? 2021",
+      "shortCiteRegEx" : "Fedus et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "The lottery ticket hypothesis: Finding sparse, trainable neural networks",
+      "author" : [ "Jonathan Frankle", "Michael Carbin." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net.",
+      "citeRegEx" : "Frankle and Carbin.,? 2019",
+      "shortCiteRegEx" : "Frankle and Carbin.",
+      "year" : 2019
+    }, {
+      "title" : "Adaptive sparse transformer for multilingual translation",
+      "author" : [ "Hongyu Gong", "Xian Li", "Dmitriy Genzel." ],
+      "venue" : "ArXiv, abs/2104.07358.",
+      "citeRegEx" : "Gong et al\\.,? 2021a",
+      "shortCiteRegEx" : "Gong et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "2021b. Pay better attention to attention: Head selection",
+      "author" : [ "Hongyu Gong", "Yun Tang", "J. Pino", "Xian Li" ],
+      "venue" : null,
+      "citeRegEx" : "Gong et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Gong et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Parameter-efficient transfer learning for NLP",
+      "author" : [ "Neil Houlsby", "Andrei Giurgiu", "Stanislaw Jastrzebski", "Bruna Morrone", "Quentin De Laroussilhe", "Andrea Gesmundo", "Mona Attariyan", "Sylvain Gelly." ],
+      "venue" : "volume 97 of Proceedings of Machine Learning Re-",
+      "citeRegEx" : "Houlsby et al\\.,? 2019",
+      "shortCiteRegEx" : "Houlsby et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Categorical reparameterization with gumbel-softmax",
+      "author" : [ "Eric Jang", "Shixiang Gu", "Ben Poole." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings. OpenReview.net.",
+      "citeRegEx" : "Jang et al\\.,? 2017",
+      "shortCiteRegEx" : "Jang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Autoencoding variational Bayes",
+      "author" : [ "Diederik P. Kingma", "Max Welling." ],
+      "venue" : "2nd International Conference on Learning Representations, ICLR 2014, Banff, AB, Canada, April 14-16, 2014, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Welling.,? 2014",
+      "shortCiteRegEx" : "Kingma and Welling.",
+      "year" : 2014
+    }, {
+      "title" : "Opennmt: Opensource toolkit for neural machine translation",
+      "author" : [ "Guillaume Klein", "Yoon Kim", "Yuntian Deng", "Jean Senellart", "Alexander Rush." ],
+      "venue" : "Proceedings of ACL 2017, System Demonstrations, pages 67–72. Association for Computational Lin-",
+      "citeRegEx" : "Klein et al\\.,? 2017",
+      "shortCiteRegEx" : "Klein et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multilingual neural machine translation with deep encoder and multiple shallow decoders",
+      "author" : [ "Xiang Kong", "Adithya Renduchintala", "James Cross", "Yuqing Tang", "Jiatao Gu", "Xian Li." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chap-",
+      "citeRegEx" : "Kong et al\\.,? 2021",
+      "shortCiteRegEx" : "Kong et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Stochastic beams and where to find them: The Gumbel-top-k trick for sampling sequences without replacement",
+      "author" : [ "Wouter Kool", "Herke Van Hoof", "Max Welling." ],
+      "venue" : "Proceedings of the 36th International Conference on Machine Learning, vol-",
+      "citeRegEx" : "Kool et al\\.,? 2019",
+      "shortCiteRegEx" : "Kool et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "GS}hard: Scaling giant models with conditional computation and automatic sharding",
+      "author" : [ "Dmitry Lepikhin", "HyoukJoong Lee", "Yuanzhong Xu", "Dehao Chen", "Orhan Firat", "Yanping Huang", "Maxim Krikun", "Noam Shazeer", "Zhifeng Chen." ],
+      "venue" : "Interna-",
+      "citeRegEx" : "Lepikhin et al\\.,? 2021",
+      "shortCiteRegEx" : "Lepikhin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Deep transformers with latent depth",
+      "author" : [ "Xian Li", "Asa Cooper Stickland", "Yuqing Tang", "Xiang Kong." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 33, pages 1736–1746. Curran Associates, Inc.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning language specific sub-network for multilingual machine translation",
+      "author" : [ "Zehui Lin", "Liwei Wu", "Mingxuan Wang", "Lei Li." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International",
+      "citeRegEx" : "Lin et al\\.,? 2021",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Rethinking the value of network pruning",
+      "author" : [ "Zhuang Liu", "Mingjie Sun", "Tinghui Zhou", "Gao Huang", "Trevor Darrell." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Catastrophic interference in connectionist networks: The sequential learning problem",
+      "author" : [ "Michael McCloskey", "Neal J. Cohen." ],
+      "venue" : "Psychology of Learning and Motivation - Advances in Research and Theory, 24(C):109–165.",
+      "citeRegEx" : "McCloskey and Cohen.,? 1989",
+      "shortCiteRegEx" : "McCloskey and Cohen.",
+      "year" : 1989
+    }, {
+      "title" : "compare-mt: A tool for holistic comparison of language generation systems",
+      "author" : [ "Graham Neubig", "Zi-Yi Dou", "Junjie Hu", "Paul Michel", "Danish Pruthi", "Xinyi Wang." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Asso-",
+      "citeRegEx" : "Neubig et al\\.,? 2019",
+      "shortCiteRegEx" : "Neubig et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "AdapterFusion: Non-destructive task composition for transfer learning",
+      "author" : [ "Jonas Pfeiffer", "Aishwarya Kamath", "Andreas Rücklé", "Kyunghyun Cho", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Associ-",
+      "citeRegEx" : "Pfeiffer et al\\.,? 2021",
+      "shortCiteRegEx" : "Pfeiffer et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "AdapterHub: A framework for adapting transformers",
+      "author" : [ "Jonas Pfeiffer", "Andreas Rücklé", "Clifton Poth", "Aishwarya Kamath", "Ivan Vulić", "Sebastian Ruder", "Kyunghyun Cho", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2020 Conference on Em-",
+      "citeRegEx" : "Pfeiffer et al\\.,? 2020",
+      "shortCiteRegEx" : "Pfeiffer et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Revisiting multi-domain machine translation",
+      "author" : [ "Minh Quang Pham", "Josep Crego", "François Yvon." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 9(0):17–35.",
+      "citeRegEx" : "Pham et al\\.,? 2021",
+      "shortCiteRegEx" : "Pham et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A study of residual adapters for multi-domain neural machine translation",
+      "author" : [ "Minh Quang Pham", "Josep Maria Crego", "François Yvon", "Jean Senellart." ],
+      "venue" : "Proceedings of the Fifth Conference on Machine Translation, pages 617–628, Online. Associa-",
+      "citeRegEx" : "Pham et al\\.,? 2020",
+      "shortCiteRegEx" : "Pham et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Monolingual adapters for zero-shot neural machine translation",
+      "author" : [ "Jerin Philip", "Alexandre Berard", "Matthias Gallé", "Laurent Besacier." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods",
+      "citeRegEx" : "Philip et al\\.,? 2020",
+      "shortCiteRegEx" : "Philip et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A call for clarity in reporting BLEU scores",
+      "author" : [ "Matt Post." ],
+      "venue" : "Proceedings of the Third Conference on Machine Translation: Research Papers, pages 186– 191, Brussels, Belgium. Association for Computational Linguistics.",
+      "citeRegEx" : "Post.,? 2018",
+      "shortCiteRegEx" : "Post.",
+      "year" : 2018
+    }, {
+      "title" : "When and why are pre-trained word embeddings useful for neural machine translation",
+      "author" : [ "Ye Qi", "Devendra Sachan", "Matthieu Felix", "Sarguna Padmanabhan", "Graham Neubig" ],
+      "venue" : "In Proceedings of the 2018 Conference of the North American Chapter",
+      "citeRegEx" : "Qi et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Domain adaptation and multi-domain adaptation for neural machine translation: A survey",
+      "author" : [ "Danielle Saunders." ],
+      "venue" : "CoRR, abs/2104.06951.",
+      "citeRegEx" : "Saunders.,? 2021",
+      "shortCiteRegEx" : "Saunders.",
+      "year" : 2021
+    }, {
+      "title" : "Multilingual unsupervised NMT using shared encoder and languagespecific decoders",
+      "author" : [ "Sukanta Sen", "Kamal Kumar Gupta", "Asif Ekbal", "Pushpak Bhattacharyya." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Sen et al\\.,? 2019",
+      "shortCiteRegEx" : "Sen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual neural machine translation with language clustering",
+      "author" : [ "Xu Tan", "Jiale Chen", "Di He", "Yingce Xia", "Tao Qin", "Tie-Yan Liu." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th Interna-",
+      "citeRegEx" : "Tan et al\\.,? 2019",
+      "shortCiteRegEx" : "Tan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Gar-",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Balancing training for multilingual neural machine translation",
+      "author" : [ "Xinyi Wang", "Yulia Tsvetkov", "Graham Neubig." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 8526–8537, Online. Association",
+      "citeRegEx" : "Wang et al\\.,? 2020a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On negative interference in multilingual models: Findings and a meta-learning treatment",
+      "author" : [ "Zirui Wang", "Zachary C. Lipton", "Yulia Tsvetkov." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Wang et al\\.,? 2020b",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Share or not? learning to schedule language-specific capacity for multilingual translation",
+      "author" : [ "Biao Zhang", "Ankur Bapna", "Rico Sennrich", "Orhan Firat." ],
+      "venue" : "9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria,",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 3,
+      "context" : "1 These paradigms are motivated by the compactness of the resulting translation system (Chu and Dabre, 2018; Dabre et al., 2020), the hypothetical positive knowledge transfer between similar domains (Pham et al.",
+      "startOffset" : 87,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 6,
+      "context" : "1 These paradigms are motivated by the compactness of the resulting translation system (Chu and Dabre, 2018; Dabre et al., 2020), the hypothetical positive knowledge transfer between similar domains (Pham et al.",
+      "startOffset" : 87,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2020), the hypothetical positive knowledge transfer between similar domains (Pham et al., 2021) or between languages in the same family (Tan et al.",
+      "startOffset" : 78,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2021) or between languages in the same family (Tan et al., 2019).",
+      "startOffset" : 48,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 5,
+      "context" : "However, having all the tasks use exactly the same model parameters can cause negative interference between unrelated tasks (Conneau et al., 2020; Wang et al., 2020b).",
+      "startOffset" : 124,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 36,
+      "context" : "However, having all the tasks use exactly the same model parameters can cause negative interference between unrelated tasks (Conneau et al., 2020; Wang et al., 2020b).",
+      "startOffset" : 124,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 11,
+      "context" : "using adapter layers as studied in (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Philip et al., 2020).",
+      "startOffset" : 35,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 2,
+      "context" : "using adapter layers as studied in (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Philip et al., 2020).",
+      "startOffset" : 35,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 27,
+      "context" : "using adapter layers as studied in (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Philip et al., 2020).",
+      "startOffset" : 35,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 28,
+      "context" : "using adapter layers as studied in (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Philip et al., 2020).",
+      "startOffset" : 35,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 2,
+      "context" : "The adapter architecture of (Bapna and Firat, 2019) illustrates this strategy, where a task-dependent set of layers is activated for each task.",
+      "startOffset" : 28,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 34,
+      "context" : "The structure of our Transformer networks (Vaswani et al., 2017) is however based on the notion of groups of nodes in the computation graph.",
+      "startOffset" : 42,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 13,
+      "context" : "Thanks to the Gumbel Top-K trick, we can move the parameters Φ into the objective function and get rid of policy gradients, which have been reported to be very unstable (Kingma and Welling, 2014).",
+      "startOffset" : 169,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 35,
+      "context" : "The systems used in our multilingual experiments are implemented as follows: • Multilingual Transformer: the embedding dimension for both encoder and decoder is set as 512, and the feedforward dimension is 1024, each multi-head attentions contains 8 heads as in (Wang et al., 2020a).",
+      "startOffset" : 262,
+      "endOffset" : 282
+    }, {
+      "referenceID" : 9,
+      "context" : "• Adapter based Transformer: the intermediate feedforward dimension is set as 128 as in (Gong et al., 2021a).",
+      "startOffset" : 88,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 14,
+      "context" : "All the translation systems are implemented with OpenNMT-tf 2 (Klein et al., 2017).",
+      "startOffset" : 62,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 12,
+      "context" : "2, we select an anneal policy for τ proposed by previous studies (Jang et al., 2017).",
+      "startOffset" : 65,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 22,
+      "context" : "Statistical significance is computed with compare-mt4 (Neubig et al., 2019).",
+      "startOffset" : 54,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 4,
+      "context" : "Domain adaptation for neural MT is surveyed in (Chu et al., 2017), while multidomain MT systems are notably studied in (Saunders, 2021; Pham et al.",
+      "startOffset" : 47,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2017), while multidomain MT systems are notably studied in (Saunders, 2021; Pham et al., 2021); for multilingual MT, the reader is referred eg.",
+      "startOffset" : 61,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2017), while multidomain MT systems are notably studied in (Saunders, 2021; Pham et al., 2021); for multilingual MT, the reader is referred eg.",
+      "startOffset" : 61,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 32,
+      "context" : "Language similarity The methods developed by (Sen et al., 2019; Kong et al., 2021) use language proximity to design parameter sharing strategies.",
+      "startOffset" : 45,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 15,
+      "context" : "Language similarity The methods developed by (Sen et al., 2019; Kong et al., 2021) use language proximity to design parameter sharing strategies.",
+      "startOffset" : 45,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 15,
+      "context" : "However, our method learn the selection from a latent commonality in data instead of using a predefined selection such as \"One language family per decoder\" in (Kong et al., 2021).",
+      "startOffset" : 159,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 17,
+      "context" : "Using the Transformer architecture, the GShard model replaces a single feedforward (FFN) sub-layer with an MoE module consisting of multiple FFN sublayers (Lepikhin et al., 2021; Fedus et al., 2021).",
+      "startOffset" : 155,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 7,
+      "context" : "Using the Transformer architecture, the GShard model replaces a single feedforward (FFN) sub-layer with an MoE module consisting of multiple FFN sublayers (Lepikhin et al., 2021; Fedus et al., 2021).",
+      "startOffset" : 155,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 11,
+      "context" : "Adapter modules Adapters have proven to be very efficient for multi-task NLP (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Pfeiffer et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 2,
+      "context" : "Adapter modules Adapters have proven to be very efficient for multi-task NLP (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Pfeiffer et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 27,
+      "context" : "Adapter modules Adapters have proven to be very efficient for multi-task NLP (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Pfeiffer et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 25,
+      "context" : "Adapter modules Adapters have proven to be very efficient for multi-task NLP (Houlsby et al., 2019; Bapna and Firat, 2019; Pham et al., 2020; Pfeiffer et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 28,
+      "context" : "Adapters can also be trained without supervision for multilingual translation (Philip et al., 2020).",
+      "startOffset" : 78,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 24,
+      "context" : "However, the hard-coded separation between the domains of different tasks may lead to a catastrophic forgetting effect (Pfeiffer et al., 2021), which is a common problem in multi-task modeling using neural networks (McCloskey and Cohen, 1989).",
+      "startOffset" : 119,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2021), which is a common problem in multi-task modeling using neural networks (McCloskey and Cohen, 1989).",
+      "startOffset" : 80,
+      "endOffset" : 107
+    } ],
+    "year" : 0,
+    "abstractText" : "Multidomain and multilingual machine translation often rely on parameter sharing strategies, where large portions of the network are meant to capture the commonalities of the tasks at hand, while smaller parts are reserved to model the peculiarities of a language or a domain. In adapter-based approaches, these strategies are hardcoded in the network architecture, independent of the similarities between tasks. In this work, we propose a new method to better take advantage of these similarities, using a latent-variable model. We also develop new techniques to train this model end-to-end and report experimental results showing that the learned patterns are both meaningful and yield improved translation performance without any increase of the model size.",
+    "creator" : null
+  }
+}

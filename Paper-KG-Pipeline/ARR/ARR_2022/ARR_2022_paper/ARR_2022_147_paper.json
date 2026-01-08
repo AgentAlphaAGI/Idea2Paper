@@ -1,0 +1,455 @@
+{
+  "name" : "ARR_2022_147_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Knowledge Enhanced Reflection Generation for Counseling Dialogues",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Mental health care has been of great importance as the ongoing COVID-19 pandemic poses a serious negative impact on people’s mental wellbeing (Paredes et al., 2021). Not only there is a larger unmet need for counseling services, the health care workers are also in tremendous physical and mental strain (Huffman et al., 2021). Effective counseling practice calls for reflective listening as an essential skill (Katz and McNulty, 1994). It requires the counselor to perceive the other’s need or problem, and respond in a way letting the other know he is being understood. This process frequently involves making inferences based on the counselor’s prior knowledge (Miller and Rollnick, 2012). For example, the client says I had a really hard time sticking to my diet this week, a plausible reflection may be You’re wondering whether you’ll be able to lose weight this way, which relates diet with losing weight as an inference. Moreover, making\na good reflection may sometime require domain knowledge. For example, to understand the client in Figure 1, the counselor needs to know that smoking can be a possible cause of emphysema, and Chantix is a medication for quit smoking.\nIn this paper, we propose the task of knowledge enhanced counseling reflection generation, which utilizes the dialogue context as well as commonsense and domain knowledge. This is a challenging task since existing pre-trained language models struggle to produce coherent and informative responses that capture relevant knowledge, even if they have acquired some knowledge during the pretraining (Petroni et al., 2019a) phase. A system that generates good counseling reflections can serve as a tool to aid counseling training or assist counselors during a session by providing candidate responses.\nWe experiment with two main strategies to incorporate knowledge. The first is retrieval, which acquires sentences containing relevant knowledge using a BERT-based model (Reimers and Gurevych, 2019a) to get vector representations of sentences from the dialogue and assertions in the knowledge base. The second strategy is generative, where we first extract key phrases from the dialogue, and query a COMET model for plausible knowledge triplets with a defined set of relations (Bosselut et al., 2019). We propose a knowledge-grounded BART (Lewis et al., 2020) model using soft positional encoding and masked self-attention representations to indicate the knowledge position and make the introduced knowledge only visible to the key phrase it relates to.\nIn addition, we explore the effect of different knowledge sources on the counseling responses generation task. Although commonsense knowledge bases usually have high coverage for general domain concepts, they contain a limited amount of domain-specific knowledge. This applies particularly to medical terminology. For instance, when querying ConceptNet (Speer et al., 2017), a well-\nknown knowledge base, for the word Chantix (a prescription smoking cessation aid) we are only able to retrieve three relationships, including synonyms, related terms, and type-of, whereas with a common word daughter ConceptNet provides a total of eleven relationships. For the Chantix example in Figure 1, ConceptNet is also missing important causal relationships regarding side effects or suggested usage, which are especially relevant during a counseling conversation about smoking cessation. To address this challenge, we collect a dataset of counseling domain knowledge using web mining with queries constructed with the medical concepts extracted from the dialogue as well as manually defined templates. We compare this Web-collected data with a public commonsense knowledge base, and show that this data collected with no human annotation can serve as a complementary knowledge resource. We also conduct an ablation study on different categories of commonsense knowledge, and show that intentional or causal relationships are more useful for counseling response generation, a finding consistent with related medical literature. (Miller and Rollnick, 2012).\nContributions. The main contributions of this work are as follows: 1) We collect a counseling knowledge base and use it along with commonsense knowledge bases for the task of reflection generation using different retrieval-based methods. 2) We adopt the encoding scheme from KBERT on BART to incorporate knowledge generated from COMET. 3) We analyze different types of commonsense and domain knowledge, and their effect on the generation task."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Large-scale pretrained language models have been shown to encode some knowledge implicitly through their pretraining objectives (Petroni et al., 2019a), including both commonsense (Shwartz et al., 2020) and factual knowledge (Petroni et al., 2019b). However, pretrained language models still struggle with some downstream applications, especially when the model needs to make inference based on context (Do and Pavlick, 2021; Kassner and Schütze, 2020). Thus, recent works have also explored enhancing pretrained models with external knowledge.\nIntroducing knowledge into language models has been shown to be successful on various downstream tasks and model architecture (Ren et al.,\n2020; Zhao et al., 2020; Song et al., 2019). For instance, Mao et al. (2019) generates story with multitasking learning on commonsense QA datasets. Zhao et al. (2020) used BERT as a knowledge selection module for dialogue generation. Chakrabarty et al. (2020) ranked knowledge generated from the COMET for sarcasm generation. Ji et al. (2020) do multi-hop with a graph convolutional network on ConceptNet. Similarly, our work uses external knowledge sources, but with several different settings to enhance text generation for counseling conversations.\nThere are various types of knowledge resources that can be used to enhance language models, focusing on different aspects. For example, large-scale commonsense knowledge graphs (CSKG) store structured commonsense knowledge in the form of knowledge triplets. The most widely used CSKG resources include ConceptNet (Speer et al., 2017), ATOMIC (Sap et al., 2019), and TransOMCS (Zhang et al., 2020). There are also medical related knowledge base such UMLS(Bodenreider, 2004) and OHAMA 1. We use ConceptNet for commonsense and decide to collect a counseling knowledge base as the medical knowledge bases have a limited amount of knowledge align with our need."
+    }, {
+      "heading" : "3 Methodology",
+      "text" : "We present a model that leverages a combination of existing commonsense knowledge resources and domain-specific knowledge derived from the target domain. The workflow is illustrated in Figure 3."
+    }, {
+      "heading" : "3.1 Task definition",
+      "text" : "We focus on the task of generating dialog responses r using the dialogue context c and an external knowledge base K. The dialogue context consists of a sequence of sentences c = (x1, x2, ..., xM ), which areM consecutive utterances in the dialogue. The knowledge base K is a collection of triplets. A triplet is denoted as i = (e1, r, e2) and its surface text form as si, where e1 and e2 are entities and r is the relationship between them. During the generation process, a set of knowledge kc relevant to c are provided to the model with parameters θ as additional input. The task generate response ŷ maximizing the conditional probability P (r|c, kc; θ).\nIn the following section, we describe the method to obtain relevant knowledge kc and the approach\n1http://schema.omaha.org.cn\nwe use to incorporate knowledge in the language model."
+    }, {
+      "heading" : "3.2 Domain Knowledge Collection",
+      "text" : "Despite their large size, existing commonsense knowledge bases contain a limited amount of information on some domain-specific concepts, especially causal relationships such as the reason to take a medicine or its side effects. In order to further investigate the effect of domain-specific knowledge in counseling response generation, we propose a pipeline to collect domain knowledge which requires no significant human labor involved. The main steps are as follows.\nMedical Concept Extraction. We start by identifying medical concepts occurring in a dataset of counseling conversations (Pérez-Rosas et al., 2016). We process each conversation utterance using Amazon Comprehend Medical to extract medical entities, along with their detection confidence scores, ranging between 0 to 1. 2 An example of entities extracted from a counseling dialogue is illustrated in Figure 1. Given the distribution of the five medical\n2https://aws.amazon.com/comprehend/\nentity categories in the dataset, shown in Figure 2, we decide to keep medical conditions, medications, tests and treatment procedures entities occurring at least two times, and experimentally set 0.6 as the threshold of confidence scores. Additionally, we manually inspect the resulting entities and remove false positives and misspelled names. After this process we obtain a set of 452 medical entities, distributed as 345 medical conditions, 44 references to medications, and 63 to tests and treatment procedures.\nKnowledge Collection with Web Queries. Next, we collect domain-specific knowledge relevant to the medical entities through web mining. We compose a set of query templates around causal and intentional relationships frequently observed in the counseling conversations. Each entity types identified during the extraction has a set of distinct query templates as shown in Table 1.\nWeb search queries are constructed based on the templates, and searched on Google via the Zenserp API.3 We keep only the top 100 matching websites for which we extract their text and parse it into sentences using the Spacy toolkit.4 The resulting sentences are then considered as knowledge candidates during our next step.\nCausal Relationship Classification. In order to identify causal knowledge in our set of knowledge candidates, we set up a binary classification task where we seek to determine whether a given sentence contains a causal relationship. The positive samples used for this classifier consist of 1,331 cause-effect relationships (e.g., He had chest pains and headaches from mold in the bedrooms) from the SemEval10 Task 8 dataset (Hendrickx et al.,\n3https://zenserp.com/ 4https://spacy.io/\n2010) and an equal amount of negative samples randomly selected from sentences containing other types of semantic relationships in the same dataset. The classifier is initialized with weights from the pretrained BERT-large model and later fine-tuned using the training set. We run this classifier on our set of knowledge candidate sentences and keep sentences for which the classifier achieves confidence scores higher than 0.7, determined empirically through inspection on a small subset of samples. The resulting set consist of 22,980 sentences containing medical concepts relevant to the counseling domain and their causal relationships."
+    }, {
+      "heading" : "3.3 Retrieved Knowledge Setup",
+      "text" : "To get external knowledge that provides useful information based on the dialogue context c, we assume that kc is semantically close to c. We use embedding distance to model the semantic similarity between the context and knowledge in natural language. More specifically, we use sentenceBERT(Reimers and Gurevych, 2019b) to get an embedding F (xi) for each of input sentence xi. The pre-trained weights are obtained from the paraphrase-distilroberta model in the SentenceTransformers library 5. We then select sj as relevant knowledge kc based on its cosine similarity to the context c.\nkc = argmaxsj∈KSim(F (c), F (sj)) (1)\nWe test three sentence retrieval methods to select the most relevant sentences. The first, retrievaleach consists of obtaining an kxi for each xi. The second, retrieval-average, matches knowledge sentences based on the document embedding obtained by averaging all sentence embeddings ∑ F (xi) M . We\n5https://www.sbert.net/\nalso test an oracle retrieval (retrieval-diff ) that uses the difference between the input embedding in retrieval-average and output embeddings F (y) as the document embedding.\nSince the sentence-BERT model is trained on natural language instead of structured data such as knowledge triplets, we convert all the triplets in ConceptNet into their surface text form. We use templates built manually to replace the relation with a phrase, for example, triplet (knife, CapableOf, cut) becomes Knife is capable of cut.\nWe follow the practice in (Wolf et al., 2019) and incorporate the knowledge kc retrieved in the previous step by appending sentences in kc to the beginning of the context c. They are separated with the special token </s> as BART use the RoBERTa tokenizer (Liu et al., 2019) for its pre-training. We use BART-large as our baseline in the experiments."
+    }, {
+      "heading" : "3.4 Generated Knowledge Setup",
+      "text" : "To bypass the difficulty of matching text spans in the context to the knowledge base, we use a generative method to predict an entity e2 in a knowledge triplet, based on the entity e1 extracted from context c and a specified relationship r. Compared with the retrieval method described in the previous section, this method has the benefit of being able to specify the type of relation in the knowledge triplet. We can thus locate the knowledge relevant to specific tokens rather than the whole sentence. To complete the knowledge triplet, we use COMET, a framework for automatic knowledge base construction. This is a GPT model (Radford et al., 2018) finetuned on knowledge triplets from commonsense knowledge bases such as ConceptNet (Speer et al., 2017) and ATOMIC(Sap et al., 2019). The model takes j = (e1, r, ∗) as input and pre-\ndicts e2 to complete the knowledge triplet. We use the original implementation6 and the pretrained weights on ConceptNet.\nFor each utterance xi in the dialogue context, we use constituency parsing (Kitaev and Klein, 2018) to find the verb phrase and the noun phrase at depth one in the dependency tree, and use them as the input to the COMET model. Following the categorization in (Hwang et al., 2020), we limit the relationships to the commonsense subset to reduce noise and to limit the number of generated knowledge triplets. For noun phrases, the relations are mostly about their physical properties, such as UsedFor and CapableOf. For verb phrases, we focus on the social-interaction or eventcentered aspects, which include relations such as Causes and MotivatedByGoal. For example, for the triplet (loseweight,HasPrerequisite, ∗) the model predicts e2 to be Eat less or Eat healthier.\nA potential drawback of appending the knowledge at the beginning of the input is that we are not able to include information about knowledge locality as we can not tell the model which piece of the context the knowledge is corresponding to. Therefore, we take inspiration from K-BERT (Liu et al., 2020) and adopt their representation method into our BART-based model, which is referred as K-BART We experiment with two ways to keep the structure information.We use BART-large as the baseline, and test inserting r and e2 without modifying the attention and positional embedding noted as inplace.\nSoft positional encoding. As BART’s transformer layers follow the implementation of RoBERTa, it uses a learned positional embedding, which assigns a unique embedding vector to each location in the input and captures the sequential\n6https://github.com/atcbosselut/comet-commonsense\nnature of the input. For COMET generated knowledge, we plug in r and e2 next to its corresponding e1 in the original context. Note that the input sentence is no longer a natural sentence, which is different from instances in pretraining. Consider the following sentence with corresponding knowledge in brackets: “I’ve been smoking [causes cancer] too much,”. This is usually regarded as two sentences: the original input “I’ve been smoking too much” and the introduced knowledge “smoking causes cancer.” However, plain positional encoding scheme is not enough to represent this information. Hence, we treat the input sequence as a tree structure, where the r and e2 are treated as a branch to the original input at the location next to e1. In this case, “causes” and “too” are both considered as the fourth token right after “smoking.” With this approach, the main body of the sentence will have the same index as a sentence without additional knowledge.\nMask-Self-Attention The information introduced by a COMET generated knowledge triplet is only relevant to the first argument e1 from the original context. Therefore, we use attention mask to modify the visibility of each part in the input sequence, and hide the introduced knowledge from other irrelevant parts of the input. The tokens in the dialogue context can see each other as usual, but the introduced knowledge r and e2 are only visible to their corresponding e1, which means their attention weights are always 0 for other parts of the input. In this way, unrelated tokens will not be affected by the semantics of introduced knowledge."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "We choose BART as the backbone network for our generation model. It is a standard seq2seq style transformer which achieved SoTA on multiple\ndown stream tasks with a bidirectional encoder and a left-to-right decoder, which generalizes both GPT2 and BERT. Each model is trained with three random seeds."
+    }, {
+      "heading" : "4.1 Dataset",
+      "text" : "We use the dataset from (Pérez-Rosas et al., 2016) on Motivational Interviewing for language model fine-tuning. The dataset consists of 277 counseling sessions, covering different topics on behavior change, including smoking cessation and weight management. It has annotations on counselor verbal behaviors, such as asking a question, making a reflective response, or seeking collaboration. In the experiments, we form data samples with a reflective response as the target text y and use five former utterances within the counseling dialog as the context c. That leaves us over 3000 samples after filtering.\nWe use ConceptNet as the knowledge base providing commonsense knowledge. It has over 21 million knowledge triplets with a set of 34 relations covering a wide variety of knowledge, including attributional relationships, causal relationships, etc. We only keep triplets that are in English and from a selected subset of relationships based on their semantic meanings, refer to the appendix for details . This leaves us with a collection of about 3.4 million triplets."
+    }, {
+      "heading" : "4.2 Evaluation",
+      "text" : "We evaluate our model with several common metrics. We measure the word-overlapping based relevance using BLEU-1/2 (Papineni et al., 2002), ROUGE-1/2 (Lin, 2004), and METEOR (Banerjee and Lavie, 2005). We measure the contextual embedding similarity using BertScore (Zhang et al.,\n2019). We measure the diversity with the ratio of unique unigrams or bigrams among generated sentences (Li et al., 2016)."
+    }, {
+      "heading" : "4.3 Results of Retrieval Methods",
+      "text" : "We first examine how the knowledge from different retrieval methods benefits the system. All the experiments use domain-specific knowledge as the data source. Table 2 shows our experimental results.\nThe retrieval-each method using sentence-level embeddings exceeds the baseline on Rouge-1 and METEOR, while the retrieval-average method, using context-level embeddings of less granularity, outperforms other methods in BLEU-2, Rouge2, and BertScore. Meanwhile, the oracle method retrieval-diff unsurprisingly gets the highest score in all metrics by a large margin except Dist-1 . Overall, results indicate that it is feasible to find relevant information from a domain-specific knowledge base to improve generation given the ground truth."
+    }, {
+      "heading" : "4.4 Result on K-BART Model Architecture",
+      "text" : "Next, we investigate whether knowledge from COMET, a generative approach, can provide additional context to the generation task. We also evaluate whether masked attention Att or soft positional encoding Pos are better strategies to infuse knowledge by providing locality information of what tokens the knowledge is related to . We show the results in Table 3.\nThe inplace method, which inserts the relation r and the generated e2 next to e1, shows a significant improvement over the baseline. More specifically, the improvement in Dist-1/2 suggests that commonsense stored in COMET can also be leveraged to introduce new words and concepts into the re-\nsponse. Using masked attention provides further improvements in several automatic metrics, except for a slightly lower BLEU score. Interestingly, the soft positional encoding worsens the performance regardless being used by itself or when combined with masked attention. One potential explanation for this is that BART is more robust to masked attention as its effects are similar to attention dropout, while the soft positional encoding causes more position collision and requires more training samples to be effective."
+    }, {
+      "heading" : "4.5 Experiments Varying Knowledge Source",
+      "text" : "After showing that both retrieved and generated knowledge helps to improve the generation of counseling responses, a natural question that follows is: how does the knowledge resource itself affect the overall performance?\nTo explore this question, we conducted a set of comparative experiments on using domain-specific and commonsense knowledge. During our experiments, we use the retrieval-diff method, which can be seen as an upper-bound of performance using the actual ground truth response. The knowledge candidates are obtained from either ConceptNet triplets in their surface text form or domain-related knowledge collected from the Internet as described in §3.2.\nDomain Specific Knowledge vs Commonsense Knowledge As shown in Table 4 both domainspecific knowledge and commonsense knowledge serve as useful sources of knowledge resources for our generation task. However, the model using ConceptNet performs significantly better than the\nmodel using domain-specific knowledge in all metrics except Dist-2. One potential reason for this is that the sheer amount of commonsense knowledge is much larger than the amount we collect and has better coverage for what is mentioned in the dialogue context. However, our experiments show that aggregating both types of knowledge further improves the system’s performance. This suggests the domain-specific knowledge provides complementary information relevant to the counseling domain, such as the side effect for a medication, that is not captured by the commonsense knowledge base. Note that more than 20% of the retrieved sentences are from the domain-specific knowledge base, while the commonsense knowledge base is more than 30 times larger in size. This further shows that our data collection pipeline is able to provide knowledge that is more relevant to the dialogue context, with the added benefit of no human annotation involved.\nThe Role of Different Types of Commonsense Knowledge We evaluate the role of different types of knowledge by conducting an ablation study based on the main categories in Conceptnet, including attribution, causal, comparison, conditional, intentional, spatial, and temporal categories.\nWe build separate models by removing a commonsense knowledge category at a time. Results in Table 5 show that removing the intentional relationships harms the performance the most on Rouge1/2 and METEOR, and removing the causal relationships leads to the lowest score on BLEU-1 and BertScore. Interestingly, these relations are important for counseling conversations where the coun-\nselor usually infer the intention or causes behind their clients statements. For instance, in smoke cessation counseling, counselors might be aware that the main reasons to quit are related to well-being or personal relationships.\nRemoving a few sets of relationships, such as Attribution or Temporal, causes minimal performance drop or even an improvement. These results suggest that those relationships are not salient or introduce noise during the retrieval process."
+    }, {
+      "heading" : "4.6 Human Evaluation",
+      "text" : "We conduct a human evaluation where we ask annotators to indicate their preferences between our best performing models from both the retrieval and the generative settings ,and a model without knowledge enhancement. We evaluated each each model response using three metrics: Fluency indicating whether the sentence is grammatically correct and natural; Coherence indicating whether the response is on topic and relevant to the dialogue history; Reflectiveness indicating if the response summarizes what the client has said or interprets what the client means. All these metrics are scored with a three-point Likert scale.\nWe also ask the annotators if the retrieved knowledge is helpful for generating a better response, where the knowledge is triplets for the generative setup and sentences for the retrieval setup. In addition, we ask the annotators to pick the best response between our models and the ground truth.\nWe randomly choose 50 samples for each model to be annotated. The annotation was conducted by two annotators using Qualtrics.7 The annotators have no information on which model generates the the response being annotated.\nFigure 4 shows the average score for each metric and the percentage of times each system was chosen as the best response. Results show that the\n7www.qualtrics.com\nground truth responses have the highest score in terms of reflectiveness and coherence. A potential reason for this is that the ground truth responses are generally longer, thus containing more information from the dialogue context. As for the best response, the ground truth was also the most picked one and our models using knowledge have not outperformed the baseline in this regard.\nThe model using generated knowledge triplets outperforms the baseline in all three metrics, suggesting the motivation and cause relationships generated by COMET brought useful context to the dialog. However, only 22% of the triplets sampled from the test set are considered helpful by our annotators. This calls for closer inspection on the difference between how the models take advantage of commonsense knowledge and how humans perceive it. The model using retrieved knowledge assertions outperforms the baseline on fluency and reflectiveness but has a low coherence score. Among the knowledge assertions, 38% of retrieved sentences are relevant to the dialog when using domain knowledge, and 48% for commonsense knowledge."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this paper, we proposed the task of knowledge enhanced counseling reflection generation, and experimented with different ways to introduce knowledge into the reflection generation model using both retrieval and generative settings. We found that both strategies benefit the generation task on various automatic metrics, which is further consolidated by the human evaluation. In addition, we showed that counseling domain knowledge serves as good complementary knowledge source to ConceptNet. Through an ablation study, we found that commonsense related to intentional and causal relationships are essential for the counseling domain."
+    } ],
+    "references" : [ {
+      "title" : "METEOR: An automatic metric for MT evaluation with improved correlation with human judgments",
+      "author" : [ "Satanjeev Banerjee", "Alon Lavie." ],
+      "venue" : "Proceedings of the ACL Workshop on Intrinsic and Extrinsic Evaluation Measures for Machine Transla-",
+      "citeRegEx" : "Banerjee and Lavie.,? 2005",
+      "shortCiteRegEx" : "Banerjee and Lavie.",
+      "year" : 2005
+    }, {
+      "title" : "The unified medical language system (umls): integrating biomedical terminology",
+      "author" : [ "Olivier Bodenreider." ],
+      "venue" : "Nucleic acids research, 32(suppl_1):D267– D270.",
+      "citeRegEx" : "Bodenreider.,? 2004",
+      "shortCiteRegEx" : "Bodenreider.",
+      "year" : 2004
+    }, {
+      "title" : "COMET: Commonsense transformers for automatic knowledge graph construction",
+      "author" : [ "Antoine Bosselut", "Hannah Rashkin", "Maarten Sap", "Chaitanya Malaviya", "Asli Celikyilmaz", "Yejin Choi." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association",
+      "citeRegEx" : "Bosselut et al\\.,? 2019",
+      "shortCiteRegEx" : "Bosselut et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Rˆ3: Reverse, retrieve, and rank for sarcasm generation with commonsense knowledge",
+      "author" : [ "Tuhin Chakrabarty", "Debanjan Ghosh", "Smaranda Muresan", "Nanyun Peng." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Chakrabarty et al\\.,? 2020",
+      "shortCiteRegEx" : "Chakrabarty et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Are rotten apples edible? challenging commonsense inference ability with exceptions",
+      "author" : [ "Nam Do", "Ellie Pavlick." ],
+      "venue" : "FINDINGS.",
+      "citeRegEx" : "Do and Pavlick.,? 2021",
+      "shortCiteRegEx" : "Do and Pavlick.",
+      "year" : 2021
+    }, {
+      "title" : "SemEval-2010 task 8: Multi-way classification of semantic relations",
+      "author" : [ "Iris Hendrickx", "Su Nam Kim", "Zornitsa Kozareva", "Preslav Nakov", "Diarmuid ’O S’eaghdha", "Sebastian Pad’o", "Marco Pennacchiotti", "Lorenza Romano", "Stan Szpakowicz" ],
+      "venue" : null,
+      "citeRegEx" : "Hendrickx et al\\.,? \\Q2010\\E",
+      "shortCiteRegEx" : "Hendrickx et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "How resilient is your team? exploring healthcare providers’ well-being during the covid",
+      "author" : [ "Elizabeth M Huffman", "Dimitrios I Athanasiadis", "Nicholas E Anton", "Lindsay A Haskett", "Dominique L Doster", "Dimitrios Stefanidis", "Nicole K Lee" ],
+      "venue" : null,
+      "citeRegEx" : "Huffman et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Huffman et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Comet-atomic 2020: On symbolic and neural commonsense knowledge graphs",
+      "author" : [ "Jena D. Hwang", "Chandra Bhagavatula", "Ronan Le Bras", "Jeff Da", "Keisuke Sakaguchi", "Antoine Bosselut", "Yejin Choi." ],
+      "venue" : "ArXiv, abs/2010.05953.",
+      "citeRegEx" : "Hwang et al\\.,? 2020",
+      "shortCiteRegEx" : "Hwang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language generation with multi-hop reasoning on commonsense knowledge graph",
+      "author" : [ "Haozhe Ji", "Pei Ke", "Shaohan Huang", "Furu Wei", "Xiaoyan Zhu", "Minlie Huang." ],
+      "venue" : "Proceedings of the 2020 Conference",
+      "citeRegEx" : "Ji et al\\.,? 2020",
+      "shortCiteRegEx" : "Ji et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Negated and misprimed probes for pretrained language models: Birds can talk, but cannot fly",
+      "author" : [ "Nora Kassner", "Hinrich Schütze." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Kassner and Schütze.,? 2020",
+      "shortCiteRegEx" : "Kassner and Schütze.",
+      "year" : 2020
+    }, {
+      "title" : "Constituency parsing with a self-attentive encoder",
+      "author" : [ "Nikita Kitaev", "Dan Klein." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 2676–2686, Melbourne, Australia. Associa-",
+      "citeRegEx" : "Kitaev and Klein.,? 2018",
+      "shortCiteRegEx" : "Kitaev and Klein.",
+      "year" : 2018
+    }, {
+      "title" : "Bart: Denoising sequence-to-sequence pretraining for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A diversity-promoting objective function for neural conversation models",
+      "author" : [ "Jiwei Li", "Michel Galley", "Chris Brockett", "Jianfeng Gao", "Bill Dolan." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computa-",
+      "citeRegEx" : "Li et al\\.,? 2016",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81, Barcelona, Spain. Association for Computational Linguistics.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "K-bert: Enabling language representation with knowledge graph",
+      "author" : [ "Weijie Liu", "Peng Zhou", "Zhe Zhao", "Zhiruo Wang", "Qi Ju", "Haotang Deng", "P. Wang." ],
+      "venue" : "ArXiv, abs/1909.07606.",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving neural story generation by targeted common sense grounding",
+      "author" : [ "Huanru Henry Mao", "Bodhisattwa Prasad Majumder", "Julian McAuley", "Garrison Cottrell." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Mao et al\\.,? 2019",
+      "shortCiteRegEx" : "Mao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Motivational interviewing: Helping people change",
+      "author" : [ "William R Miller", "Stephen Rollnick." ],
+      "venue" : "Guilford press.",
+      "citeRegEx" : "Miller and Rollnick.,? 2012",
+      "shortCiteRegEx" : "Miller and Rollnick.",
+      "year" : 2012
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "The impact of the covid-19 pandemic on subjective mental well-being: The interplay of perceived threat, future anxiety",
+      "author" : [ "Mario R Paredes", "Vanessa Apaolaza", "Cristóbal Fernandez-Robin", "Patrick Hartmann", "Diego Yañez-Martinez" ],
+      "venue" : null,
+      "citeRegEx" : "Paredes et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Paredes et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Building a motivational interviewing dataset",
+      "author" : [ "Verónica Pérez-Rosas", "Rada Mihalcea", "Kenneth Resnicow", "Satinder Singh", "Lawrence An." ],
+      "venue" : "Proceedings of the Third Workshop on Computational Linguistics and Clinical Psychology, pages 42–51, San",
+      "citeRegEx" : "Pérez.Rosas et al\\.,? 2016",
+      "shortCiteRegEx" : "Pérez.Rosas et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "2019a. Language models as knowledge bases? arXiv preprint arXiv:1909.01066",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander H Miller", "Sebastian Riedel" ],
+      "venue" : null,
+      "citeRegEx" : "Petroni et al\\.,? \\Q1909\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 1909
+    }, {
+      "title" : "2019b. Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "In Proceedings of the 2019 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving language understanding by generative pre-training",
+      "author" : [ "Alec Radford", "Karthik Narasimhan", "Tim Salimans", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Sentencebert: Sentence embeddings using siamese bertnetworks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "ArXiv, abs/1908.10084.",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019a",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "SentenceBERT: Sentence embeddings using Siamese BERTnetworks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natu-",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019b",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "Thinking globally, acting locally: Distantly supervised global-to-local knowledge selection for background based conversation",
+      "author" : [ "Pengjie Ren", "Zhumin Chen", "Christof Monz", "Jun Ma", "Maarten de Rijke." ],
+      "venue" : "Proceedings of the AAAI Conference on",
+      "citeRegEx" : "Ren et al\\.,? 2020",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Atomic: An atlas of machine commonsense for ifthen reasoning",
+      "author" : [ "Brendan Roof", "Noah A Smith", "Yejin Choi." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 33, pages 3027–3035.",
+      "citeRegEx" : "Roof et al\\.,? 2019",
+      "shortCiteRegEx" : "Roof et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Unsupervised commonsense question answering with self-talk",
+      "author" : [ "Vered Shwartz", "Peter West", "Ronan Le Bras", "Chandra Bhagavatula", "Yejin Choi." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Shwartz et al\\.,? 2020",
+      "shortCiteRegEx" : "Shwartz et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploiting persona information for diverse generation of conversational responses",
+      "author" : [ "Haoyu Song", "Weinan Zhang", "Yiming Cui", "Dong Wang", "Ting Liu." ],
+      "venue" : "IJCAI.",
+      "citeRegEx" : "Song et al\\.,? 2019",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Conceptnet 5.5: An open multilingual graph of general knowledge",
+      "author" : [ "Robyn Speer", "Joshua Chin", "Catherine Havasi" ],
+      "venue" : "In Proceedings of the AAAI Conference on Artificial Intelligence,",
+      "citeRegEx" : "Speer et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Speer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Transfertransfo: A transfer learning approach for neural network based conversational agents",
+      "author" : [ "Thomas Wolf", "Victor Sanh", "Julien Chaumond", "Clement Delangue." ],
+      "venue" : "arXiv preprint arXiv:1901.08149.",
+      "citeRegEx" : "Wolf et al\\.,? 2019",
+      "shortCiteRegEx" : "Wolf et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Transomcs: From linguistic graphs to commonsense knowledge",
+      "author" : [ "Hongming Zhang", "Daniel Khashabi", "Yangqiu Song", "Dan Roth." ],
+      "venue" : "Proceedings of International Joint Conference on Artificial Intelligence (IJCAI) 2020.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bertscore: Evaluating text generation with bert",
+      "author" : [ "Tianyi Zhang", "Varsha Kishore", "Felix Wu", "Kilian Q Weinberger", "Yoav Artzi." ],
+      "venue" : "arXiv preprint arXiv:1904.09675.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Knowledgegrounded dialogue generation with pre-trained language models",
+      "author" : [ "Xueliang Zhao", "Wei Wu", "Can Xu", "Chongyang Tao", "Dongyan Zhao", "Rui Yan." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Zhao et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 19,
+      "context" : "Mental health care has been of great importance as the ongoing COVID-19 pandemic poses a serious negative impact on people’s mental wellbeing (Paredes et al., 2021).",
+      "startOffset" : 142,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 6,
+      "context" : "Not only there is a larger unmet need for counseling services, the health care workers are also in tremendous physical and mental strain (Huffman et al., 2021).",
+      "startOffset" : 137,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 17,
+      "context" : "This process frequently involves making inferences based on the counselor’s prior knowledge (Miller and Rollnick, 2012).",
+      "startOffset" : 92,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 24,
+      "context" : "The first is retrieval, which acquires sentences containing relevant knowledge using a BERT-based model (Reimers and Gurevych, 2019a) to get vector representations of sentences from the dialogue and assertions in the knowledge base.",
+      "startOffset" : 104,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 2,
+      "context" : "The second strategy is generative, where we first extract key phrases from the dialogue, and query a COMET model for plausible knowledge triplets with a defined set of relations (Bosselut et al., 2019).",
+      "startOffset" : 178,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 11,
+      "context" : "We propose a knowledge-grounded BART (Lewis et al., 2020) model using soft positional encoding and masked self-attention representations to indicate the knowledge position and make the introduced knowledge only visible to the key phrase it relates to.",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 30,
+      "context" : "For instance, when querying ConceptNet (Speer et al., 2017), a well-",
+      "startOffset" : 39,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2019a), including both commonsense (Shwartz et al., 2020) and factual knowledge (Petroni et al.",
+      "startOffset" : 37,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 4,
+      "context" : "However, pretrained language models still struggle with some downstream applications, especially when the model needs to make inference based on context (Do and Pavlick, 2021; Kassner and Schütze, 2020).",
+      "startOffset" : 153,
+      "endOffset" : 202
+    }, {
+      "referenceID" : 9,
+      "context" : "However, pretrained language models still struggle with some downstream applications, especially when the model needs to make inference based on context (Do and Pavlick, 2021; Kassner and Schütze, 2020).",
+      "startOffset" : 153,
+      "endOffset" : 202
+    }, {
+      "referenceID" : 26,
+      "context" : "Introducing knowledge into language models has been shown to be successful on various downstream tasks and model architecture (Ren et al., 2020; Zhao et al., 2020; Song et al., 2019).",
+      "startOffset" : 126,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 34,
+      "context" : "Introducing knowledge into language models has been shown to be successful on various downstream tasks and model architecture (Ren et al., 2020; Zhao et al., 2020; Song et al., 2019).",
+      "startOffset" : 126,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 29,
+      "context" : "Introducing knowledge into language models has been shown to be successful on various downstream tasks and model architecture (Ren et al., 2020; Zhao et al., 2020; Song et al., 2019).",
+      "startOffset" : 126,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 30,
+      "context" : "The most widely used CSKG resources include ConceptNet (Speer et al., 2017), ATOMIC (Sap et al.",
+      "startOffset" : 55,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 1,
+      "context" : "There are also medical related knowledge base such UMLS(Bodenreider, 2004) and OHAMA 1.",
+      "startOffset" : 55,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 20,
+      "context" : "We start by identifying medical concepts occurring in a dataset of counseling conversations (Pérez-Rosas et al., 2016).",
+      "startOffset" : 92,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 25,
+      "context" : "More specifically, we use sentenceBERT(Reimers and Gurevych, 2019b) to get an embedding F (xi) for each of input sentence xi.",
+      "startOffset" : 38,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 31,
+      "context" : "We follow the practice in (Wolf et al., 2019) and incorporate the knowledge kc retrieved in the previous step by appending sentences in kc to the beginning of the context c.",
+      "startOffset" : 26,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 15,
+      "context" : "They are separated with the special token </s> as BART use the RoBERTa tokenizer (Liu et al., 2019) for its pre-training.",
+      "startOffset" : 81,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 23,
+      "context" : "This is a GPT model (Radford et al., 2018) finetuned on knowledge triplets from commonsense knowledge bases such as ConceptNet (Speer et al.",
+      "startOffset" : 20,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2018) finetuned on knowledge triplets from commonsense knowledge bases such as ConceptNet (Speer et al., 2017) and ATOMIC(Sap et al.",
+      "startOffset" : 92,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 10,
+      "context" : "For each utterance xi in the dialogue context, we use constituency parsing (Kitaev and Klein, 2018) to find the verb phrase and the noun phrase at depth one in the dependency tree, and use them as the input to the COMET model.",
+      "startOffset" : 75,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 7,
+      "context" : "categorization in (Hwang et al., 2020), we limit the relationships to the commonsense subset to reduce noise and to limit the number of generated knowledge triplets.",
+      "startOffset" : 18,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 14,
+      "context" : "Therefore, we take inspiration from K-BERT (Liu et al., 2020) and adopt their representation method into our BART-based model, which is referred as K-BART We experiment with two ways to keep the structure information.",
+      "startOffset" : 43,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 20,
+      "context" : "We use the dataset from (Pérez-Rosas et al., 2016) on Motivational Interviewing for language model fine-tuning.",
+      "startOffset" : 24,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 18,
+      "context" : "We measure the word-overlapping based relevance using BLEU-1/2 (Papineni et al., 2002), ROUGE-1/2 (Lin, 2004), and METEOR (Banerjee and Lavie, 2005).",
+      "startOffset" : 63,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2002), ROUGE-1/2 (Lin, 2004), and METEOR (Banerjee and Lavie, 2005).",
+      "startOffset" : 19,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2002), ROUGE-1/2 (Lin, 2004), and METEOR (Banerjee and Lavie, 2005).",
+      "startOffset" : 43,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 33,
+      "context" : "We measure the contextual embedding similarity using BertScore (Zhang et al., 2019).",
+      "startOffset" : 63,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 12,
+      "context" : "We measure the diversity with the ratio of unique unigrams or bigrams among generated sentences (Li et al., 2016).",
+      "startOffset" : 96,
+      "endOffset" : 113
+    } ],
+    "year" : 0,
+    "abstractText" : "In this paper, we study the effect of commonsense and domain knowledge while generating responses in counseling conversations using retrieval and generative methods for knowledge integration. We propose a pipeline that collects domain knowledge through web mining, and show that retrieval from both domainspecific and commonsense knowledge bases improves the quality of generated responses. We also present a model that incorporates knowledge generated by COMET using soft positional encoding and masked self-attention. We show that both retrieved and COMETgenerated knowledge improve the system’s performance as measured by automatic metrics and by human evaluation. Lastly, we present a comparative study on the types of knowledge encoded by our system, showing that causal and intentional relationships benefit the generation task more than other types of commonsense relations.",
+    "creator" : null
+  }
+}

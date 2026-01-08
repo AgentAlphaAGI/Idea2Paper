@@ -1,0 +1,674 @@
+{
+  "name" : "ARR_2022_219_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "A Sentence is Worth 128 Pseudo Tokens: A Semantic-Aware Contrastive Learning Framework for Sentence Embeddings",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Sentence embedding serves as an essential technique in a wide range of applications, including semantic search, text clustering, text classification, etc. (Kiros et al., 2015; Logeswaran and Lee, 2018; Conneau et al., 2017; Cer et al., 2018; Reimers and Gurevych, 2019; Gao et al., 2021). Contrastive learning works on learning representations such\nthat similar examples stay close whereas dissimilar ones are far apart, and thus is suitable for sentence embeddings due to its natural availability of similar examples. Incorporating contrastive learning in sentence embeddings improves the efficiency of semantic information learning in an unsupervised manner (He et al., 2020; Chen et al., 2020) and has been shown to be effective on a variety of tasks (Reimers and Gurevych, 2019; Gao et al., 2021; Zhang et al., 2020).\nIn contrastive learning for sentence embeddings, a key challenge is how to construct positive instances. Both discrete and continuous augmentation methods have been studied recently. Methods in (Wu et al., 2018; Meng et al., 2021) (e.g., CLEAR) perform discrete operations directly on the original sentences, such as word deletion and\nsentence shuffling, to get positive samples. However, these methods may lead to unacceptable semantic distortions or even complete misinterpretations of the original statement. In contrast, the SimCSE method (Gao et al., 2021) obtains two different embeddings in the continuous embedding space as a positive pair for one sentence through different dropout masks (Srivastava et al., 2014) in the neural network for representation learning. Nonetheless, this method overly relies on superficial features existing in the dataset like sentence lengths and syntactic structures and may pay less reflection on meaningful semantic information. As an illustrative example, the sentence-pair in Fig. 1 “A caterpillar was caught by me.” and “I caught a caterpillar.” appear to organize differently in expression but convey exactly the same semantics.\nTo overcome these drawbacks, in this paper, we propose a semantic-aware contrastive learning framework for sentence embeddings, termed Pseudo-Token BERT (PT-BERT), that is able to capture the pseudo-token space (i.e., latent semantic space) representation while ignoring effects of superficial features like sentence lengths and syntactic structures. Inspired by previous work on prompt learning and sentence selection (Li and Liang, 2021; Liu et al., 2021; Humeau et al., 2020), which create a pseudo-sequence and have it serve the downstream tasks, we present PT-BERT to train pseudo token representations and then to map sentences into pseudo token spaces based on an attention mechanism.\nIn particular, we train additional 128 pseudo token embeddings, together with sentence embeddings extracted from the BERT model (i.e., gradient-encoder), and then use the attention mechanism (Devlin et al., 2019) to map the sentence embedding to the pseudo token space (i.e., semantic space). We use another BERT model (i.e., momentum-encoder) to encode the original sentence, adopt a similar attention mechanism with the pseudo token embeddings, and finally output a continuously augmented version of the sentence embedding. We treat the representations of original sentence encoded by the gradient-encoder and the momentum-encoder as a positive pair. In addition, the momentum-encoder also generates negative examples, dynamically maintains a queue to store these negative examples, and updates them overtime. By projecting all sentences onto the same pseudo sentence, the model greatly reduces the\ndependence on sentence length and syntax when making judgments and makes the model more focused on the semantic level information.\nIn our experiments, we compare our results with the previous state-of-the-art work. We train PTBERT on 106 randomly sampled sentences from English Wikipedia and evaluate on seven standard semantic textual similarity (STS) tasks (Agirre et al., 2012, 2013, 2014, 2015, 2016) (Marelli et al., 2014). Besides, we also compare our approach with a framework based on an advanced discrete augmentation we proposed. We obtain a new stateof-the-art on standard semantic textual similarity tasks with our PT-BERT, which achieves 77.74% of Spearman’s correlation. To show the effectiveness of pseudo tokens, we calculate the align-loss and uniformity loss (Wang and Isola, 2020) and verify our approach on a sub-dataset with hard examples sampled from STS-(2012-2016)."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "In this section, we discuss related studies with repect to the contrastive learning framework and sentence embedding."
+    }, {
+      "heading" : "2.1 Contrastive Learning for Sentence Embedding",
+      "text" : "Contrastive learning and MoCo. Contrastive learning (Hadsell et al., 2006) has been used with much success in both natural language processing and computer vision (Yang et al., 2019; Klein and Nabi, 2020; Chen et al., 2020; He et al., 2020; Gao et al., 2021). In contrast to generative learning, contrastive learning requires learning to distinguish and match data at the abstract semantic level of the feature space. It focuses on learning common features between similar examples and distinguishing differences between non-similar examples. In order to compare the instances with more negative examples and less computation, memory bank (Wu et al., 2018) is proposed to enhance the performance under the contrastive learning framework. While with a large capacity to store more samples, the memory bank is not consistent enough, which could not update the \"key\" during comparison. MomentumContrast (MoCo) (He et al., 2020) uses a queue to maintain the dictionary of samples which allows the model to compare the query with more keys for each step and ensure the consistency of the framework. It updates the parameter of the dictionary in a momentum way.\nDiscrete and continuous augmentation. By equipping discrete augmentation that modifies sentences directly on token level with contrastive learning, significant success has been achieved in obtaining sentence embeddings. Such methods include word omission (Yang et al., 2019), entity replacement (Xiong et al., 2020), trigger words (Klein and Nabi, 2020) and traditional augmentations such as deletion, reorder and substitution (Wu et al., 2020; Meng et al., 2021). Examples with diverse expressions can be learned during training, making the model more robust to expressions of different sentence lengths and styles. However, these approaches are limited because there are huge difficulties in augmenting sentences precisely since a few changes can make the meaning completely different or even opposite.\nResearchers have also explored the possibility of building sentences continuously, which instead applies operation in embedding space. CT-BERT (Carlsson et al., 2021) encodes same sentence with two different encoders. UnsupSimCSE (Gao et al., 2021) compares the representations of the same sentence with different dropout masks among the mini-batch. These approaches continuously augment sentences while retaining the original meaning. However, positive pairs seen by SimCSE always have the same length and structure, whereas negative samples are likely to act oppositely. As a result, sentence length and structure are highly correlated to the similarity score of examples. During training, the model has never seen positive samples with diverse expressions, so that in real test scenarios, the model would be more inclined to classify the synonymous pairs with different expressions as negatives, and those sentences with the same length and structures are more likely to be grouped as positive pairs. This may cause a biased encoder."
+    }, {
+      "heading" : "2.2 Pseudo Tokens",
+      "text" : "In the domain of prompt learning (Liu et al., 2021; Jiang et al., 2020; Li and Liang, 2021; Gao et al., 2020), the way to create prompt can be divided into two types, namely discrete and continuous ways. Discrete methods usually search the natural language template as the prompt (Davison et al., 2019; Petroni et al., 2019), while the continuous way always directly works on the embedding space with \"pseudo tokens\" (Liu et al., 2021; Li and Liang, 2021). In retrieval and dialogue tasks, the current\napproach adopts \"pseudo tokens\", namely \"poly codes\" (Humeau et al., 2020), to jointly encode the query and response precisely and ensure the inference time when compared with the Cross-Encoders and Bi-Encoders (Wolf et al., 2019; Mazaré et al., 2018; Dinan et al., 2019). The essence of these methods is to create a pseudo-sequence and have it serve the downstream tasks without the need for humans to understand the exact meaning. The parameters of these pseudo tokens are independent of the natural language embeddings, and can be tuned based on a specific downstream task. In the following sections, we will show the idea to weaken the model’s consideration of sentence length and structures by introducing additional pseudo token embeddings on top of the BERT encoder."
+    }, {
+      "heading" : "3 Methods",
+      "text" : "In this section, we introduce PT-BERT, which provides novel contributions on combining advantages of both discrete and continuous augmentations to advance the state-of-art of sentence embeddings. We first present the setup of problems with a thorough analysis on the bias introduced by the textual similarity theoretically and experimentally. Then we show the details of Pseudo-Token representation and our model’s architecture."
+    }, {
+      "heading" : "3.1 Preliminary",
+      "text" : "Consider a sentence s, we say that the augmentation is continuous if s is augmented by different encoding functions, f(·) and f ′(·). Sentence embeddings h = f(s) and h′ = f ′(s) are obtained by these two functions. With a slight change of the encoding function (e.g., encoders with different dropout masks), h′ can be seen as a more precisely\naugmented version of h compared with the discrete augmentation. Semantic information of h′ could be the same as h. Therefore, h and h′ are a pair of positive examples and we could randomly sample a sentence to construct negative example pairs.\nPrevious state-of-the-art models (Gao et al., 2021) adopt the continuous strategy that augments sentences with dropout (Srivastava et al., 2014). Through careful observation, we find that all the positive examples in SimCSE have the same length and structure while negative examples act oppositely. In this way, SimCSE will inevitably take these two factors as hints during test. To further verify this conjecture, we sort out the positive pairs with a length difference of more than five words and negative pairs of less than two words from STS-(2012-2016).\nTable 1 shows that the performance of SimCSE plummets on this dataset. Besides, we also find that SimCSE truncates all training corpus into 32 tokens, which shortens the discrepancy of the sentence’s length. After we scale the max length that SimCSE could accept from 32 to 64 and 128, the performance degrades significantly during the test even though the model is supposed to learn more\nfrom the complete version of sentences. The reason for this result may lie in the fact that, without truncation, all positive pairs still have the same length, whereas the difference in length between the negative and positive ones is enlarged. Therefore, the encoder will rely more on sentence length and make the wrong decision."
+    }, {
+      "heading" : "3.2 Pseudo-Token BERT",
+      "text" : "We realize it is vital to train an unbiased encoder that captures the semantics and also would not introduce intermediate errors. This motivates us to propose the PT-BERT, as evidence shows that the encoder may fail to make predictions when trained on a biased dataset with same-length positive pairs, by learning the spurious correlations that work only well on the training dataset (Arjovsky et al., 2019; Nam et al., 2020).\nPseudo-Token representations. The idea of PTBERT is to reduce the model’s excessive dependence on textual similarity when making predictions. Discrete augmentation achieves this goal by providing both positive and negative examples with diverse expressions. Therefore the model does not\njump to conclusions based on sentence length and syntactic structure during the test.\nNote that we achieve this same purpose in a seemingly opposite way: mapping the representations of both positive and negative examples to a pseudo sentence with the same length and structure. We take an additional embedding layer outside the BERT encoder to represent a pseudo sentence {0, 1, ...,m} with fixed length m and unchangeable syntax. This embedding layer is fully independent of the BERT encoder, including the parameters and corresponding vocabulary. Random initialization is applied to this layer, and the parameter will be updated during training. The size of this layer depends on the length of pseudo sentences. Besides, adopting the attention mechanism (Vaswani et al., 2017; Bahdanau et al., 2015; Gehring et al., 2017), we take the pseudo sentence embeddings as the query while key and value are the sentence embeddings obtained from the BERT encoder. This allows the pseudo sentence to attend to the core part and ignore the redundant part while keeping the fixed length and pseudo syntactic structure.\nFig. 2 illustrates the framework of PT-BERT. Denoting the pseudo sentence embedding as P and the sentence embedding encoded by BERT as Y, we obtain the weighted pseudo sentence embedding of each sentence by mapping the sentence embedding to the pseudo tokens with attention:\nZ′i = Attention(PW Q,YiW K,YiW V) (1)\nAttention(Q,K,V) = softmax( QKT√\ndk )V,\n(2)\nwhere dk is the dimension of the model, WQ, WK, WV are the learnable parameters with Rdk×dk , i denotes the i-th sentence in the dataset. Then we obtain the final embedding hi with the same attention layer by mapping pseudo sentences back to original sentence embeddings:\nhi = Attention(YiW Q,Z′iW K,Z′iW V). (3)\nFinally, we compare the cosine similarities between the obtained embeddings of h and h′ using Eq. 4 , where h′ are the samples encoded by the momentum-encoder and stored in a queue.\nModel architecture. Instead of inputting the same sentence twice to the same encoder, we follow the architecture proposed in Momentum-Contrast\n(MoCo) (He et al., 2020) such that PT-BERT can efficiently learn from more negative examples. Samples in PT-BERT are encoded into vectors with two encoders: gradient-update encoder (the upper encoder in Fig. 2) and momentum-update encoder (the momentum encoder in Fig. 2). We dynamically maintain a queue to store the sentence representations from momentum-update encoder.\nThis mechanism allows us to store as much negative samples as possible without re-computation. Once the queue is full, we replace the \"oldest\" negative sample with a \"fresh\" one encoded by the momentum-encoder.\nSimilar to the works based on continuous augmentation, at the very beginning of the framework, PT-BERT takes input sentence s and obtained hi and h′i with two different encoder functions. We measure the loss function with:\nℓi = − log esim(hi,h ′ i)/τ∑M\nj=1 e sim(hi,hj′ )/τ\n, (4)\nwhere hi denotes the representations extracted from the gradient-update encoder, h′i represents the sentence embedding in the queue, and M is the queue size. Our gradient-update and momentumupdate encoder is based on the pre-trained language model with the same structure and dimensions as BERT-base-uncased (Devlin et al., 2019). The momentum encoder will update its parameters similar to MoCo:\nθk ← λθk + (1− λ)θq, (5)\nwhere θk is the parameter of the momentumcontrast encoder that maintains the dictionary, θq is the query encoder that updates the parameters with gradients, and λ is a hyperparameter used to control the updating process."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section, we perform the standard semantic textual similarity (STS) (Agirre et al., 2012, 2013, 2014, 2015, 2016) tasks to test our model. For all tasks, we measure the Spearman’s correlation to compare our performance with SimCSE (Gao et al., 2021). In the following, we will describe the training procedure in detail."
+    }, {
+      "heading" : "4.1 Training Data and Settings",
+      "text" : "Datasets. Following SimCSE, We train our model on 1-million sentences randomly sampled\nfrom English Wikipedia, and evaluate the model every 125 steps to find the best checkpoints. Note that we do not fine-tune our model on any dataset, which indicates that our method is completely unsupervised.\nHardware and schedule. We train our model on the machine with one NVIDIA V100s GPU. Following the settings of SimCSE (Gao et al., 2021), it takes 50 minutes to run an epoch."
+    }, {
+      "heading" : "4.2 Implementations",
+      "text" : "In this subsection, we implement PT-BERT based on Huggingface transformers (Wolf et al., 2020) and initialize it with the released BERTbase (Devlin et al., 2019). We initialize a new embedding for pseudo tokens with 128×768. During training, we create a pseudo sentence {0, 1, 2, ..., 127} for every input and map the original sentence to this pseudo\nsentence by attention. With batches of 64 sentences and an additional dynamically maintained queue of 256 sentences, each sentence has one positive sample and 255 negative samples. Adam (Kingma and Ba, 2014) optimizer is used to update the model parameters. We also take the original dropout strategy of BERT with rate p = 0.1. We set the momentum for the momentum-encoder with λ = 0.885."
+    }, {
+      "heading" : "4.3 Evaluation Setup",
+      "text" : "We evaluate the fine-tuned BERT encoder on STSB development sets every 125 steps to select the best checkpoints. We report all the checkpoints based on the evaluation results reported in Table 4. The training process is fully unsupervised since no training corpus from STS is used. During the evaluation, we also calculate the trends of alignment-loss and uniformity-loss. Losses were compared with SimCSE (Gao et al., 2021) under the same experimental settings. After training and evaluation, we test models on 7 STS tasks: STS 2012-2016 (Agirre et al., 2012, 2013, 2014, 2015, 2016), STS Benchmark (Cer et al., 2017) and SICK-Relatedness (Marelli et al., 2014). We report the result of Spearman’s correlation for all the experiments."
+    }, {
+      "heading" : "4.4 Main Results and Analysis",
+      "text" : "We first compare PT-BERT with our baseline: MoCo framework + BERT encoder (MoCo-BERT). MoCo-BERT could be seen as a version of PTBERT without pseudo token embeddings. Then we apply traditional discrete augmentations such as re-\norder, duplication, and deletion on this framework. We also compare our work with CLEAR (Wu et al., 2020) that substitutes and deletes the token spans. Besides, we argue that the performance of these methods is too weak. We additionally propose an advanced discrete augmentation approach that produces positive examples with the guidance of Semantic Role Labeling (SRL) (Gildea and Jurafsky, 2002) information, instead of random deletion and reordering. SRL-guided augmentation could compensate the errors caused by these factors, acting as a combination of deletion, duplication, and reordering with better accuracy. For the sentences with multiple predicates, we keep all the sets with order [ARG0, PRED, ARGM − NEG, ARG1] and concatenate them into a new sequence. For the sentences without recognized predicate-argument sets, we keep the original sentence as positive examples. In addition to the work based on discrete approaches, we also compare with SimCSE (Gao et al., 2021) which continuously augment sentences with dropout. In Table 3, PT-BERT with 128 pseudo tokens further pushed the state-of-the-art results to 77.74% and significantly outperformed SimCSE over six datasets.\nIn Fig 3, we observe that PT-BERT also achieves better alignment and uniformity against SimCSE, which indicates that pseudo tokens really help the learning of sentence representations. In detail, alignment and uniformity are proposed by (Wang and Isola, 2020) to evaluate the quality of representations in contrastive learning. The calculation of these two metrics are shown in the following\nformulas:\nLalignment = E (x,x+)∼ppos\n||f(x)− f(x+)||2, (6)\nLuniformity = E (x,y)∼pdata\ne−2||f(x)−f(y)|| 2 , (7)\nwhere (x, x+) is the positive pair, (x, y) is the pair consisting of any two different sentences in the whole sentence set, f(x) is the normalized representation of x. We employ the final embedding h to calculate these scores.\nAccording to the above formulas, lower alignment loss means a shorter distance between the positive samples, and low uniformity loss implies the diversity of embeddings of all sentences. Both are our expectations for the representations based on contrastive learning. To evaluate our model’s performance on alignment and uniformity, we compare it with SimCSE on the STS-benchmark dataset (Cer et al., 2017), and the result is shown in Figure 3. The result demonstrates that PT-BERT outperforms SimCSE on these two metrics: our model has a lower alignment and uniformity than SimCSE in almost all the training steps, which indicates that the representations produced by our model are more in line with the goal of the contrastive learning."
+    }, {
+      "heading" : "5 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Ablation Studies",
+      "text" : "In this section, we first investigate the impact of different sizes of pseudo token embeddings. Then we would like to report the performance difference caused by queue size under the MoCo framework.\nPseudo Sentence Length Different lengths of pseudo tokens can affect the ability of the model to express the sentence representations. By mapping the original sentences to various lengths of pseudo tokens, the performance of PT-BERT could be different. In this section, we keep all the parts except the pseudo tokens and their embeddings unchanged. We scale the pseudo sequence length from 64 to 360. Table 5(a) shows a comparison between different lengths of pseudo sequence in PT-BERT. We find that during training, PT-BERT performs better when attending to pseudo sequences with 128 tokens. Too few pseudo tokens do not fully explain the semantics of the original sentence, while too many pseudo tokens increase the number of parameters and over-express the sentence.\nQueue Size The introduction of more negative samples would make the model’s training more reliable. By training with different queue sizes, we report the result of PT-BERT with different performances due to the number of negative samples. In Table 5(b), queue size q = 4 performs best. However, the difference in performance between the three sets of experiments is not large, suggesting that the model can learn well as long as it can see enough negative samples."
+    }, {
+      "heading" : "5.2 Exploration on Hard Examples with Different Length",
+      "text" : "To prove the effectiveness of PT-BERT that could weaken the hints caused by textual similarity, we further test PT-BERT on the sub-dataset introduced in Sec. 3.1. We sorted out the positive pairs with a length difference of more than five words and negative pairs of less than two words from STS(2012-2016). PT-BERT significantly outperforms SimCSE with 3.36% Spearman’s correlation, indicating that PT-BERT could handle these hard examples better than SimCSE. This further proves that PT-BERT could debias the spurious correlation introduced by sentence length and syntax, and focus more on the semantics."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we propose a semantic-aware contrastive learning framework for sentence embeddings, termed PT-BERT. Our proposed PT-BERT approach is able to weaken textual similarity information, such as sentence length and syntactic structures, by mapping the original sentence to a fixed pseudo sentence embedding. We provide analysis of these factors on methods based on continuous and discrete augmentation, showing that PT-BERT augments sentences more accurately than discrete methods while considering more semantics instead of textual similarity than continuous approaches. Lower uniformity loss and alignment loss prove the effectiveness of PT-BERT and further experiments also show that PT-BERT could handle hard examples better than existing approaches.\nProviding a new perspective to the continuous data augmentation in sentence embeddings, we believe our proposed PT-BERT has great potential to be applied in broader downstream applications, such as text classification, text clustering, and sentiment analysis."
+    } ],
+    "references" : [ {
+      "title" : "SemEval-2014 task 10: Multilingual semantic textual similarity",
+      "author" : [ "Eneko Agirre", "Carmen Banea", "Claire Cardie", "Daniel Cer", "Mona Diab", "Aitor Gonzalez-Agirre", "Weiwei Guo", "Rada Mihalcea", "German Rigau", "Janyce Wiebe." ],
+      "venue" : "Proceedings of the 8th Interna-",
+      "citeRegEx" : "Agirre et al\\.,? 2014",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "SemEval-2016 task 1: Semantic textual similarity, monolingual and cross-lingual evaluation",
+      "author" : [ "Eneko Agirre", "Carmen Banea", "Daniel Cer", "Mona Diab", "Aitor Gonzalez-Agirre", "Rada Mihalcea", "German Rigau", "Janyce Wiebe." ],
+      "venue" : "Proceedings of the",
+      "citeRegEx" : "Agirre et al\\.,? 2016",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "SemEval-2012 task 6: A pilot on semantic textual similarity",
+      "author" : [ "Eneko Agirre", "Daniel Cer", "Mona Diab", "Aitor Gonzalez-Agirre." ],
+      "venue" : "*SEM 2012: The First Joint Conference on Lexical and Computational Semantics – Volume 1: Proceedings of the",
+      "citeRegEx" : "Agirre et al\\.,? 2012",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "SEM 2013 shared task: Semantic textual similarity",
+      "author" : [ "Eneko Agirre", "Daniel Cer", "Mona Diab", "Aitor GonzalezAgirre", "Weiwei Guo." ],
+      "venue" : "Second Joint Conference on Lexical and Computational Semantics (*SEM), Volume 1: Proceedings of the Main Confer-",
+      "citeRegEx" : "Agirre et al\\.,? 2013",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Invariant risk minimization",
+      "author" : [ "Martín Arjovsky", "Léon Bottou", "Ishaan Gulrajani", "David Lopez-Paz." ],
+      "venue" : "ArXiv, abs/1907.02893.",
+      "citeRegEx" : "Arjovsky et al\\.,? 2019",
+      "shortCiteRegEx" : "Arjovsky et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "CoRR, abs/1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic re-tuning with contrastive tension",
+      "author" : [ "Fredrik Carlsson", "Amaru Cuba Gyllensten", "Evangelia Gogoulou", "Erik Ylipää Hellqvist", "Magnus Sahlgren." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Carlsson et al\\.,? 2021",
+      "shortCiteRegEx" : "Carlsson et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Universal sentence encoder for English",
+      "author" : [ "Daniel Cer", "Yinfei Yang", "Sheng-yi Kong", "Nan Hua", "Nicole Limtiaco", "Rhomni St. John", "Noah Constant", "Mario Guajardo-Cespedes", "Steve Yuan", "Chris Tar", "Brian Strope", "Ray Kurzweil." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Cer et al\\.,? 2018",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Supervised learning of universal sentence representations from natural language inference data",
+      "author" : [ "Alexis Conneau", "Douwe Kiela", "Holger Schwenk", "Loïc Barrault", "Antoine Bordes." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Nat-",
+      "citeRegEx" : "Conneau et al\\.,? 2017",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Commonsense knowledge mining from pretrained models",
+      "author" : [ "Joe Davison", "Joshua Feldman", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference",
+      "citeRegEx" : "Davison et al\\.,? 2019",
+      "shortCiteRegEx" : "Davison et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Wizard of Wikipedia: Knowledge-powered conversational agents",
+      "author" : [ "Emily Dinan", "Stephen Roller", "Kurt Shuster", "Angela Fan", "Michael Auli", "Jason Weston." ],
+      "venue" : "Proceedings of the International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Dinan et al\\.,? 2019",
+      "shortCiteRegEx" : "Dinan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Making pre-trained language models better few-shot learners",
+      "author" : [ "Tianyu Gao", "Adam Fisch", "Danqi Chen." ],
+      "venue" : "CoRR, abs/2012.15723.",
+      "citeRegEx" : "Gao et al\\.,? 2020",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "SimCSE: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP). 9",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Convolutional sequence to sequence learning",
+      "author" : [ "Jonas Gehring", "Michael Auli", "David Grangier", "Denis Yarats", "Yann N. Dauphin." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, volume 70 of Proceedings of Machine Learning",
+      "citeRegEx" : "Gehring et al\\.,? 2017",
+      "shortCiteRegEx" : "Gehring et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Automatic labeling of semantic roles",
+      "author" : [ "Daniel Gildea", "Daniel Jurafsky." ],
+      "venue" : "Comput. Linguist., 28(3):245–288.",
+      "citeRegEx" : "Gildea and Jurafsky.,? 2002",
+      "shortCiteRegEx" : "Gildea and Jurafsky.",
+      "year" : 2002
+    }, {
+      "title" : "Dimensionality reduction by learning an invariant mapping",
+      "author" : [ "R. Hadsell", "S. Chopra", "Y. LeCun." ],
+      "venue" : "2006 IEEE Computer Society Conference on Computer Vision and Pattern Recognition (CVPR’06), volume 2, pages 1735–1742.",
+      "citeRegEx" : "Hadsell et al\\.,? 2006",
+      "shortCiteRegEx" : "Hadsell et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross Girshick." ],
+      "venue" : "2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 9726–9735.",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Poly-encoders: Architectures and pre-training strategies for fast and accurate multi-sentence scoring",
+      "author" : [ "Samuel Humeau", "Kurt Shuster", "Marie-Anne Lachaux", "Jason Weston." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Humeau et al\\.,? 2020",
+      "shortCiteRegEx" : "Humeau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "How Can We Know What Language Models Know? Transactions of the Association for Computational Linguistics, 8:423–438",
+      "author" : [ "Zhengbao Jiang", "Frank F. Xu", "Jun Araki", "Graham Neubig" ],
+      "venue" : null,
+      "citeRegEx" : "Jiang et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Skip-thought vectors",
+      "author" : [ "Ryan Kiros", "Yukun Zhu", "Ruslan Salakhutdinov", "Richard S. Zemel", "Antonio Torralba", "Raquel Urtasun", "Sanja Fidler." ],
+      "venue" : "Proceedings of the 28th International Conference on Neural Information Processing Systems - Volume 2,",
+      "citeRegEx" : "Kiros et al\\.,? 2015",
+      "shortCiteRegEx" : "Kiros et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Contrastive selfsupervised learning for commonsense reasoning",
+      "author" : [ "Tassilo Klein", "Moin Nabi." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7517– 7523, Online. Association for Computational Lin-",
+      "citeRegEx" : "Klein and Nabi.,? 2020",
+      "shortCiteRegEx" : "Klein and Nabi.",
+      "year" : 2020
+    }, {
+      "title" : "Prefix-tuning: Optimizing continuous prompts for generation",
+      "author" : [ "Xiang Lisa Li", "Percy Liang" ],
+      "venue" : null,
+      "citeRegEx" : "Li and Liang.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Li and Liang.",
+      "year" : 2021
+    }, {
+      "title" : "Gpt understands, too",
+      "author" : [ "Xiao Liu", "Yanan Zheng", "Zhengxiao Du", "Ming Ding", "Yujie Qian", "Zhilin Yang", "Jie Tang." ],
+      "venue" : "arXiv:2103.10385.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "An efficient framework for learning sentence representations",
+      "author" : [ "Lajanugen Logeswaran", "Honglak Lee." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Logeswaran and Lee.,? 2018",
+      "shortCiteRegEx" : "Logeswaran and Lee.",
+      "year" : 2018
+    }, {
+      "title" : "A SICK cure for the evaluation of compositional distributional semantic models",
+      "author" : [ "Marco Marelli", "Stefano Menini", "Marco Baroni", "Luisa Bentivogli", "Raffaella Bernardi", "Roberto Zamparelli." ],
+      "venue" : "Proceedings of the Ninth International Conference",
+      "citeRegEx" : "Marelli et al\\.,? 2014",
+      "shortCiteRegEx" : "Marelli et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Training millions of personalized dialogue agents",
+      "author" : [ "Pierre-Emmanuel Mazaré", "Samuel Humeau", "Martin Raison", "Antoine Bordes." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 2775–2779, Brussels,",
+      "citeRegEx" : "Mazaré et al\\.,? 2018",
+      "shortCiteRegEx" : "Mazaré et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Cocolm: Correcting and contrasting text sequences for language model pretraining",
+      "author" : [ "Yu Meng", "Chenyan Xiong", "Payal Bajaj", "Saurabh Tiwary", "Paul Bennett", "Jiawei Han", "Xia Song" ],
+      "venue" : null,
+      "citeRegEx" : "Meng et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning from failure: Training debiased classifier from biased classifier",
+      "author" : [ "Junhyun Nam", "Hyuntak Cha", "Sungsoo Ahn", "Jaeho Lee", "Jinwoo Shin." ],
+      "venue" : "Advances in Neural Information Processing Systems.",
+      "citeRegEx" : "Nam et al\\.,? 2020",
+      "shortCiteRegEx" : "Nam et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Pro-",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Sentence-bert: Sentence embeddings using siamese bert-networks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics.",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "Dropout: A simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "J. Mach. Learn. Res., 15(1):1929–1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Ł ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Understanding contrastive representation learning through alignment and uniformity on the hypersphere",
+      "author" : [ "Tongzhou Wang", "Phillip Isola." ],
+      "venue" : "International Conference on Machine Learning, pages 9929–9939. PMLR.",
+      "citeRegEx" : "Wang and Isola.,? 2020",
+      "shortCiteRegEx" : "Wang and Isola.",
+      "year" : 2020
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander M. Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Transfertransfo: A transfer learning approach for neural network based conversational agents",
+      "author" : [ "Thomas Wolf", "Victor Sanh", "Julien Chaumond", "Clement Delangue" ],
+      "venue" : null,
+      "citeRegEx" : "Wolf et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Wolf et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Unsupervised feature learning via nonparametric instance-level discrimination",
+      "author" : [ "Zhirong Wu", "Yuanjun Xiong", "Stella Yu", "Dahua Lin" ],
+      "venue" : null,
+      "citeRegEx" : "Wu et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Clear: Contrastive learning for sentence representation",
+      "author" : [ "Zhuofeng Wu", "Sinong Wang", "Jiatao Gu", "Madian Khabsa", "Fei Sun", "Hao Ma" ],
+      "venue" : null,
+      "citeRegEx" : "Wu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Pretrained encyclopedia: Weakly supervised knowledge-pretrained language model",
+      "author" : [ "Wenhan Xiong", "Jingfei Du", "William Yang Wang", "Veselin Stoyanov." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia,",
+      "citeRegEx" : "Xiong et al\\.,? 2020",
+      "shortCiteRegEx" : "Xiong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Reducing word omission errors in neural machine translation: A contrastive learning approach",
+      "author" : [ "Zonghan Yang", "Yong Cheng", "Yang Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 6191–",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An unsupervised sentence embedding method by mutual information maximization",
+      "author" : [ "Yan Zhang", "Ruidan He", "Zuozhu Liu", "Kwan Hui Lim", "Lidong Bing." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 39,
+      "context" : "In comparison, discrete augmentation obtains positive instances with word deletion or reordering (Wu et al., 2020; Meng et al., 2021), which may misinterpret the meaning.",
+      "startOffset" : 97,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 29,
+      "context" : "In comparison, discrete augmentation obtains positive instances with word deletion or reordering (Wu et al., 2020; Meng et al., 2021), which may misinterpret the meaning.",
+      "startOffset" : 97,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 6,
+      "context" : "The continuous method treats embeddings o the same original sentence as positive examples and augments sentences with the different encoding functions (Carlsson et al., 2021; Gao et al., 2021).",
+      "startOffset" : 151,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 14,
+      "context" : "The continuous method treats embeddings o the same original sentence as positive examples and augments sentences with the different encoding functions (Carlsson et al., 2021; Gao et al., 2021).",
+      "startOffset" : 151,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 18,
+      "context" : "Incorporating contrastive learning in sentence embeddings improves the efficiency of semantic information learning in an unsupervised manner (He et al., 2020; Chen et al., 2020) and has been shown to be effective on a variety of tasks (Reimers and Gurevych, 2019; Gao et al.",
+      "startOffset" : 141,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 8,
+      "context" : "Incorporating contrastive learning in sentence embeddings improves the efficiency of semantic information learning in an unsupervised manner (He et al., 2020; Chen et al., 2020) and has been shown to be effective on a variety of tasks (Reimers and Gurevych, 2019; Gao et al.",
+      "startOffset" : 141,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020) and has been shown to be effective on a variety of tasks (Reimers and Gurevych, 2019; Gao et al., 2021; Zhang et al., 2020).",
+      "startOffset" : 65,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2020) and has been shown to be effective on a variety of tasks (Reimers and Gurevych, 2019; Gao et al., 2021; Zhang et al., 2020).",
+      "startOffset" : 65,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2020) and has been shown to be effective on a variety of tasks (Reimers and Gurevych, 2019; Gao et al., 2021; Zhang et al., 2020).",
+      "startOffset" : 65,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 14,
+      "context" : "In contrast, the SimCSE method (Gao et al., 2021) obtains two different embeddings in the continuous embedding space as a positive pair for one sentence through",
+      "startOffset" : 31,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 33,
+      "context" : "different dropout masks (Srivastava et al., 2014) in the neural network for representation learning.",
+      "startOffset" : 24,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 24,
+      "context" : "prompt learning and sentence selection (Li and Liang, 2021; Liu et al., 2021; Humeau et al., 2020), which create a pseudo-sequence and have it serve the downstream tasks, we present PT-BERT to train pseudo token representations and then to map sentences into pseudo token spaces based on an attention mechanism.",
+      "startOffset" : 39,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 25,
+      "context" : "prompt learning and sentence selection (Li and Liang, 2021; Liu et al., 2021; Humeau et al., 2020), which create a pseudo-sequence and have it serve the downstream tasks, we present PT-BERT to train pseudo token representations and then to map sentences into pseudo token spaces based on an attention mechanism.",
+      "startOffset" : 39,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 19,
+      "context" : "prompt learning and sentence selection (Li and Liang, 2021; Liu et al., 2021; Humeau et al., 2020), which create a pseudo-sequence and have it serve the downstream tasks, we present PT-BERT to train pseudo token representations and then to map sentences into pseudo token spaces based on an attention mechanism.",
+      "startOffset" : 39,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 11,
+      "context" : ", gradient-encoder), and then use the attention mechanism (Devlin et al., 2019) to map the sentence embedding to the pseudo token space (i.",
+      "startOffset" : 58,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 35,
+      "context" : "To show the effectiveness of pseudo tokens, we calculate the align-loss and uniformity loss (Wang and Isola, 2020) and verify our approach on a sub-dataset with hard examples sampled from STS-(2012-2016).",
+      "startOffset" : 92,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 17,
+      "context" : "Contrastive learning (Hadsell et al., 2006) has been used with much success in both natural language processing and computer vision (Yang et al.",
+      "startOffset" : 21,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 41,
+      "context" : ", 2006) has been used with much success in both natural language processing and computer vision (Yang et al., 2019; Klein and Nabi, 2020; Chen et al., 2020; He et al., 2020; Gao et al., 2021).",
+      "startOffset" : 96,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2006) has been used with much success in both natural language processing and computer vision (Yang et al., 2019; Klein and Nabi, 2020; Chen et al., 2020; He et al., 2020; Gao et al., 2021).",
+      "startOffset" : 96,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2006) has been used with much success in both natural language processing and computer vision (Yang et al., 2019; Klein and Nabi, 2020; Chen et al., 2020; He et al., 2020; Gao et al., 2021).",
+      "startOffset" : 96,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2006) has been used with much success in both natural language processing and computer vision (Yang et al., 2019; Klein and Nabi, 2020; Chen et al., 2020; He et al., 2020; Gao et al., 2021).",
+      "startOffset" : 96,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2006) has been used with much success in both natural language processing and computer vision (Yang et al., 2019; Klein and Nabi, 2020; Chen et al., 2020; He et al., 2020; Gao et al., 2021).",
+      "startOffset" : 96,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 38,
+      "context" : "In order to compare the instances with more negative examples and less computation, memory bank (Wu et al., 2018) is proposed to enhance the performance under the contrastive learning framework.",
+      "startOffset" : 96,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 18,
+      "context" : "MomentumContrast (MoCo) (He et al., 2020) uses a queue to maintain the dictionary of samples which allows the model to compare the query with more keys for each step and ensure the consistency of the framework.",
+      "startOffset" : 24,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 41,
+      "context" : "Such methods include word omission (Yang et al., 2019), entity replacement (Xiong et al.",
+      "startOffset" : 35,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2019), entity replacement (Xiong et al., 2020), trigger words (Klein and",
+      "startOffset" : 28,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 39,
+      "context" : "Nabi, 2020) and traditional augmentations such as deletion, reorder and substitution (Wu et al., 2020; Meng et al., 2021).",
+      "startOffset" : 85,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 29,
+      "context" : "Nabi, 2020) and traditional augmentations such as deletion, reorder and substitution (Wu et al., 2020; Meng et al., 2021).",
+      "startOffset" : 85,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 6,
+      "context" : "CT-BERT (Carlsson et al., 2021) encodes same sentence with two different encoders.",
+      "startOffset" : 8,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 14,
+      "context" : "UnsupSimCSE (Gao et al., 2021) compares the representations of the same sentence with different dropout masks among the mini-batch.",
+      "startOffset" : 12,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 25,
+      "context" : "In the domain of prompt learning (Liu et al., 2021; Jiang et al., 2020; Li and Liang, 2021; Gao et al., 2020), the way to create prompt can be divided into two types, namely discrete and continuous ways.",
+      "startOffset" : 33,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 20,
+      "context" : "In the domain of prompt learning (Liu et al., 2021; Jiang et al., 2020; Li and Liang, 2021; Gao et al., 2020), the way to create prompt can be divided into two types, namely discrete and continuous ways.",
+      "startOffset" : 33,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 24,
+      "context" : "In the domain of prompt learning (Liu et al., 2021; Jiang et al., 2020; Li and Liang, 2021; Gao et al., 2020), the way to create prompt can be divided into two types, namely discrete and continuous ways.",
+      "startOffset" : 33,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 13,
+      "context" : "In the domain of prompt learning (Liu et al., 2021; Jiang et al., 2020; Li and Liang, 2021; Gao et al., 2020), the way to create prompt can be divided into two types, namely discrete and continuous ways.",
+      "startOffset" : 33,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 10,
+      "context" : "Discrete methods usually search the natural language template as the prompt (Davison et al., 2019; Petroni et al., 2019), while the continuous way always directly works on the embedding space with \"pseudo tokens\" (Liu et al.",
+      "startOffset" : 76,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 31,
+      "context" : "Discrete methods usually search the natural language template as the prompt (Davison et al., 2019; Petroni et al., 2019), while the continuous way always directly works on the embedding space with \"pseudo tokens\" (Liu et al.",
+      "startOffset" : 76,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2019), while the continuous way always directly works on the embedding space with \"pseudo tokens\" (Liu et al., 2021; Li and Liang, 2021).",
+      "startOffset" : 100,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2019), while the continuous way always directly works on the embedding space with \"pseudo tokens\" (Liu et al., 2021; Li and Liang, 2021).",
+      "startOffset" : 100,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 19,
+      "context" : "approach adopts \"pseudo tokens\", namely \"poly codes\" (Humeau et al., 2020), to jointly encode the",
+      "startOffset" : 53,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 37,
+      "context" : "query and response precisely and ensure the inference time when compared with the Cross-Encoders and Bi-Encoders (Wolf et al., 2019; Mazaré et al., 2018; Dinan et al., 2019).",
+      "startOffset" : 113,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 28,
+      "context" : "query and response precisely and ensure the inference time when compared with the Cross-Encoders and Bi-Encoders (Wolf et al., 2019; Mazaré et al., 2018; Dinan et al., 2019).",
+      "startOffset" : 113,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 12,
+      "context" : "query and response precisely and ensure the inference time when compared with the Cross-Encoders and Bi-Encoders (Wolf et al., 2019; Mazaré et al., 2018; Dinan et al., 2019).",
+      "startOffset" : 113,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 14,
+      "context" : "Previous state-of-the-art models (Gao et al., 2021) adopt the continuous strategy that augments sentences with dropout (Srivastava et al.",
+      "startOffset" : 33,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2021) adopt the continuous strategy that augments sentences with dropout (Srivastava et al., 2014).",
+      "startOffset" : 75,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 4,
+      "context" : "This motivates us to propose the PT-BERT, as evidence shows that the encoder may fail to make predictions when trained on a biased dataset with same-length positive pairs, by learning the spurious correlations that work only well on the training dataset (Arjovsky et al., 2019; Nam et al., 2020).",
+      "startOffset" : 254,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 30,
+      "context" : "This motivates us to propose the PT-BERT, as evidence shows that the encoder may fail to make predictions when trained on a biased dataset with same-length positive pairs, by learning the spurious correlations that work only well on the training dataset (Arjovsky et al., 2019; Nam et al., 2020).",
+      "startOffset" : 254,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 34,
+      "context" : "Besides, adopting the attention mechanism (Vaswani et al., 2017; Bahdanau et al., 2015; Gehring et al., 2017), we take the pseudo sentence embeddings as the query while key and value are the sentence embeddings obtained from the BERT encoder.",
+      "startOffset" : 42,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 5,
+      "context" : "Besides, adopting the attention mechanism (Vaswani et al., 2017; Bahdanau et al., 2015; Gehring et al., 2017), we take the pseudo sentence embeddings as the query while key and value are the sentence embeddings obtained from the BERT encoder.",
+      "startOffset" : 42,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 15,
+      "context" : "Besides, adopting the attention mechanism (Vaswani et al., 2017; Bahdanau et al., 2015; Gehring et al., 2017), we take the pseudo sentence embeddings as the query while key and value are the sentence embeddings obtained from the BERT encoder.",
+      "startOffset" : 42,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 18,
+      "context" : "Instead of inputting the same sentence twice to the same encoder, we follow the architecture proposed in Momentum-Contrast (MoCo) (He et al., 2020) such that PT-BERT can efficiently learn from more negative examples.",
+      "startOffset" : 130,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 14,
+      "context" : "For all tasks, we measure the Spearman’s correlation to compare our performance with SimCSE (Gao et al., 2021).",
+      "startOffset" : 92,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 39,
+      "context" : "CLEAR (Wu et al., 2020) is trained on both English Wikipedia and Book Corpus with 500k steps with their own version of pre-trained models.",
+      "startOffset" : 6,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 6,
+      "context" : "Result of CT-BERT (Carlsson et al., 2021) is based on the settings of SimCSE (Gao et al.",
+      "startOffset" : 18,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2021) is based on the settings of SimCSE (Gao et al., 2021)",
+      "startOffset" : 43,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 14,
+      "context" : "Results of SimCSE (Gao et al., 2021) are reported from original paper.",
+      "startOffset" : 18,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 14,
+      "context" : "Following the settings of SimCSE (Gao et al., 2021), it takes 50 minutes to run an epoch.",
+      "startOffset" : 33,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2020) and initialize it with the released BERTbase (Devlin et al., 2019).",
+      "startOffset" : 53,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 14,
+      "context" : "Losses were compared with SimCSE (Gao et al., 2021) under the same experimental settings.",
+      "startOffset" : 33,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 39,
+      "context" : "We also compare our work with CLEAR (Wu et al., 2020) that substitutes and deletes the token spans.",
+      "startOffset" : 36,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 16,
+      "context" : "We additionally propose an advanced discrete augmentation approach that produces positive examples with the guidance of Semantic Role Labeling (SRL) (Gildea and Jurafsky, 2002) information, instead of random deletion and reordering.",
+      "startOffset" : 149,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 14,
+      "context" : "In addition to the work based on discrete approaches, we also compare with SimCSE (Gao et al., 2021) which continuously augment sentences with dropout.",
+      "startOffset" : 82,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 35,
+      "context" : "In detail, alignment and uniformity are proposed by (Wang and Isola, 2020) to evaluate the quality of representations in contrastive learning.",
+      "startOffset" : 52,
+      "endOffset" : 74
+    } ],
+    "year" : 0,
+    "abstractText" : "Contrastive learning has shown great potential in unsupervised sentence embedding tasks, e.g., SimCSE (Gao et al., 2021). However, these existing solutions are heavily affected by superficial features like the length of sentences or syntactic structures. In this paper, we propose a semantic-aware contrastive learning framework for sentence embeddings, termed PseudoToken BERT (PT-BERT), which is able to explore the pseudo-token space (i.e., latent semantic space) representation of a sentence while eliminating the impact of superficial features such as sentence length and syntax. Specifically, we introduce an additional pseudo token embedding layer independent of the BERT encoder to map each sentence into a sequence of pseudo tokens in a fixed length. Leveraging these pseudo sequences, we are able to construct same-length positive and negative pairs based on the attention mechanism to perform contrastive learning. In addition, we utilize both the gradient-updating and momentumupdating encoders to encode instances while dynamically maintaining an additional queue to store the representation of sentence embeddings, enhancing the encoder’s learning performance for negative examples. Experiments show that our model outperforms the state-ofthe-art baselines on six standard semantic textual similarity (STS) tasks. Furthermore, experiments on alignments and uniformity losses, as well as hard examples with different sentence lengths and syntax, consistently verify the effectiveness of our method.",
+    "creator" : null
+  }
+}

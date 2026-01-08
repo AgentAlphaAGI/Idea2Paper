@@ -1,0 +1,354 @@
+{
+  "name" : "ARR_2022_354_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "STABLEMOE: Stable Routing Strategy for Mixture of Experts",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "In recent years, large-scale Transformers (Devlin et al., 2019; Dong et al., 2019; Raffel et al., 2020; Clark et al., 2020; Bao et al., 2020; Brown et al., 2020) have shown a striking ability to model languages. However, with the model scale growing, the training speed will go slower, and the extremely large memory requirement also introduces a heavy burden of engineering. Mixture of Experts (MoE) (Jacobs et al., 1991; Jordan and Jacobs, 1994; Shazeer et al., 2017), in a much easier way, enables Transformers to scale up the number of parameters meanwhile introducing an affordable computational overhead. MoE-based Transformers have a set of expert modules, and only a few experts will be activated for each input token. In\nthis way, we can expand the model scale by adding expert modules, which will keep the computational and memory overhead within a tolerable range.\nMost existing MoE methods (Lepikhin et al., 2021; Fedus et al., 2021; Lewis et al., 2021) decide the token-to-expert routing according to the dynamically changing token representations. However, we point out that they face the routing fluctuation problem. As shown in Figure 1, the same input may be assigned to different experts along with training. However, during inference, only one expert will be activated for the input. The routing fluctuation problem tends to harm sample efficiency because the same input updates different experts while only one is finally used.\nTaking BASE Layer (Lewis et al., 2021) as an example, during the whole training process, we examine the token-to-expert assignment for tokens in the validation set. For an input token, we define the last fluctuation step as the last step where its target expert is different from the final step. We plot the cumulative token percentage with regard to the last fluctuation step (annotated as its percentage accounting for all training steps) in Figure 2. We find that the last fluctuation step of 40.9% tokens exceeds 20%, which means 40.9% tokens do not have a stable target expert when 20% of all training steps have been done. Furthermore, 29.1% tokens still change their target experts after half of the whole training process, and 15.4% tokens even change the target expert after 80% of all training steps, which is nearing the training ending. These statistics prove that the routing fluctuation problem indeed exists in previous MoE methods.\nIn this paper, we propose STABLEMOE with two training stages to address the routing fluctuation problem. In the first training stage, we follow the learning-to-route paradigm and aim to learn a balanced and cohesive routing strategy. We design a balance loss to guarantee the assignment is balanced. In addition, inspired by Lewis et al. (2021),\nwe adopt a sigmoid gating mechanism, which enables the task objective to propagate supervised signal back to the routing strategy, to facilitate learning a more cohesive assignment. As the routing strategy is being learned, we synchronously distill it into a lightweight router decoupled from the backbone model. In the second training stage, we utilize the distilled router to determine the tokento-expert assignment. The distilled router is frozen in this stage to provide a stable routing strategy, which addresses the routing fluctuation problem in the remaining training. We conduct experiments on language modeling and multilingual machine translation. The results show that STABLEMOE outperforms existing MoE methods in terms of both convergence speed and performance.\nOur contributions are summarized as follows: (1) We point out the routing fluctuation problem in existing learning-to-route MoE methods. (2) We propose STABLEMOE to address the routing\nfluctuation problem. (3) We conduct substantial experiments under various settings to show the advantages of STABLEMOE over existing MoE methods."
+    }, {
+      "heading" : "2 Background: Mixture-of-Experts for Transformers",
+      "text" : "We first introduce the MoE mechanism designed for Transformers (Vaswani et al., 2017). Given a standard L-layer Transformer model and an input sequence X containing T tokens, the Transformer output HL is calculated by\nHL = [hL1 ;h L 2 ; ...;h L T ], (1) hlt = FFN ( ult ) + ult, (2)\nul1:T = self-att ( hl−11:T ) + hl−11:T , (3)\nwhere hlt is the hidden state of t-th token after the l-th layer, Self-Att(·) is the self-attention module, and FFN(·) is short for the feed-forward network. For simplicity, we omit the layer normalization.\nWe implement MoE for Transformers by inserting MoE layers, that are composed of a set of FFNs, into two neighboring Transformer blocks. At an MoE layer, for each input token, only a few or one expert will be activated, controlled by a gating function g(·):\nhlt = N∑ i=1 gi ( hl−1t ) FFNi ( hl−1t ) + hl−1t , (4)\nwhere N is the total number of experts, and FFNi is the i-th expert. Here, the gating function gi(·) is sparse for computational efficiency. For simplicity, we omit the layer normalization."
+    }, {
+      "heading" : "3 Method",
+      "text" : "STABLEMOE has two training stages as illustrated in Figure 3. In the first training stage, we follow the learning-to-route paradigm and aim to learn a balanced and cohesive routing strategy. As the routing strategy is being learned, we synchronously distill it into a lightweight router decoupled from the backbone model. In the second training stage, we utilize the distilled router to determine the tokento-expert assignment. The distilled router is frozen in this stage to provide a stable routing strategy. During inference, we also use the frozen distilled router for consistent routing."
+    }, {
+      "heading" : "3.1 Training Stage 1: Learn Routing Strategy",
+      "text" : "Let hl−1t ∈ Rd be the input representation of token t and E ∈ RN×d be the centroids of N experts. For each MoE layer, we assign each token to one expert FFN (Fedus et al., 2021; Lewis et al., 2021; Roller et al., 2021). The assignment score is:\nst,i = E > i h l−1 t , (5)\nwhere st,i is the assignment score between token t and expert i, indicating their affinity. We use a greedy assignment algorithm, i.e., sending each token to the expert with the highest affinity. Then, we calculate the expert FFN output as:\nat = argmax i (st,i), (6)\nhlt = σ (st,at) FFNat ( hl−1t ) + hl−1t , (7)\nwhere at is the the expert index that token t is sent to, and σ is the sigmoid gate (Lewis et al., 2021). Considering the sigmoid gate σ (st,at), if FFNat is beneficial for token t, optimizing the training objective (e.g., minimizing the cross-entropy loss for language modeling) will urge the gate to be\ngreater; otherwise, the gate will tend to be smaller. The gate signal urges similar tokens to be assigned to the same expert that is beneficial to them, thus producing cohesive token-to-expert assignments.\nBalance Loss We design a balance loss Lbal to avoid imbalanced assignments that will result in a high computational bottleneck in the MoE layer and thus limit the computational efficiency:\nLbal = α N∑ i=1 (|Ai| − n)∑ t∈Ai σ (st,i) , (8) where α is a hyper-parameter, Ai denotes the set of tokens assigned to expert i, and n denotes the average number of tokens per expert. Intuitively, if an expert is overloaded, the balance loss will urge its assignment scores to be smaller. Otherwise, if an expert is unoccupied, the balance loss will increase its assignment scores to capture more tokens.\nDistilled Router As the routing strategy is being learned, we synchronously distill it into a lightweight router decoupled from the backbone model to mimic the original routing strategy. LetX be the input sequence and Ê be the distilled expert centroids, we use word embeddings D(·) to extract the routing features. We use the cross-entropy loss as the distillation loss Ldis:\nĥl−1t = D(Xt), ŝt,i = Ê > i ĥ l−1 t , (9)\nLdis = − T∑ t=1 log exp (ŝt,at)∑N i=1 exp (ŝt,i) , (10)\nwhere ĥl−1t is the distilled routing feature of token t, ŝt,i is the distilled assignment score between token t and expert i, and at is the expert index that token t is actually sent to. In practice, D(·)\ncan also be other feature extractors such as CNNs or Transformers (we investigate other variants of distilled routers in Section 4.4.3), but the word embedding is the fastest one and achieves the best performance. At the end of training stage 1, we freeze all parameters for the distilled router (i.e., D(·) and Ê) to prepare a stable routing strategy for training stage 2 and the inference stage.\nTraining Objective In training stage 1, the training loss consists of the task loss, the balance loss, and the distillation loss:\nLS1 = Ltask + Lbal + Ldis. (11)"
+    }, {
+      "heading" : "3.2 Training Stage 2: Learn with Stable Routing Strategy",
+      "text" : "Given frozen D(·) and Ê, in training stage 2, we directly use them for a stable routing strategy. Keeping other processes the same as in training stage 1, we calculate the output of the MoE layer as follows:\nĥl−1t = D(Xt), ŝt,i = Ê > i ĥ l−1 t , (12)\nât = argmax i (ŝt,i), (13)\nhlt = σ (st,ât) FFNât ( hl−1t ) + hl−1t . (14)\nNotice that the sigmoid gate σ(·) still uses original assignment score st,ât as input, so the gate signal can also be learned in training stage 2. Since the routing strategy has been fixed in training stage 2, we no longer need the balance loss and distillation loss. Therefore, the training loss for training stage 2 contains only the task loss:\nLS2 = Ltask. (15)"
+    }, {
+      "heading" : "3.3 Inference",
+      "text" : "During inference, we also use the frozen distilled router for routing. The fixed routing strategy, which is consistent with training stage 2, makes information learned in MoE layers be utilized more thoroughly and thus leads to better performance."
+    }, {
+      "heading" : "3.4 Comparison with Existing MoE Methods",
+      "text" : "We compare three core elements, including the assignment algorithm, the gating function, and the balance loss, among STABLEMOE and existing MoE-based Transformers. In Table 1, we summarize their differences.\nAssignment algorithm Switch Transformer and the training stage 1 in STABLEMOE simply assign each token to the expert with the highest affinity. BASE Layer adopts the auction algorithm (Bertsekas, 1992) to find a global balanced assignment with the maximum affinity sum. Hash layer and the training stage 2 in STABLEMOE have token-level fixed routing strategies, which have good stability.\nGating function Hash Layer uses a hard gating function, which means an expert is either fully activated or not activated, no any intermediate state. Switch Layer, BASE Layer, and STABLEMOE have soft gating functions, which can judge the affinity between a token and its target expert and determine a proper ratio to use the expert. Soft gating mechanisms also urge models to learn a more cohesive token-to-expert assignment.\nBalance loss BASE Layer and Hash Layer do not apply any balance losses. By contrast, Switch Transformer and the training stage 1 in STABLEMOE design balance losses to control the balance of the token-to-expert assignment.\nIn summary, combing two training stages, STABLEMOE has a stable, cohesive, and balanced routing strategy, while the other three MoE methods cannot meet them all simultaneously."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Tasks and Datasets",
+      "text" : "Language Modeling Following (Lewis et al., 2021) and Roller et al. (2021), we use the combination of the corpora in RoBERTa (Liu et al., 2019) and the English subset of the CC100 (Conneau et al., 2020) corpus. The corpus contains\nabout 100B tokens, and we randomly sample 5M tokens for validation and 20M tokens for testing.\nMultilingual Machine Translation We follow Wang et al. (2020) and Ma et al. (2020) to use a collection of parallel data in different languages from the WMT datasets.1 The dataset contains 32.5 million parallel data for language pairs between English and other 9 languages, including French (Fr), Czech (Cs), German (De), Finnish (Fi), Latvian (Lv), Estonian (Et), Romanian (Ro), Hindi (Hi), and Turkish (Tr). In our experiments, we combine the original parallel data with 180 million backtranslation data as described in (Ma et al., 2020) and call the augmented dataset WMT for short."
+    }, {
+      "heading" : "4.2 Experimental Setup",
+      "text" : "We conduct experiments based on fairseq2. All experiments are conducted on NVIDIA V100 GPUs with 32 GB memory.\nLanguage Modeling We adopt the tokenizer of GPT-2 (Radford et al., 2019), which uses byte-pair encoding (Sennrich et al., 2016) with a vocabulary size of 50,257. We set up two settings for STABLEMOE, a base one and a large one. For both settings, we insert one MoE layer after the middle Transformer block. We train the model for 60K steps in total (6K for training stage 1 and 54K for training stage 2). The dimension of the distilled routing features is 50, which brings 2.51M extra parameters for routing. The balance factor α is set to 0.3. We use Adam (Kingma and Ba, 2015) with β1 = 0.9\n1http://www.statmt.org 2https://github.com/facebookresearch/fairseq\nand β2 = 0.98 as the optimizer. The rest of the hyper-parameters are summarized in Appendix A.\nMultilingual Machine Translation Following (Ma et al., 2020), we use the SentencePiece (Kudo and Richardson, 2018) model to tokenize sentences. The vocabulary is learned from the training set and consists of 64,000 tokens. We insert two MoE layers, one after the third encoder block and one after the third decoder block. We train the model for 352K steps in total (30K for training stage 1 and 322K for training stage 2). The dimension of the distilled routing features is also set to 50. The balance factor α is set to 0.3. We use Adam with β1 = 0.9 and β2 = 0.98 as the optimizer. The rest of the hyper-parameters are summarized in Appendix B."
+    }, {
+      "heading" : "4.3 Results",
+      "text" : ""
+    }, {
+      "heading" : "4.3.1 Language Modeling",
+      "text" : "We compare STABLEMOE with Switch Transformer, BASE Layer, Hash Layer, and the standard Transformer. All MoE models have the same number of shared parameters as the standard Transformer. Under the base setting, in addition, we compare two larger dense Transformers that add FFNs in a dense manner to achieve the same number of total parameters as MoE models. The deeper model stacks more FFNs, while the wider model uses FFNs with a larger hidden size. The floating point operations (FLOPs) per sequence are profiled by the torchprofile toolkit.\nWe show the main results of language modeling on the RoBERTa+cc100en corpus in Table 2. Under the base setting, STABLEMOE outperforms\nexisting MoE methods on both the validation and the test sets by 0.3-0.8 perplexity. Compared with dense models, STABLEMOE achieves about 3.7 lower perplexity than the standard Transformer, and about 1.3 higher perplexity than the deeper larger model. Under the large setting, consistently, STABLEMOE outperforms the other MoE methods, and achieves about 2.6 lower perplexity than the standard Transformer.\nWe also compare the convergence speed of different models under the base setting. The results are plotted in Figure 4, which takes the validation perplexity as y-axis and the training wall time as x-axis. Although larger dense models achieve better validation perplexity at last, their training speed is quite slow. With regard to the convergence speed, MoEbased Transformers usually exceed dense models. Further, among the MoE methods, STABLEMOE has the fastest convergence speed."
+    }, {
+      "heading" : "4.3.2 Multilingual Machine Translation",
+      "text" : "We compare STABLEMOE with Switch Transformer, BASE Layer, Hash Layer, the standard Transformer, and a larger Transformer. All MoEbased models have the same number of shared pa-\nrameters as the standard Transformer. Except the standard Transformer, the other models have the same FLOPs.\nWe translate other languages to English (X→En) and report the test BLEU on WMT in Table 3. STABLEMOE achieves the best average test BLEU among the compared MoE methods. Keeping the same FLOPs, STABLEMOE outperform the dense model by 1.22 test BLEU. With the MoE technique, we expand the number of parameters by 523% and the FLOPs just increase by 9.3%."
+    }, {
+      "heading" : "4.4 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "4.4.1 Effects of Hyperparameters",
+      "text" : "On top of the base setting of language modeling, we investigate different settings for the MoE layers in STABLEMOE.\nNumber of Experts Figure 5 shows the results of BASE Layer, Hash Layer, and STABLEMOE with different numbers of experts. As the number of experts goes larger, the validation perplexity of each model tends to further descend. Consistently, STABLEMOE performs the best with different numbers of experts. In addition, it is worth\nnoting that STABLEMOE with 16 experts outperforms BASE Layer with 32 experts, and STABLEMOE with 32 experts achieves a similar perplexity to BASE Layer with 64 experts.\nNumber of Expert Parameters We compare MoE models with different numbers of expert parameters by setting different expert sublayers. Models with 3 and 10 expert sublayers have 454M and 1.51B expert parameters, respectively. From Figure 6, we observe that more expert parameters bring better performance, and STABLEMOE consistently performs the best under both settings.\nPosition of MoE Layers We investigate the effect of the inserting position of the MoE layer. By default, the MoE layer stacks 3 MoE sublayers and is inserted after the L2 -th Transformer block (middle). We also attempt to insert the MoE layer before the first Transformer block (bottom), and after the last Transformer block (top). In addition, we also investigate the effect if we scatter 3 MoE sublayers uniformly into the standard Transformer, i.e., after the L4 -th, 2L 4 -th, and 3L 4 -th blocks, respectively. As shown in Table 4, among the above four settings, inserting stacked MoE sublayers into the middle\nposition allows STABLEMOE to achieve the best performance.\nRatio Between Two Training Stages We investigate the balance point of the ratio between two training stages in STABLEMOE. Given a fixed number of total steps, allocating more steps to training stage 1 can help to learn and distill a better routing strategy. On the other hand, a larger ratio of training stage 2 means longer stable training. Under the base setting of language modeling, we attempt to allocate 6K, 15K, and 30K steps to training stage 1 and show the results in Table 6. We find that if we use word embeddings as the distilled router, allocating 6K steps (10% of the total steps) to training stage 1 is a good balance point. We speculate that the word embedding is simple enough to be learned fast, so longer stable training is more important to achieve better performance."
+    }, {
+      "heading" : "4.4.2 Effects of the Fixed Routing Strategy",
+      "text" : "Based on the base setting of language modeling, we design two experiments to investigate how much performance improvement the fixed routing strategy can bring. On the one hand, we equip BASE Layer with a stable routing strategy to address its routing fluctuation problem. Specifically, as in STABLEMOE, we use word embeddings to distill the routing strategy of BASE Layer in the first 6K training steps, and freeze the distilled router for stable routing in the remaining training. As shown in Table 5, the fixed routing strategy decreases the validation perplexity of BASE Layer by 0.63. On the other hand, we attempt to disable the training stage 2 in STABLEMOE and always train the model as in training stage 1. As a result, the validation perplexity of STABLEMOE becomes 0.20 higher than the full version that has a fixed routing strategy. These two cases support that the fixed routing strategy, which addresses the routing fluctuation problem, can bring better performance for MoEbased Transformers.\nIn addition, we visualize the fixed routing strategy of STABLEMOE in Appendix C for reference."
+    }, {
+      "heading" : "4.4.3 Variants of Distilled Routers",
+      "text" : "In Table 6, in addition to word embedding, we also investigate four variants of the distilled router including CNN and three Transformers with different numbers of layers. We allocate 15K steps to training stage 1 for all of them. From the table, we find that using word embedding achieves the best performance, while the 3-layer Transformer does not perform well. For the routing strategy distillation, the distilling signal from a 32-category classification objective may not be informative enough to learn a complex router. By contrast, it is more suitable for simpler routers. Therefore, we recommend using word embedding, which is simple and effective, as the distilled router in STABLEMOE."
+    }, {
+      "heading" : "4.4.4 Analysis of Routing Fluctuations",
+      "text" : "We compare the degree of routing fluctuations between STABLEMOE and BASE Layer to show our advantage with regard to the routing stability. During the 60K training steps, we examine the tokento-expert assignment for tokens in the validation set every 500 steps. For each token, we define the last fluctuation step as the last step where its target expert is different from the final step. We plot\nthe cumulative token percentage about the last fluctuation step in Figure 7. For ease of reading, we annotate the x-axis as the percentage it accounts for all training steps. From the figure, we find that the routing fluctuation problem is notable for BASE Layer. By contrast, for STABLEMOE, there is no routing fluctuation in training stage 2 since we apply a fixed routing strategy."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Jacobs et al. (1991); Jordan and Jacobs (1994) propose Mixture of Experts (MoE) to compute different examples with independent expert modules. Shazeer et al. (2017) introduce MoE to build largescale language models based on LSTMs (Hochreiter and Schmidhuber, 1997). Recently, as Transformers become popular, many pieces of work design MoE-version FFNs to build MoE-based Transformers. GShard (Lepikhin et al., 2021), Switch Transformer (Fedus et al., 2021), and BASE Layer (Lewis et al., 2021) follow the learning-toroute paradigm and dynamically learn how to route each input token to experts. However, we point out that these learning-to-route methods face the routing fluctuation problem. Hash Layer (Roller et al., 2021) propose a non-parametric routing strategy, which uses a pre-designed token-level hash table to determine the token-to-expert assignment. The static routing strategy will not fluctuate, but the randomly determined hash table limits the upper bound of its performance. Our work includes the advantages of learning-to-route methods to learn a balanced and cohesive routing strategy, and further addresses the routing fluctuation problem through applying a frozen lightweight router that mimics the original routing strategy."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we point out the routing fluctuation problem that exists in previous learning-to-route MoE methods. In order to address this problem, we propose STABLEMOE with two training stages. We first learn a balanced and cohesive routing strategy and synchronously distill it into a lightweight router decoupled from the backbone model. Then, we freeze the distilled router for a stable routing strategy in the remaining training. We validate STABLEMOE on language modeling and multilingual machine translation. The results show that STABLEMOE outperforms existing MoE methods in terms of both convergence speed and performance."
+    }, {
+      "heading" : "A Hyper-parameters for Language Modeling",
+      "text" : "The hyper-parameters of STABLEMOE under the base and the large settings for language modeling are summarized in Table 7."
+    }, {
+      "heading" : "B Hyper-parameters for Multilingual Machine Translation",
+      "text" : "The hyper-parameters of STABLEMOE for multilingual machine translation are summarized in Table 8.\nC Visualization of the Fixed Routing Strategy of STABLEMOE\nWe visualize the fixed routing strategy of STABLEMOE in Table 9. On the validation set, for each expert, we demonstrate the most frequent tokens assigned to it along with a text that describes their common features. We find that tokens assigned to the same expert usually share some common features, e.g., Expert 22 captures adjectives and Expert 31 captures conjunctions. These cases show good cohesiveness of the token-to-expert assignment in STABLEMOE."
+    } ],
+    "references" : [ {
+      "title" : "Auction algorithms for net",
+      "author" : [ "PMLR. Dimitri P. Bertsekas" ],
+      "venue" : null,
+      "citeRegEx" : "Bertsekas.,? \\Q1992\\E",
+      "shortCiteRegEx" : "Bertsekas.",
+      "year" : 1992
+    }, {
+      "title" : "2019. BERT: pre-training",
+      "author" : [ "Kristina Toutanova" ],
+      "venue" : null,
+      "citeRegEx" : "Toutanova.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Toutanova.",
+      "year" : 2019
+    }, {
+      "title" : "Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity",
+      "author" : [ "William Fedus", "Barret Zoph", "Noam Shazeer." ],
+      "venue" : "CoRR, abs/2101.03961.",
+      "citeRegEx" : "Fedus et al\\.,? 2021",
+      "shortCiteRegEx" : "Fedus et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural Computing, 9(8):1735– 1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Adaptive mixtures of local experts",
+      "author" : [ "Robert A. Jacobs", "Michael I. Jordan", "Steven J. Nowlan", "Geoffrey E. Hinton." ],
+      "venue" : "Neural Computing, 3(1):79–87.",
+      "citeRegEx" : "Jacobs et al\\.,? 1991",
+      "shortCiteRegEx" : "Jacobs et al\\.",
+      "year" : 1991
+    }, {
+      "title" : "Hierarchical mixtures of experts and the EM algorithm",
+      "author" : [ "Michael I. Jordan", "Robert A. Jacobs." ],
+      "venue" : "Neural Computing, 6(2):181–214.",
+      "citeRegEx" : "Jordan and Jacobs.,? 1994",
+      "shortCiteRegEx" : "Jordan and Jacobs.",
+      "year" : 1994
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Sentencepiece: A simple and language independent subword tokenizer and detokenizer for neural text processing",
+      "author" : [ "Taku Kudo", "John Richardson." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, EMNLP",
+      "citeRegEx" : "Kudo and Richardson.,? 2018",
+      "shortCiteRegEx" : "Kudo and Richardson.",
+      "year" : 2018
+    }, {
+      "title" : "Gshard: Scaling giant models with conditional computation and automatic sharding",
+      "author" : [ "Dmitry Lepikhin", "HyoukJoong Lee", "Yuanzhong Xu", "Dehao Chen", "Orhan Firat", "Yanping Huang", "Maxim Krikun", "Noam Shazeer", "Zhifeng Chen." ],
+      "venue" : "9th Inter-",
+      "citeRegEx" : "Lepikhin et al\\.,? 2021",
+      "shortCiteRegEx" : "Lepikhin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BASE layers: Simplifying training of large, sparse models",
+      "author" : [ "Mike Lewis", "Shruti Bhosale", "Tim Dettmers", "Naman Goyal", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 38th International Conference on Machine Learning, ICML 2021, volume 139 of",
+      "citeRegEx" : "Lewis et al\\.,? 2021",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "CoRR, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "XLM-T: scaling up multilingual machine translation",
+      "author" : [ "Shuming Ma", "Jian Yang", "Haoyang Huang", "Zewen Chi", "Li Dong", "Dongdong Zhang", "Hany Hassan Awadalla", "Alexandre Muzio", "Akiko Eriguchi", "Saksham Singhal", "Xia Song", "Arul Menezes", "Furu Wei" ],
+      "venue" : null,
+      "citeRegEx" : "Ma et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever." ],
+      "venue" : "OpenAI blog.",
+      "citeRegEx" : "Radford et al\\.,? 2019",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-totext transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J. Liu." ],
+      "venue" : "Journal of Machine Learning Re-",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hash layers for large sparse models",
+      "author" : [ "Stephen Roller", "Sainbayar Sukhbaatar", "Arthur Szlam", "Jason Weston." ],
+      "venue" : "CoRR, abs/2106.04426.",
+      "citeRegEx" : "Roller et al\\.,? 2021",
+      "shortCiteRegEx" : "Roller et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016. The Association for Computer",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Outrageously large neural networks: The sparsely-gated mixture-of-experts layer",
+      "author" : [ "Noam Shazeer", "Azalia Mirhoseini", "Krzysztof Maziarz", "Andy Davis", "Quoc V. Le", "Geoffrey E. Hinton", "Jeff Dean." ],
+      "venue" : "5th International Conference on Learning Repre-",
+      "citeRegEx" : "Shazeer et al\\.,? 2017",
+      "shortCiteRegEx" : "Shazeer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multi-task learning for multilingual neural machine translation",
+      "author" : [ "Yiren Wang", "ChengXiang Zhai", "Hany Hassan." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing, EMNLP 2020, pages 1022–1034.",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 13,
+      "context" : "In recent years, large-scale Transformers (Devlin et al., 2019; Dong et al., 2019; Raffel et al., 2020; Clark et al., 2020; Bao et al., 2020; Brown et al., 2020) have shown a striking ability to model languages.",
+      "startOffset" : 42,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 4,
+      "context" : "Mixture of Experts (MoE) (Jacobs et al., 1991; Jordan and Jacobs, 1994; Shazeer et al., 2017), in a much easier way, enables Transformers to scale up the number of parameters meanwhile introducing an affordable computational overhead.",
+      "startOffset" : 25,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 5,
+      "context" : "Mixture of Experts (MoE) (Jacobs et al., 1991; Jordan and Jacobs, 1994; Shazeer et al., 2017), in a much easier way, enables Transformers to scale up the number of parameters meanwhile introducing an affordable computational overhead.",
+      "startOffset" : 25,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 16,
+      "context" : "Mixture of Experts (MoE) (Jacobs et al., 1991; Jordan and Jacobs, 1994; Shazeer et al., 2017), in a much easier way, enables Transformers to scale up the number of parameters meanwhile introducing an affordable computational overhead.",
+      "startOffset" : 25,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 8,
+      "context" : "Most existing MoE methods (Lepikhin et al., 2021; Fedus et al., 2021; Lewis et al., 2021) decide the token-to-expert routing according to the dynamically changing token representations.",
+      "startOffset" : 26,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 2,
+      "context" : "Most existing MoE methods (Lepikhin et al., 2021; Fedus et al., 2021; Lewis et al., 2021) decide the token-to-expert routing according to the dynamically changing token representations.",
+      "startOffset" : 26,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 9,
+      "context" : "Most existing MoE methods (Lepikhin et al., 2021; Fedus et al., 2021; Lewis et al., 2021) decide the token-to-expert routing according to the dynamically changing token representations.",
+      "startOffset" : 26,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 9,
+      "context" : "Taking BASE Layer (Lewis et al., 2021) as an example, during the whole training process, we examine the token-to-expert assignment for tokens in the validation set.",
+      "startOffset" : 18,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 9,
+      "context" : "Figure 2: Cumulative token percentage with regard to the last fluctuation step of tokens for BASE Layer (Lewis et al., 2021).",
+      "startOffset" : 104,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 17,
+      "context" : "We first introduce the MoE mechanism designed for Transformers (Vaswani et al., 2017).",
+      "startOffset" : 63,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 2,
+      "context" : "For each MoE layer, we assign each token to one expert FFN (Fedus et al., 2021; Lewis et al., 2021; Roller et al., 2021).",
+      "startOffset" : 59,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 9,
+      "context" : "For each MoE layer, we assign each token to one expert FFN (Fedus et al., 2021; Lewis et al., 2021; Roller et al., 2021).",
+      "startOffset" : 59,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 14,
+      "context" : "For each MoE layer, we assign each token to one expert FFN (Fedus et al., 2021; Lewis et al., 2021; Roller et al., 2021).",
+      "startOffset" : 59,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 9,
+      "context" : "where at is the the expert index that token t is sent to, and σ is the sigmoid gate (Lewis et al., 2021).",
+      "startOffset" : 84,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 0,
+      "context" : "Switch Transformer Greedy softmax Yes BASE Layer Auction (Bertsekas, 1992) sigmoid No Hash Layer Fixed Hashing {0, 1} No",
+      "startOffset" : 57,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 0,
+      "context" : "BASE Layer adopts the auction algorithm (Bertsekas, 1992) to find a global balanced assignment with the maximum affinity sum.",
+      "startOffset" : 40,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 9,
+      "context" : "Language Modeling Following (Lewis et al., 2021) and Roller et al.",
+      "startOffset" : 28,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 10,
+      "context" : "(2021), we use the combination of the corpora in RoBERTa (Liu et al., 2019) and the English subset of the CC100 (Conneau et al.",
+      "startOffset" : 57,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 11,
+      "context" : "In our experiments, we combine the original parallel data with 180 million backtranslation data as described in (Ma et al., 2020) and call the augmented dataset WMT for short.",
+      "startOffset" : 112,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 12,
+      "context" : "Language Modeling We adopt the tokenizer of GPT-2 (Radford et al., 2019), which uses byte-pair encoding (Sennrich et al.",
+      "startOffset" : 50,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2019), which uses byte-pair encoding (Sennrich et al., 2016) with a vocabulary size of 50,257.",
+      "startOffset" : 39,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 11,
+      "context" : "Multilingual Machine Translation Following (Ma et al., 2020), we use the SentencePiece (Kudo and Richardson, 2018) model to tokenize sentences.",
+      "startOffset" : 43,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020), we use the SentencePiece (Kudo and Richardson, 2018) model to tokenize sentences.",
+      "startOffset" : 34,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 3,
+      "context" : "(2017) introduce MoE to build largescale language models based on LSTMs (Hochreiter and Schmidhuber, 1997).",
+      "startOffset" : 72,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 8,
+      "context" : "GShard (Lepikhin et al., 2021), Switch Transformer (Fedus et al.",
+      "startOffset" : 7,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2021), Switch Transformer (Fedus et al., 2021), and BASE Layer (Lewis et al.",
+      "startOffset" : 28,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2021), and BASE Layer (Lewis et al., 2021) follow the learning-toroute paradigm and dynamically learn how to route each input token to experts.",
+      "startOffset" : 24,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 14,
+      "context" : "Hash Layer (Roller et al., 2021) propose a non-parametric routing strategy, which uses a pre-designed token-level hash table to determine the token-to-expert assignment.",
+      "startOffset" : 11,
+      "endOffset" : 32
+    } ],
+    "year" : 0,
+    "abstractText" : "The Mixture-of-Experts (MoE) technique can scale up the model size of Transformers with an affordable computational overhead. We point out that existing learning-to-route MoE methods suffer from the routing fluctuation issue, i.e., the target expert of the same input may change along with training, but only one expert will be activated for the input during inference. The routing fluctuation tends to harm sample efficiency because the same input updates different experts but only one is finally used. In this paper, we propose STABLEMOE with two training stages to address the routing fluctuation problem. In the first training stage, we learn a balanced and cohesive routing strategy and distill it into a lightweight router decoupled from the backbone model. In the second training stage, we utilize the distilled router to determine the token-to-expert assignment and freeze it for a stable routing strategy. We validate our method on language modeling and multilingual machine translation. The results show that STABLEMOE outperforms existing MoE methods in terms of both convergence speed and performance.",
+    "creator" : null
+  }
+}

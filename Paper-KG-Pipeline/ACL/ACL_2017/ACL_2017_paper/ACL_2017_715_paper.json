@@ -1,0 +1,502 @@
+{
+  "name" : "ACL_2017_715_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Reading Wikipedia to Answer Open-Domain Questions",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "This paper considers the problem of answering factoid questions in an open-domain setting using Wikipedia as the unique knowledge source, as one does when looking for answers in an encyclopedia. Wikipedia is a constantly evolving source of detailed information that could facilitate intelligent machines — if they are able to leverage its power. Unlike knowledge bases (KBs) such as Freebase (Bollacker et al., 2008) or DBPedia (Auer et al., 2007), which are easier for computers to process but too sparsely populated for open-domain question answering (Miller et al., 2016), Wikipedia contains up-to-date knowledge that humans are interested in, but is designed for humans, not machines, to read.\nUsing Wikipedia articles as the knowledge source causes the task of question answering (QA) to combine the challenges of both large-scale open-domain QA and of machine comprehension of text. In order to answer any question, one must first retrieve the few relevant articles among more than 5 millions items, and scan them carefully to identify the answer. Our work treats Wikipedia as a collection of articles and does not rely on its internal graph structure. As a result, our approach is generic and could be switched to another collection of documents.\nLarge-scale QA systems like IBM’s DeepQA (Ferrucci et al., 2010) rely on multiple sources to answer: Wikipedia can be one of them but it is also paired with KBs, dictionaries, and even news articles, books, etc. As a result, such systems heavily rely on information redundancy among the sources to answer correctly. Having a single knowledge source forces the model to be very precise while searching for an answer as the evidence might appear only once. This challenge thus encourages research in the ability of a machine to read, a key motivation for the machine comprehension subfield and the creation of datasets such as SQuAD (Rajpurkar et al., 2016), CNN/Daily Mail (Hermann et al., 2015) and CBT (Hill et al., 2016).\nHowever, those machine comprehension resources typically assume that a short piece of relevant text is already identified and given to the model, which is not realistic for building an opendomain QA system. In sharp contrast, methods that use KBs or information retrieval over documents have to employ search as an integral part of the solution. Instead we aim at the setting of simultaneously maintaining the challenge of machine comprehension, which requires the deep understanding of text, while keeping the realistic constraint of searching over a large open resource.\nIn this paper, we show how multiple existing QA datasets can be used to evaluate this framework by requiring an open-domain system to perform well on all of them at once. We develop DrWiki, a strong system for question answering from Wikipedia composed of: (1) Document Retriever, a module using bigram hashing and TFIDF matching designed to, given a question, efficiently return a subset of relevant articles and (2) Document Reader, a multi-layer recurrent neural network machine comprehension model trained to detect answer spans in those few returned documents. Figure 1 gives an illustration of DrWiki.\nOur experiments show that Document Retriever outperforms the built-in Wikipedia search engine and that Document Reader achieves state-of-theart results on the very competitive SQuAD benchmark (Rajpurkar et al., 2016). Finally, our full system is evaluated using multiple benchmarks. In particular, we show that performance is improved across almost all datasets through the use of multitask learning and distant supervision compared to single task training."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Open-domain QA was originally defined as finding answers in collections of unstructured documents, following the setting of the annual TREC competitions1. With the development of KBs, many recent innovations have occurred in the context of QA from KBs with the creation of re-\n1http://trec.nist.gov/data/qamain.html\nsources like WebQuestions (Berant et al., 2013) and SimpleQuestions (Bordes et al., 2015) based on the Freebase KB (Bollacker et al., 2008), or on automatically extracted KBs, e.g., OpenIE triples and NELL (Fader et al., 2014). However, KBs have inherent limitations (incompleteness, fixed schemas) that motivated researchers to return to the original setting of answering from raw text.\nA second motivation to cast a fresh look at this problem is that of machine comprehension of text, i.e., answering questions after reading a short text or story. That subfield has made considerable progress recently thanks to new deep learning architectures like attention-based and memory-augmented neural networks (Bahdanau et al., 2015; Weston et al., 2015; Graves et al., 2014) and the release of new training and evaluation datasets like QuizBowl (Iyyer et al., 2014), CNN/Daily Mail based on news articles (Hermann et al., 2015), CBT based on children books (Hill et al., 2016), or SQuAD (Rajpurkar et al., 2016) and WikiReading (Hewlett et al., 2016), both based on Wikipedia. An objective of this paper is to test how such new methods can perform in an open-domain QA framework.\nQA using Wikipedia as a resource has been explored previously. The authors of (Ryu et al., 2014) perform open-domain QA using a Wikipedia-based knowledge model. They combine article content with multiple other answer matching modules based on different types of semi-structured knowledge such as infoboxes, article structure, category structure, and defini-\ntions. Similarly (Ahn et al., 2004) also combine Wikipedia as a text resource with other resources, in this case with information retrieval over other documents. Buscaldi and Rosso (2006) also mine knowledge from Wikipedia for QA. Instead of using it as a resource for seeking the answers to questions, they focused on validation of the answers as returned by their QA system, and the use of Wikipedia categories for determining a set of patterns that should fit with the expected answer. In our work, we consider the comprehension of text only, and use the Wikipedia text documents as a sole resource for the reasons described in the introduction, that is to help focus on the machine comprehension task.\nThere are a number of highly developed full pipeline QA approaches using Wikipedia as a resource, including Microsoft’s AskMSR (Brill et al., 2002), IBM’s DeepQA (Ferrucci et al., 2010) and YodaQA (Baudiš, 2015; Baudiš and Šedivỳ, 2015), the latter of which is open source and hence reproducible for comparison purposes. AskMSR is a search-engine based QA system that relies on “data redundancy rather than sophisticated linguistic analyses of either questions or candidate answers”, i.e., it does not focus on machine comprehension, as we do. DeepQA is a very sophisticated system that relies on both unstructured information including text documents as well as structured data such as KBs, databases and ontologies to generate candidate answers or vote over evidence. YodaQA is an open source system modeled after DeepQA, similarly combining websites, information extraction, databases and Wikipedia in particular. While our comprehension task is far more challenging as we do not allow the leveraging of extra resources, comparing to these methods as an “upper bound” benchmark of what we could achieve is a useful datapoint.\nMultitask learning (Caruana, 1998) and task transfer (e.g., in the computer vision community using ImageNet (Huh et al., 2016)) have a rich history in machine learning, as well as in NLP in particular (Collobert and Weston, 2008). Several works have attempted to combine multiple QA training datasets via multitask learning to (i) achieve improvement across the datasets via task transfer; and (ii) to provide a single general system capable of asking different kinds of questions due to the inevitably different data distributions across the source datasets. Fader et al.\n(2014) used WebQuestions, TREC and WikiAnswers with four KBs as knowledge sources and reported improvement on the latter two datasets through multitasking. Bordes et al. (2015) combined WebQuestions and SimpleQuestions using distant supervision with Freebase as the KB to give slight improvements on both datasets, although poor performance was reported training on only one dataset and testing on the other, showing that task transfer is indeed a challenging subject; see also (Kadlec et al., 2016) for a similar conclusion. Our work follows similar themes, but in the setting of having to retrieve and then read text documents, rather than using a KB."
+    }, {
+      "heading" : "3 Our System: DrWiki",
+      "text" : "In the following we describe our system DrWiki for open-domain Wikipedia question answering which consists of two components: (1) the Document Retriever module for finding relevant articles and (2) a machine comprehension model, Document Reader, for extracting answers from a single document or a small collection of documents."
+    }, {
+      "heading" : "3.1 Document Retriever",
+      "text" : "Following classical QA systems, we use an efficient (non-machine learning) document retrieval system to first narrow our search space and focus on reading only articles that are likely to be relevant. A simple inverted index lookup followed by term vector model scoring performs quite well on this task for many question types, compared to the built-in ElasticSearch based Wikipedia Search API (Gormley and Tong, 2015). Articles and questions are compared as TF-IDF weighted bag-ofword vectors. We further improve our system by taking local word order into account with n-gram features. Our best performing system uses bigram counts while preserving speed and memory efficiency by using the hashing of (Weinberger et al., 2009) to map the bigrams to 224 bins with an unsigned murmur3 hash.\nWe use Document Retriever as the first part of our full model, by setting it to return 5 Wikipedia articles given any question. Those articles are then processed by Document Reader."
+    }, {
+      "heading" : "3.2 Document Reader",
+      "text" : "Our Document Reader model is inspired by the recent success of neural network models on machine comprehension tasks, in a similar spirit to the At-\ntentiveReader described in (Hermann et al., 2015; Chen et al., 2016).\nGiven a question q consisting of l tokens {q1, . . . , ql} and a document or a small set of documents of n paragraphs where paragraph p(k) consists of lk tokens {p (k) 1 , . . . , p (k) lk } for 1 ≤ k ≤ n, we develop an RNN model that we apply to each paragraph in turn and then finally aggregate the predicted answers. Our method works as follows:\nParagraph encoding We first represent each token pi in a paragraph p as a feature vector p̃i ∈ Rd and pass it as the input to a multi-layer recurrent neural network and thus obtain:\n{p1, . . . ,pm} = RNN({p̃1, . . . , p̃m}),\nwhere pi is expected to encode useful context information around token pi. Specifically, we choose to use a three-layer bidirectional long short-term memory network (LSTM) with h hidden units at each layer/direction as our RNN architecture and concatenate all the hidden units in the end. Therefore the resulting pi contains 6h dimensions.\nThe feature vector p̃i is comprised of the following parts:\n• Word embeddings: femb(pi) = E(pi). We use the 300-dimensional Glove word embeddings trained from 840B Web crawl data (Pennington et al., 2014). We keep most of the pre-trained word embeddings fixed and only fine-tune the 1, 000 most frequent words because we think that some question words such as what, how, which, many could be highly important for QA systems.\n• Exact match: fexact match(pi) = I(pi ∈ q). We use three simple binary features, indicating whether pi can be exactly matched to one question word in q, either in its original, lowercased or lemma form. These simple features turn out to be extremely helpful, as we will show in Section 5.\n• Token features: ftoken(pi) = (POS(pi),NER(pi),TF(pi)). We also add a few manual features which reflect some properties of token pi in its context, which include its part-of-speech (POS) and named entity recognition (NER) tags and its (normalized) term frequency (TF).\n• Aligned question embedding: following (Lee et al., 2016) and other recent works, the last part we incorporate is an aligned question embedding falign(pi) = ∑ j α(E(pi),E(qj))E(qj),\nwhere αj ∝ E(pi) ᵀE(qj)∑\nj′ E(pi) ᵀE(qj′ ) , which captures the similarity between pi and all the question words in q. Compared to the exact match features, these features add soft alignments between similar but non-identical words (e.g., car and vehicle).\nQuestion encoding The question encoding is simpler, as we only apply another RNN on top of the word embeddings of qi and combine the resulting hidden units into one single vector: {q1, . . . ,ql} → q. We compute q = ∑ β(qi)qi where β(·) is a normalized weighting function which learns the importance of each question word.\nPrediction At the paragraph level, the goal is to predict the span of tokens that is most likely the correct answer. We take the the paragraph vectors {p1, . . . ,pm} and the question vector q as input, and simply train two classifers independently for predicting the two ends of the span. Concretely, we use a bilinear term to capture the similarity between pi and q:\nPstart(i) = softmax (piWsq)\nPend(i) = softmax (piWeq)\nDuring prediction, we choose the best span from token i to token i′ such that i ≤ i′ ≤ i + 15 and Pstart(i)×Pend(i′) is maximized. To make scores compatible across paragraphs in one or several retrieved documents, we replace the softmax with an unnormalized exponential. Our final prediction is then the argmax over all considered paragraph spans."
+    }, {
+      "heading" : "4 Data",
+      "text" : "Our work relies on three types of data: (1) Wikipedia that serves as our knowledge source for finding answers, (2) the SQuAD dataset which is our main resource to train Document Reader and (3) three more QA datasets (CuratedTREC, WebQuestions and WikiMovies) that in addition to SQuAD, are used to test the open-domain QA abilities of our full system, and to evaluate the ability of our model to learn from multitasking and\ndistant supervision. Statistics of the datasets are given in Table 2."
+    }, {
+      "heading" : "4.1 Wikipedia (Knowledge Source)",
+      "text" : "We use the 2016-12-21 dump2 of English Wikipedia for all of our full-scale experiments as the knowledge source used to answer questions. For each page, only the plain text is extracted and all structured data sections such as lists and figures are stripped3. After discarding disambiguation pages, we retain 5,236,178 articles consisting\n2https://dumps.wikimedia.org/enwiki/ latest\n3https://github.com/attardi/ wikiextractor\nof 9,264,930 unique uncased token types."
+    }, {
+      "heading" : "4.2 SQuAD",
+      "text" : "The Stanford Question Answering Dataset (SQuAD) (Rajpurkar et al., 2016) is a dataset for machine comprehension based on Wikipedia. The dataset contains 90k/10k train/development examples with a large hidden test set, that can only be accessed by the SQuAD creators. Each example is composed of a paragraph extracted from a Wikipedia article and an associated human-generated question. The answer is always a span from this paragraph and a model is given credit if its predicted answer matches it. Two evaluation metrics are used: Exact string match (EM) and F1 score, which measures the weighted average of precision and recall at the token level.\nIn the following, we use SQuAD for training and evaluating our Document Reader for the standard machine comprehension task given the relevant paragraph as defined in (Rajpurkar et al., 2016). For the task of evaluating open-domain question answering over Wikipedia, we use the SQuAD development set QA pairs only, and we ask systems to uncover the correct answer spans without having access to the associated paragraphs. That is, a model is required to answer a given question given the whole of Wikipedia as a resource, it is not given the relevant paragraph as\nin the standard SQuAD setting."
+    }, {
+      "heading" : "4.3 Open-domain QA Evaluation Resources",
+      "text" : "SQuAD is one of the largest general purpose QA datasets currently available. SQuAD questions have been collected via a process involving showing a paragraph to each human annotator and asking them to write a question. As a result, their distribution is quite specific. We hence propose to train and evaluate our system on other datasets developed for open-domain QA that have been constructed in different ways (not necessarily in the context of answering from Wikipedia).\nCuratedTREC This dataset is based on the benchmarks from the TREC QA tasks that have been curated by Baudiš and Šedivỳ (2015). We use the large version, which contains a total of 2,180 questions extracted from the datasets from TREC 1999, 2000, 2001 and 2002.4\nWebQuestions Introduced in (Berant et al., 2013), this dataset is built to answer questions from the Freebase KB. It was created by crawling questions through the Google Suggest API, and then obtaining answers using Amazon Mechanical Turk. We converted each answer to text by using entity names so that the dataset does not reference Freebase IDs and is purely made of plain text question-answer pairs.\nWikiMovies This dataset, introduced in (Miller et al., 2016), contains 96k question-answer pairs in the domain of movies. Originally created from Freebase, the examples are built such that they can also be answered by using a subset of Wikipedia as the knowledge source (the title and the first section of articles from the movie domain).\n4This dataset is available at https://github.com/ brmson/dataset-factoid-curated."
+    }, {
+      "heading" : "4.4 Distantly Supervised Data",
+      "text" : "All the QA datasets presented above contain training portions, but CuratedTREC, WebQuestions and WikiMovies only contain question-answer pairs, and not an associated document or paragraph as in SQuAD, and hence cannot be used for training Document Reader directly. Following previous work on distant supervision (DS) for relation extraction (Mintz et al., 2009), we use a procedure to automatically associate paragraphs to such training examples, and then add these examples to our training set.\nWe use the following process for each questionanswer pair to build our training set. First, we run Document Retriever on the question to retrieve the top 5 Wikipedia articles. All paragraphs from those articles without an exact match of the known answer are directly discarded. All paragraphs shorter than 25 or longer than 1500 characters are also filtered out. If any named entities are detected in the question, we remove any paragraph that does not contain them at all. For every remaining paragraph in each retrieved page, we score all positions that match an answer using unigram and bigram overlap between the question and a 20 token window, and we keep the paragraph with the highest overlap. If there is no paragraph with nonzero overlap, the example is discarded; otherwise we add it to our DS training dataset.\nExamples of generated examples are given in Table 1 and the size of each DS dataset is given in the third column (DS) of Table 2.\nNote that we can also generate additional DS data for SQuAD by trying to find mentions of the answers in other paragraphs other than the original paragraph provided in the dataset (from other pages or the same page that the given paragraph was in). As shown in Table 2, we can generate such additional examples for around a third of the original SQuAD training examples."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : "This section first presents evaluations of our Document Retriever and Document Reader modules separately, and then describes tests of their combination, DrWiki, for open-domain QA on the full Wikipedia."
+    }, {
+      "heading" : "5.1 Finding Relevant Articles",
+      "text" : "We first examine the performance of our Document Retriever module on all the QA datasets. Ta-\nble 3 compares the performance of the two approaches described in Section 3.1 with that of the Wikipedia Search Engine7 for the task of finding articles that contain the answer given a question. Specifically, we compute the ratio of questions for which the text span of any of their associated answers appear in at least one the top 5 relevant pages returned by each system. Results on all datasets indicate that our simple approach outperforms Wikipedia Search, especially with bigram hashing."
+    }, {
+      "heading" : "5.2 Reader Evaluation on SQuAD",
+      "text" : "Next we evaluate our Document Reader component on the standard SQuAD evaluation (Rajpurkar et al., 2016).\nImplementation details We use a 3-layer bidirectional LSTMs with h = 128 hidden units for both paragraph and question encoding. We apply the Stanford CoreNLP toolkit (Manning et al., 2014) for tokenization and also generating lemma, part-of-speech, and named entity manual features.\nLastly, all the training examples are sorted by the length of paragraph and divided into minibatches of 32 examples each. We use Adamax for optimization as described in (Kingma and Ba, 2014). Dropout with p = 0.3 is applied to word embeddings and all the hidden units of LSTMs.\nResult and analysis Table 4 presents our evaluation results on both development and test sets. SQuAD has been a very competitive machine comprehension benchmark since its creation and we only list the best-performing systems in the table. Our system (single model) can achieve 70.0% exact match and 79.0% F1 scores on the test set, which surpasses all the published results and can\n7We used the Wikipedia Search API https://www. mediawiki.org/wiki/API:Search.\nmatch the top performance on the SQuAD leaderboard at the time of writing. Additionally, we think that our model is conceptually simpler than most of the existing systems. We conducted an ablation analysis on the feature vector of paragraph tokens. As shown in Table 5 all the features contribute to the performance of our final system. Without the aligned question embedding feature (only word embedding and a few manual features), our system is still able to achieve F1 over 76%. More interestingly, if we remove both faligned and fexact match, the performance drops dramatically, so we conclude that both features play a similar but complementary role in the feature representation related to the paraphrased nature of a question vs. the context around an answer."
+    }, {
+      "heading" : "5.3 Full Wikipedia Question Answering",
+      "text" : "Finally, we assess the performance of our full system DrWiki for answering open-domain questions using the four datasets introduced in Section 4. We compare three versions of DrWiki which evaluate the impact of using distant supervision and multitask learning across the training sources provided to Document Reader (Document Retriever remains the same for each case):\n• SQuAD setting: A single Document Reader model is trained on the SQuAD training set only and used on all evaluation sets.\n• Fine-tune (DS): A Document Reader model is pre-trained on SQuAD and then fine-tuned for each dataset independently using its dedicated distant supervision (DS) training set.\n• Multitask (DS) setting: A single Document Reader model is jointly trained on the SQuAD training set and all the DS sources.\nResults Table 6 presents the results. Despite the difficulty of the task compared to machine comprehension (where you are given the right paragraph) and unconstrained QA (using redundant resources), DrWiki still provides reasonable performance across all four datasets.\nWe are interested in a single full system that can answer any question using Wikipedia. The single model trained only on SQuAD is outperformed on three of the datasets by the multitask system that uses distant supervision. However performance when training on SQuAD alone is not far behind indicating that task transfer is occurring. The majority of the improvement from SQuAD to Multiclass(DS) however is likely not from task transfer as fine-tuning on each dataset alone using DS also gives improvements, showing that it is the introduction of extra data in the same domain that helps. Nevertheless, the best single model that we can find is our overall goal, and that is the Multitask(DS) system.\nWe compare to an unconstrained QA system using redundant resources (not just Wikipedia), YodaQA (Baudiš, 2015), giving results which were previously reported on CuratedTREC and WebQuestions. Despite the increased difficulty of our task it is reassuring that our performance is not\ntoo far behind on CuratedTREC (31.3 vs. 25.5). The gap is slightly bigger on WebQuestions likely because that is based on Freebase which YodaQA uses directly.\nDrWiki’s performance on SQuAD compared to its Document Reader component on machine comprehension in Table 4 shows a large drop (from 69.5 to 26.7) as we now are given Wikipedia to read, not a single paragraph. Given the correct document (but not the paragraph) we can achieve 49.6 indicating many false positives come from highly topical sentences. This is despite the fact that the Document Retriever works relatively well (77.8% of the time retrieving the answer, see Table 3). Overall, our results indicate that we have identified a key challenging task for researchers to focus on."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We studied the task of open-domain QA using Wikipedia as the unique knowledge source. This brings unique challenges for machine comprehension systems where integrating search, distant supervision and multitask learning provides an effective complete system, whereas machine comprehension systems alone cannot solve the overall task. Evaluating the individual components and the overall system across multiple benchmarks showed the efficacy of our approach.\nFuture work should aim to improve over our DrWiki system. Two obvious angles of attack are: (i) incorporate the fact that Document Reader aggregates over multiple paragraphs and documents directly in the training, as it currently trains on paragraphs independently; and (ii) perform endto-end training across the Document Retriever and Document Reader pipeline, rather than independent systems."
+    } ],
+    "references" : [ {
+      "title" : "Using wikipedia at the trec qa track",
+      "author" : [ "David Ahn", "Valentin Jijkoun", "Gilad Mishne", "Karin Mller", "Maarten de Rijke", "Stefan Schlobach." ],
+      "venue" : "Proceedings of TREC 2004.",
+      "citeRegEx" : "Ahn et al\\.,? 2004",
+      "shortCiteRegEx" : "Ahn et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Dbpedia: A nucleus for a web of open data",
+      "author" : [ "Sören Auer", "Christian Bizer", "Georgi Kobilarov", "Jens Lehmann", "Richard Cyganiak", "Zachary Ives." ],
+      "venue" : "The semantic web, Springer, pages 722–735.",
+      "citeRegEx" : "Auer et al\\.,? 2007",
+      "shortCiteRegEx" : "Auer et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "YodaQA: a modular question answering system pipeline",
+      "author" : [ "Petr Baudiš." ],
+      "venue" : "POSTER 2015-19th International Student Conference on Electrical Engineering. pages 1156–1165.",
+      "citeRegEx" : "Baudiš.,? 2015",
+      "shortCiteRegEx" : "Baudiš.",
+      "year" : 2015
+    }, {
+      "title" : "Modeling of the question answering task in the YodaQA system",
+      "author" : [ "Petr Baudiš", "Jan Šedivỳ." ],
+      "venue" : "International Conference of the CrossLanguage Evaluation Forum for European Languages. Springer, pages 222–228.",
+      "citeRegEx" : "Baudiš and Šedivỳ.,? 2015",
+      "shortCiteRegEx" : "Baudiš and Šedivỳ.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic parsing on freebase from question-answer pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP). pages 1533–1544.",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Freebase: a collaboratively created graph database for structuring human knowledge",
+      "author" : [ "Kurt Bollacker", "Colin Evans", "Praveen Paritosh", "Tim Sturge", "Jamie Taylor." ],
+      "venue" : "Proceedings of the 2008 ACM SIGMOD international conference on Management",
+      "citeRegEx" : "Bollacker et al\\.,? 2008",
+      "shortCiteRegEx" : "Bollacker et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Large-scale simple question answering with memory networks",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "arXiv preprint arXiv:1506.02075 .",
+      "citeRegEx" : "Bordes et al\\.,? 2015",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "An analysis of the AskMSR question-answering system",
+      "author" : [ "Eric Brill", "Susan Dumais", "Michele Banko." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP). pages 257–264.",
+      "citeRegEx" : "Brill et al\\.,? 2002",
+      "shortCiteRegEx" : "Brill et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Mining knowledge from Wikipedia for the question answering task",
+      "author" : [ "Davide Buscaldi", "Paolo Rosso." ],
+      "venue" : "International Conference on Language Resources and Evaluation (LREC). pages 727–730.",
+      "citeRegEx" : "Buscaldi and Rosso.,? 2006",
+      "shortCiteRegEx" : "Buscaldi and Rosso.",
+      "year" : 2006
+    }, {
+      "title" : "Multitask learning",
+      "author" : [ "Rich Caruana." ],
+      "venue" : "Learning to learn, Springer, pages 95–133.",
+      "citeRegEx" : "Caruana.,? 1998",
+      "shortCiteRegEx" : "Caruana.",
+      "year" : 1998
+    }, {
+      "title" : "A thorough examination of the CNN/Daily Mail reading comprehension task",
+      "author" : [ "Danqi Chen", "Jason Bolton", "Christopher D Manning." ],
+      "venue" : "Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Chen et al\\.,? 2016",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A unified architecture for natural language processing: deep neural networks with multitask learning",
+      "author" : [ "Ronan Collobert", "Jason Weston." ],
+      "venue" : "International Conference on Machine Learning (ICML).",
+      "citeRegEx" : "Collobert and Weston.,? 2008",
+      "shortCiteRegEx" : "Collobert and Weston.",
+      "year" : 2008
+    }, {
+      "title" : "Open question answering over curated and extracted knowledge bases",
+      "author" : [ "Anthony Fader", "Luke Zettlemoyer", "Oren Etzioni." ],
+      "venue" : "ACM SIGKDD international conference on Knowledge discovery and data mining. pages 1156–1165.",
+      "citeRegEx" : "Fader et al\\.,? 2014",
+      "shortCiteRegEx" : "Fader et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Building Watson: An overview of the DeepQA project. AI magazine 31(3):59–79",
+      "author" : [ "David Ferrucci", "Eric Brown", "Jennifer Chu-Carroll", "James Fan", "David Gondek", "Aditya A Kalyanpur", "Adam Lally", "J William Murdock", "Eric Nyberg", "John Prager" ],
+      "venue" : null,
+      "citeRegEx" : "Ferrucci et al\\.,? \\Q2010\\E",
+      "shortCiteRegEx" : "Ferrucci et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Elasticsearch: The Definitive Guide",
+      "author" : [ "Clinton Gormley", "Zachary Tong." ],
+      "venue" : "” O’Reilly Media, Inc.”.",
+      "citeRegEx" : "Gormley and Tong.,? 2015",
+      "shortCiteRegEx" : "Gormley and Tong.",
+      "year" : 2015
+    }, {
+      "title" : "Neural turing machines",
+      "author" : [ "Alex Graves", "Greg Wayne", "Ivo Danihelka." ],
+      "venue" : "arXiv preprint arXiv:1410.5401 .",
+      "citeRegEx" : "Graves et al\\.,? 2014",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomáš Kočiský", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Advances in Neural Information Processing Systems (NIPS).",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Wikireading: A novel large-scale language understanding task over wikipedia",
+      "author" : [ "Daniel Hewlett", "Alexandre Lacoste", "Llion Jones", "Illia Polosukhin", "Andrew Fandrianto", "Jay Han", "Matthew Kelcey", "David Berthelot." ],
+      "venue" : "Association for Computational Lin-",
+      "citeRegEx" : "Hewlett et al\\.,? 2016",
+      "shortCiteRegEx" : "Hewlett et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "The Goldilocks Principle: Reading children’s books with explicit memory representations",
+      "author" : [ "Felix Hill", "Antoine Bordes", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Hill et al\\.,? 2016",
+      "shortCiteRegEx" : "Hill et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "What makes ImageNet good for transfer learning",
+      "author" : [ "Minyoung Huh", "Pulkit Agrawal", "Alexei A Efros" ],
+      "venue" : null,
+      "citeRegEx" : "Huh et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Huh et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A neural network for factoid question answering over paragraphs",
+      "author" : [ "Mohit Iyyer", "Jordan L Boyd-Graber", "Leonardo Max Batista Claudino", "Richard Socher", "Hal Daumé III." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Iyyer et al\\.,? 2014",
+      "shortCiteRegEx" : "Iyyer et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "From particular to general: A preliminary case study of transfer learning in reading comprehension",
+      "author" : [ "Rudolf Kadlec", "Ondrej Bajgar", "Jan Kleindienst." ],
+      "venue" : "Machine Intelligence Workshop, NIPS .",
+      "citeRegEx" : "Kadlec et al\\.,? 2016",
+      "shortCiteRegEx" : "Kadlec et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980 .",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Learning recurrent span representations for extractive question answering",
+      "author" : [ "Kenton Lee", "Tom Kwiatkowski", "Ankur Parikh", "Dipanjan Das." ],
+      "venue" : "arXiv preprint arXiv:1611.01436 .",
+      "citeRegEx" : "Lee et al\\.,? 2016",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "The stanford corenlp natural language processing toolkit",
+      "author" : [ "Christopher D Manning", "Mihai Surdeanu", "John Bauer", "Jenny Finkel", "Steven J Bethard", "David McClosky." ],
+      "venue" : "Association for Computational Linguistics (ACL). pages 55–60.",
+      "citeRegEx" : "Manning et al\\.,? 2014",
+      "shortCiteRegEx" : "Manning et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Key-value memory networks for directly reading documents",
+      "author" : [ "Alexander H. Miller", "Adam Fisch", "Jesse Dodge", "AmirHossein Karimi", "Antoine Bordes", "Jason Weston." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP). pages 1400–",
+      "citeRegEx" : "Miller et al\\.,? 2016",
+      "shortCiteRegEx" : "Miller et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Distant supervision for relation extraction without labeled data",
+      "author" : [ "Mike Mintz", "Steven Bills", "Rion Snow", "Daniel Jurafsky." ],
+      "venue" : "Association for Computational Linguistics and International Joint Conference on Natural Language Processing",
+      "citeRegEx" : "Mintz et al\\.,? 2009",
+      "shortCiteRegEx" : "Mintz et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Glove: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher Manning." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP). pages 1532–1543.",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "SQuAD: 100,000+ questions for machine comprehension of text",
+      "author" : [ "Pranav Rajpurkar", "Jian Zhang", "Konstantin Lopyrev", "Percy Liang." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Rajpurkar et al\\.,? 2016",
+      "shortCiteRegEx" : "Rajpurkar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Open domain question answering using Wikipedia-based knowledge model",
+      "author" : [ "Pum-Mo Ryu", "Myung-Gil Jang", "Hyun-Ki Kim." ],
+      "venue" : "Information Processing & Management 50(5):683–692.",
+      "citeRegEx" : "Ryu et al\\.,? 2014",
+      "shortCiteRegEx" : "Ryu et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Bidirectional attention flow for machine comprehension",
+      "author" : [ "Minjoon Seo", "Aniruddha Kembhavi", "Ali Farhadi", "Hannaneh Hajishirzi." ],
+      "venue" : "arXiv preprint arXiv:1611.01603 .",
+      "citeRegEx" : "Seo et al\\.,? 2016",
+      "shortCiteRegEx" : "Seo et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Multi-perspective context matching for machine comprehension",
+      "author" : [ "Zhiguo Wang", "Haitao Mi", "Wael Hamza", "Radu Florian." ],
+      "venue" : "arXiv preprint arXiv:1612.04211 .",
+      "citeRegEx" : "Wang et al\\.,? 2016",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Feature hashing for large scale multitask learning",
+      "author" : [ "Kilian Weinberger", "Anirban Dasgupta", "John Langford", "Alex Smola", "Josh Attenberg." ],
+      "venue" : "International Conference on Machine Learning (ICML). pages 1113–1120.",
+      "citeRegEx" : "Weinberger et al\\.,? 2009",
+      "shortCiteRegEx" : "Weinberger et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Memory networks",
+      "author" : [ "Jason Weston", "Sumit Chopra", "Antoine Bordes." ],
+      "venue" : "International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Weston et al\\.,? 2015",
+      "shortCiteRegEx" : "Weston et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Dynamic coattention networks for question answering",
+      "author" : [ "Caiming Xiong", "Victor Zhong", "Richard Socher." ],
+      "venue" : "arXiv preprint arXiv:1611.01604 .",
+      "citeRegEx" : "Xiong et al\\.,? 2016",
+      "shortCiteRegEx" : "Xiong et al\\.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "Unlike knowledge bases (KBs) such as Freebase (Bollacker et al., 2008) or DBPedia (Auer et al.",
+      "startOffset" : 46,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2008) or DBPedia (Auer et al., 2007), which are easier for computers to process but too sparsely populated for open-domain question answering (Miller et al.",
+      "startOffset" : 19,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2007), which are easier for computers to process but too sparsely populated for open-domain question answering (Miller et al., 2016), Wikipedia contains up-to-date knowledge that humans are interested in, but is designed for humans, not machines, to read.",
+      "startOffset" : 113,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 14,
+      "context" : "Large-scale QA systems like IBM’s DeepQA (Ferrucci et al., 2010) rely on multiple sources to answer: Wikipedia can be one of",
+      "startOffset" : 41,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 29,
+      "context" : "This challenge thus encourages research in the ability of a machine to read, a key motivation for the machine comprehension subfield and the creation of datasets such as SQuAD (Rajpurkar et al., 2016), CNN/Daily Mail (Hermann et al.",
+      "startOffset" : 176,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2016), CNN/Daily Mail (Hermann et al., 2015) and CBT (Hill et al.",
+      "startOffset" : 24,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 29,
+      "context" : "Our experiments show that Document Retriever outperforms the built-in Wikipedia search engine and that Document Reader achieves state-of-theart results on the very competitive SQuAD benchmark (Rajpurkar et al., 2016).",
+      "startOffset" : 192,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 7,
+      "context" : "and SimpleQuestions (Bordes et al., 2015) based on the Freebase KB (Bollacker et al.",
+      "startOffset" : 20,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2015) based on the Freebase KB (Bollacker et al., 2008), or on automatically extracted KBs, e.",
+      "startOffset" : 33,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 2,
+      "context" : "That subfield has made considerable progress recently thanks to new deep learning architectures like attention-based and memory-augmented neural networks (Bahdanau et al., 2015; Weston et al., 2015; Graves et al., 2014) and the release of new training and evaluation datasets like QuizBowl (Iyyer et al.",
+      "startOffset" : 154,
+      "endOffset" : 219
+    }, {
+      "referenceID" : 34,
+      "context" : "That subfield has made considerable progress recently thanks to new deep learning architectures like attention-based and memory-augmented neural networks (Bahdanau et al., 2015; Weston et al., 2015; Graves et al., 2014) and the release of new training and evaluation datasets like QuizBowl (Iyyer et al.",
+      "startOffset" : 154,
+      "endOffset" : 219
+    }, {
+      "referenceID" : 16,
+      "context" : "That subfield has made considerable progress recently thanks to new deep learning architectures like attention-based and memory-augmented neural networks (Bahdanau et al., 2015; Weston et al., 2015; Graves et al., 2014) and the release of new training and evaluation datasets like QuizBowl (Iyyer et al.",
+      "startOffset" : 154,
+      "endOffset" : 219
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2014) and the release of new training and evaluation datasets like QuizBowl (Iyyer et al., 2014), CNN/Daily Mail based on news articles (Hermann et al.",
+      "startOffset" : 78,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2014), CNN/Daily Mail based on news articles (Hermann et al., 2015), CBT based on children books (Hill et al.",
+      "startOffset" : 47,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2015), CBT based on children books (Hill et al., 2016), or SQuAD (Rajpurkar et al.",
+      "startOffset" : 37,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2016), or SQuAD (Rajpurkar et al., 2016) and WikiReading (Hewlett et al.",
+      "startOffset" : 18,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2016) and WikiReading (Hewlett et al., 2016), both based on Wikipedia.",
+      "startOffset" : 24,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 30,
+      "context" : "The authors of (Ryu et al., 2014) perform open-domain QA using a Wikipedia-based knowledge model.",
+      "startOffset" : 15,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 0,
+      "context" : "Similarly (Ahn et al., 2004) also combine Wikipedia as a text resource with other resources, in this case with information retrieval over other documents.",
+      "startOffset" : 10,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2002), IBM’s DeepQA (Ferrucci et al., 2010) and YodaQA (Baudiš, 2015; Baudiš and Šedivỳ, 2015), the latter of which is open source and hence reproducible for comparison purposes.",
+      "startOffset" : 22,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2010) and YodaQA (Baudiš, 2015; Baudiš and Šedivỳ, 2015), the latter of which is open source and hence reproducible for comparison purposes.",
+      "startOffset" : 19,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2010) and YodaQA (Baudiš, 2015; Baudiš and Šedivỳ, 2015), the latter of which is open source and hence reproducible for comparison purposes.",
+      "startOffset" : 19,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 10,
+      "context" : "Multitask learning (Caruana, 1998) and task transfer (e.",
+      "startOffset" : 19,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 20,
+      "context" : ", in the computer vision community using ImageNet (Huh et al., 2016)) have a rich history in machine learning, as well as in NLP in particular (Collobert and Weston, 2008).",
+      "startOffset" : 50,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2016)) have a rich history in machine learning, as well as in NLP in particular (Collobert and Weston, 2008).",
+      "startOffset" : 82,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 22,
+      "context" : "(2015) combined WebQuestions and SimpleQuestions using distant supervision with Freebase as the KB to give slight improvements on both datasets, although poor performance was reported training on only one dataset and testing on the other, showing that task transfer is indeed a challenging subject; see also (Kadlec et al., 2016) for a similar conclusion.",
+      "startOffset" : 308,
+      "endOffset" : 329
+    }, {
+      "referenceID" : 15,
+      "context" : "A simple inverted index lookup followed by term vector model scoring performs quite well on this task for many question types, compared to the built-in ElasticSearch based Wikipedia Search API (Gormley and Tong, 2015).",
+      "startOffset" : 193,
+      "endOffset" : 217
+    }, {
+      "referenceID" : 33,
+      "context" : "Our best performing system uses bigram counts while preserving speed and memory efficiency by using the hashing of (Weinberger et al., 2009) to map the bigrams to 224 bins with an unsigned murmur3 hash.",
+      "startOffset" : 115,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 24,
+      "context" : "• Aligned question embedding: following (Lee et al., 2016) and other recent works, the last part we incorporate is an aligned question embedding",
+      "startOffset" : 40,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 29,
+      "context" : "The Stanford Question Answering Dataset (SQuAD) (Rajpurkar et al., 2016) is a dataset for machine comprehension based on Wikipedia.",
+      "startOffset" : 48,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 29,
+      "context" : "In the following, we use SQuAD for training and evaluating our Document Reader for the standard machine comprehension task given the relevant paragraph as defined in (Rajpurkar et al., 2016).",
+      "startOffset" : 166,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 5,
+      "context" : "WebQuestions Introduced in (Berant et al., 2013), this dataset is built to answer questions from the Freebase KB.",
+      "startOffset" : 27,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 26,
+      "context" : "WikiMovies This dataset, introduced in (Miller et al., 2016), contains 96k question-answer pairs in the domain of movies.",
+      "startOffset" : 39,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 27,
+      "context" : "Following previous work on distant supervision (DS) for relation extraction (Mintz et al., 2009), we use a procedure to automatically associate paragraphs to such training examples, and then add these examples to our training set.",
+      "startOffset" : 76,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 29,
+      "context" : "ponent on the standard SQuAD evaluation (Rajpurkar et al., 2016).",
+      "startOffset" : 40,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 25,
+      "context" : "We apply the Stanford CoreNLP toolkit (Manning et al., 2014) for tokenization and also generating lemma, part-of-speech, and named entity manual features.",
+      "startOffset" : 38,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 23,
+      "context" : "We use Adamax for optimization as described in (Kingma and Ba, 2014).",
+      "startOffset" : 47,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 3,
+      "context" : "We compare to an unconstrained QA system using redundant resources (not just Wikipedia), YodaQA (Baudiš, 2015), giving results which were previously reported on CuratedTREC and WebQuestions.",
+      "startOffset" : 96,
+      "endOffset" : 110
+    } ],
+    "year" : 0,
+    "abstractText" : "This paper proposes to tackle opendomain question answering using Wikipedia as the unique knowledge source: the answer to any factoid question is a text span in a Wikipedia article. This problem combines the challenges of document retrieval, to find relevant articles, and of machine comprehension of text to identify the answer spans from those articles. Our approach combines a search component based on bigram hashing and TF-IDF matching with a multi-layer recurrent neural network model trained to detect answers in Wikipedia paragraphs. Our experiments on multiple existing QA datasets indicate that (1) both modules are highly competitive with respect to existing counterparts and (2) multitask learning using distant supervision on their combination is an effective complete system on this challenging task.",
+    "creator" : null
+  }
+}

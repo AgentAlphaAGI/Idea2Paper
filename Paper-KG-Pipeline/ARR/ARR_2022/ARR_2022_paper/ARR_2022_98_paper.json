@@ -1,0 +1,718 @@
+{
+  "name" : "ARR_2022_98_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "GRS: Combining Generation and Revision in Unsupervised Sentence Simplification",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Text simplification is the task of reducing the complexity and improving the readability of text while preserving its meaning. This is beneficial for persons with reading disabilities (Evans et al., 2014), non-native speakers, people with low literacy, and children. Furthermore, other NLP tasks can use simplification as a pre-processing step, such as summarization (Klebanov et al., 2004), parsing (Chandrasekar et al., 1996), and machine translation (Štajner and Popovic, 2016).\nSentence simplification models can be categorized into generative and revision-based. Generative approaches produce a simple sentence from a complex sentence in one step, in an auto-regressive way (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Surya et al., 2019; Martin et al., 2020a). Revision-based methods iteratively edit a given sentence using a sequence of explicit edit operations such as word deletion or word reordering (Alva-Manchego et al., 2017; Dong et al., 2019; Kumar et al., 2020; Agrawal et al., 2021). While generative models learn complex edit operations implicitly from data, the explicit edit operations\nperformed by revision-based approaches can provide more control and interpretability; in addition to the final simplified sentence, users can examine the sequence of edit operations used and the resulting intermediate sentences.\nSimplification methods can also be categorized as supervised or unsupervised. Supervised methods tend to have better performance, but require aligned complex-simple sentence pairs for training (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Martin et al., 2020a,b; Maddela et al., 2021). Unsupervised methods do not need such training data, which may be hard to get, but do not perform as well (Surya et al., 2019; Kumar et al., 2020; Zhao et al., 2020).\nWe propose GRS: a new approach to bridge the gap between generative and revision-based methods for unsupervised sentence simplification. The insight is to introduce paraphrasing as an explicit edit operation within an iterative revision-based framework. For paraphrasing, we use a Seq2Seq transformer-based (Vaswani et al., 2017) model with lexically-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a). This decoding technique allows us to select words from the initial sentence that must be changed in the paraphrased sentence in a controlled manner (otherwise, paraphrasing an entire sentence reduces to a pure generative model and loses interpretability and controllability). To avoid the high computational overhead of repeatedly performing constraint-based decoding using various combinations of words to paraphrase, GRS includes a complex component detector to identify the most appropriate words to paraphrase.\nGRS is unsupervised in the sense that it does not require aligned complex-simple sentence pairs, but it uses supervised models. The paraphrasing model requires paraphrasing corpora, and the complex component detector requires two unlabeled corpora, one containing more complex sentences\nthan the other. However, collecting high-quality paraphrasing data and unaligned simplification data is simpler than collecting aligned complex-simple pairs.\nOur contributions are the following: 1) A new method for unsupervised sentence simplification that integrates a generative model into a revisionbased framework to leverage the strengths of both approaches; 2) An experimental comparison against supervised and unsupervised approaches on the Newsela and Asset datasets, demonstrating the advantages of our solution."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Early work on simplification relied on rules, e.g., to split or shorten long sentences (Chandrasekar and Srinivas, 1997; Carroll et al., 1998; Vickrey and Koller, 2008). Later work treated simplification as a monolingual phrase-based machine translation (MT) task (Coster and Kauchak, 2011; Wubben et al., 2012), with syntactic information added, such as constituency trees (Zhu et al., 2010). Recent work, reviewed below, leverages neural models in a generative and revision-based manner.\nSupervised Generative Methods employ Seq2Seq (Sutskever et al., 2014) models to implicitly learn simplification operations from aligned complex-simple sentence pairs. Inspired by the success of Seq2Seq neural MT models, Nisioi et al. (2017) applied a Seq2Seq model for text simplification. Zhang and Lapata (2017) used reinforcement learning to optimize a reward based on simplicity, fluency and relevance, building on a Seq2Seq model. Recent methods build on transformer (Vaswani et al., 2017) models, by integrating external databases containing simplification rules (Zhao et al., 2018), using an additional loss function to generate diverse outputs (Kriz et al., 2019), combining syntactic rules (Maddela et al., 2021), and conditioning on length and syntactic and lexical complexity features (Martin et al., 2020a).\nUnsupervised Generative Methods rely on non-aligned complex and simple corpora instead of aligned complex-simple sentence pairs. Zhao et al. (2020) adopted a back-translation framework, whereas Surya et al. (2019) used an unsupervised style transfer paradigm. Martin et al. (2020b) used a pre-trained BART model fine-tuned on a paraphrased sentence pairs.\nControllable Generative Methods produce outputs at specified grade levels (Scarton and Specia,\n2018; Nishihara et al., 2019), or apply syntactic or lexical constraints on the generated sentences (Martin et al., 2020a,b). However, these models do not provide any insights into how the simplification process is done and thus lack interpretability.\nSupervised Revision-Based Methods use complex-simple sentence pairs to learn where to apply edit operations iteratively. Alva-Manchego et al. (2017) proposed a model using keep, replace, and delete operations. Some recent work used iterative non-autoregressive models to edit sentences by either predicting token-level editoperations (Omelianchuk et al., 2021) or using a fixed pipeline of edit operations (Agrawal et al., 2021). Dong et al. (2019) proposed a hybrid method with explicit edit operations in an endto-end generative model. Though these methods are more interpretable and controllable than generative methods, they still require complex-simple sentence pairs for training.\nUnsupervised Revision-Based Methods such as Narayan and Gardent (2016) may apply a pipeline of edit operations in a fixed order. Kumar et al. (2020) then presented a general unsupervised revision-based approach by modelling text simplification as an unsupervised search problem. While GRS also relies on a revision-based framework and an unsupervised search strategy, we integrate a generative paraphrasing model into the framework to leverage the strengths of both text generation and text revision approaches."
+    }, {
+      "heading" : "3 GRS Model",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Overview",
+      "text" : "Our solution, GRS, iteratively revises a given complex sentence by applying edit operations on sentence fragments. In each iteration, multiple candidate simplifications are produced and evaluated using a scoring function (Section 3.5), and the best candidate is selected (Section 3.6). The selected sentence acts as the input to the next iteration. This process continues until none of the candidate sentences are simpler than the input sentence.\nGRS uses two edit operations: paraphrasing (Section 3.2; guided by the complex component detector described in Section 3.3) and deletion (Section 3.4). In Section 4.5, we empirically show that by using only these two operations, GRS outperforms existing revision-based methods that use more operations but do not include paraphrasing.\nThe scoring function (Section 3.5) guides our\nsearch for best simplifcation, using soft and hard constraints on simplicity, linguistic acceptability, and meaning preservation.\nIn Section 3.6, we explain how paraphrasing and deletion work together in an iterative search framework, how candidate sentences are selected, and when the algorithm terminates. Figure 1 gives an overview of GRS, which is explained further in Section 3.6."
+    }, {
+      "heading" : "3.2 Paraphrasing Operation",
+      "text" : "By adding paraphrasing to an iterative simplification search framework, we benefit from contextaware modifications of generative approaches in a revision-based method. We use a Transformer encoder-decoder (Vaswani et al., 2017) as the paraphrasing model, trained on the ParaBank paraphrasing dataset (Hu et al., 2019b); however, any paraphrasing auto-regressive model can be used instead. During inference, we use lexical-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a) to place negative constraints on complex words and phrases in the input sentence. Negative constraints are words that the paraphrasing model is forced not to generate during decoding. Figure 2 shows an example in which an input sentence was paraphrased to exclude two complex words (negative constraints): “massive” and “announcement”. We explain how to choose negative constraints below, with the help of the\ncomplex component detector."
+    }, {
+      "heading" : "3.3 Complex Component Detector",
+      "text" : "Constrained decoding is computationally more expensive than greedy and beam search decoding. In a brute-force search strategy for simple sentences, one may have to paraphrase a complex sentence using many combinations of negative constraints. To reduce the running time of the simplification process, GRS includes a complex component detector, which reduces the number of times the paraphrasing model is called. Before paraphrasing a sentence, the complex component detector predicts the best negative constraints; then the sentence and the predicted negative constraints are given to the paraphrasing model to generate a new candidate sentence. As a result, the paraphrasing operation is called only once per iteration of GRS, using the predicted negative constraints, avoiding the expensive process of repeatedly paraphrasing the input using different combinations of negative constraints.\nWe implemented the complex component detector as a complex-simple classifier that gives a simplicity probability to a given sentence. We only require two corpora with different complexity levels to train this classifier. Since aligned complexsimple sentence pairs are not required, this classifier can be trained on any pair of text corpora with different complexity levels. Reid and Zhong (2021) showed that it is possible to extract style-specific\nsections of a sentence by utilizing the attention layers of a style classifier. We argue that this technique can also be used to detect complex words and phrases within a sentence. Thus, we use the attention layers of our complex-simple classifier to extract the complex components from a given input sentence.\nFigure 3 illustrates one of the attention heads of the second layer of the DeBERTa classifier. This visualization shows that the word “faciliate” was attended to more than the other words in the given sentence. We use this intuition and devise a formula (Equations 1 and 2 below) to detect complex words by analyzing attention weights.\nWe fine-tune the pre-trained DeBERTa model (He et al., 2020) as our complex-simple classifier. BERT (Devlin et al., 2019) and its extensions (e.g. DeBERTa) add a [CLS] token to beginning and a [SEP] token to the end of each sentence (as shown in Figure 3). In these models, the hidden states of the [CLS] token in the last layer are used for classification tasks. In our complex-simple classifier, we found that the attention paid by the [CLS] token in the second layer to other words in the sentence can help us detect complex components. Equations 1 and 2 demonstrate how we extract complex components from attention head matrices of the second layer of the classifier. Here, A[CLS]h,i refers to the amount of attention the [CLS] token in the hth attention head of the second layer pays to the ith token of the input sentence. N and H refer to the length\nof the input sentence and the number of attention heads, respectively. ci defines whether the ith token is complex or not. If ci = 1, then this token will be set as a negative constraint. T̄ is a threshold used for finding complex tokens. In the example demonstrated in Figure 3, only c8, which refers to the word “facilitate\", is a complex token.\nT̄ =\n∑H−1 h=0 ∑N−1 i=0 A [CLS] h,i\nN (1)\nci =  1, if H−1∑ h=0 A [CLS] h,i ≥ T̄\n0, otherwise\n(2)"
+    }, {
+      "heading" : "3.4 Deletion Operation",
+      "text" : "The deletion operation aims to remove peripheral information to make sentences simpler. Inspired by Kumar et al. (2020), we use the constituency tree of the input sentence to obtain all constituents from different depths of the parse tree. These constituents are considered to be the candidate phrases that can be deleted. We create new candidate sentences by removing each of these phrases from the input sentence. The example in Figure 2 shows that the deletion operation drops the phrase “burying 25 nepalese sherpa guides under sheets of ice the size of houses” from the complex sentence since it is not the main clause of the sentence."
+    }, {
+      "heading" : "3.5 Scoring Function",
+      "text" : "Candidate sentences generated by our two edit operations may not be correct in terms of linguistic acceptability. Furthermore, important information from the original sentence may have been removed. We use a score function to filter out all non-grammatical candidate sentences or sentences that are not conceptually similar to the original sentence. The score function is composed of three important components.\nMeaning Preservation (Hmp): One important aspect of text simplification is to preserve the meaning of the original sentence. First, we use the method proposed in Reimers and Gurevych (2019) to obtain the semantic representations of the sentences. We then use the cosine similarity measure between the representations of the original and the generated candidate sentence. Our meaning preservation measure acts as a hard filter. A hard filter assigns a zero score to candidate sentences that do not pass a certain threshold. Section 4.6 shows\nthe effects of different values of this threshold for controlling the generated output.\nLinguistic Acceptability (Hla): By removing some components of a complex input sentence, the output sentence may become nonsensical. We train a model to check the linguistic acceptability of the generated sentences. For this purpose, we train a classifier on the CoLA (the corpus of linguistic acceptability) (Warstadt et al., 2019) dataset. This classifier measures the probability that a given sentence is grammatical. This module, like the meaning preservation module, is used as a hard filter in the score function.\nSimplicity (Ssimp): The simplicity component acts as a soft constraint. In order to evaluate simplicity, we use the complex-simple classifier mentioned in Section 3.3. Given an input sentence, the complex-simple classifier computes the simplicity probability of the sentence.\nThese three measures together evaluate the quality of each candidate sentence. Equation 3 demonstrates how the score function assigns a score to a given candidate sentence. In this equation S, Ssimp, Hla, Hmp, c, and o refer to the score function, simplicity module, linguistic acceptability hard filer, meaning preservation hard filter, candidate sentence, and the original sentence, respectively.\nS(c) = Ssimp(c) ∗Hmp(c, o) ∗Hla(c) (3)"
+    }, {
+      "heading" : "3.6 Simplification Search",
+      "text" : "Our unsupervised search method is inspired by Kumar et al. (2020), but with different simplification operations and a different score function. Given a complex input sentence, paraphrasing and deletion operations generate candidate sentences separately. In each iteration, the paraphrasing operation creates only one candidate sentence, as described in Section 3.2, whereas the deletion operation generates multiple candidate sentences (Section 3.4). Candidates sentences are then evaluated according to the scoring function. Given a score for each candidate sentence, we filter out those candidates that do not improve the score of the input sentence by some threshold. The threshold depends on the edit operation that the candidate sentence has been created from. In equation 4, top is the threshold associated with operator op. S, c, and c′ refer to the score function, the candidate sentence, and the input sentence in the current iteration, respectively.\nS(c) > S(c′) ∗ top (4)\nIn Section 4.6 we empirically show that by specifying different values for operation thresholds, we can control various characteristics of the revised output sentences.\nFinally, at the end of each iteration, out of the remaining sentences (that are not filtered out), we select the one with the highest score. Note that the sequence of edit operations is not fixed, and thus any sequence of deletion and paraphrasing operations can be applied."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Data",
+      "text" : "We use the Newsela (Xu et al., 2015) and ASSET datasets (Alva-Manchego et al., 2020) to evaluate GRS against existing simplification methods.\nNewsela contains 1840 news articles for children at five reading levels. We use the split from Zhang and Lapata (2017), containing 1129 validation and 1077 test sentence pairs.\nThe ASSET dataset includes 2000 validation and 359 test sentences pairs. Each sentence has 10 human-written references. We do not evaluate our models on TurkCorpus (Xu et al., 2016) since it has the same source sentences as ASSET. However, for the validation and test source sentences, ASSET introduces new human written references that have several rewriting transformations to better capture the characteristics of simplification."
+    }, {
+      "heading" : "4.2 Training Details",
+      "text" : "Paraphrasing Model: We use an off-the-shelf paraphrasing model proposed by Hu et al. (2019a) 1. It is a transformer-based encoder-decoder (Vaswani et al., 2017) model trained on a high-quality subset of the ParaBank (Hu et al., 2019b) dataset. It has 6 transformer layers in the encoder and the decoder, 8 attention heads in each layer, and a hidden vector size of 512. We do not apply any further fine-tuning.\nComplex-Simple Classifier: We use a pretrained DeBERTa (He et al., 2020) model implemented by Wolf et al. (2020). This model is composed of a 12-layer self-attentional encoder, each layer containing 12 attention heads. The model’s hidden size is 768, and the tokenizer vocabulary\n1https://github.com/ decompositional-semantics-initiative/ improved-ParaBank-rewriter\nsize is 30522. To fine-tune the DeBERTa model for the binary classification task, we use the NewselaAuto dataset (Jiang et al., 2020). To train the classifier, we use the AdamW (Loshchilov and Hutter, 2019) optimizer with a learning rate of 5 × 10−5 and a batch size of 16. Note that we do not use the alignment between the complex-simple sentence pairs in the Newsela-Auto dataset. Thus, our complex-simple classifier can be trained on any text corpora with different complexity levels. It took approximately one hour to fine-tune the classifier using a single NVIDIA 2080 Ti GPU. The accuracy of this classifier is 78.46.\nMeaning Preservation Module of the Scoring Function: To obtain contextual embeddings of sentences, we use the SentenceTransformers (Reimers and Gurevych, 2019) framework, specifically, the paraphrase-mpnet-base-v2 pre-trained model.\nLinguistic Acceptability Module of the Scoring Function: To score the linguistic acceptability of a sentence, we fine-tune a pre-trained DeBERTa model (He et al., 2020) for a binary classification task on the CoLA (the corpus of linguistic acceptability) (Warstadt et al., 2019) dataset. It contains 10,657 sentences, each labelled either as grammatical or ungrammatical. The configuration and training hyperparameters of this classifier are as same as for the complex-simple classifier explained above. It took approximately 30 minutes to fine-tune the model using a single NVIDIA 2080 Ti GPU. On the validation set, the accuracy of the model is 79.33."
+    }, {
+      "heading" : "4.3 Evaluation Metrics",
+      "text" : "To evaluate GRS and other models, we use SARI (Xu et al., 2016) as our primary metric. SARI\n(System output Against References and against the Input sentence) evaluates the quality of the output text by calculating how often the output text correctly keeps, inserts, and deletes n-grams from the complex sentence, compared to the reference text, where 1 ≤ n ≤ 4. We report the overall SARI score, as well as the individual SARI scores corresponding to n-grams correctly added (ADD), deleted (DELETE) and kept (KEEP); the overall SARI score is the mean of these three scores. We also report the FKGL score, which only considers the output sentence, not the source and reference sentences. It is computed based on sentence length and the number of syllables for each word in the sentence. We use the EASSE package (AlvaManchego et al., 2019) to calculate the SARI and FKGL scores. We do not use the BLEU (Papineni et al., 2002) metric since Sulem et al. (2018) showed that BLEU does not correlate well with simplicity."
+    }, {
+      "heading" : "4.4 Models Tested",
+      "text" : "We evaluate GRS with different configurations: only deletion - GRS (DL), only paraphrasing - GRS (PA), and both deletion and paraphrasing - GRS (PA + DL). We also consider the reference sentence to obtain an upper bound for a given evaluation metric, which we denote as ‘Gold Reference’, and the complex sentence itself as a trivial baseline, denoted by ‘Identity Baseline’.\nWe also compare GRS with state-of-the-art unsupervised, supervised, generative and revision-based approaches. From unsupervised methods, we select unsupervised generative models that use Seq2Seq models Surya et al. (2019); Zhao et al. (2020). We\nalso compare with Martin et al. (2020b), which leverages pretrained language models and a large paraphrase pair dataset, and Kumar et al. (2020), an iterative revision-based method with several explicit edit operations (deletion, lexical substitution and reordering).\nFrom supervised methods, we start with Narayan and Gardent (2014) and Xu et al. (2016), which use phrase-based MT models. We also consider Seq2Seq generative methods: Zhang and Lapata (2017), which uses reinforcement learning, and Zhao et al. (2020); Martin et al. (2020a,b), which use Seq2Seq transformer models. Next, we select Omelianchuk et al. (2021), a recent supervised revision-based method. Finally, we consider Dong et al. (2019), a hybrid approach using explicit edit operations in a generative framework."
+    }, {
+      "heading" : "4.5 Evaluation Results",
+      "text" : "Tables 1 and 2 illustrate the results on the Newsela (Xu et al., 2015) and ASSET (AlvaManchego et al., 2020) datasets, respectively. We report the overall SARI score, the individual scores of three operations used in SARI score, the FKGL score, and the average length of the output sentences. To evaluate previous methods, we obtained their output sentences on ASSET and Newsela from the respective project Github pages or by contacting the respective authors, followed by calculating the SARI and FKGL scores using the EASSE\npackage (described in Section 4.3). One exception is (Omelianchuk et al., 2021): since they also used the EASSE package, we copied their reported ASSET scores in Table 2, but they did not report the average sentence length.\nFor Newsela, using paraphrasing and deletion together (GRS (PA + DL)) gives the best performance on the SARI and FKGL metrics. On the Newsela dataset, our best model outperforms previous unsupervised methods and achieves +1.1 SARI improvement. It also outperforms all supervised methods except Martin et al. (2020b).\nFor ASSET, even though Martin et al. (2020b) perform better than our best model, we improve the performance over Kumar et al. (2020) by +3.6 SARI points and close the gap between revisionbased and generative approaches. Compared to supervised models, our unsupervised model again outperforms others except (Martin et al., 2020b) and (Omelianchuk et al., 2021). For the ASSET dataset, we observe that our model with only paraphrasing (GRS (PA)) has the best SARI score.\nAnalyzing the evaluation results, we observe that simplification is done differently by human annotators in Newsela than in ASSET. In Newsela, removal of peripheral information through content deletion happens more aggressively. The average reference sentence length is 12.75 compared to 23.04 for the source sentences. However, in ASSET, content removal is conservative and can be\nhandled by paraphrasing alone. The average reference sentence length is 16.54 compared to 19.72 of the source sentences. Simplifications in ASSET focus more on lexical simplification, sentence splitting and word reordering.\nMartin et al. (2020b) leverage BART (Lewis et al., 2020), a powerful pretrained generative model, and further fine-tune it on a paraphrasing dataset containing 1.1 million sequence pairs. Unlike traditional paraphrasing datasets that are structured at sentence-level, their paraphrasing dataset contains multiple sentences in a sequence, thus allowing the model to learn a sentence splitting operation as well. Thus, they outperform the previous best unsupervised models on ASSET by +5.8 SARI points. On the Newsela dataset, both GRS and the model from Kumar et al. (2020) perform better than Martin et al. (2020b) since they include an explicit text removal edit operation. Martin et al. (2020b) instead do not explicitly perform content removal and only do content deletion by way of paraphrasing. Finally, Kumar et al. (2020) does not perform well on ASSET, since they do not perform paraphrasing. Thus, we argue that our new design combines the advantages of both revision-based and generative approaches."
+    }, {
+      "heading" : "4.6 Controllability",
+      "text" : "By setting specific thresholds for the components of the score function and for edit operations (during the search), we can control the amount of deletion, paraphrasing, and the trade-off between simplicity and meaning preservation. In Table 3, we provide an analysis of controlling different thresholds in our search algorithm; the column labels have the\nsame meaning as in Tables 1 and 2. For all our experiments in this study, we use the GRS (PA + DL) model and the Newsela test set.\nMeaning Preservation Threshold: As mentioned in Section 3.6, meaning preservation is used as a hard filter in our score function. We assign a zero score to candidate sentences having a similarity score lower than the meaning preservation threshold when compared to the original sentence. As the meaning preservation threshold increases, candidate sentences less similar to the original sentence are pruned. Sentences more similar to the original sentence have higher Keep and lower Delete SARI scores. The addition score increases since paraphrasing is prioritized over deletion. Finally, the length of the output sentences increases since the model becomes more conservative.\nDeletion Threshold: By increasing the deletion threshold, the SARI Keep score increases and the SARI Delete score decreases, which also results in increased average length. This is consistent with our intuition about the deletion operation. The SARI Add score increases as well since a higher deletion threshold makes the model conservative on deletions and thus candidates from the paraphrasing operation are more likely to be selected.\nParaphrasing Threshold: Reducing the paraphrasing threshold results in more aggressive paraphrasing. Thus, we observe an increase in the SARI Delete and Add scores since paraphrasing replaces complex words and phrases with simpler ones."
+    }, {
+      "heading" : "5 Conclusions",
+      "text" : "We proposed GRS, a controllable and interpretable method for unsupervised text simplification that bridges the gap between previous unsupervised generative and revision-based approaches. We combined the two approaches by incorporating an explicit paraphrasing edit operation into an iterative simplification search algorithm. Empirically, we showed that GRS has the advantages of both approaches. GRS outperformed state-of-the-art unsupervised methods on the Newsela dataset and reduced the gap between generative and revisionbased unsupervised models on the ASSET dataset. Since any paraphrasing model that supports constrained decoding is compatible with GRS, one direction for future work is to explore the use of pretrained language models for our paraphrasing operation."
+    } ],
+    "references" : [ {
+      "title" : "A non-autoregressive edit-based approach to controllable text simplification",
+      "author" : [ "Sweta Agrawal", "Weijia Xu", "Marine Carpuat." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021, pages 3757–3769, Online. Association for",
+      "citeRegEx" : "Agrawal et al\\.,? 2021",
+      "shortCiteRegEx" : "Agrawal et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning how to simplify from explicit labeling of complex-simplified text pairs",
+      "author" : [ "Fernando Alva-Manchego", "Joachim Bingel", "Gustavo Paetzold", "Carolina Scarton", "Lucia Specia." ],
+      "venue" : "Proceedings of the Eighth International Joint Conference on Nat-",
+      "citeRegEx" : "Alva.Manchego et al\\.,? 2017",
+      "shortCiteRegEx" : "Alva.Manchego et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "ASSET: A dataset for tuning and evaluation of sentence simplification models with multiple rewriting transformations",
+      "author" : [ "Fernando Alva-Manchego", "Louis Martin", "Antoine Bordes", "Carolina Scarton", "Benoît Sagot", "Lucia Specia." ],
+      "venue" : "Proceedings of the 58th",
+      "citeRegEx" : "Alva.Manchego et al\\.,? 2020",
+      "shortCiteRegEx" : "Alva.Manchego et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "EASSE: Easier automatic sentence simplification evaluation",
+      "author" : [ "Fernando Alva-Manchego", "Louis Martin", "Carolina Scarton", "Lucia Specia." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th Inter-",
+      "citeRegEx" : "Alva.Manchego et al\\.,? 2019",
+      "shortCiteRegEx" : "Alva.Manchego et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Practical simplification of english newspaper text to assist aphasic readers",
+      "author" : [ "John Carroll", "Guido Minnen", "Yvonne Canning", "Siobhan Devlin", "John Tait." ],
+      "venue" : "Proceedings of the AAAI-98 Workshop on Integrating Artificial Intelligence and Assistive Technology,",
+      "citeRegEx" : "Carroll et al\\.,? 1998",
+      "shortCiteRegEx" : "Carroll et al\\.",
+      "year" : 1998
+    }, {
+      "title" : "Motivations and methods for text simplification",
+      "author" : [ "R. Chandrasekar", "Christine Doran", "B. Srinivas." ],
+      "venue" : "COLING 1996 Volume 2: The 16th International Conference on Computational Linguistics.",
+      "citeRegEx" : "Chandrasekar et al\\.,? 1996",
+      "shortCiteRegEx" : "Chandrasekar et al\\.",
+      "year" : 1996
+    }, {
+      "title" : "Automatic induction of rules for text simplification1revised version of the article originally published in knowledge-based computer systems: Research and applications",
+      "author" : [ "R Chandrasekar", "B Srinivas." ],
+      "venue" : "(eds k.s.r. anjaneyulu, m. sasikumar and s. ramani) narosa",
+      "citeRegEx" : "Chandrasekar and Srinivas.,? 1997",
+      "shortCiteRegEx" : "Chandrasekar and Srinivas.",
+      "year" : 1997
+    }, {
+      "title" : "Learning to simplify sentences using Wikipedia",
+      "author" : [ "Will Coster", "David Kauchak." ],
+      "venue" : "Proceedings of the Workshop on Monolingual Text-To-Text Generation, pages 1–9, Portland, Oregon. Association for Computational Linguistics.",
+      "citeRegEx" : "Coster and Kauchak.,? 2011",
+      "shortCiteRegEx" : "Coster and Kauchak.",
+      "year" : 2011
+    }, {
+      "title" : "2019. BERT: Pre-training",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova" ],
+      "venue" : null,
+      "citeRegEx" : "Devlin et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "EditNTS: An neural programmer-interpreter model for sentence simplification through explicit editing",
+      "author" : [ "Yue Dong", "Zichao Li", "Mehdi Rezagholizadeh", "Jackie Chi Kit Cheung." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computa-",
+      "citeRegEx" : "Dong et al\\.,? 2019",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An evaluation of syntactic simplification rules for people with autism",
+      "author" : [ "Richard Evans", "Constantin Orăsan", "Iustin Dornescu." ],
+      "venue" : "Proceedings of the 3rd Workshop on Predicting and Improving Text Readability for Target Reader Populations (PITR), pages",
+      "citeRegEx" : "Evans et al\\.,? 2014",
+      "shortCiteRegEx" : "Evans et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Dynamic multi-level multi-task learning for sentence simplification",
+      "author" : [ "Han Guo", "Ramakanth Pasunuru", "Mohit Bansal." ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics, pages 462–476, Santa Fe, New Mexico, USA.",
+      "citeRegEx" : "Guo et al\\.,? 2018",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Deberta: Decoding-enhanced bert with disentangled attention",
+      "author" : [ "Pengcheng He", "Xiaodong Liu", "Jianfeng Gao", "Weizhu Chen." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lexically constrained decoding for sequence generation using grid beam search",
+      "author" : [ "Chris Hokamp", "Qun Liu." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1535–1546,",
+      "citeRegEx" : "Hokamp and Liu.,? 2017",
+      "shortCiteRegEx" : "Hokamp and Liu.",
+      "year" : 2017
+    }, {
+      "title" : "Improved lexically constrained decoding for translation and monolingual rewriting",
+      "author" : [ "J. Edward Hu", "Huda Khayrallah", "Ryan Culkin", "Patrick Xia", "Tongfei Chen", "Matt Post", "Benjamin Van Durme." ],
+      "venue" : "Proceedings of the 2019 Conference of the North",
+      "citeRegEx" : "Hu et al\\.,? 2019a",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Parabank: Monolingual bitext generation and sentential paraphrasing via lexically-constrained neural machine translation",
+      "author" : [ "J Edward Hu", "Rachel Rudinger", "Matt Post", "Benjamin Van Durme." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial",
+      "citeRegEx" : "Hu et al\\.,? 2019b",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural CRF model for sentence alignment in text simplification",
+      "author" : [ "Chao Jiang", "Mounica Maddela", "Wuwei Lan", "Yang Zhong", "Wei Xu." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association 9",
+      "citeRegEx" : "Jiang et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Text simplification for informationseeking applications",
+      "author" : [ "Beata Beigman Klebanov", "Kevin Knight", "Daniel Marcu." ],
+      "venue" : "OTM Confederated International Conferences\" On the Move to Meaningful Internet Systems\", pages 735–747. Springer.",
+      "citeRegEx" : "Klebanov et al\\.,? 2004",
+      "shortCiteRegEx" : "Klebanov et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Complexity-weighted loss and diverse reranking for sentence simplification",
+      "author" : [ "Reno Kriz", "João Sedoc", "Marianna Apidianaki", "Carolina Zheng", "Gaurav Kumar", "Eleni Miltsakaki", "Chris Callison-Burch." ],
+      "venue" : "Proceedings of the 2019 Conference of the North",
+      "citeRegEx" : "Kriz et al\\.,? 2019",
+      "shortCiteRegEx" : "Kriz et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Iterative edit-based unsupervised sentence simplification",
+      "author" : [ "Dhruv Kumar", "Lili Mou", "Lukasz Golab", "Olga Vechtomova." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7918–7928, Online. Association",
+      "citeRegEx" : "Kumar et al\\.,? 2020",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BART: Denoising sequence-to-sequence pre-training for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Decoupled weight decay regularization",
+      "author" : [ "Ilya Loshchilov", "Frank Hutter." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Loshchilov and Hutter.,? 2019",
+      "shortCiteRegEx" : "Loshchilov and Hutter.",
+      "year" : 2019
+    }, {
+      "title" : "Controllable text simplification with explicit paraphrasing",
+      "author" : [ "Mounica Maddela", "Fernando Alva-Manchego", "Wei Xu." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Lan-",
+      "citeRegEx" : "Maddela et al\\.,? 2021",
+      "shortCiteRegEx" : "Maddela et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Controllable sentence simplification",
+      "author" : [ "Louis Martin", "Éric de la Clergerie", "Benoît Sagot", "Antoine Bordes." ],
+      "venue" : "Proceedings of the 12th Language Resources and Evaluation Conference, pages 4689– 4698, Marseille, France. European Language Re-",
+      "citeRegEx" : "Martin et al\\.,? 2020a",
+      "shortCiteRegEx" : "Martin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Muss: Multilingual unsupervised sentence simplification by mining paraphrases",
+      "author" : [ "Louis Martin", "Angela Fan", "Éric de la Clergerie", "Antoine Bordes", "Benoît Sagot." ],
+      "venue" : "arXiv preprint arXiv:2005.00352.",
+      "citeRegEx" : "Martin et al\\.,? 2020b",
+      "shortCiteRegEx" : "Martin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hybrid simplification using deep semantics and machine translation",
+      "author" : [ "Shashi Narayan", "Claire Gardent." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 435–445, Baltimore,",
+      "citeRegEx" : "Narayan and Gardent.,? 2014",
+      "shortCiteRegEx" : "Narayan and Gardent.",
+      "year" : 2014
+    }, {
+      "title" : "Unsupervised sentence simplification using deep semantics",
+      "author" : [ "Shashi Narayan", "Claire Gardent." ],
+      "venue" : "Proceedings of the 9th International Natural Language Generation conference (INLG), pages 111– 120.",
+      "citeRegEx" : "Narayan and Gardent.,? 2016",
+      "shortCiteRegEx" : "Narayan and Gardent.",
+      "year" : 2016
+    }, {
+      "title" : "Controllable text simplification with lexical constraint loss",
+      "author" : [ "Daiki Nishihara", "Tomoyuki Kajiwara", "Yuki Arase." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics: Student Research Workshop, pages 260–",
+      "citeRegEx" : "Nishihara et al\\.,? 2019",
+      "shortCiteRegEx" : "Nishihara et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring neural text simplification models",
+      "author" : [ "Sergiu Nisioi", "Sanja Štajner", "Simone Paolo Ponzetto", "Liviu P. Dinu." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 85–91,",
+      "citeRegEx" : "Nisioi et al\\.,? 2017",
+      "shortCiteRegEx" : "Nisioi et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Text Simplification by Tagging",
+      "author" : [ "Kostiantyn Omelianchuk", "Vipul Raheja", "Oleksandr Skurzhanskyi." ],
+      "venue" : "Proceedings of the 16th Workshop on Innovative Use of NLP for Building Educational Applications, pages 11–25, Online. Association for Computational",
+      "citeRegEx" : "Omelianchuk et al\\.,? 2021",
+      "shortCiteRegEx" : "Omelianchuk et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Fast lexically constrained decoding with dynamic beam allocation for neural machine translation",
+      "author" : [ "Matt Post", "David Vilar." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Hu-",
+      "citeRegEx" : "Post and Vilar.,? 2018",
+      "shortCiteRegEx" : "Post and Vilar.",
+      "year" : 2018
+    }, {
+      "title" : "LEWIS: Levenshtein editing for unsupervised text style transfer",
+      "author" : [ "Machel Reid", "Victor Zhong." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021, pages 3932–3944, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Reid and Zhong.,? 2021",
+      "shortCiteRegEx" : "Reid and Zhong.",
+      "year" : 2021
+    }, {
+      "title" : "Sentence-bert: Sentence embeddings using siamese bert-networks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics.",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "Learning simplifications for specific target audiences",
+      "author" : [ "Carolina Scarton", "Lucia Specia." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 712–718, Melbourne, Australia. Association",
+      "citeRegEx" : "Scarton and Specia.,? 2018",
+      "shortCiteRegEx" : "Scarton and Specia.",
+      "year" : 2018
+    }, {
+      "title" : "Can text simplification help machine translation",
+      "author" : [ "Sanja Štajner", "Maja Popovic" ],
+      "venue" : "In Proceedings of the 19th Annual Conference of the European Association for Machine Translation,",
+      "citeRegEx" : "Štajner and Popovic.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Štajner and Popovic.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic structural evaluation for text simplification",
+      "author" : [ "Elior Sulem", "Omri Abend", "Ari Rappoport." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,",
+      "citeRegEx" : "Sulem et al\\.,? 2018",
+      "shortCiteRegEx" : "Sulem et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unsupervised neural text simplification",
+      "author" : [ "Sai Surya", "Abhijit Mishra", "Anirban Laha", "Parag Jain", "Karthik Sankaranarayanan." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 2058–2068, Florence, Italy. Asso-",
+      "citeRegEx" : "Surya et al\\.,? 2019",
+      "shortCiteRegEx" : "Surya et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "I Sutskever", "O Vinyals", "QV Le." ],
+      "venue" : "Advances in NIPS.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Ł ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Sentence simplification for semantic role labeling",
+      "author" : [ "David Vickrey", "Daphne Koller." ],
+      "venue" : "Proceedings of ACL-08: HLT, pages 344–352, Columbus, Ohio. Association for Computational Linguistics.",
+      "citeRegEx" : "Vickrey and Koller.,? 2008",
+      "shortCiteRegEx" : "Vickrey and Koller.",
+      "year" : 2008
+    }, {
+      "title" : "A multiscale visualization of attention in the transformer model",
+      "author" : [ "Jesse Vig." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics: System Demonstrations, pages 37–42, Florence, Italy. Association for Computational Lin-",
+      "citeRegEx" : "Vig.,? 2019",
+      "shortCiteRegEx" : "Vig.",
+      "year" : 2019
+    }, {
+      "title" : "Neural network acceptability judgments",
+      "author" : [ "Alex Warstadt", "Amanpreet Singh", "Samuel R. Bowman." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 7:625–641.",
+      "citeRegEx" : "Warstadt et al\\.,? 2019",
+      "shortCiteRegEx" : "Warstadt et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sentence simplification by monolingual machine translation",
+      "author" : [ "Sander Wubben", "Antal van den Bosch", "Emiel Krahmer." ],
+      "venue" : "Proceedings of the 50th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Wubben et al\\.,? 2012",
+      "shortCiteRegEx" : "Wubben et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Problems in current text simplification research: New data can help",
+      "author" : [ "Wei Xu", "Chris Callison-Burch", "Courtney Napoles." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 3:283–297.",
+      "citeRegEx" : "Xu et al\\.,? 2015",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Optimizing statistical machine translation for text simplification",
+      "author" : [ "Wei Xu", "Courtney Napoles", "Ellie Pavlick", "Quanze Chen", "Chris Callison-Burch." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 4:401–415.",
+      "citeRegEx" : "Xu et al\\.,? 2016",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Sentence simplification with deep reinforcement learning",
+      "author" : [ "Xingxing Zhang", "Mirella Lapata." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages 584– 594, Copenhagen, Denmark. Association for Compu-",
+      "citeRegEx" : "Zhang and Lapata.,? 2017",
+      "shortCiteRegEx" : "Zhang and Lapata.",
+      "year" : 2017
+    }, {
+      "title" : "Integrating transformer and paraphrase rules for sentence simplification",
+      "author" : [ "Sanqiang Zhao", "Rui Meng", "Daqing He", "Andi Saptono", "Bambang Parmanto." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Zhao et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Semi-supervised text simplification with backtranslation and asymmetric denoising autoencoders",
+      "author" : [ "Yanbin Zhao", "Lu Chen", "Zhi Chen", "Kai Yu." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 34(05):9668–9675.",
+      "citeRegEx" : "Zhao et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A monolingual tree-based translation model for sentence simplification",
+      "author" : [ "Zhemin Zhu", "Delphine Bernhard", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 23rd International Conference on Computational Linguistics (Coling 2010), pages 1353–1361, Beijing,",
+      "citeRegEx" : "Zhu et al\\.,? 2010",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2010
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 10,
+      "context" : "This is beneficial for persons with reading disabilities (Evans et al., 2014),",
+      "startOffset" : 57,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 17,
+      "context" : "Furthermore, other NLP tasks can use simplification as a pre-processing step, such as summarization (Klebanov et al., 2004), parsing (Chandrasekar et al.",
+      "startOffset" : 100,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2004), parsing (Chandrasekar et al., 1996), and machine transla-",
+      "startOffset" : 17,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 47,
+      "context" : "Generative approaches produce a simple sentence from a complex sentence in one step, in an auto-regressive way (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Surya et al., 2019; Martin et al., 2020a).",
+      "startOffset" : 111,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 11,
+      "context" : "Generative approaches produce a simple sentence from a complex sentence in one step, in an auto-regressive way (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Surya et al., 2019; Martin et al., 2020a).",
+      "startOffset" : 111,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 18,
+      "context" : "Generative approaches produce a simple sentence from a complex sentence in one step, in an auto-regressive way (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Surya et al., 2019; Martin et al., 2020a).",
+      "startOffset" : 111,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 37,
+      "context" : "Generative approaches produce a simple sentence from a complex sentence in one step, in an auto-regressive way (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Surya et al., 2019; Martin et al., 2020a).",
+      "startOffset" : 111,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 23,
+      "context" : "Generative approaches produce a simple sentence from a complex sentence in one step, in an auto-regressive way (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Surya et al., 2019; Martin et al., 2020a).",
+      "startOffset" : 111,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 1,
+      "context" : "Revision-based methods iteratively edit a given sentence using a sequence of explicit edit operations such as word deletion or word reordering (Alva-Manchego et al., 2017; Dong et al., 2019; Kumar et al., 2020; Agrawal et al., 2021).",
+      "startOffset" : 143,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 9,
+      "context" : "Revision-based methods iteratively edit a given sentence using a sequence of explicit edit operations such as word deletion or word reordering (Alva-Manchego et al., 2017; Dong et al., 2019; Kumar et al., 2020; Agrawal et al., 2021).",
+      "startOffset" : 143,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 19,
+      "context" : "Revision-based methods iteratively edit a given sentence using a sequence of explicit edit operations such as word deletion or word reordering (Alva-Manchego et al., 2017; Dong et al., 2019; Kumar et al., 2020; Agrawal et al., 2021).",
+      "startOffset" : 143,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 0,
+      "context" : "Revision-based methods iteratively edit a given sentence using a sequence of explicit edit operations such as word deletion or word reordering (Alva-Manchego et al., 2017; Dong et al., 2019; Kumar et al., 2020; Agrawal et al., 2021).",
+      "startOffset" : 143,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 47,
+      "context" : "Supervised methods tend to have better performance, but require aligned complex-simple sentence pairs for training (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Martin et al., 2020a,b; Maddela et al., 2021).",
+      "startOffset" : 115,
+      "endOffset" : 222
+    }, {
+      "referenceID" : 11,
+      "context" : "Supervised methods tend to have better performance, but require aligned complex-simple sentence pairs for training (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Martin et al., 2020a,b; Maddela et al., 2021).",
+      "startOffset" : 115,
+      "endOffset" : 222
+    }, {
+      "referenceID" : 18,
+      "context" : "Supervised methods tend to have better performance, but require aligned complex-simple sentence pairs for training (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Martin et al., 2020a,b; Maddela et al., 2021).",
+      "startOffset" : 115,
+      "endOffset" : 222
+    }, {
+      "referenceID" : 22,
+      "context" : "Supervised methods tend to have better performance, but require aligned complex-simple sentence pairs for training (Zhang and Lapata, 2017; Guo et al., 2018; Kriz et al., 2019; Martin et al., 2020a,b; Maddela et al., 2021).",
+      "startOffset" : 115,
+      "endOffset" : 222
+    }, {
+      "referenceID" : 37,
+      "context" : "Unsupervised methods do not need such training data, which may be hard to get, but do not perform as well (Surya et al., 2019; Kumar et al., 2020; Zhao et al., 2020).",
+      "startOffset" : 106,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 19,
+      "context" : "Unsupervised methods do not need such training data, which may be hard to get, but do not perform as well (Surya et al., 2019; Kumar et al., 2020; Zhao et al., 2020).",
+      "startOffset" : 106,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 49,
+      "context" : "Unsupervised methods do not need such training data, which may be hard to get, but do not perform as well (Surya et al., 2019; Kumar et al., 2020; Zhao et al., 2020).",
+      "startOffset" : 106,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 39,
+      "context" : "For paraphrasing, we use a Seq2Seq transformer-based (Vaswani et al., 2017) model",
+      "startOffset" : 53,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 13,
+      "context" : "with lexically-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a).",
+      "startOffset" : 36,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 31,
+      "context" : "with lexically-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a).",
+      "startOffset" : 36,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 14,
+      "context" : "with lexically-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a).",
+      "startOffset" : 36,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 7,
+      "context" : "Later work treated simplification as a monolingual phrase-based machine translation (MT) task (Coster and Kauchak, 2011; Wubben et al., 2012), with syntactic information added, such as constituency trees (Zhu et al.",
+      "startOffset" : 94,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 44,
+      "context" : "Later work treated simplification as a monolingual phrase-based machine translation (MT) task (Coster and Kauchak, 2011; Wubben et al., 2012), with syntactic information added, such as constituency trees (Zhu et al.",
+      "startOffset" : 94,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 50,
+      "context" : ", 2012), with syntactic information added, such as constituency trees (Zhu et al., 2010).",
+      "startOffset" : 70,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 38,
+      "context" : "Supervised Generative Methods employ Seq2Seq (Sutskever et al., 2014) models to implic-",
+      "startOffset" : 45,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 39,
+      "context" : "Recent methods build on transformer (Vaswani et al., 2017) models, by integrating external databases containing simplification",
+      "startOffset" : 36,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 48,
+      "context" : "rules (Zhao et al., 2018), using an additional loss function to generate diverse outputs (Kriz et al.",
+      "startOffset" : 6,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2018), using an additional loss function to generate diverse outputs (Kriz et al., 2019), combining syntactic rules (Maddela et al.",
+      "startOffset" : 71,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2019), combining syntactic rules (Maddela et al., 2021), and conditioning on length and syntactic and lexical complexity features (Martin et al.",
+      "startOffset" : 35,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2021), and conditioning on length and syntactic and lexical complexity features (Martin et al., 2020a).",
+      "startOffset" : 82,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 34,
+      "context" : "Controllable Generative Methods produce outputs at specified grade levels (Scarton and Specia, 2018; Nishihara et al., 2019), or apply syntactic or lexical constraints on the generated sentences (Mar-",
+      "startOffset" : 74,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 27,
+      "context" : "Controllable Generative Methods produce outputs at specified grade levels (Scarton and Specia, 2018; Nishihara et al., 2019), or apply syntactic or lexical constraints on the generated sentences (Mar-",
+      "startOffset" : 74,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 29,
+      "context" : "operations (Omelianchuk et al., 2021) or using a fixed pipeline of edit operations (Agrawal et al.",
+      "startOffset" : 11,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2021) or using a fixed pipeline of edit operations (Agrawal et al., 2021).",
+      "startOffset" : 53,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 39,
+      "context" : "We use a Transformer encoder-decoder (Vaswani et al., 2017) as the paraphrasing model, trained on the ParaBank paraphrasing dataset (Hu et al.",
+      "startOffset" : 37,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2017) as the paraphrasing model, trained on the ParaBank paraphrasing dataset (Hu et al., 2019b); however, any paraphrasing auto-regressive model can be used instead.",
+      "startOffset" : 80,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 13,
+      "context" : "During inference, we use lexical-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a) to place negative constraints on complex words and phrases in the input sentence.",
+      "startOffset" : 54,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 31,
+      "context" : "During inference, we use lexical-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a) to place negative constraints on complex words and phrases in the input sentence.",
+      "startOffset" : 54,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 14,
+      "context" : "During inference, we use lexical-constrained decoding (Hokamp and Liu, 2017; Post and Vilar, 2018; Hu et al., 2019a) to place negative constraints on complex words and phrases in the input sentence.",
+      "startOffset" : 54,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 41,
+      "context" : "We used BertViz (Vig, 2019) to visualize attention weights.",
+      "startOffset" : 16,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 12,
+      "context" : "We fine-tune the pre-trained DeBERTa model (He et al., 2020) as our complex-simple classifier.",
+      "startOffset" : 43,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 42,
+      "context" : "For this purpose, we train a classifier on the CoLA (the corpus of linguistic acceptability) (Warstadt et al., 2019) dataset.",
+      "startOffset" : 93,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 45,
+      "context" : "We use the Newsela (Xu et al., 2015) and ASSET datasets (Alva-Manchego et al.",
+      "startOffset" : 19,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2015) and ASSET datasets (Alva-Manchego et al., 2020) to evaluate GRS against existing simplification methods.",
+      "startOffset" : 27,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 46,
+      "context" : "models on TurkCorpus (Xu et al., 2016) since it has the same source sentences as ASSET.",
+      "startOffset" : 21,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 39,
+      "context" : "It is a transformer-based encoder-decoder (Vaswani et al., 2017) model trained on a high-quality subset of the ParaBank (Hu et al.",
+      "startOffset" : 42,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2017) model trained on a high-quality subset of the ParaBank (Hu et al., 2019b) dataset.",
+      "startOffset" : 63,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 12,
+      "context" : "Complex-Simple Classifier: We use a pretrained DeBERTa (He et al., 2020) model implemented by Wolf et al.",
+      "startOffset" : 55,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 21,
+      "context" : "To train the classifier, we use the AdamW (Loshchilov and Hutter, 2019) optimizer with a learning rate of 5 × 10−5 and a batch size of 16.",
+      "startOffset" : 42,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 33,
+      "context" : "Meaning Preservation Module of the Scoring Function: To obtain contextual embeddings of sentences, we use the SentenceTransformers (Reimers and Gurevych, 2019) framework, specifically, the paraphrase-mpnet-base-v2 pre-trained model.",
+      "startOffset" : 131,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 12,
+      "context" : "Linguistic Acceptability Module of the Scoring Function: To score the linguistic acceptability of a sentence, we fine-tune a pre-trained DeBERTa model (He et al., 2020) for a binary classification task on the CoLA (the corpus of linguistic acceptability) (Warstadt et al.",
+      "startOffset" : 151,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2020) for a binary classification task on the CoLA (the corpus of linguistic acceptability) (Warstadt et al., 2019) dataset.",
+      "startOffset" : 94,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 46,
+      "context" : "To evaluate GRS and other models, we use SARI (Xu et al., 2016) as our primary metric.",
+      "startOffset" : 46,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 30,
+      "context" : "We do not use the BLEU (Papineni et al., 2002) metric since Sulem et al.",
+      "startOffset" : 23,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 45,
+      "context" : "Tables 1 and 2 illustrate the results on the Newsela (Xu et al., 2015) and ASSET (AlvaManchego et al.",
+      "startOffset" : 53,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 29,
+      "context" : "is (Omelianchuk et al., 2021): since they also used the EASSE package, we copied their reported ASSET scores in Table 2, but they did not report the average sentence length.",
+      "startOffset" : 3,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 24,
+      "context" : "Compared to supervised models, our unsupervised model again outperforms others except (Martin et al., 2020b) and (Omelianchuk et al.",
+      "startOffset" : 86,
+      "endOffset" : 108
+    } ],
+    "year" : 0,
+    "abstractText" : "We propose GRS: a new unsupervised approach to sentence simplification that combines text generation and text revision. We start with an iterative framework in which an input sentence is revised using explicit edit operations, and add paraphrasing (of sentence fragments) as a new edit operation. This allows us to combine the advantages of generative and revisionbased approaches: paraphrasing captures complex edit operations and thus improves performance, and the use of explicit edit operations in an iterative manner provides controllability and interpretability. We demonstrate these advantages of GRS compared to existing methods on the Newsela and ASSET datasets. We will release the code upon acceptance.",
+    "creator" : null
+  }
+}

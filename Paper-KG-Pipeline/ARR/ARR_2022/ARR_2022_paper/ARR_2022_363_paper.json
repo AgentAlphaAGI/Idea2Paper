@@ -1,0 +1,669 @@
+{
+  "name" : "ARR_2022_363_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Modality-specific Learning Rates for Effective Multimodal Additive Late-fusion",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Multimodal machine learning aims to jointly understand and process the inputs from different modalities (e.g., language, audio, vision). This usually requires a model to have the ability to incorporate the feature representations from each modality into a joint representation (the “multimodal fusion” problem). There are two types of commonly-used multimodal fusion methods: late-fusion and multimodal interaction. Late-fusion methods rely on the representation vectors computed from unimodal encoders, which are then combined into a joint representation using operations such as addition, multiplication (Kim et al., 2016), bi-linear pooling (Fukui et al., 2016; Yu et al., 2017b), and so\non. Multimodal interactive methods apply complex operations such as cross-modal attention (Yu et al., 2017a), modulation (Yao et al., 2018), and multi-head self-attention such as multimodal transformers (Tan and Bansal, 2019; Tsai et al., 2019).\nDespite the intuition that multimodal interaction leverages the inter-dependency across different modalities, (Hessel and Lee, 2020) proposed that there is a method to simulate the outputs of an additive late-fusion model that has the closest possible performance to an arbitrary interactive model (but not how to find the specific structure). According to the experimental results in (Hessel and Lee, 2020), the accuracy of the closest additive models is competitive with the corresponding interactive models under certain conditions, indicating that late-fusion models are still open to in-depth research because they have the potential of reducing the computational costs while maintaining effectiveness.\nAn additive late-fusion method with two modalities M , N and inputs m, n can be fomulated as follows:\nf(m,n) = fM (m) + fN (n). (1)\nWe assume that such a well-performing f(m,n) can be built up with the most effective unimodal structures for fM and fN , i.e., a transformer (Vaswani et al., 2017) for the textual modality and convolution neural networks (CNN) (Ren et al., 2015) for the visual modality. While training f(m,n), the most common current practice is to select a global learning rate. However, the optimal unimodal learning rates of fM and fN can be significantly different. For example, with an Adam optimizer (Kingma and Ba, 2014), the best learning rate for the transformer is usually around 2e-5, while the best learning rate for Multi-Layer Perceptrons (MLP) can be up to 1e-3. While combining the two structures into a late-fusion model with a global learning rate, i.e., 3e-4, the transformer part turns out to be nearly frozen in the training proce-\ndure (see the “Gradient Analysis” subsections in the Experimental Results section).\nTo address this issue, we propose the ModalitySpecific Learning Rate (MSLR) method, which uses different learning rates for different modalities while training an additive late-fusion model. We explore different model structures, tasks, and learning rate assignment strategies to analyse the impact of MSLR on the gradient effectiveness, predicative behaviors, and evaluation results.\nOur contributions are as follows. Firstly, we propose MSLR as an effective strategy to train an additive late-fusion model for multimodal tasks; secondly, we analyse the predicative behavior and gradient flow to prove the necessity of using MSLR instead of global learning rates in some conditions; finally, experiments on three different tasks: MuSE Stress Detection (Jaiswal et al., 2019, 2020), MELD Sentiment Analysis (Poria et al., 2019), and MM-IMDb Movie Genre Classification (Ovalle et al., 2017) indicate that MSLR outperforms global learning rates with certain assignment strategies."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Multimodal Classification",
+      "text" : "We focus on multimodal classification tasks which have broad applications in real life. In multimodal classification, the logits of each class predicted by each unimodal sub-part of the joint late-fusion model can be directly summed up and converted into an output distribution. Examples of commolystudied multimodal classification tasks include sentiment analysis (Zadeh et al., 2016; Yao et al., 2020; Poria et al., 2019), emotion recognition (Busso et al., 2008; Jaiswal et al., 2020; Zadeh et al., 2018), and other real-world applications such as disaster classification (Tian et al., 2018) and movie genre classification (Ovalle et al., 2017).\nThe inputs of multimodal classification models are usually videos, which contain visual image frames, audio utterances and textual transcripts. These modalities are typically processed by different models based on the nature of each modality. For example, visual features are extracted by pretrained Convolutional Neural Networks (CNNs) (Simonyan and Zisserman, 2014; Szegedy et al., 2017), spectral or temporal acoustic features are extracted using tools such as OpenSmile (Eyben et al., 2010) and Covarep (Degottex et al., 2014), textual features are usually achieved by pre-trained word embeddings (Peters et al., 2018) and Transformers\n(Devlin et al., 2019). An effective model should be able to incorporate these features with different numerical properties and natural distributions."
+    }, {
+      "heading" : "2.2 Multimodal Fusion",
+      "text" : "There are two mainstream methods to encode and combine multimodal features. The first approach is late-fusion, in which the features from different models are first encoded separately by unimodal encoders, and the single-vector representation is then combined into a joint representation and fed into the final classifier (Kim et al., 2016; Fukui et al., 2016; Yu et al., 2017b). The advantages of latefusion is that the model is relatively light-weighted and interpretable, and the sub-parts processing each modality can be well-monitored. However, the lowlevel alignments across the modalities, such as the correspondence between a textual word and a visual object, can not be detected while computing the unimodal feature vectors. On the other hand, the multimodal interaction methods enable the encoders to interact with each other via cross-modal attention mechanisms (Yu et al., 2017a; Tan and Bansal, 2019; Tsai et al., 2019).\nAlthough it is intuitive that the interaction methods can have better capability, Hessel and Lee (2020) showed that the prediction of any interactive model can be simulated by a corresponding late-fusion model, making it possible to reduce the computational costs without severely hurting the performances."
+    }, {
+      "heading" : "2.3 Modality Specific Learning",
+      "text" : ""
+    }, {
+      "heading" : "2.3.1 Modality-Specific Early Stopping.",
+      "text" : "A closely related work to ours is called ModalitySpecific Early Stopping (MSES) (Fujimori et al., 2019). They stated the issue in multimodal learning as “overfitting in some modalities”, and attributed it to “the convergence rate and generalization performance differ among modalities”, which is similar to our claims and observations. However, they did not explore the cause of this overfitting, and proposed to solve the problem by applying early stopping for the modalities that have appeared to be converged regarding the validation performances. Their method does not actually assign different step-sizes for different modalities and still chooses a global learning rate instead. In contrast, we investigate the gradient flow of the model and observe that the overfitting in certain modalities is because the global learning rate is beyond the numerical\nrange where the model structure for that modality can work regularly. While one modality receives vanishing gradient, the unimodal performance no longer improve and appears to be overfit. Thus, we directly modify the initial learning rates according to the knowledge on learning rates achieved from unimodal fine-tuning. Our method is able to delay the overfitting to some extent, instead of simply choosing the best saved parameters for the overfit modalities and stopping training."
+    }, {
+      "heading" : "2.3.2 Gradient Blending.",
+      "text" : "Another related work is Gradient Blending (Wang et al., 2020), which also states the issue of joint training as overfitting. Unlike MSES (Fujimori et al., 2019), they directly modifies the gradient descent process by substituting the total loss with a weighted sum of multiple unimodal loss, and the weight is computed based on a “overfittingto-generalization ratio” (OGRs) that describes the overfitting conditions for each modality. However, the computation of OGRs relies on training each unimodal model for several epochs, and the initial learning rate for each modality is still chosen globally and does not guarantee the training behavior of the initial steps. If a model does not receive gradient at all when the training starts (which is possible in some of our experiments), the initial OGRs can be ill-formed, limiting the usage of Gradient Blending.\nBesides, the tasks and situations they deal with are different from ours: in most of their cases, the joint training underperforms unimodal training, but in our tasks, a joint training with global learning rate can already outperform the unimodal results, and our method can bring further improvement. Also, their tasks do not include the textual modality."
+    }, {
+      "heading" : "3 Modality-Specific Learning Rates",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Learning Rates",
+      "text" : "The best learning rate for a model depends both on its structure and the optimization algorithm. The models structure further depends significantly on the modality of inputs, i.e., a transformer is effective for the textual modality, CNN for local image parts, and MLP is enough for a single hand-crafted feature vector. As a result, the best range for learning rates can be largely different across modalities.\nFor different optimizers, the default learning rate range also has large variation from less than 1e-3 (Adam-like) to 1.0 (Adadelta, (Zeiler, 2012)).\nWe propose to use Modality-Specific Learning Rate (MSLR), which includes different learning rate assigment strategies (see the following three subsections) to keep the models that work for each single modality still work in multimodal training. To focus on analysing the influence of modality, we use an AdamW optimizer (Loshchilov and Hutter, 2017) for all of our models. In this setting, the term “learning rate” stands for the step size α. Step size is a hyper-parameter independent of the cumulated first moment mt and second moment vt in each step of gradient descent. Please refer to (Kingma and Ba, 2014; Loshchilov and Hutter, 2017) for more details. In our strategies, we either choose a fixed α value for each modality or adjust α dynamically based on unimodal performance, which is still independent of the first and second moments."
+    }, {
+      "heading" : "3.2 The “Keep” Strategy",
+      "text" : "The most straight-forward MSLR strategy is keeping the best fine-tuned unimodal learning rate for different modalities while training the late-fusion model. This strategy is expected to ensure that each unimodal sub-part still has effective gradients."
+    }, {
+      "heading" : "3.3 The “Smooth” Strategy",
+      "text" : "The “Smooth” strategy compromises different learning rates by shifting the learning rate for different modalities to be closer to the average learning rate of all modalities, resulting in smaller margins. This is supposed to lead to more stable training and yields better results when all the modalities work in relatively close learning rate ranges."
+    }, {
+      "heading" : "3.4 The “Dynamic” Strategy",
+      "text" : "Motivated by the dynamic sampling strategies (Guo et al., 2018; Gottumukkala et al., 2020; Yao et al., 2021) in multi-task learning, we leverage the validation set to measure how fast the model is learning each of its unimodal sub-parts. We start from the “Keep” strategy in the first epoch, and update the step-size for modality N after each epoch based on the performance of the unimodal prediction fN (n) on the validation set. Specifically, for epoch t and modality N , we update the step-size by:\nαt,N = α0,N ∗ rvalt,N , (2)\nwhere rvalt,N is the ratio of the unimodal performance on the validation set in epoch t to the average performance of the previous 5∼10 epochs, which is usually slightly larger or smaller than 1.0. We name this as the “Dynamic” strategy. The motivation for this strategy is that if the unimodal performance of a modality is significantly improved in an epoch,\nthe learning rate for this modality should be increased to make full use of the current gradient direction; otherwise, if there is no significant difference with respect to previous epochs, we should maintain the current learning rate to keep it in the effective range for this modality."
+    }, {
+      "heading" : "4 Tasks and Models",
+      "text" : ""
+    }, {
+      "heading" : "4.1 MuSE Stress Detection",
+      "text" : "Multimodal Stressed Emotion (MuSE) (Jaiswal et al., 2019, 2020) is a multimodal dataset for emotion recognition and stress detection, which is collected from student monologue sessions recorded before or after their final exams. The topic and content of each monologue is directed by random emotion-eliciting questions such as “tell me about an unhappy experience in your life.” Monologue sentence clips are annotated with binary stress labels: “stressed” for monologues recorded right before final exams, and “non-stressed” for those after\nexams. For each sample, we make predictions using the audio utterance of a sentence in the monologue session, as well as its textual transcription. We use 1853, 200, and 273 samples for training, validation, and testing, respectively.\nRegarding the model structure (Figure 1), we use a Transformer pre-trained with BERT (Devlin et al., 2019) as our textual encoder for the transcripts. For the audio inputs, we extract an 88-dimensional\nacoustic feature using OpenSmile (Eyben et al., 2010) with eGeMaps (Eyben et al., 2015) configuration for each sentence, and pass it through a 4-layer 256-dimensional MLP. The top-level 256- dimensional representations from both modalities are concatenated and projected into the output logits by a linear layer, which is equivalent to an additive late-fusion."
+    }, {
+      "heading" : "4.2 MELD Sentiment Analysis",
+      "text" : "The Multimodal Emotion Lines Dataset (MELD) (Poria et al., 2019) is an expansion of the Emotion Lines multi-party conversation dataset (Chen et al., 2018) and contains the audios and transcrips for the dialogues from the TV-series Friends, in which each sentence is annotated with emotion and sentiment labels. For the multimodal sentiment analysis task, there are three classes: positive, negative, and neutral, and two modalities: audio and textual. We use 1038, 114, and 280 dialogues for training, validation, and test, respectively.\nFor preprocessing, we follow (Poria et al., 2019) to apply feature selection on the 6373 dimensional acoustic features from OpenSmile, resulting in a 1422 dimensional dense audio representation for each sentence. We consider the dialogue as a sequence of sentences, regardless of the specific speaker. The maximum dialogue length is 33.\nOur sentiment analysis model (Figure 2) con-\ntains a textual encoder and an audio encoder. The textual encoder has a word-level 2d Convolutional Neural Network (Zhang and Wallace, 2017) that outputs a 512-dimensional sentence embedding from the word embeddings. For the sentence embedding, we apply one step of masked selfattention (Vaswani et al., 2017) on the sentence sequence in the same dialogue, resulting in a sequence of 512-dimensional textual hidden states. For the audio encoder, we use a bi-directional LSTM (Hochreiter and Schmidhuber, 1997) which takes the audio features for each utterance as input, and outputs 300 dimensional hidden states. For each time step (sentence), the output of selfattention layer and audio LSTM are concatenated and projected by a 512-dimensional linear layer to predict its sentiment class (additive late-fusion)."
+    }, {
+      "heading" : "4.3 MM-IMDb Movie Genre Classification",
+      "text" : "The Multimodal IMDb (MM-IMDb) (Ovalle et al., 2017) dataset is built with 25,959 IMDb movies with their plots and posters; each movie is labeled with more than one genre, making it a multilabel classification task. There are two modalities: plot (textual) and poster (visual). We use a training/validation/test split of 15552/2608/7799 movies, respectively.\nAs for preprocessing, following related work (Ovalle et al., 2017) and (Fujimori et al., 2019), we use the VGG Neural Network (Simonyan and Zisserman, 2014) pre-trained on ImageNet (Deng et al., 2009) which produces 4096-dimensional visual features for the posters, and 300-dimensional Word2Vec 1 embeddings for the textual plots.\nWe implement the same model structure as described by (Fujimori et al., 2019), which is a linear layer with 2048 hidden states and ReLU activation, followed by a 512-dimensional linear layer as the classifier, for both modalities (Figure 3). There are 23 output neurons corresponding to the 23 genre classes. Each neuron has a sigmoid activation instead of softmax for multi-label classification. The motivation of using a Multi-layer Perceptrons (MLP) structure on both modality is to test the efficiency of our MSLR strategies while different modalities have similar computational flows, as well as to have a comparison with the related MSES method (Fujimori et al., 2019).\n1https://code.google.com/archive/p/ word2vec/"
+    }, {
+      "heading" : "5 Experimental Results",
+      "text" : ""
+    }, {
+      "heading" : "5.1 General Settings",
+      "text" : "For all our experiments with the “Dynamic” strategy, we compute the ratio r with respect to previous 5 epochs. All the MSES methods used for comparison are based on our implementation. The best unimodal and global learning rates for each task are found by a linear search based on the metrics on the validation sets. All our experiments are implemented with Pytorch2 and ran on 1 GeForce RTX 2080 super GPU and Intel i7 9700k processor."
+    }, {
+      "heading" : "5.2 MuSE Stress Detection",
+      "text" : "For the MuSE stress detection task and late-fusion structure with a Transformer + MLP structure, we use a batch size of 32. A learning rate of 2e-5 works the best for the textual modality, while 5e-3 works best for the audio modality. The late-fusion model works the best with a global learning rate of 3e-4. We name these models “Text-only”, “Audio-only”, and “Joint-global”, respectively."
+    }, {
+      "heading" : "5.2.1 Gradient Analysis.",
+      "text" : "We analyse the gradient-based Layer Conductance (Sundararajan et al., 2017; Shrikumar et al., 2018) for the textual and acoustic encoder, using the Captum (Kokhlikyan et al., 2020) package. The result is averaged among all the 256 neurons of the linear layer for each modality.\nWe observe in Table 5 that with a joint-global learning rate (3e-4), the textual Transformer works beyond its comfort zone (around 2e-5) and has vanished gradients (conductance close to 0). This indicates that the model’s multimodal performance is limited because it can not effectively learn the textual modality while using a global learning rate. In contrast, we observe that using the MSLR “Keep” strategy solves this issue."
+    }, {
+      "heading" : "5.2.2 Prediction Similarity.",
+      "text" : "Another approach of exploring how different are the learned models with MSLR and global learning rates is to directly analyse the testing predictions. If the language encoder has vanished gradients, the multimodal predicative behavior should be close to the unimodal audio model. In Table 1, we show the overlap rate (the ratio of the two models making the same prediction for a sample) for different model pairs, as well as the full confusion matrix for the stressed (1) and non-stressed (0) labels.\n2https://pytorch.org/\nWe observe that without MSLR, the joint-global model has 0.86 overlap with the Audio-only model and only 0.62 with the Text-only model. However, if MSLR is applied, as the training goes on (from epoch 20 to 100), MSLR gets away from the Audioonly model and becomes closer to the Text-only model, which is consistent with Table 5 showing that the textual part is receiving gradients. Besides, after 100 epochs, MSLR results in a very different model from the all the joint and unimodal models."
+    }, {
+      "heading" : "5.2.3 Evaluation Metrics.",
+      "text" : "The evaluation metrics we use for the MuSE Stress Detection task include the total accuracy and the precision, recall and F-score for the “stressed” label (Table 2). We observe that the “Keep” strategy achieves competitive scores with the best global learning rate model while the model’s predicative behavior is very different as shown by the previous subsection. Additionally, the “Dynamic” strategy significantly outperforms both the global learning rate and the Multimodal Early Stopping (MSES) method (p < 0.05, t-test). We believe that starting from “Keep” enables the model to learn both modalities with valid gradients, and the “Dynamic” strategy helps adjust the learning rate according to the validation performance of the unimodal models, which brings further improvements."
+    }, {
+      "heading" : "5.3 MELD Sentiment Analysis",
+      "text" : "For the MELD Sentiment Analysis dataset, we use a batch size of 10; the best learning rate for Textonly, Audio-only and Joint-global is 1e-4, 1e-3 and 5e-4, respectively. For the “Smooth” strategy, we use a learning rate of 2.5e-4 for textual modality and 7.5e-4 for audio."
+    }, {
+      "heading" : "5.3.1 Gradient Analysis",
+      "text" : "We apply Layer Conductance analysis on the 512 neurons of the top linear layer for each modality, as we did in the MuSE Stress Detection. The results are in Table 6. In this case, since the gap between the suitable learning rate for the two modalities is smaller than the MuSE task, we observe nonzero layer conductance for both modalities for the global learning rate method. The MSLR method, on the other hand, still achieves higher value of conductance as the training goes on."
+    }, {
+      "heading" : "5.3.2 Evaluation Metrics",
+      "text" : "Following (Poria et al., 2019), the MELD Sentiment Analysis task is evaluated with the F-scores for each class and their weighted average (Table 3).\nWe observe that the “Smooth” strategy works slightly better than the “Keep” strategy in this case. This is potentially because the smaller learning rate gap makes 5e-4 an acceptable learning rate for both modalities with valid gradient flows. The “Keep”\nstrategy maintains the large gap, which makes the training less stable compared to the “Smooth” strategy which can be considered as a reconcile with the global learning rate. The “Smooth” strategy also outperforms the “Dynamic” strategy since the latter starts from the same initial learning rates with a large gap as in the “Keep” strategy."
+    }, {
+      "heading" : "5.4 MM-IMDb Movie Genre Classification",
+      "text" : "For the MM-IMDB dataset, we use a batch size of 128. We name the unimodal model using only the plot the “Text-only” model, and the model using only the poster the “Visual-only” model. The best fine-tuned learning rates for Text-only, Visualonly and Joint-global models are 1e-2, 1e-4, and 1e-3, respectively. It’s worth noticing that although we have similar MLP structures for both modalities, the best learning rates can still have a 100- time gap between the two modalities. This is perhaps because of the numerical properties of the features from different modalities, as well as the pre-processing methods. For the “Smooth” strategy, we use a learning rate of 3e-3 for the textual modality and 3e-4 for the visual modality."
+    }, {
+      "heading" : "5.4.1 Gradient Analysis",
+      "text" : "We apply the same Layer Conductance analysis as the other two datasets on the 512 hidden units of the top-level linear layer for each modality. The results are in Table 7.\nWe observe that the textual representation has relatively low average conductance compared to the visual one when the model converges with a global learning rate. The MSLR strategy helps alleviate this issue and makes the training more efficient.\nBased on the gradient analysis on all the three tasks, we conclude that choosing an initial learning rate according to unimodal results is a simple and effective approach to help with the vanishing gradient problem in certain cases."
+    }, {
+      "heading" : "5.4.2 Evaluation Metrics",
+      "text" : "Following (Ovalle et al., 2017), the performance of genre classification is evaluated by F-scores computed by four different averaging algorithms: micro, macro, weighted, and samples. The results are shown in Table 4. We have the same conclusion as the MuSE Stress Detection task: when the best learning rates are extremely different, the “Keep” and “Dynamic” strategies work better than “Smooth” and all the other baselines."
+    }, {
+      "heading" : "6 Lesson Learned",
+      "text" : "In this work, we proposed modality-specific learning rates (MSLR) for training multimodal latefusion models built up with unimodal encoders. To summarize, we have the following findings:\nFirstly, we showed that learning multimodal latefusion models can be difficult if the best learning rate for each modality is significantly different. A global learning rate may not work for all the modalities according to our Layer Conductance analysis for the representations from different modalities.\nSecondly, we tried solving this problem using MSLR. According to both the gradient analysis and the predicative performance with the “Keep” Strategy, we conclude that it helps prevent vanishing gradient, and when the training converges, results in a different model from global learning rates.\nThirdly, we evaluated three different MSLR strategies on three different multimodal tasks with various model structures. We observed that MSLR generally achieves competitive or better scores on most of the commonly-used evaluation metrics than the baselines using a global learning rate or related modality-specific learning methods.\nSpecifically, the experimental results on the MELD Sentiment Analysis task indicates that when different modalities has close ranges of best learning rates, the model with a global learning rate is a strong baseline, while MSLR while achieves competitive performance with the “Smooth” strategy performing the best. Otherwise, in the MuSE and MM-IMDb task where the learning rate gaps are large, the “Keep” and “Dynamic” strategy outperforms global learning rate model because they ensure a valid gradient on all the modalities.\nA potential disadvantage of MSLR is the unstable training process, which can be the topic of future work. We also hope that our work inspires more research on new learning strategies for multimodal interactive models and generative tasks."
+    } ],
+    "references" : [ {
+      "title" : "Iemocap: Interactive emotional dyadic motion capture database",
+      "author" : [ "Carlos Busso", "Murtaza Bulut", "Chi-Chun Lee", "Abe Kazemzadeh", "Emily Mower", "Samuel Kim", "Jeannette N Chang", "Sungbok Lee", "Shrikanth S Narayanan." ],
+      "venue" : "Language resources",
+      "citeRegEx" : "Busso et al\\.,? 2008",
+      "shortCiteRegEx" : "Busso et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Emotionlines: An emotion corpus of multi-party conversations",
+      "author" : [ "Sheng-Yeh Chen", "Chao-Chun Hsu", "Chuan-Chun Kuo", "Lun-Wei Ku" ],
+      "venue" : "arXiv preprint arXiv:1802.08379",
+      "citeRegEx" : "Chen et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Covarep — a collaborative voice analysis repository for speech technologies",
+      "author" : [ "G. Degottex", "John Kane", "Thomas Drugman", "T. Raitio", "Stefan Scherer." ],
+      "venue" : "2014 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 960–",
+      "citeRegEx" : "Degottex et al\\.,? 2014",
+      "shortCiteRegEx" : "Degottex et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Imagenet: A large-scale hierarchical image database",
+      "author" : [ "Jia Deng", "Wei Dong", "Richard Socher", "Li-Jia Li", "Kai Li", "Li Fei-Fei." ],
+      "venue" : "2009 IEEE conference on computer vision and pattern recognition, pages 248–255. Ieee.",
+      "citeRegEx" : "Deng et al\\.,? 2009",
+      "shortCiteRegEx" : "Deng et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Com-",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The geneva minimalistic acoustic parameter set (gemaps) for voice",
+      "author" : [ "Florian Eyben", "Klaus R Scherer", "Björn W Schuller", "Johan Sundberg", "Elisabeth André", "Carlos Busso", "Laurence Y Devillers", "Julien Epps", "Petri Laukka", "Shrikanth S Narayanan" ],
+      "venue" : null,
+      "citeRegEx" : "Eyben et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Eyben et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Opensmile: the munich versatile and fast opensource audio feature extractor",
+      "author" : [ "Florian Eyben", "Martin Wöllmer", "Björn Schuller." ],
+      "venue" : "Proceedings of the 18th ACM international conference on Multimedia, pages 1459–1462.",
+      "citeRegEx" : "Eyben et al\\.,? 2010",
+      "shortCiteRegEx" : "Eyben et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Modality-specific learning rate control for multimodal classification",
+      "author" : [ "Naotsuna Fujimori", "Rei Endo", "Yoshihiko Kawai", "Takahiro Mochizuki." ],
+      "venue" : "Asian Conference on Pattern Recognition, pages 412– 422. Springer.",
+      "citeRegEx" : "Fujimori et al\\.,? 2019",
+      "shortCiteRegEx" : "Fujimori et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multimodal compact bilinear pooling for visual question answering and visual grounding",
+      "author" : [ "Akira Fukui", "Dong Huk Park", "Daylen Yang", "Anna Rohrbach", "Trevor Darrell", "Marcus Rohrbach." ],
+      "venue" : "arXiv preprint arXiv:1606.01847.",
+      "citeRegEx" : "Fukui et al\\.,? 2016",
+      "shortCiteRegEx" : "Fukui et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dynamic sampling strategies for multi-task reading comprehension",
+      "author" : [ "Ananth Gottumukkala", "Dheeru Dua", "Sameer Singh", "Matt Gardner." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 920–924.",
+      "citeRegEx" : "Gottumukkala et al\\.,? 2020",
+      "shortCiteRegEx" : "Gottumukkala et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Dynamic task prioritization for multitask learning",
+      "author" : [ "Michelle Guo", "Albert Haque", "De-An Huang", "Serena Yeung", "Li Fei-Fei." ],
+      "venue" : "Proceedings of the European Conference on Computer Vision (ECCV), pages 270–287.",
+      "citeRegEx" : "Guo et al\\.,? 2018",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Does my multimodal model learn cross-modal interactions? it’s harder to tell than you might think",
+      "author" : [ "Jack Hessel", "Lillian Lee" ],
+      "venue" : "In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Hessel and Lee.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Hessel and Lee.",
+      "year" : 2020
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural computation, 9(8):1735– 1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Muse-ing on the impact of utterance ordering on crowdsourced emotion annotations",
+      "author" : [ "Mimansa Jaiswal", "Zakaria Aldeneh", "Cristian-Paul Bara", "Yuanhang Luo", "Mihai Burzo", "Rada Mihalcea", "Emily Mower Provost." ],
+      "venue" : "ICASSP 2019-2019 IEEE Interna-",
+      "citeRegEx" : "Jaiswal et al\\.,? 2019",
+      "shortCiteRegEx" : "Jaiswal et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Muse: a multimodal dataset of stressed emotion",
+      "author" : [ "Mimansa Jaiswal", "Cristian-Paul Bara", "Yuanhang Luo", "Mihai Burzo", "Rada Mihalcea", "Emily Mower Provost." ],
+      "venue" : "Proceedings of The 12th Language Resources and Evaluation Conference, pages",
+      "citeRegEx" : "Jaiswal et al\\.,? 2020",
+      "shortCiteRegEx" : "Jaiswal et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hadamard product for low-rank bilinear pooling",
+      "author" : [ "Jin-Hwa Kim", "Kyoung-Woon On", "Woosang Lim", "Jeonghee Kim", "Jung-Woo Ha", "Byoung-Tak Zhang." ],
+      "venue" : "arXiv preprint arXiv:1610.04325.",
+      "citeRegEx" : "Kim et al\\.,? 2016",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Captum: A unified and generic model interpretability library for pytorch",
+      "author" : [ "Narine Kokhlikyan", "Vivek Miglani", "Miguel Martin", "Edward Wang", "Bilal Alsallakh", "Jonathan Reynolds", "Alexander Melnikov", "Natalia Kliushkina", "Carlos Araya", "Siqi Yan" ],
+      "venue" : null,
+      "citeRegEx" : "Kokhlikyan et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Kokhlikyan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Decoupled weight decay regularization",
+      "author" : [ "Ilya Loshchilov", "Frank Hutter." ],
+      "venue" : "arXiv preprint arXiv:1711.05101.",
+      "citeRegEx" : "Loshchilov and Hutter.,? 2017",
+      "shortCiteRegEx" : "Loshchilov and Hutter.",
+      "year" : 2017
+    }, {
+      "title" : "Gated multimodal units for information fusion",
+      "author" : [ "John Edison Arevalo Ovalle", "Thamar Solorio", "Manuel Montes-y-Gómez", "Fabio A. González." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017,",
+      "citeRegEx" : "Ovalle et al\\.,? 2017",
+      "shortCiteRegEx" : "Ovalle et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "NAACL.",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Meld: A multimodal multi-party",
+      "author" : [ "Soujanya Poria", "Devamanyu Hazarika", "Navonil Majumder", "Gautam Naik", "Erik Cambria", "Rada Mihalcea" ],
+      "venue" : null,
+      "citeRegEx" : "Poria et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Poria et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Faster r-cnn: towards real-time object detection with region proposal networks",
+      "author" : [ "Shaoqing Ren", "Kaiming He", "Ross Girshick", "Jian Sun." ],
+      "venue" : "Proceedings of the 28th International Conference on Neural Information Processing Systems-Volume 1, pages 91–",
+      "citeRegEx" : "Ren et al\\.,? 2015",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Computationally efficient measures of internal neuron importance",
+      "author" : [ "Avanti Shrikumar", "Jocelin Su", "Anshul Kundaje." ],
+      "venue" : "arXiv preprint arXiv:1807.09946.",
+      "citeRegEx" : "Shrikumar et al\\.,? 2018",
+      "shortCiteRegEx" : "Shrikumar et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Very deep convolutional networks for large-scale image recognition",
+      "author" : [ "Karen Simonyan", "Andrew Zisserman." ],
+      "venue" : "arXiv preprint arXiv:1409.1556.",
+      "citeRegEx" : "Simonyan and Zisserman.,? 2014",
+      "shortCiteRegEx" : "Simonyan and Zisserman.",
+      "year" : 2014
+    }, {
+      "title" : "Axiomatic attribution for deep networks",
+      "author" : [ "Mukund Sundararajan", "Ankur Taly", "Qiqi Yan." ],
+      "venue" : "International Conference on Machine Learning, pages 3319–3328. PMLR.",
+      "citeRegEx" : "Sundararajan et al\\.,? 2017",
+      "shortCiteRegEx" : "Sundararajan et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Inception-v4, inceptionresnet and the impact of residual connections on learning",
+      "author" : [ "Christian Szegedy", "S. Ioffe", "V. Vanhoucke", "Alexander Amir Alemi." ],
+      "venue" : "AAAI.",
+      "citeRegEx" : "Szegedy et al\\.,? 2017",
+      "shortCiteRegEx" : "Szegedy et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Lxmert: Learning cross-modality encoder representations from transformers",
+      "author" : [ "Hao Tan", "Mohit Bansal." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natu-",
+      "citeRegEx" : "Tan and Bansal.,? 2019",
+      "shortCiteRegEx" : "Tan and Bansal.",
+      "year" : 2019
+    }, {
+      "title" : "Multimodal deep representation learning for video classification",
+      "author" : [ "Haiman Tian", "Yudong Tao", "Samira Pouyanfar", "ShuChing Chen", "M. Shyu." ],
+      "venue" : "World Wide Web, 22:1325–1341.",
+      "citeRegEx" : "Tian et al\\.,? 2018",
+      "shortCiteRegEx" : "Tian et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multimodal transformer for unaligned multimodal language sequences",
+      "author" : [ "Yao-Hung Hubert Tsai", "Shaojie Bai", "Paul Pu Liang", "J Zico Kolter", "Louis-Philippe Morency", "Ruslan Salakhutdinov." ],
+      "venue" : "Proceedings of the conference. Association for Computa-",
+      "citeRegEx" : "Tsai et al\\.,? 2019",
+      "shortCiteRegEx" : "Tsai et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "NIPS.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "What makes training multi-modal classification networks hard? 2020",
+      "author" : [ "Weiyao Wang", "Du Tran", "Matt Feiszli" ],
+      "venue" : "IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),",
+      "citeRegEx" : "Wang et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Muser: Multimodal stress detection using emotion recognition as an auxiliary task",
+      "author" : [ "Yiqun Yao", "Michalis Papakostas", "Mihai Burzo", "Mohamed Abouelenien", "Rada Mihalcea." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Yao et al\\.,? 2021",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Morse: Multimodal sentiment analysis for real-life settings",
+      "author" : [ "Yiqun Yao", "Verónica Pérez-Rosas", "Mohamed Abouelenien", "Mihai Burzo." ],
+      "venue" : "Proceedings of the 2020 International Conference on Multimodal Interaction, pages 387–396.",
+      "citeRegEx" : "Yao et al\\.,? 2020",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Cascaded mutual modulation for visual reasoning",
+      "author" : [ "Yiqun Yao", "Jiaming Xu", "Feng Wang", "Bo Xu." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 975– 980.",
+      "citeRegEx" : "Yao et al\\.,? 2018",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multi-level attention networks for visual question answering",
+      "author" : [ "Dongfei Yu", "Jianlong Fu", "Tao Mei", "Yong Rui." ],
+      "venue" : "Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages 4709–4717.",
+      "citeRegEx" : "Yu et al\\.,? 2017a",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multi-modal factorized bilinear pooling with co-attention learning for visual question answering",
+      "author" : [ "Zhou Yu", "Jun Yu", "Jianping Fan", "Dacheng Tao." ],
+      "venue" : "Proceedings of the IEEE international conference on computer vision, pages 1821–1830.",
+      "citeRegEx" : "Yu et al\\.,? 2017b",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Mosi: multimodal corpus of sentiment intensity and subjectivity analysis in online opinion videos",
+      "author" : [ "Amir Zadeh", "Rowan Zellers", "Eli Pincus", "LouisPhilippe Morency." ],
+      "venue" : "arXiv preprint arXiv:1606.06259.",
+      "citeRegEx" : "Zadeh et al\\.,? 2016",
+      "shortCiteRegEx" : "Zadeh et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Multimodal language analysis in the wild: Cmumosei dataset and interpretable dynamic fusion graph",
+      "author" : [ "AmirAli Bagher Zadeh", "Paul Pu Liang", "Soujanya Poria", "Erik Cambria", "Louis-Philippe Morency." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the As-",
+      "citeRegEx" : "Zadeh et al\\.,? 2018",
+      "shortCiteRegEx" : "Zadeh et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Adadelta: an adaptive learning rate method",
+      "author" : [ "Matthew D Zeiler." ],
+      "venue" : "arXiv preprint arXiv:1212.5701.",
+      "citeRegEx" : "Zeiler.,? 2012",
+      "shortCiteRegEx" : "Zeiler.",
+      "year" : 2012
+    }, {
+      "title" : "A sensitivity analysis of (and practitioners’ guide to) convolutional neural networks for sentence classification",
+      "author" : [ "Ye Zhang", "Byron C Wallace." ],
+      "venue" : "Proceedings of the Eighth International Joint Conference on Natural Language Processing (Volume 1: Long",
+      "citeRegEx" : "Zhang and Wallace.,? 2017",
+      "shortCiteRegEx" : "Zhang and Wallace.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 15,
+      "context" : "Late-fusion methods rely on the representation vectors computed from unimodal encoders, which are then combined into a joint representation using operations such as addition, multiplication (Kim et al., 2016), bi-linear pooling (Fukui et al.",
+      "startOffset" : 190,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2016), bi-linear pooling (Fukui et al., 2016; Yu et al., 2017b), and so on.",
+      "startOffset" : 27,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2016), bi-linear pooling (Fukui et al., 2016; Yu et al., 2017b), and so on.",
+      "startOffset" : 27,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 35,
+      "context" : "Multimodal interactive methods apply complex operations such as cross-modal attention (Yu et al., 2017a), modulation (Yao et al.",
+      "startOffset" : 86,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2017a), modulation (Yao et al., 2018), and multi-head self-attention such as multimodal transformers (Tan and Bansal, 2019; Tsai et al.",
+      "startOffset" : 21,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2018), and multi-head self-attention such as multimodal transformers (Tan and Bansal, 2019; Tsai et al., 2019).",
+      "startOffset" : 71,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2018), and multi-head self-attention such as multimodal transformers (Tan and Bansal, 2019; Tsai et al., 2019).",
+      "startOffset" : 71,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 11,
+      "context" : "Despite the intuition that multimodal interaction leverages the inter-dependency across different modalities, (Hessel and Lee, 2020) proposed that there is a method to simulate the outputs of an additive late-fusion model that has the closest possible",
+      "startOffset" : 110,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 11,
+      "context" : "According to the experimental results in (Hessel and Lee, 2020), the accuracy of the closest additive models is competitive with the corresponding interactive models under certain conditions, indicating that late-fusion models are still open to in-depth research because they have the potential of reducing the computational costs while maintaining effectiveness.",
+      "startOffset" : 41,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 30,
+      "context" : ", a transformer (Vaswani et al., 2017) for the textual modality and convolution neural networks (CNN) (Ren et al.",
+      "startOffset" : 16,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2017) for the textual modality and convolution neural networks (CNN) (Ren et al., 2015) for the visual modality.",
+      "startOffset" : 71,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 16,
+      "context" : "For example, with an Adam optimizer (Kingma and Ba, 2014), the best learning rate for the transformer is usually around 2e-5, while the best learning rate for Multi-Layer Perceptrons (MLP) can be up to 1e-3.",
+      "startOffset" : 36,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2019, 2020), MELD Sentiment Analysis (Poria et al., 2019), and MM-IMDb Movie Genre Classification (Ovalle et al.",
+      "startOffset" : 39,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2019), and MM-IMDb Movie Genre Classification (Ovalle et al., 2017) indicate that MSLR outperforms global learning rates with certain assignment strategies.",
+      "startOffset" : 48,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 37,
+      "context" : "Examples of commolystudied multimodal classification tasks include sentiment analysis (Zadeh et al., 2016; Yao et al., 2020; Poria et al., 2019), emotion recognition (Busso et al.",
+      "startOffset" : 86,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 33,
+      "context" : "Examples of commolystudied multimodal classification tasks include sentiment analysis (Zadeh et al., 2016; Yao et al., 2020; Poria et al., 2019), emotion recognition (Busso et al.",
+      "startOffset" : 86,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 21,
+      "context" : "Examples of commolystudied multimodal classification tasks include sentiment analysis (Zadeh et al., 2016; Yao et al., 2020; Poria et al., 2019), emotion recognition (Busso et al.",
+      "startOffset" : 86,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2019), emotion recognition (Busso et al., 2008; Jaiswal et al., 2020; Zadeh et al., 2018), and other real-world applications such as disaster classification (Tian et al.",
+      "startOffset" : 29,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2019), emotion recognition (Busso et al., 2008; Jaiswal et al., 2020; Zadeh et al., 2018), and other real-world applications such as disaster classification (Tian et al.",
+      "startOffset" : 29,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2019), emotion recognition (Busso et al., 2008; Jaiswal et al., 2020; Zadeh et al., 2018), and other real-world applications such as disaster classification (Tian et al.",
+      "startOffset" : 29,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2018), and other real-world applications such as disaster classification (Tian et al., 2018) and movie genre classification (Ovalle et al.",
+      "startOffset" : 75,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2018) and movie genre classification (Ovalle et al., 2017).",
+      "startOffset" : 39,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 24,
+      "context" : "For example, visual features are extracted by pretrained Convolutional Neural Networks (CNNs) (Simonyan and Zisserman, 2014; Szegedy et al., 2017), spectral or temporal acoustic features are extracted using tools such as OpenSmile (Eyben et al.",
+      "startOffset" : 94,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 26,
+      "context" : "For example, visual features are extracted by pretrained Convolutional Neural Networks (CNNs) (Simonyan and Zisserman, 2014; Szegedy et al., 2017), spectral or temporal acoustic features are extracted using tools such as OpenSmile (Eyben et al.",
+      "startOffset" : 94,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2017), spectral or temporal acoustic features are extracted using tools such as OpenSmile (Eyben et al., 2010) and Covarep (Degottex et al.",
+      "startOffset" : 92,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2010) and Covarep (Degottex et al., 2014), textual features are usually achieved by pre-trained word embeddings (Peters et al.",
+      "startOffset" : 20,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2014), textual features are usually achieved by pre-trained word embeddings (Peters et al., 2018) and Transformers (Devlin et al.",
+      "startOffset" : 78,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 15,
+      "context" : "The first approach is late-fusion, in which the features from different models are first encoded separately by unimodal encoders, and the single-vector representation is then combined into a joint representation and fed into the final classifier (Kim et al., 2016; Fukui et al., 2016; Yu et al., 2017b).",
+      "startOffset" : 246,
+      "endOffset" : 302
+    }, {
+      "referenceID" : 8,
+      "context" : "The first approach is late-fusion, in which the features from different models are first encoded separately by unimodal encoders, and the single-vector representation is then combined into a joint representation and fed into the final classifier (Kim et al., 2016; Fukui et al., 2016; Yu et al., 2017b).",
+      "startOffset" : 246,
+      "endOffset" : 302
+    }, {
+      "referenceID" : 36,
+      "context" : "The first approach is late-fusion, in which the features from different models are first encoded separately by unimodal encoders, and the single-vector representation is then combined into a joint representation and fed into the final classifier (Kim et al., 2016; Fukui et al., 2016; Yu et al., 2017b).",
+      "startOffset" : 246,
+      "endOffset" : 302
+    }, {
+      "referenceID" : 7,
+      "context" : "A closely related work to ours is called ModalitySpecific Early Stopping (MSES) (Fujimori et al., 2019).",
+      "startOffset" : 80,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 31,
+      "context" : "Another related work is Gradient Blending (Wang et al., 2020), which also states the issue of joint training as overfitting.",
+      "startOffset" : 42,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 7,
+      "context" : "Unlike MSES (Fujimori et al., 2019), they directly modifies the gradient descent process by substituting the total loss with a weighted sum of multiple unimodal loss, and the weight is computed based on a “overfittingto-generalization ratio” (OGRs) that describes the overfitting conditions for each modality.",
+      "startOffset" : 12,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 18,
+      "context" : "To focus on analysing the influence of modality, we use an AdamW optimizer (Loshchilov and Hutter, 2017) for all of our models.",
+      "startOffset" : 75,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 10,
+      "context" : "Motivated by the dynamic sampling strategies (Guo et al., 2018; Gottumukkala et al., 2020; Yao et al., 2021) in multi-task learning, we leverage the validation set to measure how fast the model is learning each of its unimodal sub-parts.",
+      "startOffset" : 45,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 9,
+      "context" : "Motivated by the dynamic sampling strategies (Guo et al., 2018; Gottumukkala et al., 2020; Yao et al., 2021) in multi-task learning, we leverage the validation set to measure how fast the model is learning each of its unimodal sub-parts.",
+      "startOffset" : 45,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 32,
+      "context" : "Motivated by the dynamic sampling strategies (Guo et al., 2018; Gottumukkala et al., 2020; Yao et al., 2021) in multi-task learning, we leverage the validation set to measure how fast the model is learning each of its unimodal sub-parts.",
+      "startOffset" : 45,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 4,
+      "context" : "Regarding the model structure (Figure 1), we use a Transformer pre-trained with BERT (Devlin et al., 2019) as our textual encoder for the transcripts.",
+      "startOffset" : 85,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 6,
+      "context" : "For the audio inputs, we extract an 88-dimensional acoustic feature using OpenSmile (Eyben et al., 2010) with eGeMaps (Eyben et al.",
+      "startOffset" : 84,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2010) with eGeMaps (Eyben et al., 2015) configuration for each sentence, and pass it through a 4-layer 256-dimensional MLP.",
+      "startOffset" : 21,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 21,
+      "context" : "The Multimodal Emotion Lines Dataset (MELD) (Poria et al., 2019) is an expansion of the Emotion Lines multi-party conversation dataset (Chen et al.",
+      "startOffset" : 44,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2019) is an expansion of the Emotion Lines multi-party conversation dataset (Chen et al., 2018) and contains the audios and transcrips for the dialogues from the TV-series Friends, in which each sentence is annotated with emotion and sentiment labels.",
+      "startOffset" : 78,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 21,
+      "context" : "For preprocessing, we follow (Poria et al., 2019) to apply feature selection on the 6373 dimensional acoustic features from OpenSmile, resulting in a 1422 dimensional dense audio representation for each sentence.",
+      "startOffset" : 29,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 40,
+      "context" : "The textual encoder has a word-level 2d Convolutional Neural Network (Zhang and Wallace, 2017) that outputs a 512-dimensional sentence embedding from the word embeddings.",
+      "startOffset" : 69,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 30,
+      "context" : "For the sentence embedding, we apply one step of masked selfattention (Vaswani et al., 2017) on the sentence",
+      "startOffset" : 70,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 12,
+      "context" : "For the audio encoder, we use a bi-directional LSTM (Hochreiter and Schmidhuber, 1997) which takes the audio features for each utterance as input, and outputs 300 dimensional hidden states.",
+      "startOffset" : 52,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 19,
+      "context" : "As for preprocessing, following related work (Ovalle et al., 2017) and (Fujimori et al.",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2017) and (Fujimori et al., 2019), we use the VGG Neural Network (Simonyan and",
+      "startOffset" : 12,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 3,
+      "context" : "Zisserman, 2014) pre-trained on ImageNet (Deng et al., 2009) which produces 4096-dimensional visual features for the posters, and 300-dimensional Word2Vec 1 embeddings for the textual plots.",
+      "startOffset" : 41,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 7,
+      "context" : "We implement the same model structure as described by (Fujimori et al., 2019), which is a linear layer with 2048 hidden states and ReLU activation, followed by a 512-dimensional linear layer as the classifier, for both modalities (Figure 3).",
+      "startOffset" : 54,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 7,
+      "context" : "The motivation of using a Multi-layer Perceptrons (MLP) structure on both modality is to test the efficiency of our MSLR strategies while different modalities have similar computational flows, as well as to have a comparison with the related MSES method (Fujimori et al., 2019).",
+      "startOffset" : 254,
+      "endOffset" : 277
+    }, {
+      "referenceID" : 25,
+      "context" : "We analyse the gradient-based Layer Conductance (Sundararajan et al., 2017; Shrikumar et al., 2018) for the textual and acoustic encoder, using the Captum (Kokhlikyan et al.",
+      "startOffset" : 48,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 23,
+      "context" : "We analyse the gradient-based Layer Conductance (Sundararajan et al., 2017; Shrikumar et al., 2018) for the textual and acoustic encoder, using the Captum (Kokhlikyan et al.",
+      "startOffset" : 48,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2018) for the textual and acoustic encoder, using the Captum (Kokhlikyan et al., 2020) package.",
+      "startOffset" : 63,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 21,
+      "context" : "Following (Poria et al., 2019), the MELD Sentiment Analysis task is evaluated with the F-scores for each class and their weighted average (Table 3).",
+      "startOffset" : 10,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 19,
+      "context" : "Following (Ovalle et al., 2017), the performance of genre classification is evaluated by F-scores computed by four different averaging algorithms: micro, macro, weighted, and samples.",
+      "startOffset" : 10,
+      "endOffset" : 31
+    } ],
+    "year" : 0,
+    "abstractText" : "In multimodal machine learning, additive latefusion is a straightforward approach to combine the feature representations from different modalities, in which the final prediction can be formulated as the sum of unimodal predictions. While it has been found that certain late-fusion models can achieve competitive performance with lower computational costs compared to complex multimodal interactive models, how to effectively search for a good late-fusion model is still an open question. Moreover, for different modalities, the best unimodal models may work under significantly different learning rates due to the nature of the modality and the computational flow of the model; thus, selecting a global learning rate for late-fusion models can result in a vanishing gradient for some modalities. To help address these issues, we propose a Modality-Specific Learning Rate (MSLR) method to effectively build late-fusion multimodal models from fine-tuned unimodal models. We investigate three different strategies to assign learning rates to different modalities. Our experiments show that MSLR outperforms global learning rates on multiple tasks and settings, and enables the models to effectively learn each modality.",
+    "creator" : null
+  }
+}

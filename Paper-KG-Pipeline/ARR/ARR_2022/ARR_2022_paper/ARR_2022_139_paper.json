@@ -1,0 +1,659 @@
+{
+  "name" : "ARR_2022_139_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Sequence-to-Sequence Knowledge Graph Completion and Question Answering",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "A knowledge graph (KG) is a multi-relational graph where the nodes are entities from the real world (e.g. Barack Obama, United States) and the named edges represent the relationships between them (e.g. Barack Obama - born in - United States). KGs can be either domain specific such as WikiMovies (Miller et al., 2016) or public, crossdomain KGs encoding common knowledge such as WikiData and DBPedia (Heist et al., 2020). These graph-structure databases play an important role\nin knowledge-intensive applications including web search, question answering and recommendation systems (Ji et al., 2020).\nMost real-world knowledge graphs are incomplete. However, some missing facts can be inferred using existing facts in the KG (Bordes et al., 2013). This task termed knowledge graph completion (KGC)1 has become a popular area of research in recent years (Wang et al., 2017) and is often approached using knowledge graph embedding (KGE) models. KGE models represent each entity and relation of the KG by a dense vector embedding. Using these embeddings the model is trained to distinguish correct from incorrect facts. One of the main downstream applications of KGEs is question answering over incomplete KGs (KGQA) (Choudhary et al., 2021).\nTaking into account the large size of real world KGs (WikiData contains ~90M entities) and the applicability to downstream tasks, KGE models should fulfill the following desiderata: (i) scalability – i.e. have model size and inference time independent of the amount of entities (ii) quality – reach good empirical performance (iii) versatility – be applicable for multiple tasks such as KGC and QA, and (iv) simplicity – consist of a single module with a standard architecture and training pipeline. Traditional KGE models fulfill quality and simplicity. They build upon a simple architecture and reach a high quality in terms of KGC. However, as they create a unique embedding per entity/relation, they scale linearly with the amount of entities in the graph, both in model size and inference time, and offer limited versatility. Methods such as DKRL (Xie et al., 2016a) and KEPLER (Wang et al., 2021) attempt to tackle the scalability issue using compositional embeddings. However, they fail to achieve quality comparable to conventional KGEs. KG-BERT (Yao et al., 2019) utilizes pre-trained BERT for link prediction and holds po-\n1We use the term KGC for the task of KG link prediction.\ntential in terms of versatility as it is applicable to downstream NLP tasks. However, it is not scalable since it needs to encode the full triple representation in order capture rich interactions between entities and relations2. QA methods which leverage KGEs outperform traditional KGQA approaches on incomplete KGs. But, combining KGEs with the QA pipeline is a non-trivial task; models that attempt to do this often work on only limited query types (Huang et al. 2019; Sun et al. 2021; Saxena et al. 2020) or require multi-stage training and inference pipelines (Ren et al., 2021). Here, in order to achieve quality, these models have sacrificed versatility and simplicity.\nOur paper shows that all of these desiderata can be fulfilled by a simple sequence-to-sequence (seq2seq) model. To this end, we pose KG link prediction as a seq2seq task and train an encoderdecoder Transformer model (Vaswani et al., 2017) on this task. We then use this model pre-trained for link prediction and further finetune it for question answering; while finetuning for QA, we regularize with the link prediction objective. This simple but powerful approach, which we call KGT5, can be visualised in Fig. 1. With such a unified seq2seq approach we achieve (i) scalability – by using compositional entity representations and generative decoding (rather than scoring all entities) for inference (ii) quality – we obtain state-of-theart performance on two tasks (iii) versatility – the same model can be used for both KGC and KGQA on multiple datasets, and (iv) simplicity – we obtain all results using an off-the-shelf model with no task or dataset-specific hyperparameter tuning. In summary, we make the following contributions: • We show that KG link prediction and question an-\nswering can be treated as sequence-to-sequence tasks and tackled successfully with a single encoder-decoder Transformer (with the same architecture as T5-small (Raffel et al., 2020)).\n2Shen et al. (2020) estimate it would take KG-BERT 3 days for an evaluation run on a KG with just 40k entities\n• With this simple but powerful approach called KGT5, we reduce model size for KG link prediction up to 90% while maintaining quality competitive to conventional KGE approaches. • After ensembling KGT5 with a conventional KGE model, we even establish a new state-ofthe-art for KG link prediction • We show the versatility of this approach through the task of KGQA over incomplete graphs. By pre-training on KG link prediction and finetuning on QA, our Transformer model outperforms the state-of-the-art on multiple large-scale datasets. We will make our source code, datasets and pre-trained models publicly available once the anonymity period ends."
+    }, {
+      "heading" : "2 Background & Related Work",
+      "text" : "Given a set of entities E and a set of relationsR, a knowledge graph K ⊆ E ×R × E is a collection of subject-predicate-object (s, p, o) triples. Link prediction is the task of predicting missing triples in K by answering queries of the form of (s, p, ?) and (?, p, o). This is typically accomplished using knowledge graph embedding (KGE) models.\nConventional KGEs assign an embedding vector for each entity and relation in the KG. They model the plausibility of (s, p, o) triples via model specific scoring functions f(es, ep, eo) using the subject (es), predicate (ep) and object (eo) specific embeddings. Once trained, these embeddings are used for downstream tasks such as question answering.\nKnowledge graph question answering (KGQA) is the task of answering a natural language question using a KG as source of knowledge. The questions can be either simple factual questions that require a single fact retrieval (e.g. What language is spoken in India?), or they can be complex questions that require reasoning over multiple facts in the KG (e.g. What is the predominant religion where the leader is Ovadia Yosef?). KGEs can be utilized to perform KGQA when the background KGs are incomplete.\nIn the next few sections we will go into more detail about existing work on KGEs and KGQA."
+    }, {
+      "heading" : "2.1 Knowledge Graph Embeddings",
+      "text" : "Atomic KGE models. Multiple KGE models have been proposed in the literature, mainly differing in the form of their scoring function f(es, ep, eo). A comprehensive survey of these models, their scoring functions, training regime and link prediction performance can be found in Wang et al. (2017) and Ruffinelli et al. (2020). It is important to note that although these models obtain superior performance in the link prediction task, they suffer from a linear scaling in model size with the number of entities in the KG, and applying them to question answering necessitates separate KGE and QA modules. Compositional KGE models. To combat the linear scaling of the model size with the amount of entities in a KG, entity embeddings can be composed of token embeddings. DKRL (Xie et al., 2016b) embeds entities by combining word embeddings of entity descriptions with a CNN encoder, followed by the TransE scoring function. KEPLER (Wang et al., 2021) uses a Transformer-based encoder and combines the typical KGE training objective with a masked language modeling objective. Both of these approaches encode entities and relations separately which limits the transferability of these models to downstream tasks such as question answering. MLMLM (Clouatre et al., 2021) encodes the whole query with a RoBERTa-based model and uses [MASK] tokens to generate predictions. However, it performs significantly worse than atomic KGE models on link prediction on large KGs, and is yet to be applied to any downstream text-based tasks."
+    }, {
+      "heading" : "2.2 Knowledge Graph Question Answering",
+      "text" : "Knowledge Graph Question Answering (KGQA) has been traditionally solved using semantic parsing (Berant et al. 2013; Bast and Haussmann 2015; Das et al. 2021) where a natural language (NL) question is converted to a symbolic query over the KG. This is problematic for incomplete KGs, where a single missing link can cause the query to fail. Recent work has focused on KGQA over incomplete KGs, which is also the focus of our work. These methods attempt to overcome KG incompleteness using KG embeddings (Huang et al. 2019; Saxena et al. 2020; Sun et al. 2021; Ren et al. 2021). In order to use KGEs for KGQA, these methods first train a KGE model on the background KG,\nand then integrate the learned entity and relation embeddings into the QA pipeline. This fragmented approach brings several disadvantages; for example Huang et al. (2019)’s method only works for single fact question answering, while EmQL (Sun et al., 2021) requires prior knowledge of the NL question’s query structure. EmbedKGQA (Saxena et al., 2020) is capable of multi-hop question answering but is unable to deal with questions involving more than one entity. Hence, these methods are lacking in versatility. LEGO (Ren et al., 2021) can theoretically answer all first order logic based questions but requires multiple dataset dependent components including entity linking, relation pruning and branch pruning modules; here, to obtain versatility, LEGO has sacrificed simplicity."
+    }, {
+      "heading" : "3 The KGT5 Model",
+      "text" : "We pose both knowledge graph link prediction and question answering as sequence-to-sequence (seq2seq) tasks. We then train a simple encoderdecoder Transformer – that has the same architecture as T5-small (Raffel et al., 2020) – on these tasks. While training for question answering, we regularize with the link prediction objective. This method, which we call KGT5, results in a scalable KG link prediction model with vastly fewer parameters than conventional KGE models for large KGs. This approach also confers simplicity and versatility to the model, whereby it can be easily adapted to KGQA on any dataset regardless of question complexity.\nPosing KG link prediction as a seq2seq task requires textual representations of entities and relations, and a verbalization scheme to convert link prediction queries to textual queries; these are detailed in §3.1. The link prediction training procedure is explained in §3.2 and inference in §3.3. The KGQA finetuning and inference pipeline is explained in §3.4."
+    }, {
+      "heading" : "3.1 Textual Representations & Verbalization",
+      "text" : "Text mapping. For link prediction we require a one-to-one mapping between an entity/relation and its textual representation. For WikiData-based KGs, we use canonical mentions of entities and relations as their textual representation, followed by a disambiguation scheme that uses name aliases and unique ids3. A similar naming and disambiguation\n3Please see appendix A for details on textual representations.\nscheme is used for Freebase-based KGs; here, however, we do not enforce a one-to-one mapping since these datasets are used for QA and not link prediction and unnecessary disambiguation can even harm model performance4. Verbalization. We convert (s, p, ?) query answering to a sequence-to-sequence task by verbalizing the query (s, p, ?) to a textual representation. This is similar to the verbalization performed by Petroni et al. (2019) except there is no relation-specific template. For example, given a query (barack obama, born in, ?), we first obtain the textual mentions of the entity and relation and then verbalize it as ’predict tail: barack obama | born in’. This sequence is input to the model, and output sequence is expected to be the answer to this query, ’united states’. A similar scheme is used to verbalize subject prediction queries."
+    }, {
+      "heading" : "3.2 Training KGT5 for Link Prediction",
+      "text" : "To train a sequence-to-sequence model, we need a set of (input, output) sequences. For each triple (s, p, o) in the training graph, we verbalize the queries (s, p, ?) and (?, p, o) according to §3.1 to obtain two input sequences. The corresponding\n4This is because QA systems consider surface forms during evaluation, not entity IDs. For example, it will be better to treat both the single and album version of a song as the same entity rather than append a unique number to their text mentions.\noutput sequences are the text mentions of o and s respectively. The Transformer model is trained with teacher forcing (Williams and Zipser, 1989) and cross entropy loss.5\nOne thing to note is that unlike standard KGE models, we train using only positive triples. At each step of decoding, the model produces a probability distribution over possible next tokens. While training, this distribution is penalised for being different from the ‘true’ distribution (i.e. a probability of 1 for the true next token, 0 for all other tokens) using cross entropy loss. Hence, this training procedure is most similar to the 1vsAll + CE loss in Ruffinelli et al. (2020), except instead of scoring the true entity against all other entities, we are scoring the true token against all other tokens at each step, and the process is repeated as many times as the length of the tokenized true entity. This avoids the need for many negatives, and is independent of the number of entities."
+    }, {
+      "heading" : "3.3 Link Prediction Inference",
+      "text" : "In conventional KGE models we answer a query (s, p, ?) by finding the score f(s, p, o) ∀o ∈ E where f is the model specific scoring function. The entities o are then ranked according to the scores.\nIn our approach, given query (s, p, ?), we first verbalize it (§3.1) before feeding it to the Trans-\n5More details about training are available in Appendix B\nformer model. We then sample a fixed number of sequences from the decoder6, which are then mapped to their entity ids7. By using such a generative model we are able to approximate (with high confidence) top-m model predictions without having to score all entities in the KG, as is done by conventional KGE models. For each decoded entity we assign a score equal to the (log) probability of decoding it’s sequence. This gives us a set of (entity, score) pairs. To calculate the final ranking metrics comparable to traditional KGE models, we assign a score of −inf for all entities not encountered during the sampling procedure. A comparison of inference strategy of conventional KGE models and KGT5 can be visualized in Figure 2."
+    }, {
+      "heading" : "3.4 KGQA Training and Inference",
+      "text" : "For KGQA, we pre-train the model on the background KG using the link prediction task (§3.2). This pre-training strategy is analogous to ‘KGE module training’ used in other KGQA works (Sun et al. 2021; Ren et al. 2021). The same model is then finetuned for question answering. Hereby, we employ the same strategy as Roberts et al. (2020): we concatenate a new task prefix (predict answer:) with the input question and define the mention string of the answer entity as output. This unified approach allows us to apply KGT5 to any KGQA dataset regardless of question complexity, and without the need for sub-modules such as entity linking.\nTo combat overfitting during QA finetuning (which happens on datasets with small KGs) we devise a regularisation scheme: we add link prediction sequences sampled randomly from the back-\n6See Appendix C for additional details on sampling and our choice of decoding strategy.\n7The decoded sequence may or may not be an entity mention. We experimented with constrained decoding (Cao et al., 2021) to force the decoder to output only entity mentions; however, we found this unnecessary since the model almost always outputs an entity mention, and increasing the number of samples was enough to solve the issue.\nground KG to each batch such that a batch consists of an equal number of QA and link prediction sequences. For inference we use beam search followed by neighbourhood-based reranking to obtain the model’s prediction which is a single answer."
+    }, {
+      "heading" : "4 Experimental Study",
+      "text" : "We investigate whether a simple seq2seq Transformer model can be jointly trained to perform both knowledge graph link prediction as well as question answering. Hereby, we first describe the used datasets (§4.1), the baselines we compared to (§4.2) and the experimental setup (§4.3). The results of our experiments are analysed in §4.4-§4.6. Before going into detail, we summarize our key findings: 1. For link prediction on large KGs, the text-based\napproach of KGT5 reduces model size to comparable KGE models by 90% and is the best performing model of such a small size. 2. An ensemble of KGT5 with a traditional KGE method outperforms the current state-of-the-art. 3. On the task of KGQA over incomplete KGs, our simple seq2seq approach obtains better results than the current state-of-the-art across multiple datasets. 4. KG link prediction training might be more beneficial than language modeling pre-training on knowledge intensive tasks such as KGQA."
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "We evaluate the link prediction capability of KGT5 on Wikidata5M (Wang et al., 2021). It is one of the largest benchmark KGs and contains textual mentions of all its entities and relations. We do not use the common benchmarks FB15k-237 and WN18RR since they are too small to test the parameter efficiency of models and a Transformer model such as KGT5 is not suitable for small data.\nWe evaluate the QA capabilities of KGT5 on three large-scale KGQA benchmark datasets: MetaQA (Zhang et al., 2018), WebQuestionsSP (WQSP) (Yih et al., 2016) and ComplexWebQuestions (CWQ) (Talmor and Berant, 2018). Questions in MetaQA span from 1-hop to 3-hop questions requiring path-based reasoning on a KG which is based on WikiMovies (Miller et al., 2016). WQSP contains both 1-hop and 2-hop path based questions while CWQ contains questions requiring steps such as composition, conjunction, comparative and superlative reasoning. Both WQSP and CWQ can\nbe answered using FreeBase (Google, 2015) as the background KG. We create subsets of Freebase using the scheme proposed by Ren et al. (2021) which results in KGs that are much smaller than Freebase but can still be used to answer all questions in CWQ and WQSP.\nFollowing prior work (Sun et al., 2019a) we randomly drop 50% of edges from all KGs to simulate KG incompleteness. This stochasticity causes different works to have different KGs, making it hard to compare results without re-implementing methods. Ren et al. (2021) implemented all comparison methods using their own KG splits which they have not yet published8. A common KG split is important and we intend to publish ours. We do not re-implement comparison methods but instead report the numbers for our methods and baselines separately. We also report the accuracy obtained by executing the ground truth SPARQL queries (GT query) for test questions. GT query serves as an estimate of the hardness of a KG split and helps us compare model performance across KG splits. Note that for training all models, we only use (NL question, answer entity) pairs - no ground truth query information is used for training. Statistics of the KGs used in our experiments can be seen in Tab. 1. Statistics of the QA datasets can be seen in Tab. 7.\n8Through private communication with the authors we were able to obtain the same KG split for WQSP."
+    }, {
+      "heading" : "4.2 Comparison Models",
+      "text" : "For KG completion we compared with several standard KGE models that have been shown to achieve good performance across multiple datasets (Ruffinelli et al., 2020) but with a large number of parameters. Among low-parameter models, we compared to the text based approaches KEPLER (Wang et al., 2021), DKRL (Xie et al., 2016a) and MLMLM (Clouatre et al., 2021). We also considerd low-dimensional versions of the state-of-the-art method ComplEx. The low dimensional KGE model proposed by Chami et al. (2020) achieves good performance on common small benchmark datasets but shows a large drop in terms of quality on the larger graph Yago3-10 (Dettmers et al., 2018). We did not apply this approach on Wikidata5M.\nFor KGQA, we compared against several methods that have been shown to achieve SOTA on QA over incomplete KGs. These include PullNet (Sun et al., 2019a), EmQL (Sun et al., 2021), EmbedKGQA (Saxena et al., 2020) and LEGO (Ren et al., 2021). For the MetaQA datasets we compared with a relation-path finding baseline as well, which we call PathPred. This simple method maps a NL question to a relation path using distantly supervised data obtained from QA pairs in the training set.9.\n9Please see Appendix D for details of PathPred."
+    }, {
+      "heading" : "4.3 Experimental Setup",
+      "text" : "In all our main experiments we used a model with the same architecture as T5-small (∼60M parameters) but without the pre-trained weights. For tokenizing sequences we trained SentencePiece (Kudo and Richardson, 2018) tokenizers on the verbalised KGs (see Tab. 1 for tokenizer statistics).\nWe used AdaFactor (Shazeer and Stern, 2018) with a learning rate warmup schedule for link prediction training, batch size 320 and 10% dropout. We adopted the same procedure as Roberts et al. (2020) for QA finetuning - we halved the batch size and fixed the learning rate to 0.001. All experiments were performed using 4 Nvidia 1080Ti GPUs and models were implemented using the HuggingFace library (Wolf et al., 2019). We performed no dataset-specific hyperparameter tuning for KGT5 and used the same architecture, batch size, dropout and learning rate schedule throughout all experiments10. All models were trained until validation accuracy did not significantly increase for 10k steps.11\nFor inference, we used sampling size = 200 for link prediction and beam size = 4 for KGQA. We further performed a neighbourhood-based reranking for KGQA: given question q, topic entity from question e, predicted answer entity a and (log) probability of predicted entity pa, we compute score for a being answer as\nscore(a) = pa + α if a ∈ N (e) = pa otherwise\n(1)\n10The vocabulary size for MetaQA is 10k, compared to ∼30k for other datasets. This was needed in order to train SentencePiece tokenizer on such a small KG.\n11∼500k steps for large KGs (WD5M, CWQ), ∼30k steps for QA finetuning\nwhere α is a constant hyperparameter and N (e) is the n-hop neighbourhood of the topic entity (n = 1, 2 or 3). Re-ranking was only done on datasets where topic entity annotation is available as part of test questions."
+    }, {
+      "heading" : "4.4 Link Prediction with KGT5",
+      "text" : "Tab. 2 shows link prediction performance on Wikidata5M. We see that KGT5 outperformed all lowparameter count models in terms of MRR as well as hits@1,3. When compared to larger models, there is a drop of 0.03 points in MRR and 0.01 points in hits@1 against the best performing model.\nWe performed a more fine-grained analysis of model predictions according to the type of query (Tab. 9 in the appendix). We found that KGT5 excelled at answering queries which have none or only a few correct answers in the train set; performance dropped when several entities can be correct for a query. This could be due to the nature of sampling: low probability sequences are harder to sample and also harder to rank correctly. Additionally, the limited sampling (§3.3) may not even provide the correct answer if there exist more known positives than sampled answers.\nBased on these observations we created an ensemble of ComplEx and KGT5 which answers queries as follows: if the query does not have answers in the train KG, use KGT5; otherwise use ComplEx (614M). As shown in Tab. 2, the ensemble created by this simple rule outperformed all other single models and achieved the state-of-the-\nart on Wikidata5M12,13. Such an ensemble neither achieves the goal of scalability nor versatility but instead serves as an ablation to point out weak spots of KGT5."
+    }, {
+      "heading" : "4.5 QA over Incomplete KGs with KGT5",
+      "text" : "Due to the lack of public KG splits, we compared KGQA methods using gain over ground truth query model, which is available for both the comparison methods (from Ren et al. 2021) as well as our methods14. Tab. 3 shows hits@1 performance on Freebase-based datasets ComplexWebQuestions and WebQuestionsSP. On both datasets, KGT5 outperformed all baselines. The gains were the largest on ComplexWebQuestions which is the hardest dataset in terms of complexity and KG size.\nTab. 4 shows hits@1 performance on the MetaQA datasets. On MetaQA 1- and 3-hop, KGT5 was either equal or better than all baselines (in terms of gain). On MetaQA 2-hop however, the performance was significantly worse compared to the baselines, and even worse than ground truth querying. We did a more fine-grained analysis of the performance of KGT5 on different question types (Tab. 11, 12 and 13 in the appendix). We found that KGT5 performance suffered most on questions where the head and answer entity were of the same type (for e.g. actor→ movie→ actor questions). These question types are absent in the 1-hop and 3-hop datasets. When head and answer entities had different types (for e.g. director → movie→ language questions), KGT5 was able to answer them better than GT query.\nTo remedy this issue and create a model more faithful towards the knowledge present in the incomplete KG, we devised an ensemble of KGT5 with the PathPred baseline. The ensemble works as follows: Given a question q, try to answer it using PathPred. If this returns an empty set, use KGT5. This ensemble outperformed all single models on all MetaQA datasets, often by large margins (Tab. 4).\nAdditionally, we performed an ablation to study the effect of neighbourhood reranking on KGQA performance (Tab. 5). We found that reranking gave small but consistent gains on all datasets.\n12In this ensemble KGT5 was used to answer 42% of the queries; the rest were answered by ComplEx\n13To the best of our knowledge current state-of-the-art on Wikidata5M is ComplEx published with Broscheit et al. (2020) presented in Tab. 2.\n14Details about KGs used by us compared to baselines can be seen in Tab. 10"
+    }, {
+      "heading" : "4.6 KG vs LM Pre-training",
+      "text" : "We analyzed how generic corpora pre-training performed compared to KG link prediction training for the task of KGQA. We compared with T5-small (Raffel et al., 2020), which has the same architecture as KGT5 but pre-trained on a mixture of tasks, most notable being language modeling on web text. From Tab. 6 we see that KGT5 vastly outperformed T5-small. This is not surprising: the data for KGT5 pretraining was tailored towards the task performed – KGQA – which was not the case for T5-small. However, this shows that it is the link prediction pre-training that is responsible for the excellent KGQA performance of KGT5."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We have shown that KG link prediction and question answering can be treated as seq2seq tasks and tackled successfully with a single encoder-decoder Transformer model. We did this by training a Transformer model with the same architecture as T5small on the link prediction task, and then finetuning it on the QA task. This simple but powerful approach, which we call KGT5, performed competitively with the state-of-the-art method for KG completion while using 90% fewer parameters, and when used in conjunction with a conventional KGE model, it even established a new state-of-the-art. On the task of KGQA on incomplete KGs, we found that our unified approach outperformed baselines on multiple large-scale benchmark datasets. Additionally, we compared language modeling pretraining with KG link prediction training and found that for knowledge-intensive tasks such as KGQA, link prediction training could be more beneficial."
+    }, {
+      "heading" : "A Textual representations of entities and relations",
+      "text" : "For WikiData based datasets we obtain canonical mentions of entities and relations from the corresponding WikiData page titles. However, multiple entities can have identical canonical mentions; we disambiguate such entities with their corresponding name aliases if present. In all other cases of identical canonical mentions we extend each mention with a unique id. This results in a one-to-one mapping between entities and their textual representations.\nFor the Freebase based question answering datasets, such as WQSP and CWQ, we use the identifier triples (Chah, 2017) to retrieve mention strings. In particular, we use the canonical name (in English) connected by the relation type /type/object/name. Furthermore, we disambiguate similar to the WikiData based datasets with an alias retrieved via the relation /common/topic/alias or append part of the description /common/topic/description if available."
+    }, {
+      "heading" : "B Teacher forcing",
+      "text" : "At each step of decoding, the model produces a probability distribution over possible next tokens. While training, this distribution is penalised for being different from the ‘true’ distribution (i.e. a probability of 1 for the true next token, 0 for all other tokens) using cross entropy loss. In teacher forcing (Williams and Zipser, 1989) the target token is used as the next token during decoding.\nAn entity usually consists of multiple tokens. Consider an input sequence input, target entity mention tokenized as [w1, w2, .., wT ] and vocabulary [v1, v2, ..., vM ]. Then\nyt,c = 1c=wt pt,c = IP(vc|input, w1, w2, ..., wt−1)\nJt = − M∑ c=1 yt,c log pt,c\nLoss = 1\nT T∑ t=1 Jt\nwhere IP is the model’s output distribution."
+    }, {
+      "heading" : "C Sampling strategy for link prediction",
+      "text" : "At each step of decoding we get a probability distribution over tokens. We sample a token from\nDataset Train Questions Distinct Qtypes Distinct NL questions Train QA pairs\nthis distribution and then autoregressively decode until the ‘stop’ token. By repeating this sampling procedure multiple times we can get multiple predictions for the same input sequence. The score for a sequence is the sum of log probabilities for its tokens. For an input sequence input, and an entity mention tokenized as [w1, w2, ..., wT ], the score for the entity would be\nT∑ t=1 log(IP(wt|input, w1, w2, ..., wt−1))\nwhere IP is the model’s output distribution.\nAnother way to obtain large number predictions could have been beam search (Graves, 2012). This would also have the advantage of being deterministic and guaranteed to produce as many predictions as we want. Although in theory wider beam sizes should give improved performance, it has been observed that for beam sizes larger than 5, performance of generative models suffers drastically (Yang et al., 2018) and sampling generally produces better results. We observe the same phenomenon in our work where beam size 50 produces far worse results than sampling 50 times. Modifying the stopping criteron (Murray and Chiang, 2018) or training method (Welleck et al., 2019) might be helpful solutions that we hope to explore in future work."
+    }, {
+      "heading" : "D Path Predictor on MetaQA",
+      "text" : "Being an artificially generated template-based dataset, MetaQA has far more questions than any other dataset that we compare with (Tab. 7). It also has very little variety in the forms of questions (Tab. 8). Hence we try to answer the following question: Can we create a simple model that maps a NL question to a relation path, and then does KG traversal with this path to answer questions? We achieve this by using distant supervision to get the question→ path mapping data, which is then processed to get the final model. We call this model PathPred. We do not use ground truth queries to create this data.\nA question in MetaQA consists of the question text qtext, a topic entity h and a set of answers {a1, a2, ...} (answers only in train set). Since the topic entity annotation is present for all questions (including test set), we can replace the entity in the question to get a base template qbase15.\nGiven a training tuple of (qbase, h, a), we find all the k-hop relation paths [r1, .., rk] between h and a (k=1,2 or 3 depending on the dataset). We then aggregate these paths for each distinct qbase, and take the most frequent path as the mapping from qbase to relation path. This mapping from question template qbase to a relation path [r1, .., rk]\n15As an example given a qtext ‘who are the co-actors of Brad Pitt’ and topic entity annotation ‘Brad Pitt’, we can get a base template qbase as ‘who are the co-actors of NE’ where NE (named entity) is the substitution string\nconstitutes the PathPred model. For a test question (qtext, h), we first get qbase from qtext. We then use the aforementioned mapping to get a relation path using qbase. This relation path is then used to traverse the KG starting from h to arrive at the answer(s).\nIn the KGT5 + PathPred ensemble (§4.5, Tab. 4), we first apply the PathPred technique; if the resulting answer set is empty – which can happen due to KG incompleteness – we apply KGT5 to get the answer."
+    } ],
+    "references" : [ {
+      "title" : "More accurate question answering on freebase",
+      "author" : [ "Hannah Bast", "Elmar Haussmann." ],
+      "venue" : "Proceedings of the 24th ACM International on Conference on Information and Knowledge Management, CIKM ’15, page 1431–1440, New York, NY, USA. Association",
+      "citeRegEx" : "Bast and Haussmann.,? 2015",
+      "shortCiteRegEx" : "Bast and Haussmann.",
+      "year" : 2015
+    }, {
+      "title" : "Semantic parsing on freebase from question-answer pairs",
+      "author" : [ "Jonathan Berant", "Andrew K. Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Translating embeddings for modeling multirelational data",
+      "author" : [ "Antoine Bordes", "Nicolas Usunier", "Alberto GarciaDuran", "Jason Weston", "Oksana Yakhnenko." ],
+      "venue" : "Neural Information Processing Systems (NIPS), pages 1–9.",
+      "citeRegEx" : "Bordes et al\\.,? 2013",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "LibKGE - A knowledge graph embedding library for reproducible research",
+      "author" : [ "Samuel Broscheit", "Daniel Ruffinelli", "Adrian Kochsiek", "Patrick Betz", "Rainer Gemulla." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Broscheit et al\\.,? 2020",
+      "shortCiteRegEx" : "Broscheit et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Autoregressive entity retrieval",
+      "author" : [ "Nicola De Cao", "Gautier Izacard", "Sebastian Riedel", "Fabio Petroni." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Cao et al\\.,? 2021",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Freebase-triples: A methodology for processing the freebase data dumps",
+      "author" : [ "Niel Chah." ],
+      "venue" : "CoRR, abs/1712.08707.",
+      "citeRegEx" : "Chah.,? 2017",
+      "shortCiteRegEx" : "Chah.",
+      "year" : 2017
+    }, {
+      "title" : "Lowdimensional hyperbolic knowledge graph embeddings",
+      "author" : [ "Ines Chami", "Adva Wolf", "Da-Cheng Juan", "Frederic Sala", "Sujith Ravi", "Christopher Ré." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Chami et al\\.,? 2020",
+      "shortCiteRegEx" : "Chami et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A survey of knowledge graph embedding and their applications",
+      "author" : [ "Shivani Choudhary", "Tarun Luthra", "Ashima Mittal", "Rajat Singh." ],
+      "venue" : "CoRR, abs/2107.07842.",
+      "citeRegEx" : "Choudhary et al\\.,? 2021",
+      "shortCiteRegEx" : "Choudhary et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "MLMLM: Link prediction with mean likelihood masked language model",
+      "author" : [ "Louis Clouatre", "Philippe Trempe", "Amal Zouaq", "Sarath Chandar." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021, pages 4321–4331, On-",
+      "citeRegEx" : "Clouatre et al\\.,? 2021",
+      "shortCiteRegEx" : "Clouatre et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Case-based reasoning for natural language queries over knowledge bases",
+      "author" : [ "Rajarshi Das", "Manzil Zaheer", "Dung Thai", "Ameya Godbole", "Ethan Perez", "Jay-Yoon Lee", "Lizhen Tan", "Lazaros Polymenakos", "Andrew McCallum" ],
+      "venue" : null,
+      "citeRegEx" : "Das et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Das et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Convolutional 2d knowledge graph embeddings",
+      "author" : [ "Tim Dettmers", "Pasquale Minervini", "Pontus Stenetorp", "Sebastian Riedel." ],
+      "venue" : "Thirty-second AAAI conference on artificial intelligence.",
+      "citeRegEx" : "Dettmers et al\\.,? 2018",
+      "shortCiteRegEx" : "Dettmers et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Sequence transduction with recurrent neural networks",
+      "author" : [ "Alex Graves." ],
+      "venue" : "CoRR, abs/1211.3711.",
+      "citeRegEx" : "Graves.,? 2012",
+      "shortCiteRegEx" : "Graves.",
+      "year" : 2012
+    }, {
+      "title" : "Knowledge graphs on the web - an overview",
+      "author" : [ "Nicolas Heist", "Sven Hertling", "Daniel Ringler", "Heiko Paulheim." ],
+      "venue" : "CoRR, abs/2003.00719.",
+      "citeRegEx" : "Heist et al\\.,? 2020",
+      "shortCiteRegEx" : "Heist et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Knowledge graph embedding based question answering",
+      "author" : [ "Xiao Huang", "Jingyuan Zhang", "Dingcheng Li", "Ping Li." ],
+      "venue" : "Proceedings of the Twelfth ACM International Conference on Web Search and Data Mining, WSDM ’19, page 105–113, New York, NY,",
+      "citeRegEx" : "Huang et al\\.,? 2019",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A survey on knowledge graphs: Representation, acquisition and applications",
+      "author" : [ "Shaoxiong Ji", "Shirui Pan", "Erik Cambria", "Pekka Marttinen", "Philip S. Yu." ],
+      "venue" : "CoRR, abs/2002.00388.",
+      "citeRegEx" : "Ji et al\\.,? 2020",
+      "shortCiteRegEx" : "Ji et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Simple embedding for link prediction in knowledge graphs",
+      "author" : [ "Seyed Mehran Kazemi", "David Poole." ],
+      "venue" : "Advances in Neural Information Processing Systems.",
+      "citeRegEx" : "Kazemi and Poole.,? 2018",
+      "shortCiteRegEx" : "Kazemi and Poole.",
+      "year" : 2018
+    }, {
+      "title" : "Sentencepiece: A simple and language independent subword tokenizer and detokenizer for neural text processing",
+      "author" : [ "Taku Kudo", "John Richardson." ],
+      "venue" : "CoRR, abs/1808.06226.",
+      "citeRegEx" : "Kudo and Richardson.,? 2018",
+      "shortCiteRegEx" : "Kudo and Richardson.",
+      "year" : 2018
+    }, {
+      "title" : "Key-value memory networks for directly reading",
+      "author" : [ "Alexander Miller", "Adam Fisch", "Jesse Dodge", "AmirHossein Karimi", "Antoine Bordes", "Jason Weston" ],
+      "venue" : null,
+      "citeRegEx" : "Miller et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Miller et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Correcting length bias in neural machine translation",
+      "author" : [ "Kenton Murray", "David Chiang." ],
+      "venue" : "CoRR, abs/1808.10006.",
+      "citeRegEx" : "Murray and Chiang.,? 2018",
+      "shortCiteRegEx" : "Murray and Chiang.",
+      "year" : 2018
+    }, {
+      "title" : "Language models as knowledge bases? CoRR, abs/1909.01066",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Patrick S.H. Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander H. Miller", "Sebastian Riedel" ],
+      "venue" : null,
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-totext transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J. Liu." ],
+      "venue" : "Journal of Machine Learning Re-",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lego: Latent execution-guided reasoning for multi-hop question answering on knowledge graphs",
+      "author" : [ "Hongyu Ren", "Hanjun Dai", "Bo Dai", "Xinyun Chen", "Michihiro Yasunaga", "Haitian Sun", "Dale Schuurmans", "Jure Leskovec", "Denny Zhou." ],
+      "venue" : "Proceed-",
+      "citeRegEx" : "Ren et al\\.,? 2021",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "How much knowledge can you pack into the parameters of a language model",
+      "author" : [ "Adam Roberts", "Colin Raffel", "Noam Shazeer" ],
+      "venue" : "In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Roberts et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Roberts et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "You {can} teach an old dog new tricks! on training knowledge graph embeddings",
+      "author" : [ "Daniel Ruffinelli", "Samuel Broscheit", "Rainer Gemulla." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Ruffinelli et al\\.,? 2020",
+      "shortCiteRegEx" : "Ruffinelli et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving multi-hop question answering over knowledge graphs using knowledge base embeddings",
+      "author" : [ "Apoorv Saxena", "Aditay Tripathi", "Partha Talukdar." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Saxena et al\\.,? 2020",
+      "shortCiteRegEx" : "Saxena et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adafactor: Adaptive learning rates with sublinear memory cost",
+      "author" : [ "Noam Shazeer", "Mitchell Stern" ],
+      "venue" : null,
+      "citeRegEx" : "Shazeer and Stern.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Shazeer and Stern.",
+      "year" : 2018
+    }, {
+      "title" : "Exploiting structured knowledge in text via graph-guided representation learning",
+      "author" : [ "Tao Shen", "Yi Mao", "Pengcheng He", "Guodong Long", "Adam Trischler", "Weizhu Chen." ],
+      "venue" : "CoRR, abs/2004.14224.",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Faithful embeddings for knowledge base queries",
+      "author" : [ "Haitian Sun", "Andrew O. Arnold", "Tania Bedrax-Weiss", "Fernando Pereira", "William W. Cohen" ],
+      "venue" : null,
+      "citeRegEx" : "Sun et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "2019a. Pullnet: Open domain question answering with iterative retrieval on knowledge bases and text",
+      "author" : [ "Haitian Sun", "Tania Bedrax-Weiss", "William W. Cohen" ],
+      "venue" : null,
+      "citeRegEx" : "Sun et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Rotate: Knowledge graph embedding by relational rotation in complex space",
+      "author" : [ "Zhiqing Sun", "Zhi-Hong Deng", "Jian-Yun Nie", "Jian Tang." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Sun et al\\.,? 2019b",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The web as a knowledge-base for answering complex questions",
+      "author" : [ "Alon Talmor", "Jonathan Berant." ],
+      "venue" : "NAACL.",
+      "citeRegEx" : "Talmor and Berant.,? 2018",
+      "shortCiteRegEx" : "Talmor and Berant.",
+      "year" : 2018
+    }, {
+      "title" : "Complex embeddings for simple link prediction",
+      "author" : [ "Théo Trouillon", "Johannes Welbl", "Sebastian Riedel", "Éric Gaussier", "Guillaume Bouchard" ],
+      "venue" : null,
+      "citeRegEx" : "Trouillon et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Trouillon et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "CoRR, abs/1706.03762.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Knowledge graph embedding: A survey of approaches and applications",
+      "author" : [ "Quan Wang", "Zhendong Mao", "Bin Wang", "Li Guo." ],
+      "venue" : "IEEE Transactions on Knowledge and Data Engineering, 29(12):2724– 2743.",
+      "citeRegEx" : "Wang et al\\.,? 2017",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Kepler: A unified model for knowledge embedding and pre-trained language representation",
+      "author" : [ "Xiaozhi Wang", "Tianyu Gao", "Zhaocheng Zhu", "Zhengyan Zhang", "Zhiyuan Liu", "Juanzi Li", "Jian Tang." ],
+      "venue" : "Transactions of the Association for Computational Linguis-",
+      "citeRegEx" : "Wang et al\\.,? 2021",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Neural text generation with unlikelihood training",
+      "author" : [ "Sean Welleck", "Ilia Kulikov", "Stephen Roller", "Emily Dinan", "Kyunghyun Cho", "Jason Weston." ],
+      "venue" : "CoRR, abs/1908.04319.",
+      "citeRegEx" : "Welleck et al\\.,? 2019",
+      "shortCiteRegEx" : "Welleck et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A learning algorithm for continually running fully recurrent neural networks",
+      "author" : [ "Ronald J. Williams", "David Zipser." ],
+      "venue" : "Neural Computation, 1(2):270– 280.",
+      "citeRegEx" : "Williams and Zipser.,? 1989",
+      "shortCiteRegEx" : "Williams and Zipser.",
+      "year" : 1989
+    }, {
+      "title" : "Huggingface’s transformers: State-of-the-art natural language",
+      "author" : [ "Thomas Wolf", "Lysandre Debut", "Victor Sanh", "Julien Chaumond", "Clement Delangue", "Anthony Moi", "Pierric Cistac", "Tim Rault", "Rémi Louf", "Morgan Funtowicz", "Jamie Brew" ],
+      "venue" : null,
+      "citeRegEx" : "Wolf et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Wolf et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Representation learning of knowledge graphs with entity descriptions",
+      "author" : [ "Ruobing Xie", "Zhiyuan Liu", "Jia Jia", "Huanbo Luan", "Maosong Sun." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 30(1).",
+      "citeRegEx" : "Xie et al\\.,? 2016a",
+      "shortCiteRegEx" : "Xie et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Representation learning of knowledge graphs with entity descriptions",
+      "author" : [ "Ruobing Xie", "Zhiyuan Liu", "Jia Jia", "Huanbo Luan", "Maosong Sun." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 30.",
+      "citeRegEx" : "Xie et al\\.,? 2016b",
+      "shortCiteRegEx" : "Xie et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Embedding entities and relations for learning and inference in knowledge bases",
+      "author" : [ "Bishan Yang", "Wen tau Yih", "Xiaodong He", "Jianfeng Gao", "Li Deng" ],
+      "venue" : null,
+      "citeRegEx" : "Yang et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Breaking the beam search curse: A study of (re)scoring methods and stopping criteria for neural machine translation",
+      "author" : [ "Yilin Yang", "Liang Huang", "Mingbo Ma." ],
+      "venue" : "CoRR, abs/1808.09582.",
+      "citeRegEx" : "Yang et al\\.,? 2018",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "KG-BERT: BERT for knowledge graph completion",
+      "author" : [ "Liang Yao", "Chengsheng Mao", "Yuan Luo." ],
+      "venue" : "CoRR, abs/1909.03193.",
+      "citeRegEx" : "Yao et al\\.,? 2019",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The value of semantic parse labeling for knowledge base question answering",
+      "author" : [ "Wen-tau Yih", "Matthew Richardson", "Chris Meek", "MingWei Chang", "Jina Suh." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Yih et al\\.,? 2016",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Quaternion knowledge graph embedding",
+      "author" : [ "Shuai Zhang", "Yi Tay", "Lina Yao", "Qi Liu." ],
+      "venue" : "arXiv preprint arXiv:1904.10281.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Variational reasoning for question answering with knowledge graph",
+      "author" : [ "Yuyu Zhang", "Hanjun Dai", "Zornitsa Kozareva", "Alexander J Smola", "Le Song." ],
+      "venue" : "AAAI.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Graphvite: A high-performance cpu-gpu hybrid system for node embedding",
+      "author" : [ "Zhaocheng Zhu", "Shizhen Xu", "Meng Qu", "Jian Tang." ],
+      "venue" : "The World Wide Web Conference, pages 2494–2504. ACM.",
+      "citeRegEx" : "Zhu et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "2021. D Path Predictor on MetaQA Being an artificially generated template-based dataset, MetaQA has far more questions than any other dataset that we compare with (Tab",
+      "author" : [ "Ren" ],
+      "venue" : null,
+      "citeRegEx" : "Ren,? \\Q2021\\E",
+      "shortCiteRegEx" : "Ren",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "KGs can be either domain specific such as WikiMovies (Miller et al., 2016) or public, crossdomain KGs encoding common knowledge such as WikiData and DBPedia (Heist et al.",
+      "startOffset" : 53,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2016) or public, crossdomain KGs encoding common knowledge such as WikiData and DBPedia (Heist et al., 2020).",
+      "startOffset" : 90,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 14,
+      "context" : "These graph-structure databases play an important role in knowledge-intensive applications including web search, question answering and recommendation systems (Ji et al., 2020).",
+      "startOffset" : 159,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 2,
+      "context" : "However, some missing facts can be inferred using existing facts in the KG (Bordes et al., 2013).",
+      "startOffset" : 75,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 33,
+      "context" : "This task termed knowledge graph completion (KGC)1 has become a popular area of research in recent years (Wang et al., 2017) and is often approached using knowledge graph embedding",
+      "startOffset" : 105,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 7,
+      "context" : "question answering over incomplete KGs (KGQA) (Choudhary et al., 2021).",
+      "startOffset" : 46,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 38,
+      "context" : "Methods such as DKRL (Xie et al., 2016a) and KEPLER (Wang et al.",
+      "startOffset" : 21,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2016a) and KEPLER (Wang et al., 2021) attempt to tackle the scalability issue using compositional embeddings.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 42,
+      "context" : "KG-BERT (Yao et al., 2019) utilizes pre-trained BERT for link prediction and holds po-",
+      "startOffset" : 8,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 13,
+      "context" : "But, combining KGEs with the QA pipeline is a non-trivial task; models that attempt to do this often work on only limited query types (Huang et al. 2019; Sun et al. 2021; Saxena et al. 2020) or require multi-stage training and inference pipelines (Ren et al.",
+      "startOffset" : 134,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 27,
+      "context" : "But, combining KGEs with the QA pipeline is a non-trivial task; models that attempt to do this often work on only limited query types (Huang et al. 2019; Sun et al. 2021; Saxena et al. 2020) or require multi-stage training and inference pipelines (Ren et al.",
+      "startOffset" : 134,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 24,
+      "context" : "But, combining KGEs with the QA pipeline is a non-trivial task; models that attempt to do this often work on only limited query types (Huang et al. 2019; Sun et al. 2021; Saxena et al. 2020) or require multi-stage training and inference pipelines (Ren et al.",
+      "startOffset" : 134,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 21,
+      "context" : "2020) or require multi-stage training and inference pipelines (Ren et al., 2021).",
+      "startOffset" : 62,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 32,
+      "context" : "To this end, we pose KG link prediction as a seq2seq task and train an encoderdecoder Transformer model (Vaswani et al., 2017) on this task.",
+      "startOffset" : 104,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 20,
+      "context" : "• We show that KG link prediction and question answering can be treated as sequence-to-sequence tasks and tackled successfully with a single encoder-decoder Transformer (with the same architecture as T5-small (Raffel et al., 2020)).",
+      "startOffset" : 209,
+      "endOffset" : 230
+    }, {
+      "referenceID" : 39,
+      "context" : "DKRL (Xie et al., 2016b) embeds entities by combining word embeddings of entity descriptions with a CNN encoder, followed by the TransE scoring function.",
+      "startOffset" : 5,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 34,
+      "context" : "KEPLER (Wang et al., 2021) uses a Transformer-based encoder and combines the typical KGE training objective with a masked language modeling objective.",
+      "startOffset" : 7,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 8,
+      "context" : "MLMLM (Clouatre et al., 2021) encodes the whole query with a RoBERTa-based model and uses [MASK] tokens to generate predictions.",
+      "startOffset" : 6,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 1,
+      "context" : "Knowledge Graph Question Answering (KGQA) has been traditionally solved using semantic parsing (Berant et al. 2013; Bast and Haussmann 2015; Das et al. 2021) where a natural language (NL) question is converted to a symbolic query over the KG.",
+      "startOffset" : 95,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 9,
+      "context" : "Knowledge Graph Question Answering (KGQA) has been traditionally solved using semantic parsing (Berant et al. 2013; Bast and Haussmann 2015; Das et al. 2021) where a natural language (NL) question is converted to a symbolic query over the KG.",
+      "startOffset" : 95,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 13,
+      "context" : "These methods attempt to overcome KG incompleteness using KG embeddings (Huang et al. 2019; Saxena et al. 2020; Sun et al. 2021; Ren et al. 2021).",
+      "startOffset" : 72,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 24,
+      "context" : "These methods attempt to overcome KG incompleteness using KG embeddings (Huang et al. 2019; Saxena et al. 2020; Sun et al. 2021; Ren et al. 2021).",
+      "startOffset" : 72,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 27,
+      "context" : "These methods attempt to overcome KG incompleteness using KG embeddings (Huang et al. 2019; Saxena et al. 2020; Sun et al. 2021; Ren et al. 2021).",
+      "startOffset" : 72,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 21,
+      "context" : "These methods attempt to overcome KG incompleteness using KG embeddings (Huang et al. 2019; Saxena et al. 2020; Sun et al. 2021; Ren et al. 2021).",
+      "startOffset" : 72,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 27,
+      "context" : "(2019)’s method only works for single fact question answering, while EmQL (Sun et al., 2021) requires prior knowledge of the NL question’s query structure.",
+      "startOffset" : 74,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 21,
+      "context" : "LEGO (Ren et al., 2021) can theoretically answer all first order logic based questions but requires multiple dataset dependent components including entity linking, relation pruning and branch pruning modules; here, to obtain versatility, LEGO has sacrificed simplicity.",
+      "startOffset" : 5,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 20,
+      "context" : "We then train a simple encoderdecoder Transformer – that has the same architecture as T5-small (Raffel et al., 2020) – on these tasks.",
+      "startOffset" : 95,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 36,
+      "context" : "The Transformer model is trained with teacher forcing (Williams and Zipser, 1989) and cross entropy loss.",
+      "startOffset" : 54,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 27,
+      "context" : "This pre-training strategy is analogous to ‘KGE module training’ used in other KGQA works (Sun et al. 2021; Ren et al. 2021).",
+      "startOffset" : 90,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 21,
+      "context" : "This pre-training strategy is analogous to ‘KGE module training’ used in other KGQA works (Sun et al. 2021; Ren et al. 2021).",
+      "startOffset" : 90,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 4,
+      "context" : "We experimented with constrained decoding (Cao et al., 2021) to force the decoder to output only entity mentions; however, we found this unnecessary since the model almost always outputs an entity mention, and increasing the number of samples was enough to solve the issue.",
+      "startOffset" : 42,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 34,
+      "context" : "We evaluate the link prediction capability of KGT5 on Wikidata5M (Wang et al., 2021).",
+      "startOffset" : 65,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 45,
+      "context" : "We evaluate the QA capabilities of KGT5 on three large-scale KGQA benchmark datasets: MetaQA (Zhang et al., 2018), WebQuestionsSP (WQSP) (Yih et al.",
+      "startOffset" : 93,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 43,
+      "context" : ", 2018), WebQuestionsSP (WQSP) (Yih et al., 2016) and ComplexWebQuestions (CWQ) (Talmor and Berant, 2018).",
+      "startOffset" : 31,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2016) and ComplexWebQuestions (CWQ) (Talmor and Berant, 2018).",
+      "startOffset" : 38,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 17,
+      "context" : "Questions in MetaQA span from 1-hop to 3-hop questions requiring path-based reasoning on a KG which is based on WikiMovies (Miller et al., 2016).",
+      "startOffset" : 123,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 2,
+      "context" : "Model MRR Hits@1 Hits@3 Hits@10 Params TransE (Bordes et al., 2013) † 0.",
+      "startOffset" : 46,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 46,
+      "context" : "† results are from the best pre-trained models made available by Graphvite (Zhu et al., 2019) .",
+      "startOffset" : 75,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 3,
+      "context" : "‡ results were obtained through a hyperparameter search with LibKGE (Broscheit et al., 2020).",
+      "startOffset" : 68,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 23,
+      "context" : "For KG completion we compared with several standard KGE models that have been shown to achieve good performance across multiple datasets (Ruffinelli et al., 2020) but with a large number",
+      "startOffset" : 137,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 34,
+      "context" : "Among low-parameter models, we compared to the text based approaches KEPLER (Wang et al., 2021), DKRL (Xie et al.",
+      "startOffset" : 76,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2021), DKRL (Xie et al., 2016a) and MLMLM (Clouatre et al.",
+      "startOffset" : 14,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 10,
+      "context" : "(2020) achieves good performance on common small benchmark datasets but shows a large drop in terms of quality on the larger graph Yago3-10 (Dettmers et al., 2018).",
+      "startOffset" : 140,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2019a), EmQL (Sun et al., 2021), EmbedKGQA (Saxena et al.",
+      "startOffset" : 15,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2021), EmbedKGQA (Saxena et al., 2020) and LEGO (Ren et al.",
+      "startOffset" : 19,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 16,
+      "context" : "For tokenizing sequences we trained SentencePiece (Kudo and Richardson, 2018) tokenizers on the verbalised KGs (see Tab.",
+      "startOffset" : 50,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 25,
+      "context" : "We used AdaFactor (Shazeer and Stern, 2018) with a learning rate warmup schedule for link prediction training, batch size 320 and 10% dropout.",
+      "startOffset" : 18,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 37,
+      "context" : "All experiments were performed using 4 Nvidia 1080Ti GPUs and models were implemented using the HuggingFace library (Wolf et al., 2019).",
+      "startOffset" : 116,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 20,
+      "context" : "We compared with T5-small (Raffel et al., 2020), which has the same architecture as KGT5 but pre-trained on a mixture of",
+      "startOffset" : 26,
+      "endOffset" : 47
+    } ],
+    "year" : 0,
+    "abstractText" : "Knowledge graph embedding (KGE) models represent each entity and relation of a knowledge graph (KG) with low-dimensional embedding vectors. These methods have recently been applied to KG link prediction and question answering over incomplete KGs (KGQA). KGEs typically create an embedding for each entity in the graph, which results in large model sizes on real-world graphs with millions of entities. Their atomic entity representation also necessitates a multi-stage approach to downstream tasks, which limits their utility. We show that an off-the-shelf encoder-decoder Transformer model can serve as a scalable and versatile KGE model obtaining state-of-the-art results for KG link prediction and KGQA. We achieve this by posing KG link prediction as a sequence-to-sequence task and exchange the triple scoring approach taken by prior KGE methods with a generative decoding approach. Such a simple but powerful method reduces the model size up to 90% compared to conventional KGE models and attains the best performance among small-sized models. An ensemble with a traditional KGE model even sets a new state-of-the-art. After finetuning this model on the task of KGQA over incomplete KGs, our approach outperforms baselines on multiple large-scale datasets without extensive hyperparameter tuning.",
+    "creator" : null
+  }
+}

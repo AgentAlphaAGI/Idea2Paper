@@ -1,0 +1,481 @@
+{
+  "name" : "COLING_2020_65_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Dual Dynamic Memory Network for End-to-End Multi-turn Task-oriented Dialog Systems",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Task-oriented dialog systems are designed to help users achieve specific goals with natural language, such as weather inquiry or restaurant reservation. Compared with traditional pipeline methods (Williams and Young, 2007; Young et al., 2013), end-to-end approaches recently have gained much attention (Zhao et al., 2017; Eric and Manning, 2017; Madotto et al., 2018), since they free the task-oriented dialog systems from the manually designed pipeline modules and can be automatically scaled up to new domains.\nRecently, sequence-to-sequence (Seq2Seq) models have dominated the study of end-to-end taskoriented dialog systems (Bordes et al., 2017). Different from typical Seq2Seq models for open-domain dialog systems, the successful conversations for task-oriented dialog systems heavily rely on both dialog history and domain-specific knowledge base (KB). To effectively incorporate KB information and perform knowledge-based reasoning, memory augmented models have been proposed (Madotto et al., 2018; Wu et al., 2019), which model the dialog history and the KB knowledge as a bag of words in a flat memory.\nDespite the remarkable progress of previous studies, current memory based models for multi-turn taskoriented dialog systems still suffer from the following limitations. First, existing methods concatenate dialog utterances of current turn and previous turns as a whole, which ignore previous reasoning process performed by the model and are incapable of dynamically tracking long-term dialog states. These methods introduce much noise since previous utterances as the context is lengthy and redundant (Zhang et al., 2018). Taking the dialog in Table 1 as an example, when answering the user question in 6-th turn, it is difficult for the model to infer that the name of the restaurant is “cocum” from a long concatenated dialog context. In addition, previous models struggle to work well in the situations that require many rounds of interactions to complete a specific task. Second, previous studies tend to confound dialog history with KB knowledge, and store them into a flat memory (Sukhbaatar et al., 2015; Eric and Manning, 2017; Madotto et al., 2018). The shared memory forces the model to encode the dialog context and KB information using a single strategy, making it hard to efficiently reason over the two different types of data, especially when\nThis work is licensed under a Creative Commons Attribution 4.0 International Licence. Licence details: http:// creativecommons.org/licenses/by/4.0/.\nthe memory is large. Although some methods (Raghu et al., 2019) have explored to separate memories for modeling dialog context and KB facts, they either focus on language generation or achieve progress towards the dialog task (i.e., KB modeling), but not both.\nTo alleviate the aforementioned limitations, we propose a Dual Dynamic Memory Network (DDMN), which keeps track of the dialog history and KB knowledge with separate memories. Specifically, we leverage a dialog memory manager to effectively maintain history utterances with a dialog history memory and a dialog state memory. The dialog history memory keeps fixed to store the representation of dialog context throughout the whole conversation, and the dialog state memory keeps updated at each turn to track the flow of history information and capture proper information of current turn for generation. We leverage a KB memory manager containing a KB memory and a KB memory pointer to effectively track KB knowledge. The KB memory stores the KB triples using an end-to-end memory network (Sukhbaatar et al., 2015) and is shared across the entire conversation. The KB memory pointer softly attends to the KB memory at each turn, and guides the model to select appropriate KB entries in decoding.\nOur main contributions can be summarized as follows. (1) We propose a Dual Dynamic Memory Network (DDMN) for task-oriented dialog systems, which dynamically keeps track of long dialog context for multi-turn interactions and effectively incorporates KB knowledge into generation. (2) We employ separate memories to model dialog context and KB triples. The iterative interactions between the two kinds of memories make the decoder focus on relevant dialog context and KB facts for generating coherent and human-like dialogs. (3) The experimental results on three public datasets show that DDMN achieves impressive results compared to the existing methods. More importantly, our model is able to maintain more sustained conversations than the compared methods with the increase of dialog turns."
+    }, {
+      "heading" : "2 Model Description",
+      "text" : "Let D = {di =< ui, si >}Mi=1 denote a set of dialogs, and M is the number of dialog turns. ui and si denote the user utterances and system responses, respectively. Given a contextX with utterances {dj}m−1j=1 and um, a sequence of KB triples B = {b1, b2, . . . , bl}, where m denotes the turn of current dialog, l is the number of KB triples, the objective of task-oriented dialog generation is to generate a proper response Y = {y1, y2, . . . , yn} word by word.\nAs shown in Figure 1, our proposed DDMN architecture consists of four components: a dialog encoder, a dialog memory manager, a KB memory manager, and a decoder. We elaborate on the proposed model in detail as below."
+    }, {
+      "heading" : "2.1 Dialog Encoder",
+      "text" : "To overcome the challenge of modeling long dialog context in multi-turn conversations, the dialog encoder encodes dialog history utterances turn by turn. Specifically, for the first turn, the input to the encoder is u1. For j-th (j > 1) turn, the input is {sj−1, uj}, which is the concatenation of system response of the previous turn and user utterance of the current turn. Concretely, the input of dialog encoder at each turn are a sequence of tokens x = (x1, x2, . . . , xn), where n is the number of tokens. We first convert each token into a word vector through a randomly initialized trainable embedding matrix, and then employ a bidirectional gated recurrent unit (BiGRU) (Chung et al., 2014) to encode the input into hidden states:\nht = BiGRU(e(xt),ht−1) (1)\nwhere e(xt) is the embedding of the token xt. We take the concatenation of the forward and backward hidden states as the the output of the encoder, denoted as H = (h1, . . . ,hn), which is then passed into the dialog memory manager for global management."
+    }, {
+      "heading" : "2.2 Dialog Memory Manager",
+      "text" : "The dialog memory manager maintains a dialog history memory and a dialog state memory, which are both initialized with the encoder hidden states of the first turn. For j-th (j > 1) turn, both the dialog history memory and the dialog state memory are “expanded” by concatenating the hidden states of j-th turn. The two memories are maintained throughout the whole conversation, with the dialog history memory keeping fixed to store the representation of dialog context of all previous turns. The dialog state memory keeps updated at each turn, which aims to track the flow of history information and capture proper information of current turn for response generation.\nGenerally, the decoder applies a GRU network to generate response word by word. At step t, the decoder state st can be updated by:\nst = GRU(st−1, e(yt−1)) (2)\nwhere e(yt−1) is the embedding of the previous word yt−1. Here, st is regarded as a “query” vector qt, which is used to attend to the dialog state memory and obtain the weighted context representation ct by reading from the dialog history memory. Then the dialog state memory will be updated with qt and ct by R rounds. Formally, let K ∈ RN×d and V ∈ RN×d be the dialog state memory and dialog history memory respectively, where N is the number of the memory slots and d is the dimension of vector in each slot, the detailed memory updating operations at round r(r ∈ [1, R]) are introduced as below.\nDialog State Memory Addressing The addressing operation aims to specify the normalized weights assigned to memory slots in K(r−1) (the dialog state memory at r − 1-th round), which formulates an\nattention vector ã(r)t at time step t. The j-th value of ã (r) t is given by:\nã (r) t,j = softmax(et,j), et,j = v (r) a T tanh(W(r)a qt +U (r) a k (r−1) t,j ) (3)\nwhere v(r)a , W (r) a and U (r) a are learnable parameters, k (r−1) t,j is the j-th slot in K (r−1) at time step t.\nDialog History Memory Reading The reading operation reads from the dialog history memory V to get the context representation c̃(r)t with the guidance of ã (r) t . The output of reading is given by c̃ (r) t = ∑N j=1 ã (r) t,j vj , where vj is the j-th memory slot in V.\nDialog State Memory Updating Inspired by the read-write operations (Meng et al., 2016; Meng et al., 2018), we define two types of operations for updating the dialog state memory: FORGET and ADD. FORGET is analogous to the forget gate in GRU, which determines the information to be removed from memory slots. Similarly, ADD operation decides how much current information should be written to the dialog state memory as the added content.\nSpecifically, we first deploy another GRU network to imitate the decoder at round r, and obtain the “intermediate” hidden state s̃(r)t with reading output:\ns̃ (r) t = GRU(qt, c̃ (r) t ) (4)\nwhere s̃(r)t is used to update the dialog state memory. Then, the “intermediate” dialog state memory after FORGET operation is given by:\nk̃ (r) t,i = k (r−1) t,i (1− a (r) t,i · F (r) t ), F (r) t = Sigmoid(W (r) F , s̃ (r) t ) (5)\nwhere the computation of a(r)t,i is similar to that of ã (r) t,j defined in Eq.(3), W (r) F ∈ Rd×d is a learnable parameter. The dialog state memory after ADD operation is given by:\nk (r) t,i = k̃ (r) t,i + a (r) t,i ·A (r) t , A (r) t = Sigmoid(W (r) A , s̃ (r) t ) (6)\nwhere W(r)A ∈ Rd×d is a learnable parameter. After R rounds of updating, the dialog state memory is modified with FORGET and ADD operations. Due to the “expansion” of dialog state/history memory along with the increase of the dialog turns, the dialog memory manager is able to dynamically keep track of long-term dialog state."
+    }, {
+      "heading" : "2.3 KB Memory Manager",
+      "text" : "To incorporate external knowledge effectively, the KB memory manager adopts end-to-end multi-hop memory networks (MemNN) (Sukhbaatar et al., 2015) for encoding structural KB information. Given the KB triples B = {b1, b2, . . . , bl}, each entry bi ∈ B is represented in the format of a triple (subject, relation, object). The KB memory is then represented as a set of trainable embedding matrices C = (C1, . . . ,CK+1) and Ck ∈ RV×d using MemNN, where K is the number of memory hops and V is the vocabulary size of the KB. It is noteworthy that our KB memory is shared across the entire conversation. Formally, an initial query vector q1 is used as the reading head, and it loops over K hops and computes the attention weights at each hop k as:\npki = softmax((q k)T cki ) (7)\nwhere cki = C k(bi) ∈ Rd is the memory content in i-th position. Note that pk ∈ Rl is a soft memory attention that decides the memory relevance with respect to the query vector. Then the KB memory manager reads the memory ok by the weighted sum over ck+1 and update the query vector qk+1 as:\nok = ∑ i pki c k+1 i , q k+1 = qk + ok. (8)\nTo further strengthen the ability of selecting correct KB entries, we introduce a KB memory pointer Ptrkb, inspired by Wu et al. (2019). Note that the proposed pointer Ptrkb is passed to the decoder turn by turn. Suppose Ptrkb is denoted as a sequence of pointers (σ1, σ2, . . . , σl), each pointer is formulated by: σi = Sigmoid((qK)T cKi ) (9) where qK and cKi are the query vector and the memory content at the last hop, respectively. We add an auxiliary classification task to train Ptrkb . We first define the corresponding label Ptr label = (g1, g2, . . . , gl) by checking whether the object words in the KB memory exist in the expected system\nresponse Y , where gi = 1 if object(bi) ∈ Y , otherwise gi = 0. Then the KB memory pointer is trained using binary cross-entropy loss:\nLossp = − l∑\ni=1\ngi log σi + (1− gi) log (1− σi) (10)"
+    }, {
+      "heading" : "2.4 Decoder",
+      "text" : "The decoder generates a response word by word. In particular, a word at time step t is either generated from the vocabulary or copied from one of the two memories (dialog history memory or KB memory). First, the decoder employs a GRU network defined in Eq. (2) for generation. The generation distribution over vocabulary Pg(yt) can be obtained by feeding the decoder state st and ct (the reading output of dialog history memory at the last round) into a softmax layer, which is given by\nPg(yt) = softmax(W1[st; ct]) (11) where W1 is a trainable parameter.\nSecond, following the copy mechanism (Gulcehre et al., 2016) that the attention scores are viewed as the probability to form the copy distribution, we adopt the addressing result of dialog state memory at the last round as the attention score at,j , thus the copy distribution over the dialog history memory is given by Pc(yt = w) = ∑ tj:wtj=w\nat,j . Third, we use the KB memory pointer Ptrkb to dynamically access the KB memory, and then employ\nthe decoder state st defined in Eq. (2) to attend over the KB memory: βt,j = softmax(αtj), αtj = vTb tanh(Wbst +Ubc̃ K j ), c̃ K j = c K j × σj , j ∈ [1, l] (12) where vb,Wb, Ub are parameters to be learned, cKj is the KB memory content in j-th position at the last hop. Therefore, the copy distribution over the KB memory is given by Pkb(yt = w) = ∑ tj:wtj=w\nβt,j . We copy the object word once a KB memory position is pointed to.\nWe use a soft gate g1 to control whether a word is generated from vocabulary or copied from dialog history memory by combining Pg(yt) and Pc(yt): g1 = Sigmoid(W2[st; ct] + b2), Pcon(yt) = g1Pg(yt) + (1− g1)Pc(yt) (13) Moreover, we use another gate g2 to obtain the final output distribution P (yt) by leveraging Pkb(yt) and Pcon(yt): g2 = Sigmoid(W3[st; ct] + b3), P (yt) = g2Pkb(yt) + (1− g2)Pcon(yt) (14) Therefore, the decoder loss is the cross-entropy between the output distribution P (yt) and the reference distribution pt, denoted as Lossd = − ∑ pt log(P (yt))."
+    }, {
+      "heading" : "2.5 Training",
+      "text" : "We train our model by minimizing the weighted-sum of the two losses: Loss = Lossd + γLossp (15)\nwhere γ is a hyper-parameter controlling the impact of Lossp. Since minimizing cross-entropy loss does not always produce the best results due to the exposure bias (Ranzato et al., 2015), we further adopt the self-critical sequence training (SCST) algorithm (Rennie et al., 2017), which is a reinforcement learning process with the reward obtained by the current model.\nSpecifically, we produce two separate output sequences at each training iteration: (1) the sampling output ys, which is obtained by sampling from the output distribution P (yt) at each decoding time step, and (2) the baseline output ŷ, which is obtained by maximizing the output distribution with a greedy search. We define r(y) as the reward function, which is computed by comparing an output sequence y with the ground truth sequence using the evaluation metric of our choice. The SCST loss is given by\nLossrl = −(r(ys)− r(ŷ)) T∑ t=1 log(P (yt)) (16)\nThus, minimizing Lossrl is equivalent to maximizing the conditional likelihood of sampled sequence ys if it obtains a higher reward than the baseline ŷ, which improves the reward expectation of our model."
+    }, {
+      "heading" : "3 Experimental Setup",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Datasets",
+      "text" : "We perform experiments on three public multi-turn task-oriented dialog datasets: In-Car Assistant (Eric and Manning, 2017), CamRest (Wen et al., 2016) and Multi-WOZ 2.1 (Budzianowski et al., 2018).\nIn-Car Assistant dataset consists of 3,031 multi-turn dialogs in three distinct domains: schedule (Sch.), weather (Wea.), and navigation (Nav.). This dataset has an average of 2.6 turns and the KB information is complicated. Following the data processing in Madotto et al. (2018), we obtain 2,425/302/304 dialogs for training/validation/testing respectively.\nCamRest dataset consists of 676 conversations in the restaurant reservation domain with 5.1 turns on average. Following the data processing in Raghu et al. (2019), we divide the dataset into training/validation/testing sets with 406/135/135 dialogs respectively.\nMulti-WOZ 2.1 dataset extends the Multi-WOZ (Budzianowski et al., 2018) by equipping the corresponding KB to every dialogue. Following the data processing in Qin et al. (2020), we obtain 1,839/117/141 dialogs for training/validation/testing respectively. It contains three distinct domains, including restaurant (Res.), attraction (Att.), and hotel (Hot.), with 5.6 turns on average."
+    }, {
+      "heading" : "3.2 Implementation Details",
+      "text" : "Our model is trained in an end-to-end manner using Adam optimizer (Kingma and Ba, 2014) with an initial learning rate of 5× 10−4. The shared size of embedding and the hidden units of GRU are sampled from {128, 256}. Both the number of rounds R and the number of hops K are set to 3. The dropout rate is set between [0.1, 0.4] and the hyper-parameter γ in the loss function is set to 1. The hyper-parameters are tuned with grid-search over the validation set using BLEU score as metric. We select the model with best BLEU score as an initialization for SCST training, and use the weighted sum of BLEU and entity F1 score as our reward metric. During the decoding stage, we use beam-search strategy with the beam size sampling from {1, 2, 4}."
+    }, {
+      "heading" : "3.3 Baselines",
+      "text" : "We compare our model with several existing end-to-end task-oriented dialog systems: (1) Seq2Seq/+Attn that employs standard seq2seq with and without attention over the input context (Luong et al., 2015); (2) Ptr-Unk that employs a seq2seq model with a copy mechanism to copy unknown words during generation (Gulcehre et al., 2016); (3) Mem2Seq that employs a memory network based approach with multi-hop attention for attending over dialog history and KB triples (Madotto et al., 2018); (4) BossNet that employs a bag-of-sequences memory network for disentangling language model from KB incorporation in taskoriented dialogs (Raghu et al., 2019); (5) MLM that employs a multi-level memory network for modeling dialog context and KB results separately (Reddy et al., 2019); (6) GLMP that employs a memory network with a global memory pointer and a local memory pointer to strengthen the copy ability (Wu et al., 2019)."
+    }, {
+      "heading" : "3.4 Evaluation Metrics",
+      "text" : "Following previous works (Madotto et al., 2018; Wu et al., 2019), we evaluate our model and other baselines on two automatic evaluation metrics: BLEU (Papineni et al., 2002) and Entity F1. BLEU calculates n-gram overlaps between the generated response and the gold response. Entity F1 is computed by micro-averaging the precision and recall over KB entities in the entire set of system responses, which evaluates the performance of the model to generate relevant entities to achieve specific tasks from the provided KBs. It is noteworthy that entity F1 indicates the task-completion ability of the model, since KB entities are the key towards the dialog task."
+    }, {
+      "heading" : "4 Experimental Results",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Quantitative Results",
+      "text" : "Automatic Evaluation Table 2 shows the evaluation results on different datasets, we can observe that our framework achieves the state-of-the-art performance in terms of BLEU and overall entity F1 on all\ndatasets. On In-Car Assistant dataset, BossNet obtains better entity F1 than Mem2Seq but with a much lower BLEU score. By analyzing the responses generated by BossNet, we reveal that BossNet tends to copy necessary entity words from the KB but many entity words are out of order compared with the gold response. MLM achieves a much higher BLEU score than previous models, which is due to its separate memories for modeling dialog context and KB results. GLMP has achieved a strong improvement on BLEU and entity F1, which is mainly benefited from its global and local memory pointers to guide the KB attention and response generation. Our models perform even better than GLMP, which verifies the effectiveness of our models in generating natural and appropriate responses. We observe similar trend on Multi-WOZ 2.1 dataset. In particular, our model achieves significant higher BLEU score than other methods. It is because the conversations in Multi-WOZ 2.1 require long-turn interactions, which further shows the effectiveness of our framework in generating correct responses.\nOn CamRest dataset, our models substantially and consistently outperform the baseline methods by a noticeable margin. It is noteworthy that DDMN achieves significant improvement with a highest BLEU of 19.3 and promising entity F1 score of 58.9%, while DDMN with SCST obtains the best entity F1 score of 59.1% but has a lower BLEU score. This may be because that optimizing the combined discrete reward metrics in SCST does not guarantee an increase in quality of the output, since BLEU measures the n-gram overlap while entity F1 score captures the entity words without considering the order of words. Furthermore, Figure 2 shows the changes of average BLEU scores of DDMN and several baselines along with the increase of dialog turns on CamRest dataset. The BLEU scores of the baseline models decrease sharply as the dialog turns increase while DDMN achieves much more stable performance, suggesting that certain dialog and KB modeling strategy devised in DDMN to keep track of the dialog context, KB knowledge, and previous inference process is effective.\nHuman Evaluation We randomly select 100 dialogs from the test data of different datasets for human evaluation. Following Wu et al. (2019), we adopt the appropriateness (Appr.) and human-likeness (Humanlike.) to judge the quality of the generated responses at the turn level. We also adopt the goal completion (Goal.) and coherence to judge the completion of overall dialog task and the overall fluency of the whole dialog at the dialog level. Three annotators are invited to independently assign the score scaled from 0 to 5 for each generated output. We report the average rating scores from all annotators and the results are shown in Table 3. The agreement ratio computed with Fless’ kappa (Fleiss, 1971) is 0.57, showing moderate agreement. As shown in Table 3, DDMN outperforms the baseline methods on both turn level and dialog level, which is consistent with the automatic evaluation. In particular, DDMN obtains significant higher goal completion score and coherence score than compared methods, demonstrating the effectiveness of DDMN in modeling multi-turn interactions in task-oriented dialog generation."
+    }, {
+      "heading" : "4.2 Case Study",
+      "text" : "As an intuitive way to show the performance of task-oriented dialog systems, Table 4 reports some responses generated by DDMN and baseline models. We observe that Mem2Seq tends to generate repeated or inappropriate responses. For example, the responses in the first three turns generated by MemSeq are very similar in both content and sentence structure. GLMP performs much better than Mem2Seq, while its performance deteriorate with the increase of dialog turns, e.g., GLMP fails to extract correct key entities in the third and fourth turns. Compared with GLMP, DDMN is able to generate more proper and natural responses even in the last few turns during the conversation. This verifies that DDMN is capable of memorizing the key information from previous turns."
+    }, {
+      "heading" : "4.3 Model Ablation",
+      "text" : "To investigate the effectiveness of each module proposed in our framework, we conduct ablation test from four aspects, the results are reported in Table 5. First, we remove the dialog state memory updating (w/o DSMU), resulting in significant performance degradation on both In-Car Assistant and CamRest datasets. This suggests that updating dialog context turn by turn is a necessary step to distill important information for response generation. Second, we remove the two gates g1 and g2 in decoder separately, where g1 controls a word generated from the vocabulary or copied from the dialog history memory, and g2 controls whether a word should be copied from the KB memory. The results show that g2 contributes more to the performance of DDMN than g1,since entity words can not be copied efficiently without g2. Finally, we remove the KB memory pointer (w/o Ptrkb) during training, the performance drops slightly over both BLEU and entity F1 score."
+    }, {
+      "heading" : "4.4 Error Analysis",
+      "text" : "To better understand the limitations of the proposed model, we carry out an analysis of the errors made by DDMN. Specifically, we randomly select 100 responses generated by DDMN that achieve low human evaluation scores in the test set of In-Car Assistant. We reveal several reasons of the low evaluation scores, which can be divided into four categories. (1) KB entries in generated responses are incorrect (33%), which occurs especially when the given KB triples are large, and it is difficult for the model to attend accurately over the KB memory. (2) Generated responses incorrectly achieve user goals (30%) since our model can not capture user intent well sometimes. (3) The sentence structure of generated responses are not appropriate (21%), which occurs when the model directly returns KB entries, even if more information should be asked. (4) Miscellaneous errors (16%), e.g., the generated responses are grammatically incorrect or conflict with the user input."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "End-to-end methods have shown promising results recently and attracted increasing attention since they are easily adapted to a new domain. Some approaches view the dialog history as a sequence using recurrent neural networks (Eric and Manning, 2017; Gulcehre et al., 2016), which also force the KB triples with the same pattern and make it hard to perform reasoning over them. To better handle KB triples in task-oriented dialogs, the memory network based architecture (Bordes et al., 2017) and its variants (Wu et al., 2017; Wu et al., 2018) have been proposed and shown promising results. Mem2Seq (Madotto et al., 2018) and GLMP (Wu et al., 2019) further augmented memory based methods by incorporating copy mechanism (Gulcehre et al., 2016), which enable the models copy words from past dialog utterances or from KB. These methods use a shared memory for the KB triples and the dialog utterances, making it difficult to reason over the memory and distinguish between the two forms of data.\nRecently, there have been several works employing separate memories for modeling the dialog context and KB triples (Raghu et al., 2019; Reddy et al., 2019; Chen et al., 2019). For example, BossNet (Raghu et al., 2019) implicitly disentangled the language model from knowledge incorporation and thus enhance the ability of copying unseen KB entries. Multi-level memory model (Reddy et al., 2019) represented the KB results with a multi-level memory instead of the form of triples. WMM2Seq (Chen et al., 2019) adopted a working memory to interact with a dialog context memory and a KB memory. Nevertheless, existing methods still ignore the flow of history information during conversations, making it struggle to perform well in long-turn interactions. Different from the aforementioned methods, we propose a dialog memory manager and a KB memory manager to dynamically track the dialog context and KB triples, respectively."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we propose a novel Dual Dynamic Memory Network (DDMN) with a dialog memory manager and a KB memory manager for multi-turn end-to-end task-oriented dialog systems. DDMN encodes dialog context turn by turn and the dialog memory manager dynamically tracks the dialog history. The KB memory manager shares the KB information throughout the whole conversation with a KB memory pointer to softly distill relevant KB entries at each turn. In addition, we leverage self-critical sequence training to boost the performance of DDMN. Extensive experiments on three public dialog datasets demonstrate the superior performance of our model in both automatic and human evaluation."
+    } ],
+    "references" : [ {
+      "title" : "Learning end-to-end goal-oriented dialog",
+      "author" : [ "Antoine Bordes", "Y-Lan Boureau", "Jason Weston." ],
+      "venue" : "5th International Conference on Learning Representations.",
+      "citeRegEx" : "Bordes et al\\.,? 2017",
+      "shortCiteRegEx" : "Bordes et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "MultiWOZ - a large-scale multi-domain wizard-of-Oz dataset for task-oriented dialogue modelling",
+      "author" : [ "Paweł Budzianowski", "Tsung-Hsien Wen", "Bo-Hsiang Tseng", "Iñigo Casanueva", "Stefan Ultes", "Osman Ramadan", "Milica Gašić." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 5016–5026.",
+      "citeRegEx" : "Budzianowski et al\\.,? 2018",
+      "shortCiteRegEx" : "Budzianowski et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A working memory model for task-oriented dialog response generation",
+      "author" : [ "Xiuyi Chen", "Jiaming Xu", "Bo Xu." ],
+      "venue" : "ACL, pages 2687–2693.",
+      "citeRegEx" : "Chen et al\\.,? 2019",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Empirical evaluation of gated recurrent neural networks on sequence modeling",
+      "author" : [ "Junyoung Chung", "Caglar Gulcehre", "KyungHyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1412.3555.",
+      "citeRegEx" : "Chung et al\\.,? 2014",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Key-value retrieval networks for task-oriented dialogue",
+      "author" : [ "Mihail Eric", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 18th Annual SIGdial Meeting on Discourse and Dialogue, pages 37–49.",
+      "citeRegEx" : "Eric and Manning.,? 2017",
+      "shortCiteRegEx" : "Eric and Manning.",
+      "year" : 2017
+    }, {
+      "title" : "Measuring nominal scale agreement among many raters",
+      "author" : [ "Joseph L Fleiss." ],
+      "venue" : "Psychological bulletin, 76(5):378.",
+      "citeRegEx" : "Fleiss.,? 1971",
+      "shortCiteRegEx" : "Fleiss.",
+      "year" : 1971
+    }, {
+      "title" : "Pointing the unknown words",
+      "author" : [ "Caglar Gulcehre", "Sungjin Ahn", "Ramesh Nallapati", "Bowen Zhou", "Yoshua Bengio." ],
+      "venue" : "ACL, pages 140–149.",
+      "citeRegEx" : "Gulcehre et al\\.,? 2016",
+      "shortCiteRegEx" : "Gulcehre et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980.",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "Effective approaches to attention-based neural machine translation",
+      "author" : [ "Minh-Thang Luong", "Hieu Pham", "Christopher D Manning." ],
+      "venue" : "EMNLP, pages 1412–1421.",
+      "citeRegEx" : "Luong et al\\.,? 2015",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Mem2seq: Effectively incorporating knowledge bases into end-to-end task-oriented dialog systems",
+      "author" : [ "Andrea Madotto", "Chien-Sheng Wu", "Pascale Fung." ],
+      "venue" : "ACL, pages 1468–1478.",
+      "citeRegEx" : "Madotto et al\\.,? 2018",
+      "shortCiteRegEx" : "Madotto et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Interactive attention for neural machine translation",
+      "author" : [ "Fandong Meng", "Zhengdong Lu", "Hang Li", "Qun Liu." ],
+      "venue" : "Proceedings of the 26th International Conference on Computational Linguistics: Technical Papers, pages 2174–2185.",
+      "citeRegEx" : "Meng et al\\.,? 2016",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Neural machine translation with key-value memory-augmented attention",
+      "author" : [ "Fandong Meng", "Zhaopeng Tu", "Yong Cheng", "Haiyang Wu", "Junjie Zhai", "Yuekui Yang", "Di Wang." ],
+      "venue" : "IJCAI, pages 2574–2580.",
+      "citeRegEx" : "Meng et al\\.,? 2018",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "ACL, pages 311–318.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Dynamic fusion network for multi-domain end-to-end task-oriented dialog",
+      "author" : [ "Libo Qin", "Xiao Xu", "Wanxiang Che", "Yue Zhang", "Ting Liu." ],
+      "venue" : "arXiv preprint arXiv:2004.11019.",
+      "citeRegEx" : "Qin et al\\.,? 2020",
+      "shortCiteRegEx" : "Qin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Disentangling language and knowledge in task-oriented dialogs",
+      "author" : [ "Dinesh Raghu", "Nikhil Gupta" ],
+      "venue" : "In NAACL-HLT,",
+      "citeRegEx" : "Raghu and Gupta,? \\Q2019\\E",
+      "shortCiteRegEx" : "Raghu and Gupta",
+      "year" : 2019
+    }, {
+      "title" : "Sequence level training with recurrent neural networks. arXiv preprint arXiv:1511.06732",
+      "author" : [ "Marc’Aurelio Ranzato", "Sumit Chopra", "Michael Auli", "Wojciech Zaremba" ],
+      "venue" : null,
+      "citeRegEx" : "Ranzato et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Ranzato et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Multi-level memory for task oriented dialogs",
+      "author" : [ "Revanth Reddy", "Danish Contractor", "Dinesh Raghu", "Sachindra Joshi." ],
+      "venue" : "NAACL-HLT, pages 3744–3754.",
+      "citeRegEx" : "Reddy et al\\.,? 2019",
+      "shortCiteRegEx" : "Reddy et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Self-critical sequence training for image captioning",
+      "author" : [ "Steven J Rennie", "Etienne Marcheret", "Youssef Mroueh", "Jerret Ross", "Vaibhava Goel." ],
+      "venue" : "Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages 7008–7024.",
+      "citeRegEx" : "Rennie et al\\.,? 2017",
+      "shortCiteRegEx" : "Rennie et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "End-to-end memory networks. In Advances in neural information processing systems, pages 2440–2448",
+      "author" : [ "Sainbayar Sukhbaatar", "Jason Weston", "Rob Fergus" ],
+      "venue" : null,
+      "citeRegEx" : "Sukhbaatar et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Sukhbaatar et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Conditional generation and snapshot learning in neural dialogue systems",
+      "author" : [ "Tsung-Hsien Wen", "Milica Gasic", "Nikola Mrksic", "Lina M Rojas-Barahona", "Pei-Hao Su", "Stefan Ultes", "David Vandyke", "Steve Young." ],
+      "venue" : "EMNLP, pages 2153–2162.",
+      "citeRegEx" : "Wen et al\\.,? 2016",
+      "shortCiteRegEx" : "Wen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Partially observable markov decision processes for spoken dialog systems",
+      "author" : [ "Jason D Williams", "Steve Young." ],
+      "venue" : "Computer Speech & Language, 21(2):393–422.",
+      "citeRegEx" : "Williams and Young.,? 2007",
+      "shortCiteRegEx" : "Williams and Young.",
+      "year" : 2007
+    }, {
+      "title" : "End-to-end recurrent entity network for entity-value independent goal-oriented dialog learning",
+      "author" : [ "Chien-Sheng Wu", "Andrea Madotto", "Genta Winata", "Pascale Fung." ],
+      "venue" : "Dialog System Technology Challenges Workshop, DSTC6.",
+      "citeRegEx" : "Wu et al\\.,? 2017",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "End-to-end dynamic query memory network for entity-value independent task-oriented dialog",
+      "author" : [ "Chien-Sheng Wu", "Andrea Madotto", "Genta Indra Winata", "Pascale Fung." ],
+      "venue" : "2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 6154–6158.",
+      "citeRegEx" : "Wu et al\\.,? 2018",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Global-to-local memory pointer networks for task-oriented dialogue",
+      "author" : [ "Chien-Sheng Wu", "Richard Socher", "Caiming Xiong." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Wu et al\\.,? 2019",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Pomdp-based statistical spoken dialog systems: A review",
+      "author" : [ "Steve Young", "Milica Gašić", "Blaise Thomson", "Jason D Williams." ],
+      "venue" : "Proceedings of the IEEE, 101(5):1160–1179.",
+      "citeRegEx" : "Young et al\\.,? 2013",
+      "shortCiteRegEx" : "Young et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Modeling multi-turn conversation with deep utterance aggregation",
+      "author" : [ "Zhuosheng Zhang", "Jiangtong Li", "Pengfei Zhu", "Hai Zhao", "Gongshen Liu." ],
+      "venue" : "arXiv preprint arXiv:1806.09102.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Generative encoder-decoder models for task-oriented spoken dialog systems with chatting capability",
+      "author" : [ "Tiancheng Zhao", "Allen Lu", "Kyusong Lee", "Maxine Eskenazi." ],
+      "venue" : "Proceedings of the 18th Annual SIGdial Meeting on Discourse and Dialogue, pages 27–36.",
+      "citeRegEx" : "Zhao et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 20,
+      "context" : "Compared with traditional pipeline methods (Williams and Young, 2007; Young et al., 2013), end-to-end approaches recently have gained much attention (Zhao et al.",
+      "startOffset" : 43,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 24,
+      "context" : "Compared with traditional pipeline methods (Williams and Young, 2007; Young et al., 2013), end-to-end approaches recently have gained much attention (Zhao et al.",
+      "startOffset" : 43,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2013), end-to-end approaches recently have gained much attention (Zhao et al., 2017; Eric and Manning, 2017; Madotto et al., 2018), since they free the task-oriented dialog systems from the manually designed pipeline modules and can be automatically scaled up to new domains.",
+      "startOffset" : 67,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2013), end-to-end approaches recently have gained much attention (Zhao et al., 2017; Eric and Manning, 2017; Madotto et al., 2018), since they free the task-oriented dialog systems from the manually designed pipeline modules and can be automatically scaled up to new domains.",
+      "startOffset" : 67,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2013), end-to-end approaches recently have gained much attention (Zhao et al., 2017; Eric and Manning, 2017; Madotto et al., 2018), since they free the task-oriented dialog systems from the manually designed pipeline modules and can be automatically scaled up to new domains.",
+      "startOffset" : 67,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 0,
+      "context" : "Recently, sequence-to-sequence (Seq2Seq) models have dominated the study of end-to-end taskoriented dialog systems (Bordes et al., 2017).",
+      "startOffset" : 115,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 9,
+      "context" : "To effectively incorporate KB information and perform knowledge-based reasoning, memory augmented models have been proposed (Madotto et al., 2018; Wu et al., 2019), which model the dialog history and the KB knowledge as a bag of words in a flat memory.",
+      "startOffset" : 124,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 23,
+      "context" : "To effectively incorporate KB information and perform knowledge-based reasoning, memory augmented models have been proposed (Madotto et al., 2018; Wu et al., 2019), which model the dialog history and the KB knowledge as a bag of words in a flat memory.",
+      "startOffset" : 124,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 25,
+      "context" : "These methods introduce much noise since previous utterances as the context is lengthy and redundant (Zhang et al., 2018).",
+      "startOffset" : 101,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 18,
+      "context" : "Second, previous studies tend to confound dialog history with KB knowledge, and store them into a flat memory (Sukhbaatar et al., 2015; Eric and Manning, 2017; Madotto et al., 2018).",
+      "startOffset" : 110,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 4,
+      "context" : "Second, previous studies tend to confound dialog history with KB knowledge, and store them into a flat memory (Sukhbaatar et al., 2015; Eric and Manning, 2017; Madotto et al., 2018).",
+      "startOffset" : 110,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 9,
+      "context" : "Second, previous studies tend to confound dialog history with KB knowledge, and store them into a flat memory (Sukhbaatar et al., 2015; Eric and Manning, 2017; Madotto et al., 2018).",
+      "startOffset" : 110,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 18,
+      "context" : "The KB memory stores the KB triples using an end-to-end memory network (Sukhbaatar et al., 2015) and is shared across the entire conversation.",
+      "startOffset" : 71,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 3,
+      "context" : "We first convert each token into a word vector through a randomly initialized trainable embedding matrix, and then employ a bidirectional gated recurrent unit (BiGRU) (Chung et al., 2014) to encode the input into hidden states:",
+      "startOffset" : 167,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 10,
+      "context" : "Dialog State Memory Updating Inspired by the read-write operations (Meng et al., 2016; Meng et al., 2018), we define two types of operations for updating the dialog state memory: FORGET and ADD.",
+      "startOffset" : 67,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 11,
+      "context" : "Dialog State Memory Updating Inspired by the read-write operations (Meng et al., 2016; Meng et al., 2018), we define two types of operations for updating the dialog state memory: FORGET and ADD.",
+      "startOffset" : 67,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 18,
+      "context" : "To incorporate external knowledge effectively, the KB memory manager adopts end-to-end multi-hop memory networks (MemNN) (Sukhbaatar et al., 2015) for encoding structural KB information.",
+      "startOffset" : 121,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 6,
+      "context" : "Second, following the copy mechanism (Gulcehre et al., 2016) that the attention scores are viewed as the probability to form the copy distribution, we adopt the addressing result of dialog state memory at the last round as the attention score at,j , thus the copy distribution over the dialog history memory is given by Pc(yt = w) = ∑ tj:wtj=w at,j .",
+      "startOffset" : 37,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 15,
+      "context" : "Since minimizing cross-entropy loss does not always produce the best results due to the exposure bias (Ranzato et al., 2015), we further adopt the self-critical sequence training (SCST) algorithm (Rennie et al.",
+      "startOffset" : 102,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2015), we further adopt the self-critical sequence training (SCST) algorithm (Rennie et al., 2017), which is a reinforcement learning process with the reward obtained by the current model.",
+      "startOffset" : 79,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 4,
+      "context" : "We perform experiments on three public multi-turn task-oriented dialog datasets: In-Car Assistant (Eric and Manning, 2017), CamRest (Wen et al.",
+      "startOffset" : 98,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 19,
+      "context" : "We perform experiments on three public multi-turn task-oriented dialog datasets: In-Car Assistant (Eric and Manning, 2017), CamRest (Wen et al., 2016) and Multi-WOZ 2.",
+      "startOffset" : 132,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 1,
+      "context" : "1 dataset extends the Multi-WOZ (Budzianowski et al., 2018) by equipping the corresponding KB to every dialogue.",
+      "startOffset" : 32,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 7,
+      "context" : "Our model is trained in an end-to-end manner using Adam optimizer (Kingma and Ba, 2014) with an initial learning rate of 5× 10−4.",
+      "startOffset" : 66,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 8,
+      "context" : "3 Baselines We compare our model with several existing end-to-end task-oriented dialog systems: (1) Seq2Seq/+Attn that employs standard seq2seq with and without attention over the input context (Luong et al., 2015); (2) Ptr-Unk that employs a seq2seq model with a copy mechanism to copy unknown words during generation (Gulcehre et al.",
+      "startOffset" : 194,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2015); (2) Ptr-Unk that employs a seq2seq model with a copy mechanism to copy unknown words during generation (Gulcehre et al., 2016); (3) Mem2Seq that employs a memory network based approach with multi-hop attention for attending over dialog history and KB triples (Madotto et al.",
+      "startOffset" : 112,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2016); (3) Mem2Seq that employs a memory network based approach with multi-hop attention for attending over dialog history and KB triples (Madotto et al., 2018); (4) BossNet that employs a bag-of-sequences memory network for disentangling language model from KB incorporation in taskoriented dialogs (Raghu et al.",
+      "startOffset" : 140,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2019); (5) MLM that employs a multi-level memory network for modeling dialog context and KB results separately (Reddy et al., 2019); (6) GLMP that employs a memory network with a global memory pointer and a local memory pointer to strengthen the copy ability (Wu et al.",
+      "startOffset" : 113,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2019); (6) GLMP that employs a memory network with a global memory pointer and a local memory pointer to strengthen the copy ability (Wu et al., 2019).",
+      "startOffset" : 135,
+      "endOffset" : 152
+    }, {
+      "referenceID" : 9,
+      "context" : "Following previous works (Madotto et al., 2018; Wu et al., 2019), we evaluate our model and other baselines on two automatic evaluation metrics: BLEU (Papineni et al.",
+      "startOffset" : 25,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 23,
+      "context" : "Following previous works (Madotto et al., 2018; Wu et al., 2019), we evaluate our model and other baselines on two automatic evaluation metrics: BLEU (Papineni et al.",
+      "startOffset" : 25,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2019), we evaluate our model and other baselines on two automatic evaluation metrics: BLEU (Papineni et al., 2002) and Entity F1.",
+      "startOffset" : 93,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 5,
+      "context" : "The agreement ratio computed with Fless’ kappa (Fleiss, 1971) is 0.",
+      "startOffset" : 47,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 4,
+      "context" : "Some approaches view the dialog history as a sequence using recurrent neural networks (Eric and Manning, 2017; Gulcehre et al., 2016), which also force the KB triples with the same pattern and make it hard to perform reasoning over them.",
+      "startOffset" : 86,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 6,
+      "context" : "Some approaches view the dialog history as a sequence using recurrent neural networks (Eric and Manning, 2017; Gulcehre et al., 2016), which also force the KB triples with the same pattern and make it hard to perform reasoning over them.",
+      "startOffset" : 86,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 0,
+      "context" : "To better handle KB triples in task-oriented dialogs, the memory network based architecture (Bordes et al., 2017) and its variants (Wu et al.",
+      "startOffset" : 92,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2017) and its variants (Wu et al., 2017; Wu et al., 2018) have been proposed and shown promising results.",
+      "startOffset" : 25,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2017) and its variants (Wu et al., 2017; Wu et al., 2018) have been proposed and shown promising results.",
+      "startOffset" : 25,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2018) and GLMP (Wu et al., 2019) further augmented memory based methods by incorporating copy mechanism (Gulcehre et al.",
+      "startOffset" : 17,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2019) further augmented memory based methods by incorporating copy mechanism (Gulcehre et al., 2016), which enable the models copy words from past dialog utterances or from KB.",
+      "startOffset" : 79,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 16,
+      "context" : "Recently, there have been several works employing separate memories for modeling the dialog context and KB triples (Raghu et al., 2019; Reddy et al., 2019; Chen et al., 2019).",
+      "startOffset" : 115,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 2,
+      "context" : "Recently, there have been several works employing separate memories for modeling the dialog context and KB triples (Raghu et al., 2019; Reddy et al., 2019; Chen et al., 2019).",
+      "startOffset" : 115,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 16,
+      "context" : "Multi-level memory model (Reddy et al., 2019) represented the KB results with a multi-level memory instead of the form of triples.",
+      "startOffset" : 25,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 2,
+      "context" : "WMM2Seq (Chen et al., 2019) adopted a working memory to interact with a dialog context memory and a KB memory.",
+      "startOffset" : 8,
+      "endOffset" : 27
+    } ],
+    "year" : 2020,
+    "abstractText" : "Existing end-to-end task-oriented dialog systems struggle to dynamically model long dialog context for interactions and effectively incorporate external knowledge base (KB) information into dialog generation. To conquer these limitations, we propose a Dual Dynamic Memory Network (DDMN) for multi-turn dialog generation, which maintains two core components: dialog memory manager and KB memory manager. The dialog memory manager dynamically expands the dialog memory turn by turn and keeps track of dialog history with an updating mechanism, which encourages the model to filter previous irrelevant information and memorize important newly coming information. The KB memory manager shares the structural KB triples throughout the whole conversation, and dynamically extracts KB information with a memory pointer at each turn. Experimental results on three benchmark datasets demonstrate that DDMN significantly outperforms the strong baselines in terms of both automatic evaluation and human evaluation.",
+    "creator" : "TeX"
+  }
+}

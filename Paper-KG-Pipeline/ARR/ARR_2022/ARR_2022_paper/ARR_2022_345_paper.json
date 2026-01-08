@@ -1,0 +1,707 @@
+{
+  "name" : "ARR_2022_345_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "DiffCSE: Difference-based Contrastive Learning for Sentence Embeddings",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021). Recent work has shown that finetuning pretrained language models with contrastive learning makes it possible to learn good sentence embeddings without any labeled data (Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021). Contrastive learning uses multiple augmentations on a single datum to construct positive pairs whose representations are trained to be more similar to one another than negative pairs. While different data augmentations (random cropping, color jitter, rotations, etc.) have been found to be crucial for pretraining vision models (Chen et al., 2020), such augmentations have generally been un-\nsuccessful when applied to contrastive learning of sentence embeddings. Indeed, Gao et al. (2021) find that constructing positive pairs via a simple dropout-based augmentation works much better than more complex augmentations such as word deletions or replacements based on synonyms or masked language models. This is perhaps unsurprising in hindsight; while the training objective in contrastive learning encourages representations to be invariant to augmentation transformations, direct augmentations on the input (e.g., deletion, replacement) often change the meaning of the sentence. That is, ideal sentence embeddings should not be invariant to such transformations.\nWe propose to learn sentence representations that are aware of, but not necessarily invariant to, such direct surface-level augmentations. This is an instance of equivariant contrastive learning (Dangovski et al., 2021), which improves vision representation learning by using a contrastive loss on insensitive image transformations (e.g., grayscale) and a prediction loss on sensitive image transformations (e.g., rotations). We operationalize equivariant contrastive learning on sentences by using dropout-based augmentation as the insensitive transformation (as in SimCSE (Gao et al., 2021)) and MLM-based word replacement as the sensitive transformation. This results in an additional crossentropy loss based on the difference between the original and the transformed sentence.\nWe conduct experiments on 7 semantic textual similarity tasks (STS) and 7 transfer tasks from SentEval (Conneau and Kiela, 2018) and find that this difference-based learning greatly improves over standard contrastive learning. Our DiffCSE approach can achieve around 2.3% absolute improvement on STS datasets over SimCSE1, the previous\n1SimCSE has two settings: unsupervised and supervised. In this paper, we focus on the unsupervised setting. Unless otherwise stated, in this paper we use SimCSE to refer to unsupervised SimCSE.\nstate-of-the-art model. We also conduct a set of ablation studies to justify our designed architecture. Qualitative study and analysis are also included to look into the embedding space of DiffCSE."
+    }, {
+      "heading" : "2 Background and Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Learning Sentence Embeddings",
+      "text" : "Learning universal sentence embeddings has been studied extensively in prior work, including unsupervised approaches such as Skip-Thought (Kiros et al., 2015), Quick-Thought (Logeswaran and Lee, 2018) and FastSent (Hill et al., 2016), or supervised methods such as InferSent (Conneau et al., 2017), Universal Sentence Encoder (Cer et al., 2018) and Sentence-BERT (Reimers and Gurevych, 2019). Recently, researchers have focused on (unsupervised) contrastive learning approaches such as SimCLR (Chen et al., 2020) to learn sentence embeddings. SimCLR (Chen et al., 2020) learns image representations by creating semantically close augmentations for the same images and then pulling these representations to be closer than representations of random negative examples. The same framework can be adapted to learning sentence embeddings by designing good augmentation methods for natural language. ConSERT (Yan et al., 2021) uses a combination of four data augmentation strategies: adversarial attack, token shuffling, cut-off, and dropout. DeCLUTR (Giorgi et al., 2020) uses overlapped spans as positive examples and distant spans as negative examples for\nlearning contrastive span representations. Finally, SimCSE (Gao et al., 2021) proposes an extremely simple augmentation strategy by just switching dropout masks. While simple, sentence embeddings learned in this manner have been shown to be better than other more complicated augmentation methods."
+    }, {
+      "heading" : "2.2 Equivariant Contrastive Learning",
+      "text" : "DiffCSE is inspired by a recent generalization of contrastive learning in computer vision (CV) called equivariant contrastive learning (Dangovski et al., 2021). We now explain how this CV technique can be adapted to natural language.\nUnderstanding the role of input transformations is crucial for successful contrastive learning. Past empirical studies have revealed useful transformations for contrastive learning, such as random resized cropping and color jitter for computer vision (Chen et al., 2020) and dropout for NLP (Gao et al., 2021). Contrastive learning encourages representations to be insensitive to these transformations, i.e. the encoder is trained to be invariant to a set of manually chosen transformations. The above studies in CV and NLP have also revealed transformations that are harmful for contrastive learning. For example, Chen et al. (2020) showed that making the representations insensitive to rotations decreases the ImageNet linear probe accuracy, and Gao et al. (2021) showed that using an MLM to replace 15% of the words drastically reduces performance on STS-B. While previous works simply omit these\ntransformations from contrastive pre-training, here we argue that we should still make use of these transformations by learning representations that are sensitive (but not necessarily invariant) to such transformations.\nThe notion of (in)sensitivity can be captured by the more general property of equivariance in mathematics. Let T be a transformation from a group G and let T (x) denote the transformation of a sentence x. Equivariance is the property that there is an induced group transformation T ′ on the output features (Dangovski et al., 2021):\nf(T (x)) = T ′(f(x)).\nIn the special case of contrastive learning, T ′’s target is the identity transformation, and we say that f is trained to be “invariant to T .” However, invariance is just a trivial case of equivariance, and we can design training objectives where T ′ is not the identity for some transformations (such as MLM), while it is the identity for others (such as dropout). Dangovski et al. (2021) show that generalizing contrastive learning to equivariance in this way improves the semantic quality of features in CV, and here we show that the complementary nature of invariance and equivariance extends to the NLP domain. The key observation is that the encoder should be equivariant to MLM-based augmentation instead of being invariant. We can operationalize this by using a conditional discriminator that combines the sentence representation with an edited sentence, and then predicts the difference between the original and edited sentences. This is essentially a conditional version of the ELECTRA model (Clark et al., 2020), which makes the encoder equivariant to MLM by using a binary discriminator which detects whether a token is from the original sentence or from a generator. We hypothesize that conditioning the ELECTRA model with the representation from our sentence encoder is a useful objective for encouraging f to be “equivariant to MLM.”\nTo the best of our knowledge, we are the first to observe and highlight the above parallel between CV and NLP. In particular, we show that equivariant contrastive learning extends beyond CV, and that it works for transformations even without algebraic structures, such as diff operations on sentences. Further, insofar as the canonical set of useful transformations is less established in NLP than is in CV, DiffCSE can serve as a diagnostic tool for NLP researchers to discover useful trans-\nformations."
+    }, {
+      "heading" : "3 Difference-based Contrastive Learning",
+      "text" : "Our approach is straightforward and can be seen as combining the standard contrastive learning objective from SimCSE (Figure 1, left) with a difference prediction objective which conditions on the sentence embedding (Figure 1, right).\nGiven an unlabeled input sentence x, SimCSE creates a positive example x+ for it by applying different dropout masks. By using the BERTbase encoder f , we can obtain the sentence embedding h = f (x) for x (see section 4 for how h is obtained). The training objective for SimCSE is:\nLcontrast = − log esim(hi,h + i )/τ∑N\nj=1 e sim(hi,h+j )/τ\n,\nwhere N is the batch size for the input batch {xi}Ni=1 as we are using in-batch negative examples, sim(·, ·) is the cosine similarity function, and τ is a temperature hyperparameter.\nOn the right-hand side of Figure 1 is a conditional version of the difference prediction objective used in ELECTRA (Clark et al., 2020), which contains a generator and a discriminator. Given a sentence of length T , x = [x(1), x(2), ..., x(T )], we first apply a random mask m = [m(1),m(2), ...,m(T )],m(t) ∈ [0, 1] on x to obtain x′ = m ·x. We use another pretrained MLM as the generator G to perform masked language modeling to recover randomly masked tokens in x′ to obtain the edited sentence x′′ = G(x′). Then, we use a discriminator D to perform the Replaced Token Detection (RTD) task. For each token in the sentence, the model needs to predict whether it has been replaced or not. The cross-entropy loss for a single sentence x is: LxRTD = T∑ t=1 ( −1 ( x′′(t) = x(t) ) logD ( x′′,h, t\n) − 1 ( x′′(t) ̸= x(t) ) log ( 1−D ( x′′,h, t\n))) And the training objective for a batch is LRTD =∑N\ni=1 L xi RTD . Finally we optimize these two losses\ntogether with a weighting coefficient λ:\nL = Lcontrast + λ · LRTD\nThe difference between our model and ELECTRA is that our discriminator D is conditional, so it can\nuse the information of x compressed in a fixeddimension vector h = f (x). The gradient of D can be backward-propagated into f through h. By doing so, f will be encouraged to make h informative enough to cover the full meaning of x, so that D can distinguish the tiny difference between x and x′′. This approach essentially makes the conditional discriminator perform a “diff operation”, hence the name DiffCSE.\nWhen we train our DiffCSE model, we fix the generator G, and only the sentence encoder f and the discriminator D are optimized. After training, we discard D and only use f (which remains fixed) to extract sentence embeddings to evaluate on the downstream tasks."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Setup",
+      "text" : "In our experiment, we follow the setting of unsupervised SimCSE (Gao et al., 2021) and build our model based on their PyTorch implementation.2 We also use the checkpoints of BERT (Devlin et al., 2019) and RoBERTa (Liu et al., 2019) as the initialization of our sentence encoder f . We add an MLP layer with Batch Normalization (Ioffe and Szegedy, 2015) (BatchNorm) on top of the [CLS] representation as the sentence embedding. We will compare the model with/without BatchNorm in section 5. For the discriminator D, we use the same model as the sentence encoder f (BERT/RoBERTa). For the generator G, we use the smaller DistilBERT and DistilRoBERTa (Sanh et al., 2019) for efficiency. Note that the generator is fixed during training unlike the ELECTRA paper (Clark et al., 2020). We will compare the results of using different size model for the generator in section 5. More training details are shown in Appendix A."
+    }, {
+      "heading" : "4.2 Data",
+      "text" : "For unsupervised pretraining, we use the same 106 randomly sampled sentences from English Wikipedia that are provided by the source code of SimCSE.2 We evaluate our model on 7 semantic textual similarity (STS) and 7 transfer tasks in SentEval.3 STS tasks includes STS 2012– 2016 (Agirre et al., 2016), STS Benchmark (Cer et al., 2017) and SICK-Relatedness (Marelli et al., 2014). All the STS experiments are fully unsupervised, which means no STS training datasets\n2 https://github.com/princeton-nlp/SimCSE 3 https://github.com/facebookresearch/SentEval\nare used and all embeddings are fixed once they are trained. The transfer tasks are various sentence classification tasks, including MR (Pang and Lee, 2005), CR (Hu and Liu, 2004), SUBJ (Pang and Lee, 2004), MPQA (Wiebe et al., 2005), SST2 (Socher et al., 2013), TREC (Voorhees and Tice, 2000) and MRPC (Dolan and Brockett, 2005). In these transfer tasks, we will use a logistic regression classifier trained on top of the frozen sentence embeddings, following the standard setup (Conneau and Kiela, 2018)."
+    }, {
+      "heading" : "4.3 Results",
+      "text" : "Baselines We compare our model with many strong unsupervised baselines including SimCSE (Gao et al., 2021), IS-BERT (Zhang et al., 2020), CMLM (Yang et al., 2020), DeCLUTR (Giorgi et al., 2020), CT-BERT (Carlsson et al., 2021), SG-OPT (Kim et al., 2021) and some post-processing methods like BERT-flow (Li et al., 2020) and BERT-whitening (Su et al., 2021) along with some naive baselines like averaged GloVe embeddings (Pennington et al., 2014) and averaged first and last layer BERT embeddings.\nSemantic Textual Similarity (STS) We show the results of STS tasks in Table 1 including BERTbase (upper part) and RoBERTabase (lower part). We also reproduce the previous state-ofthe-art SimCSE (Gao et al., 2021). DiffCSEBERTbase can significantly outperform SimCSEBERTbase and raise the averaged Spearman’s correlation from 76.25% to 78.49%. For the RoBERTa model, DiffCSE-RoBERTabase can also improve upon SimCSE-RoBERTabase from 76.57% to 77.80%.\nTransfer Tasks We show the results of transfer tasks in Table 2. Compared with SimCSEBERTbase, DiffCSE-BERTbase can improve the averaged scores from 85.56% to 86.86%. When applying it to the RoBERTa model, DiffCSERoBERTabase also improves upon SimCSERoBERTabase from 84.84% to 87.04%. Note that the CMLM-BERTbase (Yang et al., 2020) can achieve even better performance than DiffCSE. However, they use 1TB of the training data from Common Crawl dumps while our model only use 115MB of the Wikipedia data for pretraining. We put their scores in Table 2 for reference. In SimCSE, the authors propose to use MLM as an auxiliary task for the sentence encoder to further boost the performance of transfer tasks. Compared with\nthe results of SimCSE with MLM, DiffCSE still can have a little improvement around 0.2%."
+    }, {
+      "heading" : "5 Ablation Studies",
+      "text" : "In the following sections, we perform an extensive series of ablation studies that support our model design. We use BERTbase model to evaluate on the development set of STS-B and transfer tasks. Removing Contrastive Loss In our model, both the contrastive loss and the RTD loss are crucial because they maintain what should be sensitive and what should be insensitive respectively. If we remove the RTD loss, the model becomes a SimCSE model; if we remove the contrastive loss, the performance of STS-B drops significantly by 30%, while the average score of transfer tasks also drops by 2% (see Table 3). This result shows that it is important to have insensitive and sensitive attributes that exist together in the representation space.\nNext Sentence vs. Same Sentence Some methods for unsupervised sentence embeddings like Quick-Thoughts (Logeswaran and Lee, 2018) and CMLM (Yang et al., 2020) predict the next sentence as the training objective. We also experiment with a variant of DiffCSE by conditioning the ELECTRA loss based on the next sentence. Note that this kind of model is not doing a “diff operation” between two similar sentences, and is not an instance of equivariant contrastive learning. As shown in Table 3 (use next sent. for x′), the score of STS-B decreases significantly compared to DiffCSE while transfer performance remains\nsimilar. We also tried using the same sentence and the next sentence at the same time for conditioning the ELECTRA objective (use same+next sent. for x′), and did not observe improvements.\nOther Conditional Pretraining Tasks Instead of a conditional binary difference prediction loss, we can also consider other conditional pretraining tasks such as a conditional MLM objective proposed by Yang et al. (2020), or corrective language modeling,4 proposed by COCO-LM (Meng et al., 2021). We experiment with these objectives instead of the difference prediction objective in Table 3. We observe that conditional MLM on the same sentence does not improve the performance either on STS-B or transfer tasks compared with DiffCSE. Conditional MLM on the next sentence performs even worse for STS-B, but slightly better than using the same sentence on transfer tasks. Using both the same and the next sentence also does not improve the performance compared with DiffCSE. For the corrective LM objective, the performance of STS-B decreases significantly compared with DiffCSE.\nDifferent Augmentations - Insert/Delete/Replace In DiffCSE, we use MLM token replacement as the equivariant augmentation. It is possible to use other methods like random insertion or deletion instead of replacement.5 For insertion, we choose to ran-\n4This task is similar to ELECTRA. However, instead of a binary classifier for replaced token detection, corrective LM uses a vocabulary-size classifier with the copy mechanism to recover the replaced tokens.\n5Edit distance operators include insert, delete and replace.\ndomly insert mask tokens to the sentence, and then use a generator to convert mask tokens into real tokens. The number of inserted masked tokens is 15% of the sentence length. The task is to predict\nwhether a token is an inserted token or the original token. For deletion, we randomly delete 15% tokens in the sentence, and the task is to predict for each token whether a token preceding it has been deleted or not. The results are shown in Table 4. We can see that using either insertion or deletion achieves a slightly worse STS-B performance than using MLM replacement. For transfer tasks, their results are similar. Finally, we find that combining all three augmentations in the training process does not improve the MLM replacement strategy.\nPooler Choice In SimCSE, the authors use the pooler in BERT’s original implementation (one linear layer with tanh activation function) as the final layer to extract features for computing contrastive loss. In our implementation (see details in Appendix A), we find that it is better to use a two-layer pooler with Batch Normalization (BatchNorm) (Ioffe and Szegedy, 2015), which is commonly used in contrastive learning framework in computer vision (Chen et al., 2020; Grill et al., 2020; Chen and He, 2021; Hua et al., 2021). We show the ablation results in Table 5. We can observe that adding BatchNorm is beneficial for either DiffCSE or SimCSE to get better performance on STS-B and transfer tasks.\nDifferent Size of the Generator In our DiffCSE model, the generator can be in different model size from BERTlarge, BERTbase (Devlin et al., 2019), DistilBERTbase (Sanh et al., 2019), BERTmedium, BERTsmall, BERTmini, BERTtiny (Turc et al., 2019). Their exact sizes are shown in Table 6 (L: number of layers, H: hidden dimension). Notice that although DistilBERTbase has only half the number of layers of BERT, it can retain 97% of\nBERT’s performance due to knowledge distillation. We show our results in Table 6, we can see the performance of transfer tasks does not change much with different generators. However, the score of STS-B decreases as we switch from BERTmedium to BERT-tiny. This finding is not the same as ELECTRA, which works best with generators 1/4-1/2 the size of the discriminator. Because our discriminator is conditional on sentence vectors, it will be easier for the discriminator to perform the RTD task. As a result, using stronger generators (BERTbase, DistilBERTbase) to increase the difficulty of RTD would help the discriminator learn better. However, when using a large model like BERTlarge, it may be a too-challenging task for the discriminator. In our experiment, using DistilBERTbase, which has the ability close to but slightly worse than BERTbase, gives us the best performance.\nMasking Ratio In our conditional ELECTRA task, we can mask the original sentence in different ratios for the generator to produce MLM-based augmentations. A higher masking ratio will make more perturbations to the sentence. Our empirical result in Table 7 shows that the difference between difference masking ratios is small (in 15%-40% ), and a masking ratio of around 30% can give us the best performance.\nCoefficient λ In Section 3, we use the λ coefficient to weight the ELECTRA loss and then add it with contrastive loss. Because the contrastive learning objective is a relatively easier task, the scale of contrastive loss will be 100 to 1000 smaller than\nELECTRA loss. As a result, we need a smaller λ to balance these two loss terms. In the Table 8 we show the STS-B result under different λ values. Note that when λ goes to zero, the model becomes a SimCSE model. We find that using λ = 0.005 can give us the best performance."
+    }, {
+      "heading" : "6 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "6.1 Qualitative Study",
+      "text" : "A very common application for sentence embeddings is the retrieval task. Here we show some retrieval examples to qualitatively explain why DiffCSE can perform better than SimCSE. In this study, we use the 2758 sentences from STS-B testing set as the corpus, and then use sentence query to retrieve the nearest neighbors in the sentence embedding space by computing cosine similarities. We show the retrieved top-3 examples in Table 9. The first query sentence is “you can do it, too.”. The SimCSE model retrieves a very similar sentence but has a slightly different meaning (“you can use it, too.”) as the rank-1 answer. In contrast, DiffCSE can distinguish the tiny difference, so it retrieves the ground truth answer as the rank-1 answer. The second query sentence is “this is not a problem”. SimCSE retrieves a sentence with opposite meaning but very similar wording, while DiffCSE can retrieve the correct answer with less similar wording. We also provide a third example where both SimCSE and DiffCSE fail to retrieve the correct answer for a query sentence using double negation."
+    }, {
+      "heading" : "6.2 Retrieval Task",
+      "text" : "Besides the qualitative study, we also show the quantitative result of the retrieval task. Here we also use all the 2758 sentences in the testing set of STS-B as the corpus. There are 97 positive pairs in this corpus (with 5 out of 5 semantic similarity scores from human annotation). For each positive pair, we use one sentence to retrieve the other one, and see whether the other sentence is in the top-1/5/10 ranking. The recall@1/5/10 of the retrieval task are shown in Table 10. We can observe that DiffCSE can outperform SimCSE for\nrecall@1/5/10, showing the effectiveness of using DiffCSE for the retrieval task."
+    }, {
+      "heading" : "6.3 Distribution of Sentence Embeddings",
+      "text" : "To look into the representation space of DiffCSE, we plot the cosine similarity distribution of sentence pairs from STS-B test set for both SimCSE and DiffCSE in Figure 2. We observe that both SimCSE and DiffCSE can assign cosine similarities consistent with human ratings. However, we also observe that under the same human rating, DiffCSE assigns slightly higher cosine similarities compared with SimCSE. This phenomenon\nmay be caused by the fact that ELECTRA and other Transformer-based pretrained LMs have the problem of squeezing the representation space, as mentioned by Meng et al. (2021). As we use the sentence embeddings as the input of ELECTRA to perform conditional ELECTRA training, the sentence embedding will be inevitably squeezed to fit the input distribution of ELECTRA. We follow prior studies (Wang and Isola, 2020; Gao et al., 2021) to use uniformity and alignment (details in Appendix C) to measure the quality of representation space for DiffCSE and SimCSE in Table 11. Compared to averaged BERT embeddings, SimCSE has similar alignment (0.177 v.s. 0.172) but better uniformity (-2.313). In contrast, DiffCSE has similar uniformity as Avg. BERT (-1.438 v.s. -1.468) but much better alignment (0.097). It indicates that SimCSE and DiffCSE are optimizing the representation space in two different directions. And the improvement of DiffCSE may come from its better alignment."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "In this paper, we present DiffCSE, a new unsupervised sentence embedding framework that is aware of, but not invariant to, MLM-based word replacement. Empirical results on semantic textual similarity tasks and transfer tasks both show the effectiveness of DiffCSE compared to current stateof-the-art sentence embedding methods. We also conduct extensive ablation studies to demonstrate the different modeling choices in DiffCSE. Qualitative study and the retrieval results also show that DiffCSE can produce a better embedding space for sentence retrieval. One limitation of our work is that we do not explore the supervised setting that uses human-labeled NLI datasets to further boost the performance. We leave this topic for future work. We believe that our work can provide researchers in the NLP community a new way to utilize augmentations for natural language and thus produce better sentence embeddings."
+    }, {
+      "heading" : "A Training Details",
+      "text" : "We use a single NVIDIA 2080Ti GPU for each experiment. The averaged running time for DiffCSE is 3-6 hours. We use grid-search of batch size ∈ {64, 128} learning rate ∈ {2e-6, 5e-6, 7e-6, 1e-5} and masking ratio ∈ {0.15, 0.20, 0.30, 0.40} and λ ∈ {0.1, 0.05, 0.01, 0.005, 0.001}. The temperature τ in SimCSE is set to 0.05 for all the experiments. During the training process, we save the checkpoint with the highest score on the STS-B development set. And then we use STS-B development set to find the best hyperparameters (listed in Table 12) for STS task; we use the averaged score of the development sets of 7 transfer tasks to find the best hyperparameters (listed in Table 13) for transfer tasks. All numbers in Table 1 and Table 2 are from a single run.\nDuring testing, we follow SimCSE to discard the MLP projector and only use the [CLS] output to extract the sentence embeddings.\nThe numbers of model parameters for BERTbase and RoBERTabase are listed in Table 14. Note that in training time DiffCSE needs two BERT models to work together (sentence encoder + discriminator), but in testing time we only need the sentence encoder, so the model size is the same as the SimCSE model.\nProjector with BatchNorm In Section 5, we mention that we use a projector with BatchNorm as the final layer of our model. Here we provided the PyTorch code for its structure:\nclass ProjectionMLP(nn.Module): def __init__(self, hidden_size):\nsuper().__init__() in_dim = hidden_size middle_dim = hidden_size * 2 out_dim = hidden_size self.net = nn.Sequential( nn.Linear(in_dim, middle_dim,\nbias=False), nn.BatchNorm1d(middle_dim), nn.ReLU(inplace=True), nn.Linear(middle_dim, out_dim,\nbias=False), nn.BatchNorm1d(out_dim,\naffine=False))"
+    }, {
+      "heading" : "B Using Augmentations as Positive/Negative Examples",
+      "text" : "In Section 5, we try to use different augmentations (e.g. insertion, deletion, replacement) for learning equivariance. In Table 15 we provide the results of using these augmentations as additional positive or negative examples along with the SimCSE training paradigm. We can observe that using these augmentations as additional positives only decreases the performance. The only method that can improve the performance a little bit is to use MLM 15% replaced examples as additional negative examples. Overall, none of these results can perform better than our proposed method, e.g. using these augmentations to learn equivariance."
+    }, {
+      "heading" : "C Uniformity and Alignment",
+      "text" : "Wang and Isola (2020) propose to use two properties, alignment and uniformity, to measure the quality of representations. Given a distribution of positive pairs ppos and the distribution of the whole dataset pdata, alignment computes the expected distance between normalized embeddings of the paired sentences:\nℓalign ≜ E (x,x+)∼ppos ∥∥f(x)− f (x+)∥∥2 . Uniformity measures how well the embeddings are uniformly distributed in the representation space:\nℓuniform ≜ log E x,y i.i.d.∼ pdata e−2∥f(x)−f(y)∥ 2 .\nThe smaller the values of uniformity and alignment, the better the quality of the representation space is indicated."
+    }, {
+      "heading" : "D Source Code",
+      "text" : "We build our model using the PyTorch implementation of SimCSE6 Gao et al. (2021), which is based on the HuggingFace’s Transformers package.7 We also upload our code8 and pretrained models (links in README.md). Please follow the instructions in README.md to reproduce the results."
+    }, {
+      "heading" : "E Potential Risks",
+      "text" : "On the risk side, insofar as our method utilizes pretrained language models, it may inherit and propagate some of the harmful biases present in such models. Besides that, we do not see any other potential risks in our paper.\n6https://github.com/princeton-nlp/ SimCSE\n7https://github.com/huggingface/ transformers\n8https://www.dropbox.com/s/ t63buqs3xnifffp/DiffCSE.zip"
+    } ],
+    "references" : [ {
+      "title" : "SemEval-2016 task 1: Semantic textual similarity, monolingual and cross-lingual evaluation",
+      "author" : [ "Eneko Agirre", "Carmen Banea", "Daniel Cer", "Mona Diab", "Aitor Gonzalez-Agirre", "Rada Mihalcea", "German Rigau", "Janyce Wiebe." ],
+      "venue" : "Proceedings of the",
+      "citeRegEx" : "Agirre et al\\.,? 2016",
+      "shortCiteRegEx" : "Agirre et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic re-tuning with contrastive tension",
+      "author" : [ "Fredrik Carlsson", "Amaru Cuba Gyllensten", "Evangelia Gogoulou", "Erik Ylipää Hellqvist", "Magnus Sahlgren" ],
+      "venue" : null,
+      "citeRegEx" : "Carlsson et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Carlsson et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "SemEval-2017 task 1: Semantic textual similarity multilingual and crosslingual focused evaluation",
+      "author" : [ "Daniel Cer", "Mona Diab", "Eneko Agirre", "Iñigo LopezGazpio", "Lucia Specia." ],
+      "venue" : "Proceedings of the 11th International Workshop on Semantic",
+      "citeRegEx" : "Cer et al\\.,? 2017",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Universal sentence encoder for english",
+      "author" : [ "Daniel Cer", "Yinfei Yang", "Sheng-yi Kong", "Nan Hua", "Nicole Limtiaco", "Rhomni St John", "Noah Constant", "Mario Guajardo-Cespedes", "Steve Yuan", "Chris Tar" ],
+      "venue" : "In Proceedings of the 2018 Conference on Empirical",
+      "citeRegEx" : "Cer et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "International conference on machine learning, pages 1597–1607. PMLR.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploring simple siamese representation learning",
+      "author" : [ "Xinlei Chen", "Kaiming He." ],
+      "venue" : "Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 15750–15758.",
+      "citeRegEx" : "Chen and He.,? 2021",
+      "shortCiteRegEx" : "Chen and He.",
+      "year" : 2021
+    }, {
+      "title" : "Electra: Pre-training text encoders as discriminators rather than generators",
+      "author" : [ "Kevin Clark", "Minh-Thang Luong", "Quoc V Le", "Christopher D Manning." ],
+      "venue" : "arXiv preprint arXiv:2003.10555.",
+      "citeRegEx" : "Clark et al\\.,? 2020",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "SentEval: An evaluation toolkit for universal sentence representations",
+      "author" : [ "Alexis Conneau", "Douwe Kiela" ],
+      "venue" : null,
+      "citeRegEx" : "Conneau and Kiela.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Conneau and Kiela.",
+      "year" : 2018
+    }, {
+      "title" : "Supervised learning of universal sentence representations from natural language inference data",
+      "author" : [ "Alexis Conneau", "Douwe Kiela", "Holger Schwenk", "Loïc Barrault", "Antoine Bordes." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Conneau et al\\.,? 2017",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Equivariant contrastive learning",
+      "author" : [ "Rumen Dangovski", "Li Jing", "Charlotte Loh", "Seungwook Han", "Akash Srivastava", "Brian Cheung", "Pulkit Agrawal", "Marin Soljačić." ],
+      "venue" : "arXiv preprint arXiv:2111.00899.",
+      "citeRegEx" : "Dangovski et al\\.,? 2021",
+      "shortCiteRegEx" : "Dangovski et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bert: Pre-training of deep",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova" ],
+      "venue" : null,
+      "citeRegEx" : "Devlin et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatically constructing a corpus of sentential paraphrases",
+      "author" : [ "William B Dolan", "Chris Brockett." ],
+      "venue" : "Proceedings of the Third International Workshop on Paraphrasing (IWP2005).",
+      "citeRegEx" : "Dolan and Brockett.,? 2005",
+      "shortCiteRegEx" : "Dolan and Brockett.",
+      "year" : 2005
+    }, {
+      "title" : "Simcse: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "arXiv preprint arXiv:2104.08821.",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Declutr: Deep contrastive learning for unsupervised textual representations",
+      "author" : [ "John M Giorgi", "Osvald Nitski", "Gary D Bader", "Bo Wang." ],
+      "venue" : "arXiv preprint arXiv:2006.03659.",
+      "citeRegEx" : "Giorgi et al\\.,? 2020",
+      "shortCiteRegEx" : "Giorgi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bootstrap your own latent - a new approach to self-supervised learning",
+      "author" : [ "Valko." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 33, pages 21271–21284. Curran Associates, Inc.",
+      "citeRegEx" : "Valko.,? 2020",
+      "shortCiteRegEx" : "Valko.",
+      "year" : 2020
+    }, {
+      "title" : "Learning distributed representations of sentences from unlabelled data",
+      "author" : [ "Felix Hill", "Kyunghyun Cho", "Anna Korhonen." ],
+      "venue" : "arXiv preprint arXiv:1602.03483.",
+      "citeRegEx" : "Hill et al\\.,? 2016",
+      "shortCiteRegEx" : "Hill et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Mining and summarizing customer reviews",
+      "author" : [ "Minqing Hu", "Bing Liu." ],
+      "venue" : "Proceedings of the tenth ACM SIGKDD international conference on Knowledge discovery and data mining, pages 168–177.",
+      "citeRegEx" : "Hu and Liu.,? 2004",
+      "shortCiteRegEx" : "Hu and Liu.",
+      "year" : 2004
+    }, {
+      "title" : "On feature decorrelation in self-supervised learning",
+      "author" : [ "Tianyu Hua", "Wenxiao Wang", "Zihui Xue", "Sucheng Ren", "Yue Wang", "Hang Zhao." ],
+      "venue" : "Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 9598–9608.",
+      "citeRegEx" : "Hua et al\\.,? 2021",
+      "shortCiteRegEx" : "Hua et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Batch normalization: Accelerating deep network training by reducing internal covariate shift",
+      "author" : [ "Sergey Ioffe", "Christian Szegedy." ],
+      "venue" : "International conference on machine learning, pages 448–456. PMLR.",
+      "citeRegEx" : "Ioffe and Szegedy.,? 2015",
+      "shortCiteRegEx" : "Ioffe and Szegedy.",
+      "year" : 2015
+    }, {
+      "title" : "Self-guided contrastive learning for bert sentence representations",
+      "author" : [ "Taeuk Kim", "Kang Min Yoo", "Sang-goo Lee." ],
+      "venue" : "arXiv preprint arXiv:2106.07345.",
+      "citeRegEx" : "Kim et al\\.,? 2021",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Skip-thought vectors",
+      "author" : [ "Ryan Kiros", "Yukun Zhu", "Ruslan Salakhutdinov", "Richard S Zemel", "Antonio Torralba", "Raquel Urtasun", "Sanja Fidler." ],
+      "venue" : "pages 3294–3302.",
+      "citeRegEx" : "Kiros et al\\.,? 2015",
+      "shortCiteRegEx" : "Kiros et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "On the sentence embeddings from pre-trained language models",
+      "author" : [ "Bohan Li", "Hao Zhou", "Junxian He", "Mingxuan Wang", "Yiming Yang", "Lei Li." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An efficient framework for learning sentence representations",
+      "author" : [ "Lajanugen Logeswaran", "Honglak Lee" ],
+      "venue" : null,
+      "citeRegEx" : "Logeswaran and Lee.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Logeswaran and Lee.",
+      "year" : 2018
+    }, {
+      "title" : "A sick cure for the evaluation of compositional distributional semantic models",
+      "author" : [ "Marco Marelli", "Stefano Menini", "Marco Baroni", "Luisa Bentivogli", "Raffaella Bernardi", "Roberto Zamparelli" ],
+      "venue" : "In Lrec,",
+      "citeRegEx" : "Marelli et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Marelli et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Coco-lm: Correcting and contrasting text sequences for language model pretraining",
+      "author" : [ "Yu Meng", "Chenyan Xiong", "Payal Bajaj", "Saurabh Tiwary", "Paul Bennett", "Jiawei Han", "Xia Song." ],
+      "venue" : "arXiv preprint arXiv:2102.08473.",
+      "citeRegEx" : "Meng et al\\.,? 2021",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A sentimental education: Sentiment analysis using subjectivity summarization based on minimum cuts",
+      "author" : [ "Bo Pang", "Lillian Lee." ],
+      "venue" : "arXiv preprint cs/0409058.",
+      "citeRegEx" : "Pang and Lee.,? 2004",
+      "shortCiteRegEx" : "Pang and Lee.",
+      "year" : 2004
+    }, {
+      "title" : "Seeing stars: Exploiting class relationships for sentiment categorization with respect to rating scales",
+      "author" : [ "Bo Pang", "Lillian Lee." ],
+      "venue" : "Proceedings of the 43rd Annual Meeting of the Association for Computational Linguistics (ACL’05), pages 115–124.",
+      "citeRegEx" : "Pang and Lee.,? 2005",
+      "shortCiteRegEx" : "Pang and Lee.",
+      "year" : 2005
+    }, {
+      "title" : "Glove: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 2014 conference on empirical methods in natural language processing (EMNLP), pages 1532–1543.",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Sentence-bert: Sentence embeddings using siamese bert-networks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "arXiv preprint arXiv:1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D Manning", "Andrew Y Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 2013 conference on empiri-",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Whitening sentence representations for better semantics and faster retrieval",
+      "author" : [ "Jianlin Su", "Jiarun Cao", "Weijie Liu", "Yangyiwen Ou." ],
+      "venue" : "arXiv preprint arXiv:2103.15316.",
+      "citeRegEx" : "Su et al\\.,? 2021",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Well-read students learn better: On the importance of pre-training compact models",
+      "author" : [ "Iulia Turc", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "arXiv preprint arXiv:1908.08962.",
+      "citeRegEx" : "Turc et al\\.,? 2019",
+      "shortCiteRegEx" : "Turc et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Building a question answering test collection",
+      "author" : [ "Ellen M Voorhees", "Dawn M Tice." ],
+      "venue" : "Proceedings of the 23rd annual international ACM SIGIR conference on Research and development in information retrieval, pages 200–207.",
+      "citeRegEx" : "Voorhees and Tice.,? 2000",
+      "shortCiteRegEx" : "Voorhees and Tice.",
+      "year" : 2000
+    }, {
+      "title" : "Understanding contrastive representation learning through alignment and uniformity on the hypersphere",
+      "author" : [ "Tongzhou Wang", "Phillip Isola." ],
+      "venue" : "International Conference on Machine Learning, pages 9929–9939. PMLR.",
+      "citeRegEx" : "Wang and Isola.,? 2020",
+      "shortCiteRegEx" : "Wang and Isola.",
+      "year" : 2020
+    }, {
+      "title" : "Annotating expressions of opinions and emotions in language",
+      "author" : [ "Janyce Wiebe", "Theresa Wilson", "Claire Cardie." ],
+      "venue" : "Language resources and evaluation, 39(2):165–210.",
+      "citeRegEx" : "Wiebe et al\\.,? 2005",
+      "shortCiteRegEx" : "Wiebe et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "Consert: A contrastive framework for self-supervised sentence representation transfer",
+      "author" : [ "Yuanmeng Yan", "Rumei Li", "Sirui Wang", "Fuzheng Zhang", "Wei Wu", "Weiran Xu." ],
+      "venue" : "arXiv preprint arXiv:2105.11741.",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Universal sentence representation learning with conditional masked language model",
+      "author" : [ "Ziyi Yang", "Yinfei Yang", "Daniel Cer", "Jax Law", "Eric Darve." ],
+      "venue" : "arXiv preprint arXiv:2012.14388.",
+      "citeRegEx" : "Yang et al\\.,? 2020",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "An unsupervised sentence embedding method by mutual information maximization",
+      "author" : [ "Yan Zhang", "Ruidan He", "Zuozhu Liu", "Kwan Hui Lim", "Lidong Bing." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "2020) propose to use two properties, alignment and uniformity, to measure the quality of representations. Given a distribution of positive pairs ppos and the distribution of the whole",
+      "author" : [ "C Uniformity", "Alignment Wang", "Isola" ],
+      "venue" : null,
+      "citeRegEx" : "Uniformity et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Uniformity et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 9,
+      "context" : "We show that DiffSCE is an instance of equivariant contrastive learning (Dangovski et al., 2021), which generalizes contrastive learning and learns representations that are insensitive to certain types of augmentations and sensitive to other “harmful” types of augmentations.",
+      "startOffset" : 72,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 8,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 3,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 20,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 23,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 13,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 37,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 12,
+      "context" : "Learning “universal” sentence representations that capture rich semantic information and are at the same time performant across a wide range of downstream NLP tasks without task-specific finetuning is an important open issue in the field (Conneau et al., 2017; Cer et al., 2018; Kiros et al., 2015; Logeswaran and Lee, 2018; Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 238,
+      "endOffset" : 381
+    }, {
+      "referenceID" : 13,
+      "context" : "Recent work has shown that finetuning pretrained language models with contrastive learning makes it possible to learn good sentence embeddings without any labeled data (Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 168,
+      "endOffset" : 225
+    }, {
+      "referenceID" : 37,
+      "context" : "Recent work has shown that finetuning pretrained language models with contrastive learning makes it possible to learn good sentence embeddings without any labeled data (Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 168,
+      "endOffset" : 225
+    }, {
+      "referenceID" : 12,
+      "context" : "Recent work has shown that finetuning pretrained language models with contrastive learning makes it possible to learn good sentence embeddings without any labeled data (Giorgi et al., 2020; Yan et al., 2021; Gao et al., 2021).",
+      "startOffset" : 168,
+      "endOffset" : 225
+    }, {
+      "referenceID" : 4,
+      "context" : ") have been found to be crucial for pretraining vision models (Chen et al., 2020), such augmentations have generally been unsuccessful when applied to contrastive learning of sentence embeddings.",
+      "startOffset" : 62,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 9,
+      "context" : "This is an instance of equivariant contrastive learning (Dangovski et al., 2021), which improves vision representation learning by using a contrastive loss on insensitive image transformations (e.",
+      "startOffset" : 56,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 12,
+      "context" : "We operationalize equivariant contrastive learning on sentences by using dropout-based augmentation as the insensitive transformation (as in SimCSE (Gao et al., 2021)) and MLM-based word replacement as the sensitive transformation.",
+      "startOffset" : 148,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 7,
+      "context" : "We conduct experiments on 7 semantic textual similarity tasks (STS) and 7 transfer tasks from SentEval (Conneau and Kiela, 2018) and find that this difference-based learning greatly improves over standard contrastive learning.",
+      "startOffset" : 103,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 20,
+      "context" : "Learning universal sentence embeddings has been studied extensively in prior work, including unsupervised approaches such as Skip-Thought (Kiros et al., 2015), Quick-Thought (Logeswaran and Lee, 2018) and FastSent (Hill et al.",
+      "startOffset" : 138,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2015), Quick-Thought (Logeswaran and Lee, 2018) and FastSent (Hill et al.",
+      "startOffset" : 23,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2015), Quick-Thought (Logeswaran and Lee, 2018) and FastSent (Hill et al., 2016), or supervised methods such as InferSent (Conneau et al.",
+      "startOffset" : 63,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2016), or supervised methods such as InferSent (Conneau et al., 2017), Universal Sentence Encoder (Cer et al.",
+      "startOffset" : 49,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2017), Universal Sentence Encoder (Cer et al., 2018) and Sentence-BERT (Reimers and Gurevych, 2019).",
+      "startOffset" : 36,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 4,
+      "context" : "Recently, researchers have focused on (unsupervised) contrastive learning approaches such as SimCLR (Chen et al., 2020) to learn sentence embeddings.",
+      "startOffset" : 100,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 4,
+      "context" : "SimCLR (Chen et al., 2020) learns image representations by creating semantically close augmentations for the same images and then pulling these representations to be closer than representations of random negative examples.",
+      "startOffset" : 7,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 37,
+      "context" : "ConSERT (Yan et al., 2021) uses a combination of four data augmentation strategies: adversarial attack, token shuffling, cut-off, and dropout.",
+      "startOffset" : 8,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 13,
+      "context" : "DeCLUTR (Giorgi et al., 2020) uses overlapped spans as positive examples and distant spans as negative examples for learning contrastive span representations.",
+      "startOffset" : 8,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 12,
+      "context" : "Finally, SimCSE (Gao et al., 2021) proposes an extremely simple augmentation strategy by just switching dropout masks.",
+      "startOffset" : 16,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 9,
+      "context" : "DiffCSE is inspired by a recent generalization of contrastive learning in computer vision (CV) called equivariant contrastive learning (Dangovski et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 4,
+      "context" : "Past empirical studies have revealed useful transformations for contrastive learning, such as random resized cropping and color jitter for computer vision (Chen et al., 2020) and dropout for NLP (Gao et al.",
+      "startOffset" : 155,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 9,
+      "context" : "Equivariance is the property that there is an induced group transformation T ′ on the output features (Dangovski et al., 2021):",
+      "startOffset" : 102,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 6,
+      "context" : "This is essentially a conditional version of the ELECTRA model (Clark et al., 2020), which makes the encoder equivariant to MLM by using a binary discriminator which detects whether a token is from the original sentence or from a generator.",
+      "startOffset" : 63,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 6,
+      "context" : "On the right-hand side of Figure 1 is a conditional version of the difference prediction objective used in ELECTRA (Clark et al., 2020), which contains a generator and a discriminator.",
+      "startOffset" : 115,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 12,
+      "context" : "In our experiment, we follow the setting of unsupervised SimCSE (Gao et al., 2021) and build our model based on their PyTorch implementation.",
+      "startOffset" : 64,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 10,
+      "context" : "2 We also use the checkpoints of BERT (Devlin et al., 2019) and RoBERTa (Liu et al.",
+      "startOffset" : 38,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2019) and RoBERTa (Liu et al., 2019) as the initialization of our sentence encoder f .",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 18,
+      "context" : "We add an MLP layer with Batch Normalization (Ioffe and Szegedy, 2015) (BatchNorm) on top of the [CLS] representation as the sentence embedding.",
+      "startOffset" : 45,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 30,
+      "context" : "For the generator G, we use the smaller DistilBERT and DistilRoBERTa (Sanh et al., 2019) for efficiency.",
+      "startOffset" : 69,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 6,
+      "context" : "Note that the generator is fixed during training unlike the ELECTRA paper (Clark et al., 2020).",
+      "startOffset" : 74,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 0,
+      "context" : "3 STS tasks includes STS 2012– 2016 (Agirre et al., 2016), STS Benchmark (Cer et al.",
+      "startOffset" : 36,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2016), STS Benchmark (Cer et al., 2017) and SICK-Relatedness (Marelli et al.",
+      "startOffset" : 23,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 27,
+      "context" : "The transfer tasks are various sentence classification tasks, including MR (Pang and Lee, 2005), CR (Hu and Liu, 2004), SUBJ (Pang and Lee, 2004), MPQA (Wiebe et al.",
+      "startOffset" : 75,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 16,
+      "context" : "The transfer tasks are various sentence classification tasks, including MR (Pang and Lee, 2005), CR (Hu and Liu, 2004), SUBJ (Pang and Lee, 2004), MPQA (Wiebe et al.",
+      "startOffset" : 100,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 26,
+      "context" : "The transfer tasks are various sentence classification tasks, including MR (Pang and Lee, 2005), CR (Hu and Liu, 2004), SUBJ (Pang and Lee, 2004), MPQA (Wiebe et al.",
+      "startOffset" : 125,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 36,
+      "context" : "The transfer tasks are various sentence classification tasks, including MR (Pang and Lee, 2005), CR (Hu and Liu, 2004), SUBJ (Pang and Lee, 2004), MPQA (Wiebe et al., 2005), SST2 (Socher et al.",
+      "startOffset" : 152,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2005), SST2 (Socher et al., 2013), TREC (Voorhees and Tice, 2000) and MRPC (Dolan and Brockett, 2005).",
+      "startOffset" : 14,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2013), TREC (Voorhees and Tice, 2000) and MRPC (Dolan and Brockett, 2005).",
+      "startOffset" : 14,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2013), TREC (Voorhees and Tice, 2000) and MRPC (Dolan and Brockett, 2005).",
+      "startOffset" : 49,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 7,
+      "context" : "In these transfer tasks, we will use a logistic regression classifier trained on top of the frozen sentence embeddings, following the standard setup (Conneau and Kiela, 2018).",
+      "startOffset" : 149,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 12,
+      "context" : "Baselines We compare our model with many strong unsupervised baselines including SimCSE (Gao et al., 2021), IS-BERT (Zhang et al.",
+      "startOffset" : 88,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2021), IS-BERT (Zhang et al., 2020), CMLM (Yang et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2020), CMLM (Yang et al., 2020), DeCLUTR (Giorgi et al.",
+      "startOffset" : 14,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2020), DeCLUTR (Giorgi et al., 2020), CT-BERT (Carlsson et al.",
+      "startOffset" : 17,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2020), CT-BERT (Carlsson et al., 2021), SG-OPT (Kim et al.",
+      "startOffset" : 17,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2021), SG-OPT (Kim et al., 2021) and some post-processing methods like BERT-flow (Li et al.",
+      "startOffset" : 16,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2021) and some post-processing methods like BERT-flow (Li et al., 2020) and BERT-whitening (Su et al.",
+      "startOffset" : 56,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 28,
+      "context" : "with some naive baselines like averaged GloVe embeddings (Pennington et al., 2014) and averaged first and last layer BERT embeddings.",
+      "startOffset" : 57,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 12,
+      "context" : "We also reproduce the previous state-ofthe-art SimCSE (Gao et al., 2021).",
+      "startOffset" : 54,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 38,
+      "context" : "Note that the CMLM-BERTbase (Yang et al., 2020) can achieve even better performance than DiffCSE.",
+      "startOffset" : 28,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 23,
+      "context" : "Same Sentence Some methods for unsupervised sentence embeddings like Quick-Thoughts (Logeswaran and Lee, 2018) and CMLM (Yang et al.",
+      "startOffset" : 84,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 38,
+      "context" : "Same Sentence Some methods for unsupervised sentence embeddings like Quick-Thoughts (Logeswaran and Lee, 2018) and CMLM (Yang et al., 2020) predict the next sentence as the training objective.",
+      "startOffset" : 120,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 25,
+      "context" : "(2020), or corrective language modeling,4 proposed by COCO-LM (Meng et al., 2021).",
+      "startOffset" : 62,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 18,
+      "context" : "In our implementation (see details in Appendix A), we find that it is better to use a two-layer pooler with Batch Normalization (BatchNorm) (Ioffe and Szegedy, 2015), which is commonly used in contrastive learning framework in computer vision (Chen et al.",
+      "startOffset" : 140,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 4,
+      "context" : "In our implementation (see details in Appendix A), we find that it is better to use a two-layer pooler with Batch Normalization (BatchNorm) (Ioffe and Szegedy, 2015), which is commonly used in contrastive learning framework in computer vision (Chen et al., 2020; Grill et al., 2020; Chen and He, 2021; Hua et al., 2021).",
+      "startOffset" : 243,
+      "endOffset" : 319
+    }, {
+      "referenceID" : 5,
+      "context" : "In our implementation (see details in Appendix A), we find that it is better to use a two-layer pooler with Batch Normalization (BatchNorm) (Ioffe and Szegedy, 2015), which is commonly used in contrastive learning framework in computer vision (Chen et al., 2020; Grill et al., 2020; Chen and He, 2021; Hua et al., 2021).",
+      "startOffset" : 243,
+      "endOffset" : 319
+    }, {
+      "referenceID" : 17,
+      "context" : "In our implementation (see details in Appendix A), we find that it is better to use a two-layer pooler with Batch Normalization (BatchNorm) (Ioffe and Szegedy, 2015), which is commonly used in contrastive learning framework in computer vision (Chen et al., 2020; Grill et al., 2020; Chen and He, 2021; Hua et al., 2021).",
+      "startOffset" : 243,
+      "endOffset" : 319
+    }, {
+      "referenceID" : 10,
+      "context" : "Different Size of the Generator In our DiffCSE model, the generator can be in different model size from BERTlarge, BERTbase (Devlin et al., 2019), DistilBERTbase (Sanh et al.",
+      "startOffset" : 124,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2019), DistilBERTbase (Sanh et al., 2019), BERTmedium, BERTsmall, BERTmini, BERTtiny (Turc et al.",
+      "startOffset" : 24,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2019), BERTmedium, BERTsmall, BERTmini, BERTtiny (Turc et al., 2019).",
+      "startOffset" : 51,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 35,
+      "context" : "Table 11: Alignment and Uniformity (Wang and Isola, 2020) measured on STS-B test set for SimCSE and DiffCSE.",
+      "startOffset" : 35,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 35,
+      "context" : "We follow prior studies (Wang and Isola, 2020; Gao et al., 2021) to use uniformity and alignment (details in Appendix C) to measure the quality of representation space for DiffCSE and SimCSE in Table 11.",
+      "startOffset" : 24,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 12,
+      "context" : "We follow prior studies (Wang and Isola, 2020; Gao et al., 2021) to use uniformity and alignment (details in Appendix C) to measure the quality of representation space for DiffCSE and SimCSE in Table 11.",
+      "startOffset" : 24,
+      "endOffset" : 64
+    } ],
+    "year" : 0,
+    "abstractText" : "We propose DiffCSE, an unsupervised contrastive learning framework for learning sentence embeddings. DiffCSE learns sentence embeddings that are sensitive to the difference between the original sentence and an edited sentence, where the edited sentence is obtained by stochastically masking out the original sentence and then sampling from a masked language model. We show that DiffSCE is an instance of equivariant contrastive learning (Dangovski et al., 2021), which generalizes contrastive learning and learns representations that are insensitive to certain types of augmentations and sensitive to other “harmful” types of augmentations. Our experiments show that DiffCSE achieves state-of-the-art results among unsupervised sentence representation learning methods, outperforming unsupervised SimCSE by 2.3 absolute points on semantic textual similarity tasks.",
+    "creator" : null
+  }
+}

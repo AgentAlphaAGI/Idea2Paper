@@ -1,0 +1,539 @@
+{
+  "name" : "ARR_2022_309_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Balancing Multi-domain Corpora Learning for Open-Domain Response Generation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Recent work has achieved improvements in general performance for open-domain response generation (Vinyals and Le, 2015; Serban et al., 2017; Li et al., 2016; Xu et al., 2018). However, most studies are restricted to single-corpus training and evaluating, while there lacks studies for training and evaluating with multiple corpora from different domains. Single-corpus training has intrinsic limitations. For example, a corpus of everyday chats, e.g., the PersonaChat corpus (Dinan et al., 2019), does not cover technical topics discussed in Ubuntu chatlogs (Lowe et al., 2015). A conversational system that learns only from PersonaChat or\n1We will publish the Github link in the final version.\nfrom multiple corpora without an appropriate technique is not likely to generate relevant responses for certain topics (see Table 1). Therefore, it is necessary for an open-domain conversational system to learn from multiple corpora, and to learn with good techniques.\nFurthermore, the case of using a single smallscale open-domain corpus has apparent weaknesses. A common way of dealing with a smallscale corpus is through fine-tuning (Li et al., 2016; Akama et al., 2017; Chu et al., 2017). Fine-tuning on a single corpus tends to make the model overfit on that specific corpus while performing worse on other corpora. Table 2 shows the result of a GPT-2 model gaining good performance on PersonaChat while performing poorly on other corpora.\nThis paper explores how to train and evaluate on multiple corpora from different domains for the open-domain response generation task. We propose several methods to make a model generate relevant responses for each of the multiple corpora.\nSince simply training multiple corpora one by one does not solve the imbalanced performance (as Table 1 and 2 show), we first investigate interleaved learning, a method that intermingles the training data instead of simply concatenating, which ensures a model learns from all corpora evenly. We use this method as a baseline. Additionally, we explore two multi-domain learning methods: labeled learning and multi-task labeled learning. Labeled learning comes from a control technique in response generation (Li et al., 2016; Johnson et al., 2017; Yang et al., 2017). Previous works focus on controlling persona and style, while our method controls corpus’s information with the corpus embedding. Multi-task labeled learning is inspired by works of domain adaption (Luan et al., 2017; Niu and Bansal, 2018; Chu and Wang, 2018), where multiple losses from both the corpus classifier and response generator are minimized. To the best of our knowledge, this paper is the first that uses corpus embeddings on the open-domain response generation task for multiple corpora.\nFurthermore, we propose a novel weighted learning with Domain-specific Frequency (DF). DF is a word-level importance weight (Leopold and Kindermann, 2002) that assigns different weights to the same words from different corpora. In the training process, we weight the loss of a conversational system with DF, so that the model focuses on the most important words for a specific corpus.\nFor automatic evaluation metrics, we eliminate the stop words and use ROUGE-1 (precision, recall, F1) (Lin, 2004) to measure the relevance of the generated responses. In addition, we adopt DF to see how well the model distinguishes among different corpora and generates relevant responses for each corpus. We will explain DF as an evaluation metric in Section 4.4. Results show that for overall performance, the best method (weighted learning) improves 27.4% on precision, 45.5% on recall, and 34.1% on F1. Further, it has at least 20.0% higher DF, stating that it uses more important words from the “correct” corpus. We also conduct an extensive human evaluation on 2400 generated responses. The human evaluation shows a highly significant (p < 0.001) improvement on all of our proposed methods, especially the weighted learning method."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Open-Domain Response Generation Recent work of open-domain response generation gener-\nally follows the work of Ritter et al. (2011) where the task is treated as a machine translation task, and many of them use a Seq2Seq structure (Sutskever et al., 2014) following previous work (Vinyals and Le, 2015; Shang et al., 2015; Sordoni et al., 2015). In recent years, substantial improvements have been made (Serban et al., 2017; Li et al., 2016; Wolf et al., 2019), and embeddings are used to control response generation on extra information such as persona (Li et al., 2016), profiles (Yang et al., 2017), coherence (Xu et al., 2018), emotions (Huang et al., 2018), and dialogue attributes like response-relatedness (See et al., 2019). However, there is a lack of work that uses embeddings to control response generation over multiple corpora. Our work follows the common models of opendomain conversational systems, while we study the problem of multiple corpora of different domains.\nMulti-Domain Learning and Domain Adaption Multi-domain learning aims at making a conversational model learn from multiple domains to prevent the performance from degrading due to domain differences (Ben-David et al., 2007). There are two categories of solutions for multidomain learning (Joshi et al., 2012): (i) capturing domain-specific characteristics in the parameters (Daume III, 2007); (ii) capturing the relationship among different domains (Saha et al., 2011).\nSome work of natural language generation and machine translation is related to multi-domain learning. Luan et al. (2017) and Niu and Bansal (2018) use multi-task learning for domain adaption respectively on speaker-role and politeness. Wen et al. (2016) and Akama et al. (2017) utilizes finetuning as a common way of domain adaption for language generator and style transferer. For machine translation, in order to deal with the mixeddomain parallel corpus, Zeng et al. (2018) adjust the weights of target words in the training objective based on their relevance to different domains. We differ in that we propose DF and we deal with the response generation task. Chu et al. (2017) propose mixed fine-tuning, which adds the out-ofdomain pre-training data to the fine-tuning dataset, and they observe an improvement of performance. In this paper, we also mix small-scale fine-tuning datasets with out-of-domain training data, while the data we add is not necessarily used during pretraining. Shi et al. (2015) state that fine-tuning can be done by placing the corpus to be fine-tuned at the end of the entire corpus, which is an extension\nof curriculum learning proposed by Bengio et al. (2009). We also explore how the order of multiple corpora influences the result, but our focus is on balancing performance. Recently, Smith et al. (2020) investigated blending conversational skills with knowledge and empathy skills, where they mix 3 corpora. They focus on selecting appropriate skills and they propose a blended corpus with labels, while we focus on generating responses that are most relevant to a specific corpus."
+    }, {
+      "heading" : "3 Base Models",
+      "text" : "We use two base models: an LSTM Seq2Seq model with attention (Hochreiter and Schmidhuber, 1997; Sutskever et al., 2014; Bahdanau et al., 2015) and a pre-trained GPT-2 model (Radford et al., 2019). The LSTM Seq2Seq model with attention is a common model for conversational systems (Li et al., 2016; See et al., 2019), and the GPT2 model is a state-of-the-art model for the response generation task (Zhang et al., 2020; Zhao et al., 2020).\nThe basic task of response generation can be described as follows. Probability of response Y given context X is predicted as:\nP (Y |X) = ∏n\nt=1 P (yt|y1, . . . , yt−1, X), (1)\nwhere X = x1, . . . , xm and Y = y1, . . . , yn is a context-response pair."
+    }, {
+      "heading" : "3.1 LSTM Seq2Seq Model with Attention",
+      "text" : "We simplify an LSTM with attention unit as LSTM ∗ since it is well introduced in previous work (Li et al., 2016). We calculate the hidden vector ht at step t as:\nht = LSTM ∗(ht−1, E(zt)), (2)\nwhere ht−1 ∈ Rdim is the hidden vector at step t − 1, dim is the dimension of hidden vectors, and E(zt) is the word embedding for word zt ∈ (x1, . . . , xm, y1, . . . , yn−1). We apply dot product in the attention mechanism."
+    }, {
+      "heading" : "3.2 GPT-2",
+      "text" : "As for GPT-2, we follow the adaption of Wolf et al. (2019). The transformer block of GPT-2 captures the relation of multiple words in one sentence, which largely follows Vaswani et al. (2017). The hidden vector to be input to the transformer block is calculated as:\nh0[t] = E(X,Y[1:t]) + (E0, E1) +Wp, (3)\nwhere Y[1:t] is (y1, . . . , yt), E(X,Y[1:t]) is the subword embedding for context X and response Y[1:t]. E0 and E1 are dialogue-state embeddings, which tutor the model to distinguish between contexts and responses. Wp is a pre-trained position embedding. The probability of the subword to generate is then calculated as:\nh[t] = transformer_block(h0[t]) (4)\nP (y)t+1 = softmax (E >(h[t])), (5)\nwhere y ∈ V , and V stands for the sub-word vocabulary. We simplify the structure of transformer block as transformer_block . The hidden vector of tth sub-word is used to generate the probability distribution for the vocabulary (P (y), y ∈ V ) for (t+ 1)th sub-word. E> means that the model uses the sub-word embeddings in calculating sub-word probabilities for generation (Press and Wolf, 2017)."
+    }, {
+      "heading" : "4 Proposed Methods",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Interleaved Learning",
+      "text" : "Interleaving is a concept in cognitive psychology proven to be efficient for learning (Kornell and Bjork, 2008; Kang and Pashler, 2012; Rohrer, 2012): intermingling learning material of different topics helps students to gain better learning results than learning the material topic by topic. Previous work from machine learning also shows that training order greatly influences the performance (Bengio et al., 2009). When the training is conducted on a simple concatenation of multiple corpora, the model tends to concentrate on the last corpus (Shi et al., 2015). To address this issue, we propose interleaved learning as an alternative: each time we collect one context-response pair from each of the corpora, and we randomly shuffle them. For example, if there are 3 corpora (a1, a2, ...), (b1, b2, ...), (c1, c2, ...) where ai, bi and ci are context-response pairs, the resulting mixed corpus might be (b1, a1, c1, c2, b2, a2, ...). Interleaved learning guarantees that the combined corpus is evenly distributed, which helps the model learn from multiple corpora evenly."
+    }, {
+      "heading" : "4.2 Labeled Learning",
+      "text" : "We propose our labeled learning as follows: each corpus is assigned a randomly initialized unique embedding, and the conversational model learns these embeddings together with conversations during the training period. We denote these embeddings as “corpus embedding”, or Ec. A model\ncaptures each corpus’s characteristics through the corpus embedding and uses it to control the generated responses. To know which corpus embedding to use, each context is labeled with which corpus it comes from, and these labels are provided to the model both in the training and generation period. We propose an approach for each of our base models for encoding corpus embeddings.\nFor the LSTM model, following Li et al. (2016), we input the corpus embedding Ec into the first layer of the decoder LSTM at every step, together with the response words. Calculation of a hidden vector ht in the decoder LSTM is then adapted to:\nht = LSTM ∗(ht−1, E(yt), Ec). (6)\nThe structure is illustrated in the dashed red rectangle of Figure 1a.\nFor the GPT-2 model, our method is based on Wolf et al. (2019). Instead of two kinds of dialoguestate embeddings (context embedding E0 and response embedding E1), we replace the response embedding with corpus embeddings Ec. As a result, the model is aware of which corpus the response belongs. Calculation of a hidden vector to be input to the transformer block is adapted to:\nh0[t] = E(X,Y[1:t]) + (E0, Ec) +Wp. (7)\nThe structure is illustrated in Figure 1b."
+    }, {
+      "heading" : "4.3 Multi-Task Labeled Learning",
+      "text" : "Labeled learning needs corpus labels for both training and generation processes. To avoid providing\nlabels in the generation process, we combine multitask learning with labeled learning on multiple corpora. Here, the conversational model has to predict by itself which corpus a context belongs to, which is expected to result in worse performance, but less information is required. In the encoder, we have a classifier layer that uses the sum of hidden vectors from the encoder ( ∑ H) to predict the corpus of a context. The loss of the classifier is calculated as:\nLc = −log ( softmax ((∑ H ) ·W[c] )) , (8)\nwhere W[c] ∈ Rdim is the part from the classifier layer for target corpus c. Lc is summed up with the loss from the response generator. The predicted corpus embedding is input into the decoder like labeled learning (see Section 4.2). The simplified structure is illustrated in Figure 1a."
+    }, {
+      "heading" : "4.4 Document-specific Frequency (DF)",
+      "text" : "We propose Domain-specific Frequency (DF) to measure how important a word is with respect to a different corpus under a collection of corpora. DF is used for weighted learning and evaluation. It is calculated as follows:\nf(w)d = freq(w)d −minv{freq(v)d} (9)\ndf(w)d =\n{ 0 f(w)d = 0\nf(w)d∑ d∈D f(w)d f(w)d 6= 0 (10)\nDF(w)d = df(w)d\nmaxv{df(v)d} , (11)\nwhere freq(w)d is the relative frequency of a word w in a corpus d, and D represents the set of all\ncorpora. It is easy to see from Equation 10 that DF(w)d represents the importance of word w for corpus d compared to other corpora. For a word w that frequently appears in corpus d but seldom in other corpora (e.g., “upgrade” from Ubuntu corpus), ∑ d∈D f(w)d is close to f(w)d, making DF(w)d approach 1. A word that frequently appears in all corpora (e.g., “I”, “you”) is punished, resulting in a lower DF(w)d. A word that seldom appears in corpus d but frequently appears in other corpora (e.g., “music” seldom appears in Ubuntu corpus, but is common in other corpora) has the lowest DF(w)d. Words that appear minimal times (e.g., once) in a corpus are ignored with Equation 9. Words that appear few times (e.g., twice or three times) are not dealt with, yet they are not of great influence in our experiments. We apply a normalization in the final step (Equation 11) to make DF(w)d of each corpus d range from 0 to 1.\nWe show DF(w)Ubuntu and DF(w)PersonaChat of some words in Table 3. We also show the results of TF-IDF (log normalization variant), a commonly used word importance weight, as a comparison. As expected, for the corpus Ubuntu and PersonaChat, most unique words w have very different DF(w)Ubuntu and DF(w)PersonaChat. Unique words of each corpus get the highest values for the corresponding corpus, like “upgrade” for the Ubuntu corpus and “music” for the PersonaChat corpus; these words receive the lowest values for incorrect corpora, like “upgrade” for PersonaChat and “music” for Ubuntu. The stress on unique words makes DF more suitable for our task.\nWeighted Learning with DF Weighted learning weights the loss of the predication y′ for each target word w using DF(w)d. In the training period, each context is labeled with the corpus d it belongs to, so that the model can use the DF(w)d of the corresponding corpus. Here DF is calculated only on the training sets. In the generation step, corpus labels are not provided, so DF is not used. The loss is weighted as follows :\nLweighted = DF(w)d · ( −log ( softmax (y′w) )) ,\n(12) where y′w represents the model’s predicted score for the target word w. With the weighted loss, the model concentrates on words that are important to the corpus of the current context, and focuses less on frequent words or words that are not important to the current corpus. The structure is illustrated in Figure 1c.\nEvaluation with DF For the generated responses to be relevant to a specific corpus, they have to be similar to that corpus, which includes using important words of that corpus (e.g., responses generated for the Ubuntu corpus should have more technical words than other corpora). Thus, we propose DF as an evaluation metric that shows to what extent the generated responses use important words of the corresponding corpus. We want to decrease the influence of common words like “i”, “to”, etc., and thus address the important words. So we adopt exponential DF with α as the base (αDF):\nαDF(w)d = { 0 DF(w)d = 0 αDF(w)d DF(w)d 6= 0,\n(13)\nwhere α is a constant. αDF(w)d rescales DF(w)d by exponent with α as a base. In our experiments, we set α to be 100, which transforms the range of the metric from (0, 1) to (0, 100). This makes the difference between high and low αDF more significant than DF and gives a 100-scale score. For each corpus d ∈ D, we average αDF(w)d on word w from the generated responses of each test set, which gives us αDFd scores (d ∈ D) for each test set. Ideally, the generated responses of a specific corpus d should have a higher αDFd score and lower αDFd score (d ∈ {d\n′ ∈ D | d′ 6= d}). For example, generated responses of the Ubuntu test set should have a higher αDFUbuntu score, while a lower αDFUbuntu score (Ubuntu ∈ {d′ ∈ D | d′ 6= Ubuntu}). αDFd scores for responses from the original test sets are the standard scores.\nWe show αDF(w)Ubuntu and αDF(w)PersonaChat (calculated purely on test set) in Table 3. As expected, αDF has a more significant difference between important words and common words.\nIs DF a Legal Evaluation Metric? Although DF is used for both weighted learning and evaluation, we see DF as a suitable evaluation metric for our task and not biased in favor of weighted learning due to: 1) for each word, multiple DF values are used in the training step given the corpus that a context belongs to; 2) in the generation step, DF is never used. 3) In the evaluation process, DF can be calculated purely on the test sets. Note that it is very likely for the model trained with weighted learning to be influenced more by DF weights of incorrect corpus than of the correct corpus. Above all, if the trained model is able to choose to be influenced more by DF weights from the correct corpus in the evaluation step, it means that the model is good at distinguishing which corpus a given context is from, thus is suitable for our task."
+    }, {
+      "heading" : "5 Experiment Setup",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Datasets",
+      "text" : "Data Collection We collected 4 commonly used English corpora of different domains from the ParlAI platform (Miller et al., 2017): OpenSubtitles corpus (OSDB) (Lison et al., 2018), Twitter corpus (Miller et al., 2017), Ubuntu chatlogs corpus (Lowe et al., 2015), and PersonaChat corpus (Zhang et al., 2018) from the NeurIPS 2018 ConvAI2 Challenge (Dinan et al., 2019). Each corpus contains 250K context-response pairs, as much as the size of the original PersonaChat used in ConvAI2 competition. This gives us 1M context-response pairs in total. The corpus for training is a combination of these 4 corpora. For comparison, we have a single corpus–PersonaChat–trained on both base models. For testing, each of the 4 corpora has a test set of 30K context-response pairs, which is the same size of the test set of PersonaChat.\nThe OpenSubtitles corpus (OSDB) is a noisy dataset of film subtitles. We removed films that belonged to genres that usually had few conversations, such as musical and documentary films. We regarded two neighboring sentences as a contextresponse pair following Vinyals and Le (2015). The Twitter corpus contains one-turn dialogues extracted from Twitter. The original author has already cleaned it, so we only removed special\nsymbols such as hashtags, Emojis, and @. The Ubuntu corpus contains dialogues about solving technical problems of Ubuntu. The PersonaChat corpus contains dialogues between two workers acting as specific personas; we focused on the dialogue part and ignored the persona part. This corpus allows us to compare our base models with state-of-the-art performance. These 4 corpora have very different characteristics, confirmed by the imbalanced performance of GPT-2 fine-tuned on a single corpus (see Table 2)."
+    }, {
+      "heading" : "5.2 Training and Decoding",
+      "text" : "We used Pytorch (Paszke et al., 2017) to implement the LSTM Seq2Seq model with attention and the pre-trained GPT-2 models. For GPT-2, we adapted our model from the implementation of the HuggingFace team2. The LSTM model has 4 layers and the dimension is 512. The training procedure was with a batch size of 256, learning rate of 1.0, dropout rate of 0.2, and gradient clip threshold of 5. The vocabulary size is 50000. GPT-2 has 12 layers, 12 heads, and the dimension is 768, the same as the pre-trained model. The training procedure was with Adam and we adopted a similar setup as Wolf et al. (2019): the batch size was 32, learning rate was 6× 10−5, β1 = 0.9, β2 = 0.999, L2 weight decay set to 0.01, learning rate linearly decreased to zero at the end. We followed these hyper-parameters to ensure state-of-the-art performance for the base models. We use the same hyper-parameters for both base models and models with our proposed methods, so the proposed methods work slightly (but not much) worse than it should be. This is to avoid the extra improvement caused by hyperparameters. We pre-trained the LSTM model on 3 large-scale corpora (OSDB, Twitter and Ubuntu) with interleaved learning until converging. GPT-2 is already pre-trained, so we directly used it for finetuning (details about pre-training convergence can be found in Section B). For decoding, we adopted greedy decoding for all the models to ensure an equal condition."
+    }, {
+      "heading" : "5.3 Evaluation",
+      "text" : "For automatic metrics, to measure the relevance of the generated responses, we eliminated punctuation and stop words, and adopted Rouge-13 (precision,\n2https://huggingface.co/. 3We used implementation from https://github.\ncom/google-research/google-research/ tree/master/rouge.\nrecall, F1) as multi-grams become meaningless without stop words. However, Rouge-1 compares the generated responses with the golden ones, while there is never a standard response for any context, so in addition to Rouge, we use αDF score that shows to what extent the generated responses use important words of the corresponding corpus, as stated in Section 4.4. Due to the limitation of automatic evaluation methods (Liu et al., 2016), we also conduct an extensive human evaluation on the relevance of generated responses to contexts (see Section 6.1 for details)."
+    }, {
+      "heading" : "6 Results",
+      "text" : "Our base models achieve perplexity scores of 28.9 (LSTM model) and 19.6 (GPT-2) on the test set of the PersonaChat dataset from the ConvAI2 competition when fine-tuned with the single PersonaChat corpus (more details can be found in Section C).\nThese results would likely advance the models to the second round in the competition.\nTable 4 shows that models trained with our proposed methods gain better performance on Rouge than baselines. Baselines concentrate on the last trained corpus (PersonaChat), while with the proposed methods, performance is more balanced on multiple corpora. Weighted learning has the best overall performance on all metrics, and it performs especially well on the Ubuntu corpus, indicating that it might be good at distinguishing the unique technical words from the Ubuntu corpus. Labeled learning is the second best with stable improvement from interleaved learning, indicating that the corpus embeddings function as expected. Multi-task labeled learning has slightly worse performance than interleaved learning, indicating that predicting the corpus of a contexts is not easy, and wrong predictions result in worse performance.\nTable 5 shows αDFd scores for generated responses of each corpus. We use both αDFd calculated purely on the train set (train-set-αDF) and αDFd calculated purely on the test set (test-setαDF). The black scores are scores for the corresponding corpus (we expect high scores for these parts), while the grey scores are scores for nonrelated corpus–PersonaChat4 (we expect low scores for these parts). Note that scores for different corpora are in different scales. From the table, we can see that train-set-DF scores and test-set-DF scores are similar, and weighted learning always has the highest score, indicating that weighted learning distinguishes well which corpus a context comes from. Labeled learning is the second best, indicating that the learned corpus embeddings help the model to use more important words of the corresponding corpus. Compared to the concatenated corpus, the improvement is at least 20%, while the decrease in PersonaChat is just 9% at most."
+    }, {
+      "heading" : "6.1 Human Evaluation",
+      "text" : "We conducted a human evaluation on all GPT-2 models: base models and models adapted with our proposed methods. We randomly picked 2400 responses: 400 different contexts evenly from 4 corpora with 6 responses generated by each of our models. 3 judges5 are asked to pick the most and\n4Full results displaying all non-related corpora can be found in Section E.\n5Similar to previous work like Zhang et al. (2020), we have 3 judges. We have one random worker from https: //www.mturk.com/worker, one bachelor student, and one graduate student. An example of the mTurk interface can be found in Section F.\nthe least relevant response(s) for the given context. The most relevant response(s) are given score 3, the least relevant response(s) are given score 1, and the other(s) are given score 2. Table 6 shows the overall scores of all GPT-2 based models. Table 7 shows the p-value for the t-test conducted between every two models. The overall scores of our proposed methods are all highly significantly (p < 0.001) higher than the concatenated models, especially the weighted learning method."
+    }, {
+      "heading" : "6.2 Response Examples",
+      "text" : "The generated responses from better methods are more relevant to the corresponding corpus, while worse methods cannot distinguish contexts from different corpora (e.g., they may answer any questions in a “PersonaChat” way). To show an intuition of the difference among our proposed methods, we present some response examples generated by GPT-2 in Section G."
+    }, {
+      "heading" : "7 Conclusions",
+      "text" : "We have experimented with 4 methods–interleaved learning (baseline), labeled learning, multi-task labeled learning, and weighted learning–to help common open-domain conversational systems generate relevant responses for multiple corpora of different domains. We adopted Rouge (precision, recall, F1) for auto evaluation. In addition, we used DF to evaluate how well a model uses relevant words for a corresponding corpus. We also did an extensive human evaluation. Our results show significant improvement in performance for our proposed methods, especially weighted learning."
+    }, {
+      "heading" : "A Comparison among TF-IDF, DF and αDF for 4 corpora on more example words",
+      "text" : "Example words are divided into five blocks. The first block has frequent words in all corpora, the second block has unique words from OSDB, the third block has unique words from Twitter, the fourth block has unique words from Ubuntu, and the fifth block has unique words from PersonaChat. The values of the corresponding corpus are marked with different colors.\nFrom this table, it is clear that the commonly used word importance weight, TF-IDF, is not suitable for our task. This is due to the vast range of frequency, which leads to a relatively small penalty for IDF (Inversed Document Frequency) over words with too large TF (Term Frequency)."
+    }, {
+      "heading" : "B Convergence time of pre-training LSTM model on large-scale corpora",
+      "text" : "In the pre-training period, it takes 21 epochs for the concatenated corpus to converge on the base LSTM model, while only 12 epochs with interleaved learning, which is 43% shorter. When trained on the concatenated corpus in the order of OSDB→ Twitter→ Ubuntu, it takes 20 epochs for the perplexity on OSDB and Ubuntu to be balanced, while with interleaved learning, it takes less than one epoch. For concatenated corpus, the performance of the Ubuntu corpus is sacrificed in order to balance the performance of the two corpora, which results in worse overall performance."
+    }, {
+      "heading" : "C Results of automatic evaluation with stop words",
+      "text" : "Models of labeled, multi-task labeled and weighted learning do not have the best hyper-parameters, but the same hyper-parameters as the base models. Their perplexity is slightly worse than it should be.\nThe results of the single corpus PersonaChat trained with the LSTM model confirm our concern on a small fine-tuning corpus. The LSTM model is pre-trained on OSDB, Twitter and Ubuntu; however, the performance for the 3 corpora greatly decreases after fine-tuning.\nThe automatic evaluation with stop words is not good for measuring relevance, since stop words are taken too much into account. See BLEU and F1 scores of PersonChat (single) and weighted learning as an example. Models trained on PersonaChat (single) cannot answer Ubuntu technical questions at all, yet they receive better scores than weighted learning. But once the stop words are removed, the scores of weighted learning surplus PersonaChat (single) a lot."
+    }, {
+      "heading" : "D Additional Results of automatic evaluation without stop words",
+      "text" : ""
+    }, {
+      "heading" : "E Full results of αDF for generated responses from multiple corpora",
+      "text" : "Model Corpus / Method\nTest set: OSDB OSDB Twitter Ubuntu PersonaChat\nαDF Calculated From:\nTrain Test Train Test Train Test Train Test\nTest Set (Standard Score) 7.01 9.66 3.75 3.75 2.82 2.86 3.59 3.75\nLSTM PersonaChat (single) 2.92 3.40 2.40 2.82 2.27 2.51 9.18 9.91 Concatenated 2.92 3.35 2.49 2.94 2.41 2.71 7.65 8.55 Interleaved 3.88 4.13 2.45 2.54 2.89 2.87 4.98 5.31 Labeled 3.94 4.16 2.37 2.44 2.71 2.70 5.01 5.34 Multi-task Labeled 3.78 4.02 2.41 2.49 2.91 2.88 5.02 5.36 Weighted 5.60 6.29 2.65 2.84 2.89 2.84 4.14 4.47\nGPT-2 PersonaChat (single) 2.76 3.15 2.30 2.66 2.24 2.51 10.53 11.09 Concatenated 3.07 3.59 2.52 2.96 2.30 2.55 8.75 9.35 Interleaved 4.86 5.78 2.63 2.67 2.69 2.66 4.77 5.04 Labeled 4.86 5.77 2.61 2.66 2.67 2.64 4.76 5.04 Multi-task Labeled 4.81 5.70 2.60 2.64 2.69 2.65 4.83 5.1 Weighted 6.02 7.46 2.71 2.83 2.47 2.48 4.12 4.38\n(a) αDFd scores for generated responses from OSDB\nModel Corpus / Method\nTest set: Twitter OSDB Twitter Ubuntu PersonaChat\nαDF Calculated From:\nTrain Test Train Test Train Test Train Test\nTest Set (Standard Score) 3.97 4.07 9.07 11.01 3.24 3.40 3.64 3.80\nLSTM PersonaChat (single) 2.79 3.21 2.78 3.36 2.35 2.59 8.60 9.18 Concatenated 2.62 3.12 3.55 4.31 2.30 2.71 7.97 8.69 Interleaved 3.28 3.68 4.66 4.95 3.11 3.34 4.11 4.51 Labeled 3.30 3.68 4.97 5.27 3.00 3.24 3.89 4.26 Multi-task Labeled 3.31 3.68 4.47 4.73 3.14 3.36 4.08 4.49 Weighted 3.10 3.62 9.92 10.10 2.79 3.01 3.79 4.30\nGPT-2 PersonaChat (single) 2.74 3.04 2.87 3.33 2.45 2.66 9.47 9.77 Concatenated 2.87 3.28 3.32 3.94 2.41 2.65 8.21 8.68 Interleaved 3.42 3.67 4.59 5.08 3.05 3.13 4.39 4.68 Labeled 3.48 3.74 4.66 5.16 3.08 3.19 4.06 4.35 Multi-task Labeled 3.41 3.66 4.63 5.11 3.08 3.15 4.37 4.65 Weighted 3.58 4.01 8.13 8.84 2.59 2.79 3.68 4.07\n(b) αDFd scores for generated responses from Twitter\nModel Corpus / Method\nTest set: Ubuntu OSDB Twitter Ubuntu PersonaChat\nαDF Calculated From:\nTrain Test Train Test Train Test Train Test\nTest Set (Standard Score) 2.69 2.74 2.96 2.85 19.36 23.20 2.67 2.78\nLSTM PersonaChat (single) 2.71 3.28 2.41 2.89 2.74 3.06 8.55 9.09 Concatenated 2.61 2.89 2.27 2.53 7.60 7.74 5.59 5.99 Interleaved 2.91 3.19 2.30 2.36 11.78 11.27 3.70 4.01 Labeled 3.03 3.38 2.28 2.36 12.46 11.75 3.45 3.75 Multi-task Labeled 2.91 3.17 2.30 2.35 11.19 10.72 3.77 4.09 Weighted 2.16 2.84 2.05 2.16 27.73 25.42 2.68 3.01\nGPT-2 PersonaChat (single) 2.60 2.85 2.31 2.64 4.12 4.64 8.27 8.42 Concatenated 2.67 3.03 2.45 2.82 6.54 7.10 7.04 7.37 Interleaved 2.73 3.05 2.22 2.37 15.67 16.02 3.08 3.41 Labeled 2.68 3.03 2.17 2.35 16.73 17.02 2.90 3.24 Multi-task Labeled 2.73 3.06 2.22 2.37 15.45 15.78 3.12 3.44 Weighted 2.26 2.56 2.16 2.28 25.73 24.42 2.37 2.60\n(c) αDFd scores for generated responses from Ubuntu"
+    }, {
+      "heading" : "F Example of human evaluation system",
+      "text" : "G Examples of generated responses"
+    }, {
+      "heading" : "H Possible Limitations",
+      "text" : "Our proposed methods are meant to work in most models, which is why we choose the most common conversational models as our base models. However, there are many variants of these base models that focus on different aspects, such as integrating knowledge, avoiding dull responses, keeping the speech style, etc. Although our methods work on the base models, we are unsure if they can work the same way with variant models. For example, the base models that we use do not deal with dull responses, thus might have different results than the variants that deal with dull responses.\nAlso, dialogues are always multi-turn, while we focus on a simpler task: single-turn response generation. Furthermore, the methods are trained and evaluated on English corpora. We see a limitation on applying the methods to other languages."
+    } ],
+    "references" : [ {
+      "title" : "Analysis of Representations",
+      "author" : [ "nando Pereira" ],
+      "venue" : null,
+      "citeRegEx" : "Pereira.,? \\Q2007\\E",
+      "shortCiteRegEx" : "Pereira.",
+      "year" : 2007
+    }, {
+      "title" : "Automatic Dialogue Generation with Expressed Emotions",
+      "author" : [ "Chenyang Huang", "Osmar Zaiane", "Amine Trabelsi", "Nouha Dziri." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics:",
+      "citeRegEx" : "Huang et al\\.,? 2018",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multi-Domain Learning: When Do Domains Matter",
+      "author" : [ "Mahesh Joshi", "Mark Dredze", "William W. Cohen", "Carolyn Rose" ],
+      "venue" : "In Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational Natu-",
+      "citeRegEx" : "Joshi et al\\.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Joshi et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Learning painting styles: Spacing is advantageous when it promotes discriminative contrast",
+      "author" : [ "Sean HK Kang", "Harold Pashler." ],
+      "venue" : "Applied Cognitive Psychology, 26(1):97–103.",
+      "citeRegEx" : "Kang and Pashler.,? 2012",
+      "shortCiteRegEx" : "Kang and Pashler.",
+      "year" : 2012
+    }, {
+      "title" : "Learning concepts and categories is spacing the “Enemy of induction”",
+      "author" : [ "Nate Kornell", "Robert Bjork" ],
+      "venue" : "Psychological science,",
+      "citeRegEx" : "Kornell and Bjork.,? \\Q2008\\E",
+      "shortCiteRegEx" : "Kornell and Bjork.",
+      "year" : 2008
+    }, {
+      "title" : "Text categorization with support vector machines",
+      "author" : [ "Edda Leopold", "Jörg Kindermann." ],
+      "venue" : "how to represent texts in input space? Machine Learning, 46(1):423–444.",
+      "citeRegEx" : "Leopold and Kindermann.,? 2002",
+      "shortCiteRegEx" : "Leopold and Kindermann.",
+      "year" : 2002
+    }, {
+      "title" : "A Persona-Based Neural Conversation Model",
+      "author" : [ "Jiwei Li", "Michel Galley", "Chris Brockett", "Georgios Spithourakis", "Jianfeng Gao", "Bill Dolan." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long",
+      "citeRegEx" : "Li et al\\.,? 2016",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81, Barcelona, Spain. Association for Computational Linguistics.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "OpenSubtitles2018: Statistical Rescoring of Sentence Alignments in Large, Noisy Parallel Corpora",
+      "author" : [ "Pierre Lison", "Jörg Tiedemann", "Milen Kouylekov." ],
+      "venue" : "Proceedings of the Eleventh International Conference on Language Resources and Evaluation",
+      "citeRegEx" : "Lison et al\\.,? 2018",
+      "shortCiteRegEx" : "Lison et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "How NOT To Evaluate Your Dialogue System: An Empirical Study of Unsupervised Evaluation Metrics for Dialogue Response Generation",
+      "author" : [ "Chia-Wei Liu", "Ryan Lowe", "Iulian Serban", "Mike Noseworthy", "Laurent Charlin", "Joelle Pineau." ],
+      "venue" : "Proceed-",
+      "citeRegEx" : "Liu et al\\.,? 2016",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "The Ubuntu Dialogue Corpus: A Large Dataset for Research in Unstructured MultiTurn Dialogue Systems",
+      "author" : [ "Ryan Lowe", "Nissan Pow", "Iulian Serban", "Joelle Pineau." ],
+      "venue" : "Proceedings of the 16th Annual Meeting of the Special Interest Group on Dis-",
+      "citeRegEx" : "Lowe et al\\.,? 2015",
+      "shortCiteRegEx" : "Lowe et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Multi-Task Learning for Speaker-Role Adaptation in Neural Conversation Models",
+      "author" : [ "Yi Luan", "Chris Brockett", "Bill Dolan", "Jianfeng Gao", "Michel Galley." ],
+      "venue" : "Proceedings of the Eighth International Joint Conference on Natural Language Processing",
+      "citeRegEx" : "Luan et al\\.,? 2017",
+      "shortCiteRegEx" : "Luan et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "ParlAI: A Dialog Research Software Platform",
+      "author" : [ "Alexander Miller", "Will Feng", "Dhruv Batra", "Antoine Bordes", "Adam Fisch", "Jiasen Lu", "Devi Parikh", "Jason Weston." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Miller et al\\.,? 2017",
+      "shortCiteRegEx" : "Miller et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Polite Dialogue Generation Without Parallel Data",
+      "author" : [ "Tong Niu", "Mohit Bansal." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 6:373–389.",
+      "citeRegEx" : "Niu and Bansal.,? 2018",
+      "shortCiteRegEx" : "Niu and Bansal.",
+      "year" : 2018
+    }, {
+      "title" : "Automatic differentiation in PyTorch",
+      "author" : [ "Adam Paszke", "Sam Gross", "Soumith Chintala", "Gregory Chanan", "Edward Yang", "Zachary DeVito", "Zeming Lin", "Alban Desmaison", "Luca Antiga", "Adam Lerer." ],
+      "venue" : "NIPS-W.",
+      "citeRegEx" : "Paszke et al\\.,? 2017",
+      "shortCiteRegEx" : "Paszke et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Using the output embedding to improve language models",
+      "author" : [ "Ofir Press", "Lior Wolf." ],
+      "venue" : "EACL.",
+      "citeRegEx" : "Press and Wolf.,? 2017",
+      "shortCiteRegEx" : "Press and Wolf.",
+      "year" : 2017
+    }, {
+      "title" : "Better Language Models and Their Implications",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever." ],
+      "venue" : "Technical report, Technical report, OpenAI.",
+      "citeRegEx" : "Radford et al\\.,? 2019",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Data-Driven Response Generation in Social Media",
+      "author" : [ "Alan Ritter", "Colin Cherry", "William B. Dolan." ],
+      "venue" : "Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing, pages 583–593. Association for Computational Linguis-",
+      "citeRegEx" : "Ritter et al\\.,? 2011",
+      "shortCiteRegEx" : "Ritter et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Interleaving helps students distinguish among similar concepts",
+      "author" : [ "Doug Rohrer." ],
+      "venue" : "Educational Psychology Review, 24(3):355–367.",
+      "citeRegEx" : "Rohrer.,? 2012",
+      "shortCiteRegEx" : "Rohrer.",
+      "year" : 2012
+    }, {
+      "title" : "Online Learning of Multiple Tasks and Their Relationships",
+      "author" : [ "Avishek Saha", "Piyush Rai", "Hal DaumÃ© III", "Suresh Venkatasubramanian" ],
+      "venue" : "In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics,",
+      "citeRegEx" : "Saha et al\\.,? \\Q2011\\E",
+      "shortCiteRegEx" : "Saha et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "What makes a good conversation? How controllable attributes affect human judgments",
+      "author" : [ "Abigail See", "Stephen Roller", "Douwe Kiela", "Jason Weston." ],
+      "venue" : "arXiv:1902.08654 [cs].",
+      "citeRegEx" : "See et al\\.,? 2019",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A Hierarchical Latent Variable Encoder-Decoder Model for Generating Dialogues",
+      "author" : [ "Iulian Vlad Serban", "Alessandro Sordoni", "Ryan Lowe", "Laurent Charlin", "Joelle Pineau", "Aaron Courville", "Yoshua Bengio." ],
+      "venue" : "Thirty-First AAAI Conference on Artifi-",
+      "citeRegEx" : "Serban et al\\.,? 2017",
+      "shortCiteRegEx" : "Serban et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural Responding Machine for Short-Text Conversation",
+      "author" : [ "Lifeng Shang", "Zhengdong Lu", "Hang Li." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference on",
+      "citeRegEx" : "Shang et al\\.,? 2015",
+      "shortCiteRegEx" : "Shang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Recurrent Neural Network Language Model Adaptation with Curriculum Learning",
+      "author" : [ "Yangyang Shi", "Martha Larson", "Catholijn M. Jonker." ],
+      "venue" : "Comput. Speech Lang., 33(1):136–154.",
+      "citeRegEx" : "Shi et al\\.,? 2015",
+      "shortCiteRegEx" : "Shi et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Can You Put it All Together: Evaluating Conversational Agents’ Ability to Blend Skills",
+      "author" : [ "Eric Michael Smith", "Mary Williamson", "Kurt Shuster", "Jason Weston", "Y-Lan Boureau." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for",
+      "citeRegEx" : "Smith et al\\.,? 2020",
+      "shortCiteRegEx" : "Smith et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A Neural Network Approach to Context-Sensitive Generation of Conversational Responses",
+      "author" : [ "Alessandro Sordoni", "Michel Galley", "Michael Auli", "Chris Brockett", "Yangfeng Ji", "Margaret Mitchell", "Jian-Yun Nie", "Jianfeng Gao", "Bill Dolan." ],
+      "venue" : "Pro-",
+      "citeRegEx" : "Sordoni et al\\.,? 2015",
+      "shortCiteRegEx" : "Sordoni et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Sequence to Sequence Learning with Neural Networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V Le." ],
+      "venue" : "Z. Ghahramani, M. Welling, C. Cortes, N. D. Lawrence, and K. Q. Weinberger, editors, Advances in Neural Information Processing Systems",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Attention is All you Need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Gar-",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A Neural Conversational Model",
+      "author" : [ "Oriol Vinyals", "Quoc Le." ],
+      "venue" : "arXiv:1506.05869 [cs]. 10",
+      "citeRegEx" : "Vinyals and Le.,? 2015",
+      "shortCiteRegEx" : "Vinyals and Le.",
+      "year" : 2015
+    }, {
+      "title" : "Multi-domain Neural Network Language Generation for Spoken Dialogue Systems",
+      "author" : [ "Tsung-Hsien Wen", "Milica Gašić", "Nikola Mrkšić", "Lina M. Rojas-Barahona", "Pei-Hao Su", "David Vandyke", "Steve Young." ],
+      "venue" : "Proceedings of the 2016 Con-",
+      "citeRegEx" : "Wen et al\\.,? 2016",
+      "shortCiteRegEx" : "Wen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "TransferTransfo: A Transfer Learning Approach for Neural Network Based Conversational Agents",
+      "author" : [ "Thomas Wolf", "Victor Sanh", "Julien Chaumond", "Clement Delangue." ],
+      "venue" : "arXiv:1901.08149 [cs].",
+      "citeRegEx" : "Wolf et al\\.,? 2019",
+      "shortCiteRegEx" : "Wolf et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Better Conversations by Modeling, Filtering, and Optimizing for Coherence and Diversity",
+      "author" : [ "Xinnuo Xu", "Ondřej Dušek", "Ioannis Konstas", "Verena Rieser." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Xu et al\\.,? 2018",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Personalized Response Generation via Domain Adaptation",
+      "author" : [ "Min Yang", "Zhou Zhao", "Wei Zhao", "Xiaojun Chen", "Jia Zhu", "Lianqiang Zhou", "Zigang Cao." ],
+      "venue" : "Proceedings of the 40th International ACM SIGIR Conference on Research and Development in",
+      "citeRegEx" : "Yang et al\\.,? 2017",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multidomain neural machine translation with word-level domain context discrimination",
+      "author" : [ "Jiali Zeng", "Jinsong Su", "Huating Wen", "Yang Liu", "Jun Xie", "Yongjing Yin", "Jianqiang Zhao." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Nat-",
+      "citeRegEx" : "Zeng et al\\.,? 2018",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Personalizing Dialogue Agents: I have a dog, do you have pets too",
+      "author" : [ "Saizheng Zhang", "Emily Dinan", "Jack Urbanek", "Arthur Szlam", "Douwe Kiela", "Jason Weston" ],
+      "venue" : "In Proceedings of the 56th Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Zhang et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "DIALOGPT : Largescale generative pre-training for conversational response generation",
+      "author" : [ "Yizhe Zhang", "Siqi Sun", "Michel Galley", "Yen-Chun Chen", "Chris Brockett", "Xiang Gao", "Jianfeng Gao", "Jingjing Liu", "Bill Dolan." ],
+      "venue" : "Proceedings of the 58th An-",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Knowledgegrounded dialogue generation with pre-trained language models",
+      "author" : [ "Xueliang Zhao", "Wei Wu", "Can Xu", "Chongyang Tao", "Dongyan Zhao", "Rui Yan." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Zhao et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 28,
+      "context" : "Recent work has achieved improvements in general performance for open-domain response generation (Vinyals and Le, 2015; Serban et al., 2017; Li et al., 2016; Xu et al., 2018).",
+      "startOffset" : 97,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 21,
+      "context" : "Recent work has achieved improvements in general performance for open-domain response generation (Vinyals and Le, 2015; Serban et al., 2017; Li et al., 2016; Xu et al., 2018).",
+      "startOffset" : 97,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 6,
+      "context" : "Recent work has achieved improvements in general performance for open-domain response generation (Vinyals and Le, 2015; Serban et al., 2017; Li et al., 2016; Xu et al., 2018).",
+      "startOffset" : 97,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 31,
+      "context" : "Recent work has achieved improvements in general performance for open-domain response generation (Vinyals and Le, 2015; Serban et al., 2017; Li et al., 2016; Xu et al., 2018).",
+      "startOffset" : 97,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2019), does not cover technical topics discussed in Ubuntu chatlogs (Lowe et al., 2015).",
+      "startOffset" : 70,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 6,
+      "context" : "A common way of dealing with a smallscale corpus is through fine-tuning (Li et al., 2016; Akama et al., 2017; Chu et al., 2017).",
+      "startOffset" : 72,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 6,
+      "context" : "Labeled learning comes from a control technique in response generation (Li et al., 2016; Johnson et al., 2017; Yang et al., 2017).",
+      "startOffset" : 71,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 32,
+      "context" : "Labeled learning comes from a control technique in response generation (Li et al., 2016; Johnson et al., 2017; Yang et al., 2017).",
+      "startOffset" : 71,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 11,
+      "context" : "Multi-task labeled learning is inspired by works of domain adaption (Luan et al., 2017; Niu and Bansal, 2018; Chu and Wang, 2018), where multiple losses from both the corpus classifier and response generator are minimized.",
+      "startOffset" : 68,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 13,
+      "context" : "Multi-task labeled learning is inspired by works of domain adaption (Luan et al., 2017; Niu and Bansal, 2018; Chu and Wang, 2018), where multiple losses from both the corpus classifier and response generator are minimized.",
+      "startOffset" : 68,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 5,
+      "context" : "DF is a word-level importance weight (Leopold and Kindermann, 2002) that assigns different weights to the same words from different corpora.",
+      "startOffset" : 37,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 7,
+      "context" : "For automatic evaluation metrics, we eliminate the stop words and use ROUGE-1 (precision, recall, F1) (Lin, 2004) to measure the relevance of the generated responses.",
+      "startOffset" : 102,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 26,
+      "context" : "(2011) where the task is treated as a machine translation task, and many of them use a Seq2Seq structure (Sutskever et al., 2014) following previous work (Vinyals and Le, 2015; Shang et al.",
+      "startOffset" : 105,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2019), and embeddings are used to control response generation on extra information such as persona (Li et al., 2016), profiles (Yang et al.",
+      "startOffset" : 101,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2016), profiles (Yang et al., 2017), coherence (Xu et al.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2017), coherence (Xu et al., 2018), emotions (Huang et al.",
+      "startOffset" : 19,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2018), emotions (Huang et al., 2018), and dialogue attributes like response-relatedness (See et al.",
+      "startOffset" : 18,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2018), and dialogue attributes like response-relatedness (See et al., 2019).",
+      "startOffset" : 59,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 2,
+      "context" : "There are two categories of solutions for multidomain learning (Joshi et al., 2012): (i) capturing domain-specific characteristics in the parameters (Daume III, 2007); (ii) capturing the relationship among different domains (Saha et al.",
+      "startOffset" : 63,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2012): (i) capturing domain-specific characteristics in the parameters (Daume III, 2007); (ii) capturing the relationship among different domains (Saha et al., 2011).",
+      "startOffset" : 148,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 26,
+      "context" : "We use two base models: an LSTM Seq2Seq model with attention (Hochreiter and Schmidhuber, 1997; Sutskever et al., 2014; Bahdanau et al., 2015) and a pre-trained GPT-2 model (Radford et al.",
+      "startOffset" : 61,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2015) and a pre-trained GPT-2 model (Radford et al., 2019).",
+      "startOffset" : 38,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 6,
+      "context" : "The LSTM Seq2Seq model with attention is a common model for conversational systems (Li et al., 2016; See et al., 2019), and the GPT2 model is a state-of-the-art model for the response generation task (Zhang et al.",
+      "startOffset" : 83,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 20,
+      "context" : "The LSTM Seq2Seq model with attention is a common model for conversational systems (Li et al., 2016; See et al., 2019), and the GPT2 model is a state-of-the-art model for the response generation task (Zhang et al.",
+      "startOffset" : 83,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 35,
+      "context" : ", 2019), and the GPT2 model is a state-of-the-art model for the response generation task (Zhang et al., 2020; Zhao et al., 2020).",
+      "startOffset" : 89,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2019), and the GPT2 model is a state-of-the-art model for the response generation task (Zhang et al., 2020; Zhao et al., 2020).",
+      "startOffset" : 89,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 6,
+      "context" : "We simplify an LSTM with attention unit as LSTM ∗ since it is well introduced in previous work (Li et al., 2016).",
+      "startOffset" : 95,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 15,
+      "context" : "E> means that the model uses the sub-word embeddings in calculating sub-word probabilities for generation (Press and Wolf, 2017).",
+      "startOffset" : 106,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 4,
+      "context" : "Interleaving is a concept in cognitive psychology proven to be efficient for learning (Kornell and Bjork, 2008; Kang and Pashler, 2012; Rohrer, 2012): intermingling learning material of different topics helps students to gain better learning results than learning the material topic by topic.",
+      "startOffset" : 86,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 3,
+      "context" : "Interleaving is a concept in cognitive psychology proven to be efficient for learning (Kornell and Bjork, 2008; Kang and Pashler, 2012; Rohrer, 2012): intermingling learning material of different topics helps students to gain better learning results than learning the material topic by topic.",
+      "startOffset" : 86,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 18,
+      "context" : "Interleaving is a concept in cognitive psychology proven to be efficient for learning (Kornell and Bjork, 2008; Kang and Pashler, 2012; Rohrer, 2012): intermingling learning material of different topics helps students to gain better learning results than learning the material topic by topic.",
+      "startOffset" : 86,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 23,
+      "context" : "When the training is conducted on a simple concatenation of multiple corpora, the model tends to concentrate on the last corpus (Shi et al., 2015).",
+      "startOffset" : 128,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 12,
+      "context" : "Data Collection We collected 4 commonly used English corpora of different domains from the ParlAI platform (Miller et al., 2017): OpenSubtitles corpus (OSDB) (Lison et al.",
+      "startOffset" : 107,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2017): OpenSubtitles corpus (OSDB) (Lison et al., 2018), Twitter corpus (Miller et al.",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2018), Twitter corpus (Miller et al., 2017), Ubuntu chatlogs corpus (Lowe",
+      "startOffset" : 24,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2015), and PersonaChat corpus (Zhang et al., 2018) from the NeurIPS 2018 ConvAI2 Challenge (Dinan et al.",
+      "startOffset" : 32,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 14,
+      "context" : "We used Pytorch (Paszke et al., 2017) to implement the LSTM Seq2Seq model with attention and the pre-trained GPT-2 models.",
+      "startOffset" : 16,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 9,
+      "context" : "Due to the limitation of automatic evaluation methods (Liu et al., 2016), we also conduct an extensive human evaluation on the relevance of generated responses to contexts (see Section 6.",
+      "startOffset" : 54,
+      "endOffset" : 72
+    } ],
+    "year" : 0,
+    "abstractText" : "Open-domain conversational systems are assumed to generate equally good responses on multiple domains. Previous work achieved good performance on the single corpus, but training and evaluating on multiple corpora from different domains is less studied. This paper explores methods of generating relevant responses for each of multiple multi-domain corpora. We first examine interleaved learning which intermingles multiple corpora as the baseline. We then investigate two multidomain learning methods, labeled learning and multi-task labeled learning, which encode each corpus through a unique corpus embedding. Furthermore, we propose Domainspecific Frequency (DF), a novel word-level importance weight that measures the relative importance of a word for a specific corpus compared to other corpora. Based on DF, we propose weighted learning, a method that integrates DF to the loss function. We also adopt DF as a new evaluation metric. Extensive experiments show that our methods gain significant improvements on both automatic and human evaluation. We share our code and data for reproducibility.1",
+    "creator" : null
+  }
+}

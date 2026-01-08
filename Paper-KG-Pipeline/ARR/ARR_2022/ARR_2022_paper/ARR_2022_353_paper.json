@@ -1,0 +1,428 @@
+{
+  "name" : "ARR_2022_353_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "A Generative Approach for Mitigating Structural Biases in Natural Language Inference",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Natural language processing (NLP) datasets are plagued with artifacts and biases, which allow models to perform tasks without learning the desired underlying language capabilities. For instance, in natural language inference (NLI) datasets, models can predict an entailment relationship y from the hypothesis text H alone, without considering the premise P at all (Gururangan et al., 2018; Poliak et al., 2018). Another identified source of bias is lexical overlap between P and H , which is associ-\nated with an entailment prediction (McCoy et al., 2019). We refer to such biases as structural biases, cases where an undesired subset of the input alone incorrectly identifies the label. Relying on such biases results in poor out-of-distribution (o.o.d) generalization when models are applied to data without bias. Furthermore, models that contain such biases may make surprising predictions when the bias is present, causing problems in critical systems.\nA line of work has attempted to improve the performance on o.o.d datasets by proposing different objective functions (e.g., Utama et al., 2020a; Karimi Mahabadi et al., 2020). However, these methods typically still result in a significant gap between the performance in and out of distribution, which indicates that the models are still biased. Table 1 shows this gap, which we term the o.o.d generalization gap (∆).\nIn this work, we reformulate classification as a generative task, where the model’s task is to generate the remainder features R conditioned on the biased features B and the label y. Using Bayes’ Rule, we decompose the posterior p(y | B,R) into the likelihood p(R | y,B) and the prior p(y | B). This reformulation lets us control the amount of bias present in the final model. By setting a uniform prior we can obtain a provably unbiased model. We denote this generative model as GEN..\nTo assess the extent to which a given model is biased w.r.t a specific structural bias, we consider two metrics: the o.o.d generalization gap and the correlation between a model and a biased model p(y | B), such as a hypothesis-only or overlap-only model. We first experiment with injecting synthetic bias into a fraction of the training set and evaluating on test sets with and without that bias. We find that the discriminative model’s performance decreases as the amount of bias increases, while GEN maintains similar performance at all bias levels. Moreover, the biased-ness of the discriminative model increases, while GEN remains unbiased.\nNext, we experiment with two kinds of natural bias: hypothesis-only and overlap. We demonstrate that GEN is unbiased compared to the discriminative baseline as measured by its low ∆ and low absolute correlation with a biased model (ρ).\nHowever, while our approach leads to unbiased models, it performs worse than the discriminative baseline even on o.o.d data. We then identify and quantify several causes for the poor performance of GEN. We show that generative modeling is a more challenging task than discriminative modeling, and that it requires learning a large amount of spurious signal compared to the discriminative model.\nFinally, to mitigate the difficulty of the generative modeling task, we fine-tune GEN with a discriminative objective (Lewis and Fan, 2019). While this leaks some bias into the model, the final model (denoted as GEN-FT) matches or surpasses the discriminative baseline while maintaining a relatively small o.o.d generalization gap.\nTo conclude, our contributions are as follows: • We develop a generative modeling approach,\nwhich provably eliminates structural biases in natural language understanding tasks.\n• We demonstrate experimentally on two bias types and different NLI datasets that this approach leads to unbiased models.\n• We analyze the strengths and weaknesses of the generative model.\n• We show how discriminative fine-tuning improves the generative model, while allowing some bias to leak into the model."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Biases and Artifacts",
+      "text" : "Many natural language understanding (NLU) datasets contain biases or artifacts, superficial fea-\ntures that are associated with a certain label. Examples include hypothesis-only biases in NLI such as negation words in the hypothesis being correlated with a contradiction label (Poliak et al., 2018; Gururangan et al., 2018). Similar one-sided biases have been found in other tasks, including visual question answering (VQA) (Agrawal et al., 2018; Das et al., 2019), reading comprehension (Kaushik and Lipton, 2018), and fact verification (Schuster et al., 2019). Another kind of bias identified in NLI is lexical overlap, which is correlated with an entailment decision in NLI datasets (McCoy et al., 2019). We view all these cases as structural biases, cases where the input can be split into two disjoint sets, of the biased features and the remainder features.\nThe existence of structural biases in datasets allows models to perform unreasonably well when given access only to the biased features, such as a hypothesis-only model being able to predict entailment without access to the premise. The bias learned by the model manifests in poor o.o.d generalization when evaluated on a test set where the training set correlation between the biased features and a certain label does not hold."
+    }, {
+      "heading" : "2.2 Mitigation Strategies",
+      "text" : "Common approaches for improving o.o.d generalization combine the main model with a bias model, such as a hypothesis-only model. For instance, a bias model may be trained adversarially, making the main model perform worse when the bias model performs well (Belinkov et al., 2019b; Stacey et al., 2020). Others use a bias model to modulate the main model’s predictions in different ways (He et al., 2019; Karimi Mahabadi et al., 2020; Utama et al., 2020b). All these approaches use discriminative models to estimate p(y | P,H). Moreover, they typically still result in a gap between in- and out-of-distribution performance.\nIn contrast, we propose a novel generative formulation of the NLI task, which leads to an unbiased model, in theory, and in practice. Belinkov et al. (2019a) also proposed to solve a generative problem, modeling p(P | y,H), in order to encourage the model to consider the premise in its predictions. However, they ended up not using a generative model; rather, they approximated it with discriminative models. Lewis and Fan (2019) used a generative model for a different task, VQA, and found it improves generalization from biased training data. While our basic approach is similar, we analyze the generative model more rigorously, investigate the effect of different modeling options, and focus on quantifying the model’s bias."
+    }, {
+      "heading" : "3 Structural Bias",
+      "text" : "Consider the general case of a classification task, for which we wish to build a model pθ(y|X) where y is a low-dimensional label and X is an arbitrarily large set of features. The model is trained on an empirical training set D = {(Xi, yi)}Ni=1. The dataset is constructed by humans, and inadvertently contains structural biases. We define a structural bias as a case where, if the input X is split into two disjoint sets X=(B,R = X −B), the label y can be learned to be reliably predicted given only B. For most choices of B this is not a problem, but in some cases, the subset represents an externally imposed constraint that needs to be maintained or an externally imposed understanding of how the model should operate.\nThis formulation comprises a broad set of commonly considered biases. For example, in the NLI task, X = (P,H) where P and H are the premise and hypothesis. If we choose the split B = H , we arrive at the hypothesis-only bias. This is an undesirable bias because as humans we know that NLI is impossible if one is only given the hypothesis.\nTaking different splits leads to representations of different biases. For instance, we can model the lexical overlap bias under the structural bias framework with the subset B = P ⋂ H . NLI models should perform no better than chance when given only the overlapping tokens between P and H .\nFinally, this formulation extends beyond NLI and NLP to broader biases. For example, if one of the features in X is a protected characteristic s (e.g., gender or race), B = s. Then, depending on the task, an undesirable structural bias may exist if a model can learn to predict y given s.\nWe denote these biases as structural biases be-\ncause they are defined through the structure B ⊂ X , rather than specific known patterns in the data. For example, in the hypothesis-only case, this formulation does not require knowledge about what aspects of the hypothesis allow a hypothesis-only model to predict the label (e.g., negation words), only that somehow the hypothesis alone incorrectly gives a signal about the label. Thus, this type of bias is broader than specific known biases such as the presence of negation words, but narrower than unknown biases because it requires some knowledge of where the bias might be found."
+    }, {
+      "heading" : "3.1 Generative Classifiers Eliminate Structural Bias",
+      "text" : "Generative classifiers are models that make predictions according to Bayes’ Rule. The generative classifier framework provides a principled way of handling structural bias:\npθ(y | X) = pθ(y | B,R) (1)\n= pθ(R | y,B)pθ(y | B)\npθ(R | B)\n= pθ(R | y,B)pθ(y | B)∑ y′ pθ(R | y′, B)pθ(y′ | B) .\nWe emphasize that under this framework, one may separately model pθ(R | y,B) and pθ(y | B), but the marginal likelihood must be constructed by marginalizing over the product of those components rather than estimated separately.\nSeparating the bias component gives explicit control over a given structural bias in the model. Formally, consider the ability of any model to predict the label given the bias subset, p(y | B), defined by marginalizing out the remainder features:\np(y | B) = ∫ pθ(y | R,B)pθ(R | B)dR. (2)\nFor a discriminative model this may take any value, but for a generative classifier this becomes:\np(y | B) = ∫ pθ(y | R,B)pθ(R | B)dR (3)\n= ∫ pθ(R | y,B)pθ(y | B)dR\n= pθ(y | B) ∫ pθ(R | y,B)dR = pθ(y | B).\nTherefore, for any given structural bias, the ability of the model to rely on the bias alone, p(y | B), can be eliminated in a principled way by training a generative model to learn pθ(R | y,B) and setting\npθ(y | B) = Uniform(Y). R andB are collections of tokens, so the actual training process amounts to training a standard encoder–decoder model. Predictions are made using Eq. 1 at inference time. Unlike other methods, this approach does not require a specific model for pθ(y | B); it simply requires the desired pθ(y | B), which is often uniform."
+    }, {
+      "heading" : "3.2 Measuring Structural Bias",
+      "text" : "Typically, debiasing methods are evaluated by measuring the accuracy of the resulting model on a “hard” test set, a subset of the test set for which a bias-only model p(y | B) predicts the incorrect label. While this captures overall quality, it does not assess the extent to which bias remains. For some applications, the overall quality on non-biased data is a reasonable final objective, but for other applications complete removal of bias is critical.\nTo quantify the remaining biased-ness of a given model, we consider two metrics: the difference between the accuracy of the model on the standard test set and its accuracy on a “hard” set created with respect to the bias in question, which we term the o.o.d generalization gap (∆), and the correlation (ρ) between the predictions of a given model and a fully biased model, i.e., p(y | B).\nA truly unbiased model will give a similar performance on the original test set and the hard test set, because it cannot rely on the predictive power of B in the original test set even when it is present. Thus low values of ∆ indicate the model is unbiased.\nSimilarly, a model that consistently makes similar decisions to the fully biased model p(y | B) in the original test set is likely using only the biased features B as the fully biased model. Therefore, a larger ρ gives additional evidence that a specific structural bias remains in a given model."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In all experiments, we estimate p(R | y,B) with an encoder-decoder model, with inputs (y,B) and output R. To condition on y, we prefix a label-specific token to B. We then train the model as a conditional generative model, by fine-tuning BERT (Devlin et al., 2019) or BART (Lewis et al., 2020) with the standard auto-regressive cross-entropy loss. At test time, we attach all possible label tokens to each B and pick ŷ = arg maxy∈Y pθ(R|y,B)."
+    }, {
+      "heading" : "4.1 Synthetic Experiment",
+      "text" : "To empirically verify the analysis in Section 3, we construct a synthetic experiment by artificially in-\njecting a hypothesis-only bias into an NLI dataset, similarly to He et al. (2019). We use MNLI (Williams et al., 2018), an English NLI dataset, as the base NLI dataset. For each example, we add one of three tokens to the beginning of the hypothesis, each token corresponding to a label. With probability p the token corresponds to the true label and with probability 1 − p the token is randomly selected from the three labels. The result is that p directly controls the amount of hypothesis-only bias present in the data.\nFigure 1 shows the results when training with synthetic bias in MNLI, for different values of p, and evaluating on MNLI dev hard (without synthetic bias), a subset that a hypothesis-only model predicts incorrectly. The discriminative model’s performance degrades gradually as p increases, while GEN maintains similar performance. At high levels of p, the discriminative model falls below the generative one, indicating that the presence of large amounts of bias precludes the discriminative model from learning the task effectively. Figure 2 shows the two biased-ness metrics, calculated for the gen-\nerative and discriminative models across a range of p values. For each p, ∆ is calculated from the difference in accuracy for a given model between a version of the dev set with the synthetic bias included as in training, and a version of the dev set with the synthetic bias token randomly chosen for each example. The fully biased model used as the reference when calculating ρ is a model that always selects the label that corresponds with the synthetic bias token prefixed to the hypothesis. According to both metrics, as the bias ratio p increases, the discriminative model quickly becomes significantly biased while GEN remains entirely unbiased."
+    }, {
+      "heading" : "4.2 Hypothesis-only Bias",
+      "text" : "We train our models on the (English) Stanford Natural Language Inference dataset (SNLI; Bowman et al. 2015) and on the MNLI dataset, two NLI datasets that are known to contain hypothesis-only biases (Poliak et al., 2018; Gururangan et al., 2018; Tsuchiya, 2018). We evaluate models on the available in-distribution test sets and on o.o.d test sets that have fewer or no hypothesis-only biases. For SNLI, we use the hard set provided by Gururangan et al. (2018). For MNLI, we use the blind evaluation test and hard test sets for MNLI matched.\nWe experiment with two kinds of pre-trained models: a BERT model, which is combined in an encoder-decoder model during the fine-tuning stage, and BART, a pre-trained encoder-decoder, which is then fine-tuned. For the first kind of model, we used BERT as both an encoder and a decoder. The encoder is a regular BERT model, and the decoder is a BERT model with a language modeling layer, which starts generating from the “CLS” token. All models are taken from the Transformers library (Wolf et al., 2019). Both models are fine-tuned with either the baseline discriminative objective or our proposed generative formulation."
+    }, {
+      "heading" : "4.3 Overlap Bias",
+      "text" : "Another type of bias that has been demonstrated in the MNLI dataset is lexical overlap bias. McCoy et al. (2019) demonstrate that, while somewhat uncommon, lexical overlap, subsequence overlap, and constituent overlap between the premise and hypothesis give a strong signal for entailment. Like hypothesis-only bias, this signal comes from peculiarities of the dataset creation process. For a model performing actual NLI, the overlap of words between the hypothesis and the premise should not give any indication of the label. This is emphasized by McCoy et al. (2019), as they create a separate\nlabel-balanced evaluation set where each example has a high overlap.\nTo treat overlap bias in the generative formulation, we set B = P ⋂ H . Specifically, we concatenate the premise and hypothesis and mask out any tokens that do not appear in both of them. The input to the encoder of GEN is then the label y followed by this partially masked concatenation. For simplicity, the output of GEN is the unmasked concatenation of P and H . In principle, we do not need to output the unmasked tokens, but this simplifies training and remains probabilistically valid.1\nBecause this setup is closely connected to the way the BART model is pretrained, we experiment solely with the BART model for this configuration.\nWhile not traditionally studied in the overlap bias case, we perform the same analysis as in the hypothesis-only bias by constructing a hard set for overlap bias. We train a discriminative model that predicts the label from the masked concatenated premise–hypothesis input, and filter the MNLI dev set for examples where this model is incorrect.2"
+    }, {
+      "heading" : "5 Results",
+      "text" : ""
+    }, {
+      "heading" : "5.1 GEN Reduces the Generalization Gap",
+      "text" : "Hypothesis-only bias Table 2 shows the results of the proposed generative model and the discriminative baseline in the case of hypothesis-only bias. For GEN, we show results with either a hypothesisonly prior for p(y | H) or a uniform prior. The generative approach with the uniform prior leads to nearly identical accuracy on the i.i.d and o.o.d test sets, that is, unbiased models as measured by low o.o.d generalization gap (∆ between −2 and 3). In contrast, the discriminative model has much larger gaps (∆ of at least 9 on SNLI and 7 on MNLI), meaning that it is a more biased model. GEN with a hypothesis-only prior also exhibits large generalization gaps, demonstrating the bias leak in this model. Obviously, a hypothesis-only model is the most biased, with the largest gaps.\nThese results also show the advantage of using a pre-trained encoder-decoder (BART) compared to plugging a pre-trained encoder (BERT) and finetuning it as an encoder-decoder. While both generative models are unbiased, BART is more amenable to the generative fine-tuning than BERT, with overall better results. For this reason, we only report results with BART henceforth.\n1An example for the data preparation is in Appendix A.4. 2As we cannot use the hidden test to filter based on labels,\nwe use dev matched/mismatched for val./eval. respectively.\nOverlap bias Table 3 shows similar results in the case of overlap bias on a hard set w.r.t this bias.3 GEN exhibits a lower generalization gap (∆) than the discriminative baseline. As expected, the overlap bias model shows the greatest gap.\nWhile the generative approach leads to unbiased models for both bias types, it also performs significantly worse than the discriminative model, on both in-distribution and o.o.d test sets. We return to this issue in Sections 6 and 7."
+    }, {
+      "heading" : "5.2 GEN is Uncorrelated with a Bias Model",
+      "text" : "Table 4 shows correlations ρ of GEN and the discriminative baseline with a bias-only model. In the hypothesis-only case, the models were trained on SNLI or MNLI and correlations were measured on predictions on SNLI test or MNLI dev mismatched, respectively. In the overlap case, the models were trained on MNLI and correlations were measured on MNLI dev mismatched.\nIn both bias types, the discriminative model predictions are much more correlated with the bias models than the predictions of the generative models. In fact, the correlations of the generative models are as low as those of a majority model or a uniform model, which is unbiased by construction.\n3For results on HANS evaluation sets, see Appendix A.1."
+    }, {
+      "heading" : "6 Evaluating Generated Premises",
+      "text" : "So far, we have only used GEN to score existing examples (with teacher forcing), conditioned on the label and the biased features. In this section, we evaluate the quality of its generations when decoding without constraints. For the experiments here, we consider the hypothesis-only bias and evaluate the quality of GEN in generating premises. We use a BART model trained on SNLI and generate premises for all hypotheses in the test set.\nTo evaluate how well our model can generate premises, we used two metrics: BLEU (Papineni et al., 2002) of the generated premises w.r.t gold premises, to measure the generation quality (higher is better), and self-BLEU (Zhu et al., 2018) to measure the diversity of the generations (lower is more diverse). We report a BLEU value of 0.1078, indicating that the model is not very good at generating premises. We report self-BLEU of 0.8032 for the generated premises compared to 0.5875 for the original premises, suggesting that the generated premises are less diverse. Table 5 also shows examples where, given different hypotheses, the model generates very similar premises.\nA possible explanation for the difficulty of the generative task may be found in the nature of NLI\nexamples in common datasets. In many cases, the relationship is determined by a small number of words in the premise and hypothesis pair. To quantify this, we measured the number of words highlighted as explanations in the e-SNLI dataset (Camburu et al., 2018) and found that less than 21% of words in the premise are highlighted on average.4 This pattern is reflected also in decisions made by NLI models. By applying gradient attributions,5 we found that more than 70% of the premise words have low attributions values (between −0.1 to 0.1), with fewer than 6% of the words having absolute values greater than 0.3. This shows that only a small number of words had any significant effect on the model predictions. Table 13 in the appendix shows a qualitative example of this behavior. Finally, this pattern is also reflected in the generations produced by GEN, as demonstrated in Table 5."
+    }, {
+      "heading" : "7 Discriminative Fine-tuning",
+      "text" : "The analysis in Section 6 suggests that the central limitation of GEN is that at training time there is no indication of the model’s downstream use as a classifier. The model is rewarded at training time for devoting significant capacity to modeling the full high-dimensional distribution of R, even when large parts of that distribution are unimportant for making downstream predictions.\nTo help GEN in such cases, we experiment with an additional fine-tuning step in which we directly optimize for predictive performance. Specifically, for the fine-tuning step we construct the discriminative distribution using Bayes’ Rule in Eq. 1 and use\n4Of the premises that were highlighted at all. 5We computed attributions with Integrated Gradients (Sundararajan et al., 2017) using Captum (Kokhlikyan et al., 2020).\nit at training time by minimizing the label crossentropy loss:\nLft = − N∑ i=1 log pθ(yi | Bi, Ri) (4)\n= − N∑ i=1 log pθ(Ri | yi, Bi)pθ(yi | Bi)∑ y′ pθ(Ri | y′, Bi)pθ(y′ | Bi) .\nUsing this objective requires a choice of pθ(y | B). We explore the impact of different choices for this distribution in App. A.3, but found that using a pretrained and frozen pθ(y | B) during the fine-tuning step works best. We hypothesize that this setup allows the generative component pθ(R | y,B) to ignore as much bias as possible. At inference, as we would like to ignore the bias, we take the fine-tuned generative component pθ(R | y,B) and perform inference the same way as before, using Bayes’ Rule with a uniform prior.\nThe adjusted training procedure is composed of the following steps: 1) Train a discriminative prior model, pθ(y | B), freeze the weights. 2) Train a generative model, pθ(R | y,B), as in Section 4. 3) Fine-tune the model using Eq. 4, using the pretrained pθ(y | B). 4) Test the model using Eq. 1 with a uniform prior."
+    }, {
+      "heading" : "7.1 Results",
+      "text" : "Tables 6 and 7 show the results of the fine-tuning pipeline. The fine-tuned generative models (denoted as GEN-FT) achieve smaller o.o.d generalization gaps (∆) and correlations to the biased models (ρ) than the discriminative baselines. GEN-FT is also significantly better than GEN in terms of o.o.d performance, at the expense of slight bias leakage (higher ρ compared to GEN in Table 4). In the case\nof hypothesis-only bias, GEN-FT match or surpass the results of the discriminative baselines on the o.o.d sets. In the overlap bias case, GEN-FT does not match the discriminative model on the o.o.d set, but it narrows the gap.\nThe above results were obtained using a bias model prior in the fine-tuning step and a uniform prior at inference time. This was the strategy that achieved the lowest generalization gap (∆) on the dev set while outperforming the discriminative baseline. See Appendix A.3 for an ablation study of additional options."
+    }, {
+      "heading" : "8 Scalability",
+      "text" : "Given that the generative approach consumes more compute than the discriminative baseline, it is natural to ask whether it can scale to larger models. To answer this, we experimented with the T5 model (Raffel et al., 2020), an encoder-decoder available in five sizes, from 60M to 11B parameters. We focus on the hypothesis-only bias case in SNLI. We train the generative and discriminative models using regular fine-tuning (also called model-tuning), and also experiment with prompt-tuning (Lester et al., 2021), a faster and cheaper approach, which adds a small number of learnable tokens to the start of the input, and trains them end-to-end, while the model’s original weights stay frozen (Memory and training statistics are found in Table 14, App. B.1).\nFigure 3 shows that both the generative and discriminative approaches scale with model size. Prompt-tuning is effective, matching model-tuning performance at larger sizes. In larger models, the generative approach narrows the gap from the discriminative one, but cannot close it. Table 8 shows that with the largest 11B model, the generative approach leads to unbiased models. The table also shows that discriminative fine-tuning is possible at this scale and obtains a similar performance to the discriminative model on the hard set. Prompttuning also allows us to hold only one model for the discriminative fine-tuning phase (compared to two models in model-tuning). We conclude that the generative approach is scalable and can be used with very large models to mitigate structural biases."
+    }, {
+      "heading" : "9 Conclusion",
+      "text" : "Structural biases are common in various NLI datasets and are a major obstacle when trying to create robust systems for this task. We proposed a generative approach for NLI, which leads to unbiased models. We demonstrated that our generative models are robust to large amounts of bias and perform equally well in and out of distribution. This comes, however, with a trade-off, where the generative models perform worse than discriminative baselines. We investigated reasons for the difficulty of training generative NLI models, highlighting the large output space of generating sentences, as opposed to identifying a small subset of words that are often sufficient for solving the task. We showed how to mitigate this problem by fine-tuning GEN with a discriminative objective. Finally, we demonstrated that the method scales efficiently to large language models. Our work lays down a novel formulation for the NLI task, which may be applied to many other natural language understanding tasks. Future work can examine other kinds of bias and different tasks. For instance, if the bias variables are constructed according to protected attributes like race or gender, our approach leads to unbiased models w.r.t the protected attributes."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 HANS evaluation sets\nGiven that we study overlap bias, it is natural to evaluate the generative classifier approach on the HANS evaluation set (McCoy et al., 2019). The three HANS evaluation sets are constructed to be label balanced, while containing exclusively examples of significant amount of overlap. Three specific types of overlap are considered: lexical overlap, subsequence overlap, and constituent overlap. See McCoy et al. (2019) for more details.\nTable 9 shows the accuracies of the generative classifier and previous results from the literature, reported by Utama et al. (2020a). In general, the accuracies for the generative classifier are low. We hypothesize that this is due to the fact that the examples in the HANS evaluation set are significantly out of distribution compared to the training set, w.r.t the amount of overlap between premise and hypothesis. In the training set, sentences often have 20 or 30 tokens with only 1 or 2 token overlaps. In the HANS set, sentences are shorter and all but 1 or 2 tokens overlap. This makes the input significantly more out of domain for the generative classifier only, which is used to seeing many mask tokens in the input and in the HANS set sees almost no mask tokens.\nA.2 Correlations\nFigure 4 shows the correlations of generative and discriminative models to a bias model under different bias ratios in the synthetic bias case. Here the correlations are calculated on a biased test set, while in Section 5.2 they were calculated on an unbiased test set. The pattern is the same: the discriminative model is become more biased (higher ρ) as the bias ratio increases, while GEN remains unbiased (small ρ).\nA.3 Ablation study of fine-tuning pipeline\nOur fine-tuning pipeline allows different ways to combine the steps, such as choosing a prior or whether to use another step of fine-tuning. Table 10 presents an ablation study of the different possible combinations, using BART on SNLI with hypothesis-only bias. (The table shows means and standard deviations of 3 runs with different random seeds.) Row 1 shows the results of GEN, without any fine-tuning; the same model from Section 3. Fine-tuning with a hypothesis-only prior leads to a smaller gap than fine-tuning with a uniform prior (compare rows 3 and 5). We can explain these apparently surprising results by the hypothesis-only prior capturing some of the bias, such that removing it during inference allows the predictions to be less biased. Fine-tuning with a uniform prior does not allow such a decomposition, resulting in a large gap (row 3). In contrast, using a hypothesisonly prior at inference leads to biased predictions (large generalization gaps; rows 2, 4 and 6). These models perform well on the test set (relative to using uniform prior at inference; rows 3, 5, 7), but relatively poorly on the o.o.d set. In fact, maintaining the same kind of prior throughout the pipeline (rows 3 and 6) leads to results similar to the discriminative baseline (row 11).\nThe fine-tuning step allows a balancing of bias and performance. Fine-tuning with a hypothesisonly prior and using a uniform prior at test time\nresults in good o.o.d performance and relatively small generalization gaps (row 5). This setting achieve the smallest generalization gap that still beats the discriminative baseline (row 11).\nAnother consideration is the additional training time incurred by two phases of training. If we skip the generative training phase and directly train with the discriminative objective, we lose a bit in terms of test performance but maintain a good o.o.d performance, resulting in a medium-size generalization gap (row 9).\nThe model on row 9 shows comparable performance to the one in row 5, with a slight performance drop and a larger standard derivation. In practice, that model demonstrated slight instability and performed worse on the test and hard test sets than the model on row 6, showing that the initial generative training phase may allow the model to generalize better.\nA.4 Data preparation for overlap bias\nTable 3 shows an example for how a P,H pair is transformed to R,B which are used as an input to the model in Section 4.3."
+    }, {
+      "heading" : "B Gradient Attributions Example",
+      "text" : "Table 13 gives qualitative examples for the phenomenon in Section 6.\nB.1 Hyperparameters and Training Details\nTable 12 shows the hyperparameters for the models used throughout the paper. We experimented with word dropout values of: 0.01, 0.1, 0.3, 0.5, weight decay values of: 0.001, 0.01, 0.1, 1, learning rate values in the range: [10−6, 10−4], and maximum number of 5, 10, 20 and 100 epochs. The values that achieved the best accuracy on the validation set appear in the table. All other hyperparameters are the default ones in Wolf et al. (2019). Where mean\nand standard deviation is specified, we calculate those values over 3 runs, each with a different seed. Otherwise, those are the results of only one run.\nEach experiment was performed on one or two NVIDIA RTX 2080 Ti GPUs. Training takes about 6–7 hours for discriminative models, 7–8 hours for generative models, and 15–20 hours for the discriminative fine-tuning step. Discriminative BERT/BART models have 109M/140M parameters, while generative BERT/BART models have 247M/139M parameters.\nThe experiment in Section 8 were preformed using NVIDIA A100s cards. The statistics for those experiments are presented in Table 14. All experiments used a batch size of 32, except for the modeltuned T5-XL and T5-XXL, which were trained with batch sizes of 16 and 8 respectively . For a fair comparison, we used T5.1.1 “LM Adapted” checkpoints,6 which are compatible with both modeltuning and prompt-tuning. For prompt-tuning, we used 20 additional tokens, resulting in <100K trainable parameters even for the largest 11B model.\n6https://github.com/google-research/ text-to-text-transfer-transformer/ blob/main/released_checkpoints.md# lm-adapted-t511lm100k"
+    } ],
+    "references" : [ {
+      "title" : "Don’t just assume; look and answer: Overcoming priors for visual question answering",
+      "author" : [ "Aishwarya Agrawal", "Dhruv Batra", "Devi Parikh", "Aniruddha Kembhavi." ],
+      "venue" : "2018 IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2018,",
+      "citeRegEx" : "Agrawal et al\\.,? 2018",
+      "shortCiteRegEx" : "Agrawal et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Don’t take the premise for granted: Mitigating artifacts in natural language inference",
+      "author" : [ "Yonatan Belinkov", "Adam Poliak", "Stuart Shieber", "Benjamin Van Durme", "Alexander Rush." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association",
+      "citeRegEx" : "Belinkov et al\\.,? 2019a",
+      "shortCiteRegEx" : "Belinkov et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "On adversarial removal of hypothesis-only bias in natural language inference",
+      "author" : [ "Yonatan Belinkov", "Adam Poliak", "Stuart Shieber", "Benjamin Van Durme", "Alexander Rush." ],
+      "venue" : "Proceedings of the Eighth Joint Conference on Lexical and Computational Se-",
+      "citeRegEx" : "Belinkov et al\\.,? 2019b",
+      "shortCiteRegEx" : "Belinkov et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A large annotated corpus for learning natural language inference",
+      "author" : [ "Samuel R. Bowman", "Gabor Angeli", "Christopher Potts", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing, pages",
+      "citeRegEx" : "Bowman et al\\.,? 2015",
+      "shortCiteRegEx" : "Bowman et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "e-snli: Natural language inference with natural language explanations",
+      "author" : [ "Oana-Maria Camburu", "Tim Rocktäschel", "Thomas Lukasiewicz", "Phil Blunsom." ],
+      "venue" : "Advances in Neural Information Processing Systems 31: Annual Conference on Neural Infor-",
+      "citeRegEx" : "Camburu et al\\.,? 2018",
+      "shortCiteRegEx" : "Camburu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dataset bias: A case study for visual question answering",
+      "author" : [ "Anubrata Das", "Samreen Anjum", "Danna Gurari." ],
+      "venue" : "Proceedings of the Association for Information Science and Technology, 56(1):58–67.",
+      "citeRegEx" : "Das et al\\.,? 2019",
+      "shortCiteRegEx" : "Das et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Annotation artifacts in natural language inference data",
+      "author" : [ "Suchin Gururangan", "Swabha Swayamdipta", "Omer Levy", "Roy Schwartz", "Samuel Bowman", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the",
+      "citeRegEx" : "Gururangan et al\\.,? 2018",
+      "shortCiteRegEx" : "Gururangan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unlearn dataset bias in natural language inference by fitting the residual",
+      "author" : [ "He He", "Sheng Zha", "Haohan Wang." ],
+      "venue" : "Proceedings of the 2nd Workshop on Deep Learning Approaches for Low-Resource NLP (DeepLo 2019), pages 132–142, Hong Kong, China.",
+      "citeRegEx" : "He et al\\.,? 2019",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "End-to-end bias mitigation by modelling biases in corpora",
+      "author" : [ "Rabeeh Karimi Mahabadi", "Yonatan Belinkov", "James Henderson." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 8706–8716, On-",
+      "citeRegEx" : "Mahabadi et al\\.,? 2020",
+      "shortCiteRegEx" : "Mahabadi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "How much reading does reading comprehension require? a critical investigation of popular benchmarks",
+      "author" : [ "Divyansh Kaushik", "Zachary C. Lipton." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages",
+      "citeRegEx" : "Kaushik and Lipton.,? 2018",
+      "shortCiteRegEx" : "Kaushik and Lipton.",
+      "year" : 2018
+    }, {
+      "title" : "Captum: A unified and generic model interpretability library for pytorch",
+      "author" : [ "Narine Kokhlikyan", "Vivek Miglani", "Miguel Martin", "Edward Wang", "Bilal Alsallakh", "Jonathan Reynolds", "Alexander Melnikov", "Natalia Kliushkina", "Carlos Araya", "Siqi Yan" ],
+      "venue" : null,
+      "citeRegEx" : "Kokhlikyan et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Kokhlikyan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The power of scale for parameter-efficient prompt tuning",
+      "author" : [ "Brian Lester", "Rami Al-Rfou", "Noah Constant." ],
+      "venue" : "arXiv preprint arXiv:2104.08691.",
+      "citeRegEx" : "Lester et al\\.,? 2021",
+      "shortCiteRegEx" : "Lester et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Generative question answering: Learning to answer the whole question",
+      "author" : [ "Mike Lewis", "Angela Fan." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net.",
+      "citeRegEx" : "Lewis and Fan.,? 2019",
+      "shortCiteRegEx" : "Lewis and Fan.",
+      "year" : 2019
+    }, {
+      "title" : "BART: Denoising sequence-to-sequence pretraining for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Right for the wrong reasons: Diagnosing syntactic heuristics in natural language inference",
+      "author" : [ "Tom McCoy", "Ellie Pavlick", "Tal Linzen." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 3428–3448,",
+      "citeRegEx" : "McCoy et al\\.,? 2019",
+      "shortCiteRegEx" : "McCoy et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Hypothesis only baselines in natural language inference",
+      "author" : [ "Adam Poliak", "Jason Naradowsky", "Aparajita Haldar", "Rachel Rudinger", "Benjamin Van Durme." ],
+      "venue" : "Proceedings of the Seventh Joint Conference on Lexical and Computational Semantics,",
+      "citeRegEx" : "Poliak et al\\.,? 2018",
+      "shortCiteRegEx" : "Poliak et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "Journal of Machine Learning Research,",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning from others’ mistakes: Avoiding dataset biases without modeling them",
+      "author" : [ "Victor Sanh", "Thomas Wolf", "Yonatan Belinkov", "Alexander M Rush." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Sanh et al\\.,? 2021",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Towards debiasing fact verification models",
+      "author" : [ "Tal Schuster", "Darsh Shah", "Yun Jie Serene Yeo", "Daniel Roberto Filizzola Ortiz", "Enrico Santus", "Regina Barzilay." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Schuster et al\\.,? 2019",
+      "shortCiteRegEx" : "Schuster et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Avoiding the Hypothesis-Only Bias in Natural Language Inference via Ensemble Adversarial Training",
+      "author" : [ "Joe Stacey", "Pasquale Minervini", "Haim Dubossarsky", "Sebastian Riedel", "Tim Rocktäschel." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical",
+      "citeRegEx" : "Stacey et al\\.,? 2020",
+      "shortCiteRegEx" : "Stacey et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Axiomatic attribution for deep networks",
+      "author" : [ "Mukund Sundararajan", "Ankur Taly", "Qiqi Yan." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017, volume 70 of Proceedings",
+      "citeRegEx" : "Sundararajan et al\\.,? 2017",
+      "shortCiteRegEx" : "Sundararajan et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Performance impact caused by hidden bias of training data for recognizing textual entailment",
+      "author" : [ "Masatoshi Tsuchiya." ],
+      "venue" : "Proceedings of the Eleventh International Conference on Language Resources and Evaluation (LREC 2018), Miyazaki,",
+      "citeRegEx" : "Tsuchiya.,? 2018",
+      "shortCiteRegEx" : "Tsuchiya.",
+      "year" : 2018
+    }, {
+      "title" : "Mind the trade-off: Debiasing NLU models without degrading the in-distribution performance",
+      "author" : [ "Prasetya Ajie Utama", "Nafise Sadat Moosavi", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Utama et al\\.,? 2020a",
+      "shortCiteRegEx" : "Utama et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards debiasing NLU models from unknown biases",
+      "author" : [ "Prasetya Ajie Utama", "Nafise Sadat Moosavi", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 7597–7610, On-",
+      "citeRegEx" : "Utama et al\\.,? 2020b",
+      "shortCiteRegEx" : "Utama et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A broad-coverage challenge corpus for sentence understanding through inference",
+      "author" : [ "Adina Williams", "Nikita Nangia", "Samuel Bowman." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Lin-",
+      "citeRegEx" : "Williams et al\\.,? 2018",
+      "shortCiteRegEx" : "Williams et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Huggingface’s transformers: Stateof-the-art natural language processing",
+      "author" : [ "Thomas Wolf", "Lysandre Debut", "Victor Sanh", "Julien Chaumond", "Clement Delangue", "Anthony Moi", "Pierric Cistac", "Tim Rault", "Rémi Louf", "Morgan Funtowicz" ],
+      "venue" : null,
+      "citeRegEx" : "Wolf et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Wolf et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Texygen: A benchmarking platform for text generation models",
+      "author" : [ "Yaoming Zhu", "Sidi Lu", "Lei Zheng", "Jiaxian Guo", "Weinan Zhang", "Jun Wang", "Yong Yu." ],
+      "venue" : "The 41st International ACM SIGIR Conference on Research & Development in Information",
+      "citeRegEx" : "Zhu et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Table 9 shows the accuracies of the generative classifier and previous results from the literature, reported by Utama et al. (2020a)",
+      "author" : [ "lap. See McCoy" ],
+      "venue" : "In general,",
+      "citeRegEx" : "McCoy,? \\Q2020\\E",
+      "shortCiteRegEx" : "McCoy",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 7,
+      "context" : "For instance, in natural language inference (NLI) datasets, models can predict an entailment relationship y from the hypothesis text H alone, without considering the premise P at all (Gururangan et al., 2018; Poliak et al., 2018).",
+      "startOffset" : 183,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 17,
+      "context" : "For instance, in natural language inference (NLI) datasets, models can predict an entailment relationship y from the hypothesis text H alone, without considering the premise P at all (Gururangan et al., 2018; Poliak et al., 2018).",
+      "startOffset" : 183,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 15,
+      "context" : "Another identified source of bias is lexical overlap between P and H , which is associated with an entailment prediction (McCoy et al., 2019).",
+      "startOffset" : 121,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 13,
+      "context" : "Finally, to mitigate the difficulty of the generative modeling task, we fine-tune GEN with a discriminative objective (Lewis and Fan, 2019).",
+      "startOffset" : 118,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 17,
+      "context" : "Examples include hypothesis-only biases in NLI such as negation words in the hypothesis being correlated with a contradiction label (Poliak et al., 2018; Gururangan et al., 2018).",
+      "startOffset" : 132,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 7,
+      "context" : "Examples include hypothesis-only biases in NLI such as negation words in the hypothesis being correlated with a contradiction label (Poliak et al., 2018; Gururangan et al., 2018).",
+      "startOffset" : 132,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 0,
+      "context" : "Similar one-sided biases have been found in other tasks, including visual question answering (VQA) (Agrawal et al., 2018; Das et al., 2019), reading comprehension (Kaushik and Lipton, 2018), and fact verification (Schuster et al.",
+      "startOffset" : 99,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 5,
+      "context" : "Similar one-sided biases have been found in other tasks, including visual question answering (VQA) (Agrawal et al., 2018; Das et al., 2019), reading comprehension (Kaushik and Lipton, 2018), and fact verification (Schuster et al.",
+      "startOffset" : 99,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2019), reading comprehension (Kaushik and Lipton, 2018), and fact verification (Schuster et al.",
+      "startOffset" : 31,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2019), reading comprehension (Kaushik and Lipton, 2018), and fact verification (Schuster et al., 2019).",
+      "startOffset" : 81,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 15,
+      "context" : "is lexical overlap, which is correlated with an entailment decision in NLI datasets (McCoy et al., 2019).",
+      "startOffset" : 84,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 2,
+      "context" : "For instance, a bias model may be trained adversarially, making the main model perform worse when the bias model performs well (Belinkov et al., 2019b; Stacey et al., 2020).",
+      "startOffset" : 127,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 21,
+      "context" : "For instance, a bias model may be trained adversarially, making the main model perform worse when the bias model performs well (Belinkov et al., 2019b; Stacey et al., 2020).",
+      "startOffset" : 127,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 8,
+      "context" : "Others use a bias model to modulate the main model’s predictions in different ways (He et al., 2019; Karimi Mahabadi et al., 2020; Utama et al., 2020b).",
+      "startOffset" : 83,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 25,
+      "context" : "Others use a bias model to modulate the main model’s predictions in different ways (He et al., 2019; Karimi Mahabadi et al., 2020; Utama et al., 2020b).",
+      "startOffset" : 83,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 6,
+      "context" : "We then train the model as a conditional generative model, by fine-tuning BERT (Devlin et al., 2019) or BART (Lewis et al.",
+      "startOffset" : 79,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2019) or BART (Lewis et al., 2020) with the standard auto-regressive cross-entropy loss.",
+      "startOffset" : 16,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 26,
+      "context" : "We use MNLI (Williams et al., 2018), an English NLI dataset, as the base NLI dataset.",
+      "startOffset" : 12,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 17,
+      "context" : "2015) and on the MNLI dataset, two NLI datasets that are known to contain hypothesis-only biases (Poliak et al., 2018; Gururangan et al., 2018; Tsuchiya, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 7,
+      "context" : "2015) and on the MNLI dataset, two NLI datasets that are known to contain hypothesis-only biases (Poliak et al., 2018; Gururangan et al., 2018; Tsuchiya, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 23,
+      "context" : "2015) and on the MNLI dataset, two NLI datasets that are known to contain hypothesis-only biases (Poliak et al., 2018; Gururangan et al., 2018; Tsuchiya, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 27,
+      "context" : "All models are taken from the Transformers library (Wolf et al., 2019).",
+      "startOffset" : 51,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 16,
+      "context" : "To evaluate how well our model can generate premises, we used two metrics: BLEU (Papineni et al., 2002) of the generated premises w.",
+      "startOffset" : 80,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 28,
+      "context" : "t gold premises, to measure the generation quality (higher is better), and self-BLEU (Zhu et al., 2018) to measure the diversity of the generations (lower is more diverse).",
+      "startOffset" : 85,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 4,
+      "context" : "To quantify this, we measured the number of words highlighted as explanations in the e-SNLI dataset (Camburu et al., 2018) and found that less than 21% of words in the premise are highlighted on average.",
+      "startOffset" : 100,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 22,
+      "context" : "(5)We computed attributions with Integrated Gradients (Sundararajan et al., 2017) using Captum (Kokhlikyan et al.",
+      "startOffset" : 54,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 18,
+      "context" : "To answer this, we experimented with the T5 model (Raffel et al., 2020), an encoder-decoder available in five sizes, from 60M to 11B parameters.",
+      "startOffset" : 50,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 12,
+      "context" : "We train the generative and discriminative models using regular fine-tuning (also called model-tuning), and also experiment with prompt-tuning (Lester et al., 2021), a faster and cheaper approach, which adds a small number of learnable tokens to the start of the input, and trains them end-to-end, while the model’s original weights stay frozen (Memory and training statistics are found in Table 14, App.",
+      "startOffset" : 143,
+      "endOffset" : 164
+    } ],
+    "year" : 0,
+    "abstractText" : "Many natural language inference (NLI) datasets contain biases that allow models to perform well by only using a biased subset of the input, without considering the remainder features. For instance, models are able to classify samples by only using the hypothesis, without learning the true relationship between it and the premise. These structural biases lead discriminative models to learn unintended superficial features and generalize poorly out of the training distribution. In this work, we reformulate the NLI task as a generative task, where a model is conditioned on the biased subset of the input and the label and generates the remaining subset of the input. We show that by imposing a uniform prior, we obtain a provably unbiased model. Through synthetic experiments, we find that this approach is highly robust to large amounts of bias. We then demonstrate empirically on two types of natural bias that this approach leads to fully unbiased models in practice. However, we find that generative models are difficult to train and generally perform worse than discriminative baselines. We highlight the difficulty of the generative modeling task in the context of NLI as a cause for this worse performance. Finally, by fine-tuning the generative model with a discriminative objective, we reduce the performance gap between the generative model and the discriminative baseline, while allowing for a small amount of bias.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,565 @@
+{
+  "name" : "ARR_2022_339_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Learning Non-Autoregressive Models from Search for Unsupervised Sentence Summarization",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Text summarization is an important natural language processing (NLP) task, aiming at generating concise summaries for given texts while preserving the key information. It has extensive real-world applications such as headline generation (Nenkova et al., 2011).\nState-of-the-art text summarization models are typically trained in a supervised way with large training corpora, comprising pairs of long texts and their summaries (Zhang et al., 2020; Aghajanyan et al., 2020, 2021). However, such parallel data are expensive to obtain, preventing the applications to less popular domains and less spoken languages.\nUnsupervised text generation has been attracting increasing interest, because it does not require parallel data for training. One widely used approach is to compress a long text into a short one, and to reconstruct it to the long text by a cycle consistency loss (Miao and Blunsom, 2016; Wang and\n1Our code is released on real but anonymized repo: https://github.com/ARR-NAUS/NAUS\nLee, 2018; Baziotis et al., 2019). Due to the indifferentiability of the compressed sentence space, such an approach requires reinforcement learning (or its variants), which makes the training difficult (Kreutzer et al., 2021).\nRecently, Schumann et al. (2020) propose an edit-based approach for unsupervised summarization. Their model maximizes a scoring function that evaluates the quality (fluency and semantics) of the generated summary, achieving higher performance than cycle-consistency methods. However, the search approach is slow in inference because hundreds of search steps are needed for each data sample. Moreover, their approach can only select words from the input sentence with the word order preserved. Thus, it is restricted and may generate noisy summaries due to the local optimality of search algorithms.\nTo address the above drawbacks, we propose a Non-Autoregressive approach to Unsupervised Summarization (NAUS). The idea is to perform search as in Schumann et al. (2020) and, inspired by Li et al. (2020), to train a machine learning model to smooth out such noise and to speed up the inference process. Different from Li et al. (2020), we propose to utilize non-autoregressive text generators, which generate all tokens in the output in parallel, based on our following observations: • Non-autoregressive models are several times faster than autoregressive generation, which is important when the system is deployed. • The input and output of the summarization task have a strong correspondence. Non-autoregressive generation supports encoder-only architectures, which can better utilize such input–output correspondence and even outperform autoregressive models for summarization. • For non-autoregressive models, we can design a length-control algorithm based on dynamic programming. This can satisfy the output length constraint, which is typical in summarization but can-\nnot be easily achieved with autoregressive models. We conducted experiments on Gigaword headline generation (Graff et al., 2003) and DUC2004 (Over and Yen, 2004) datasets. Experiments show that our NAUS achieves state-of-the-art performance on unsupervised summarization; especially, it outperforms its teacher (i.e., the search approach), confirming that NAUS can indeed smooth out the search noise. Regarding inference efficiency, our NAUS with truncating is 1000 times more efficient than the search approach; even with dynamic programming for length control, NAUS is still 100 times more efficient than search and several times more efficient than autoregressive models. Our NAUS is also able to perform length-transfer summary generation, i.e., generating summaries of different lengths from training."
+    }, {
+      "heading" : "2 Approach",
+      "text" : "In our approach, we first follow Schumann et al. (2020) and obtain a summary by discrete search towards a heuristically defined objective function (§2.1). Then, we propose a non-autoregressive model for the summarization task (§2.2). We present the training strategy and the proposed length-control algorithm in §2.3."
+    }, {
+      "heading" : "2.1 Search-Based Summarization",
+      "text" : "Consider a given source text x = (x1, x2, . . . , xn). The goal of summarization is to find a shorter text y = (y1, y2, . . . , ym) as the summary.\nOur work on unsupervised summarization follows the recent progress of search-based text generation. Schumann et al. (2020) formulate summarization as word-level extraction (with order preserved), and apply edit-based discrete local search to maximize a heuristically designed objective.\nSpecifically, the objective function considers two aspects: (1) a language fluency score fLM(y), given by the reciprocal of a language model’s perplexity; and (2) a semantic similarity score fSIM(y;x), given by the cosine embeddings. The overall objective combines the two aspects as\nf(y;x) = fLM(y) · fSIM(y;x)γ (1)\nwhere γ is a weighting hyperparameter. Interested readers are referred to Schumann et al. (2020) for the details of the scoring function.\nFurther, the desired summary length can be specified as a hard constraint, achieved by searching only among sentences of the correct length. Sup-\npose the desired summary length is T , the approach selects T random words from the input, and maximizes the scoring function (1) by changing the selection and non-selection of two words.\nA greedy hill-climbing algorithm determines whether the change is accepted or not. In other words, a change is accepted if the score improves, or rejected otherwise. Such a process continues until a (possibly local) optimum is found.\nA pilot analysis in Schumann et al. (2020) shows that words largely overlap between a source text and its summary. This explains the high performance of such a word extraction approach, being a state-of-the-art unsupervised summarization system and outperforming strong competitors, e.g., cycle consistency (Wang and Lee, 2018; Baziotis et al., 2019)."
+    }, {
+      "heading" : "2.2 Non-Autoregressive Model for Summarization",
+      "text" : "Despite the high performance, such edit-based search has several drawbacks. First, the search process is slow because hundreds of local search steps are needed to obtain a high-quality summary. Second, their approach only extracts the original words with order preserved. Therefore, the generated summary is restricted and may be noisy.\nTo this end, we propose a Non-Autoregressive approach to Unsupervised Summarization (NAUS) by learning from the search results. In this way, the machine learning model can smooth out the search noise and is much faster, largely alleviating the drawbacks of search-based summarization. Compared with training an autoregressive model from search (Li et al., 2020), non-autoregressive generation predicts all the words in parallel, further improving inference efficiency by several times.\nMoreover, a non-autoregressive model enables us to design an encoder-only architecture, which is more suited to the summarization task due to the strong correspondence between input and output, which cannot be fully utilized by encoder–decoder models, especially autoregressive ones.\nSpecifically, we propose to use multi-layer Transformer (Vaswani et al., 2017) as the nonautoregressive architecture for summarization. Each Transformer layer is composed of a multihead attention sublayer and a feed-forward sublayer. Additionally, there is a residual connection in each sublayer, followed by layer normalization.\nLet X(n) ∈ RT×d be representation at the nth\nlayer, where T is the number of words and d is the dimension. Specially, the input layer X(0) is the embeddings of words. Suppose we have h attention heads. The output of the ith head in the nth attention sublayer is A(n)i = softmax ( QiK > i√\ndk\n) Vi,\nwhere Qi, Ki, and Vi are matrices calculated by three distinct multi-layer perceptrons (MLPs) from X(n−1); dk is the attention dimension.\nMultiple attention heads are then concatenated: A(n) = Concat ( A\n(n) 1 , . . . , A (n) h ) WO\nwhere WO ∈ Rd×d is a weight matrix. Then, we have a residual connection and layer normalization by\nĀ(n) = LayerNorm ( X(n−1) +A(n) ) (2)\nFurther, an MLP sublayer processes Ā(n), followed by residual connection and layer normalization, yielding the nth layer’s representation\nX(n) = LayerNorm ( Ā(n) + MLP(Ā(n)) ) (3)\nThe last layer X(N) is fed to softmax to predict the summary in a non-autoregressive manner, that is, the probability at the tth step is given by softmax(Wx\n(N) t ), where x (N) t is the tth row of\nthe matrix X(N) and W is the softmax weight. It is emphasized that, in the vocabulary, we include a special blank token , which is handled by dynamic programming during both training and inference (§2.3). This enables us to generate a shorter summary than the input with such a multi-layer Transformer.\nOur model can be thought of as an encoderonly architecture, differing from a typical encoder– decoder model with cross attention (Vaswani et al., 2017; Baziotis et al., 2019; Zhou and Rush, 2019). Previously, Su et al. (2021) propose a seemingly similar model to us, but put multiple end-of-\nsequence (EOS) tokens at the end of the generation; thus, they are unable to maintain the correspondence between input and output. Instead, we allow blank tokens scattering over the entire sentence; thus, the residual connections in Eqns (2) and (3) can better utilize such input–output correspondence for summarization."
+    }, {
+      "heading" : "2.3 Training and Inference",
+      "text" : "In this section, we first introduce the Connectionist Temporal Classification (CTC) training. Then, we propose a length-control decoding approach for summary generation.\nCTC Training. The Connectionist Temporal Classification (CTC, Graves et al., 2006) algorithm allows a special blank token in the vocabulary, and uses dynamic programming to marginalize out such blank tokens. In addition, non-autoregressive generation suffers from a common problem that words may be repeated in consecutive steps (Gu et al., 2018; Lee et al., 2018); thus, CTC merges repeated words unless separated by . For example, the sequence of tokens a aabb is reduced to the text aab, denoted by Γ(a aabb ) = aab. The CTC training is by maximum marginal likelihood estimation, treating the predictors as unobserved latent variables.\nConcretely, the likelihood is marginalized over all possible fillings of , i.e., all possible token sequences that are reduced to the groundtruth text:\nP (y|x) = ∑\nw:Γ(w)=y P (w|x) (4)\nwhere P (w|x) is the probability of generating a sequence of tokens w. Although enumerating every candidate in {w : Γ(w) = y} is intractable, such marginalization fortunately can be computed by dynamic programming in an efficient way.\nLet αs,t = ∑\nw1:s:Γ(w1:s)=y1:t P (w1:s|x) be the\nmarginal probability of generating y1:t up to the\nsth decoding slot. Moreover, αs,0 is defined to be the probability that w1:s is all , thus not having matched any word in y. The αs,t variable can be further decomposed into two terms αs,t = α s,t + α¬ s,t, where the first term is such probability with ws = , and the second term ws 6= . Apparently, the initialization of α variables is\nα 1,0 = P (w1 = |x) (5) α¬ 1,1 = P (w1 = y1|x) (6) α 1,t = 0,∀t ≥ 1 (7) α¬ 1,t = 0,∀t > 1 or t = 0 (8)\nEqn. (7) is because, at the first prediction slot, the empty token does not match any target words; Eqn. (8) is because the predicted non- first token must match exactly the first target word.\nThe recursion formula for α s,t is\nα s,t = αs,t−1P (wt = |x)\nsince the newly predicted token with probability P (wt = |x) does not match any target word, inheriting αs,t−1.\nThe recursion formula for α¬ s,t is\nα¬ s,t =  ( α s−1,t−1 + α ¬ s−1,t ) P (ws = yt|x),\nif yt = yt−1 αs−1,t−1P (ws = yt|x), otherwise.\nHere, ws is not , so we must have ws = yt, having the predicted probability P (ws = yt|x).\nIf yt = yt−1, then we have two sub-cases: first, w1:s−1 is reduced to y1:t−1 with ws−1 = separating two repeating words in y, having probability α s−1,t−1; or second, w1:s−1 is reduced to y1:t with ws−1 = yt 6= , having probability α¬ s−1, which implies we are merging ws−1 and ws.\nIf yt 6= yt−1, then we only require ws−1 is reduced to yt−1, where ws−1 can be either or non- . This is given by probability αs−1,t−1 = α s−1,t−1 + α ¬ s−1,t−1.\nFinally, α|w|,|y| is the marginal probability in Eqn. (4), as it is the probability that the entire generated sequence matches the entire target text.\nThe CTC maximum likelihood estimation is to maximize the marginal probability, which is equivalent to minimizing the loss −α|w|,|y|. Since the dynamic programming formulas are differentiable, the entire model can be trained by backpropagation in an end-to-end manner with auto-differentiation tools (such as PyTorch).\nLength-Control Inference. Controlling output\nPartial sentence length \uD835\uDC61\nlength is the nature of the summarization task, for example, displaying a short news headline on a mobile device. Moreover, Schumann et al. (2020) show that the main evaluation metric ROUGE (Lin, 2004) is sensitive to the summary length, and longer summaries tend to achieve higher ROUGE scores. Thus, it is crucial to control the summary length for fair comparison.\nWe propose a length-control algorithm by dynamic programming (DP), following the nature of CTC training. However, our DP is an approximate algorithm because of the dependencies introduced by removing consecutive repeated tokens. Thus, we equip our DP with a beam search mechanism.\nWe define Bs,t to be a set of top-B sequences with s predicted tokens that are reduced to t words. Bs,t is constructed by three scenarios.\nFirst, the blank token is predicted for the sth generation slot, and thus the summary length t remains the same, shown by the blue arrow in Figure 2. This yields a set of candidates\nB (1) s,t = { b⊕ |b ∈ Bs−1,t } (9)\nwhere ⊕ refers to string/token concatenation. Second, a repeated word is predicted for the sth generation slot, i.e., bs−1 for a subsequence b of length s−1. In this case, the summary length t also remains the same, also shown in the blue arrow in Figure 2. This gives a candidate set\nB (2) s,t = { b⊕ bs−1 |b ∈ Bs−1,t } (10)\nThird, a non- , non-repeating word ws is generated, increasing the summary length from t− 1 to t, shown by the red arrow in Figure 2. This gives\nB (3) s,t = { b⊕ w∗ |b ∈ Bs−1,t−1,\nw∗ = argmax ws 6= ,ws 6=bs−1\nP (ws|x) } (11)\nBased on the three candidates sets, we select top-B sequences to keep the beam size fixed:\nBs,t = topB(B (1) s,t ∪B (2) s,t ∪B (3) s,t ) (12)\nwhere topB ranks the sequences by their predicted joint probabilities.\nTheorem 1. (1) If repeating tokens are not merged, then the proposed length-control algorithm with beam size B = 1 finds the exact optimum BS,T being the most probable length-T sentence given by S prediction slots. (2) If we merge repeating tokens predicted by CTC-trained models, the above algorithm may not be exact.\nAppendix A presents the proof of the theorem and provides a more detailed analysis, showing that our length-control algorithm, although being approximate inference, can generate a summary of the desired length properly. Compared with truncating an overlength output, our approach is able to generate more fluent and complete sentences. Also, our length-control algorithm is different from conventional beam search, shown in Appendix C."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Setup",
+      "text" : "Datasets. We evaluated our NAUS model on Gigaword headline generation and DUC2004 datasets.\nThe head generation dataset (Rush et al., 2015) is constructed from the Gigaword news corpus (Graff et al., 2003), where the first sentence of a news article is considered as input text and the news title is considered as the summary. The dataset contains 3.8M/198K/1951 samples for training/validation/test. Based on the curve in Appendix B, we used 3M samples for training NAUS.\nIt should be emphasized that, when NAUS learns from search, we only use the input of the training corpus: we perform search (Schumann et al., 2020) for each input, and train our NAUS from the search results. Therefore, we do not utilize any labeled parallel data, and our approach is unsupervised.\nMoreover, we considered two settings with desired summary lengths of 8 and 10, following Schumann et al. (2020). Our NAUS is trained from respective search results.\nThe DUC2004 dataset (Over and Yen, 2004) is designed for testing only with 500 samples, where we also take the first sentence of an article as the input text. Our NAUS is transferred from the above headline generation corpus. Based on the length of DUC2004 summaries, we trained NAUS from search results with 13 words, also following Schumann et al. (2020) for fair comparison.\nEvaluation Metrics. We evaluated the quality of predicted summaries by ROUGE scores (Lin, 2004), which are the most widely used metrics in previous work (Wang and Lee, 2018; Baziotis\net al., 2019; Zhou and Rush, 2019). Specifically, ROUGE-n evaluates n-gram overlap between a predicted summary and its reference summary; ROUGE-L, instead, measures the longest common sequence between the predicted and reference summaries.\nDifferent ROUGE variants are adopted in previous work, depending on the dataset. We followed the standard evaluation scripts and evaluated headline generation by ROUGE F1 (Wang and Lee, 2018; Baziotis et al., 2019; Schumann et al., 2020) and DUC2004 by Truncate ROUGE Recall (Dorr et al., 2003; West et al., 2019).\nIn addition to summary quality, we also evaluated inference efficiency of different methods, as it is important for the deployment of deep learning models in real-time applications. We report the average inference time in seconds for each data sample, and compare the speedup with Schumann et al. (2020)’s search approach, which achieves (previous) state-of-the-art ROUGE scores. Our experiments were conducted on an i9-9940X CPU and an RTX6000 graphic card. Other implementation details are presented in Appendix B."
+    }, {
+      "heading" : "3.2 Results and Analyses",
+      "text" : "Main Results. Table 1 presents the performance of our model and baselines on the Gigaword headline test set. For a fair comparison, we categorize all approaches by average summary lengths of ~8 and ~10 into Groups A and B, respectively.\nThe Lead baseline extracts the first several words of the input sentence. Despite its simplicity, the Lead approach is a strong summarization baseline adopted in most previous work (Févry and Phang, 2018; Baziotis et al., 2019).\nWang and Lee (2018) utilize cycle consistency (Miao and Blunsom, 2016) for unsupervised summarization; Zhou and Rush (2019) perform beam search towards a step-by-step decomposable score of fluency and contextual matching. Both are unable to explicitly control the summary length: in a fair comparison of length 10 (Group B, Table 1), their performance is worse than the (previous) state-of-the-art approach (Schumann et al., 2020),2 which performs edit-based local search.\nOur NAUS approach follows Schumann et al.\n2Schumann et al. (2020) present a few variants that use additional datasets for training language models (in an unsupervised way). In our study, we focus on the setting without data augmentation, i.e., the language model is trained on nonparallel the Gigawords corpus.\n(2020), but trains a non-autoregressive model from search results. We consider two settings for controlling the summary length: truncating longer summaries and decoding with our proposed lengthcontrol algorithm. Both of our variants outperform Schumann et al. (2020) by 1.21–2.73 in terms of the total ROUGE score (Rows 5–6 & 13–14, Table 1). As mentioned, Schumann et al. (2020) only extracts original words with order preserved, yielding noisy sentences. Our NAUS, as a student, learns from the search-based teacher model and is able to smooth out its noise. This is a compelling result, as our student model outperforms its teacher.\nRegarding inference efficiency, our NAUS method with truncating is more than 1300 times faster than Schumann et al. (2020), because we do not need iterative search. Even with dynamic programming and beam search for length control, NAUS is still over 100 times faster. This shows our NAUS is extremely efficient in inference, which is important for real-time applications.\nAlthough the efficiency of Wang and Lee (2018) and Zhou and Rush (2019) is not available, we still expect our approach to be a few times faster (despite our higher ROUGE scores) because their models are autoregressive. By contrast, our NAUS is non-autoregressive, meaning that it predicts all words simultaneously. We will provide a controlled comparison between autoregressive and nonautoregressive models in Table 3.\nTable 2 shows the results on the DUC2004\ndataset. The cycle-consistency approach (Baziotis et al., 2019; West et al., 2019) does not perform well on this dataset, outperformed by an early rule-based syntax tree trimming approach (Zajic et al., 2004) and the state-of-the-art edit-based search (Schumann et al., 2020).\nThe performance of our NAUS model is consistent with Table 1, outperforming all previous methods in terms of the total ROUGE score, and being 100–1000 times faster than the search approach (Schumann et al., 2020).\nIn general, the proposed NAUS not only achieves state-of-the-art ROUGE scores for unsupervised summarization, but also is more efficient when deployed. Results are consistent on both datasets, demonstrating the generality of our NAUS.\nIn-Depth Analyses. We conduct in-depth analyses on the proposed NAUS model in Table 3. Due to the limit of time and space, we chose the Gigaword headline generation as our testbed. All the\nautoregressive (AR) and non-autoregressive (NAR) variants learn from the search output of our replication (Rows 2 & 11), where we achieve very close results to those reported in Schumann et al. (2020).\nWe first tried vanilla encoder–decoder NAR Transformer (Rows 4 & 13, Gu et al., 2018), where we set the number of decoding slots as the desired summary length and thus length-control is not needed. As seen, a vanilla NAR model does not perform well, and CTC largely outperforms vanilla NAR in both groups (Rows 5–6 & 14–15). Such results are highly consistent with the translation literature (Saharia et al., 2020; Chan et al., 2020; Gu and Kong, 2021; Qian et al., 2021).\nThe proposed encoder-only NAUS model outperforms encoder–decoder ones in both groups in terms of the total ROUGE score, when the summary length is controlled by either truncating or length-control decoding (Rows 8–9 & 17–18). Profoundly, our non-autoregressive NAUS is even better than the autoregressive Transformer (Rows 3 & 12) . We also experimented with previous non-autoregressive work for supervised summarization (Su et al., 2021)3 in our learning-fromsearch setting. Although their approach appears to be encoder-only, it adds end-of-sequence (EOS) tokens at the end of the generation, and thus is unable to utilize the input–output correspondence. Their performance is higher than vanilla NAR models, but lower than ours. By contrast, NAUS is able to capture such correspondence with the residual connections, i.e., Eqns. (2) and (3), in its encoder-only architecture.\nGenerally, the efficiency of encoder-only NAR4 (without length-control decoding) is ~2 times faster than encoder–decoder NAR and ~20 times faster than the AR Transformer.\nFurther, our length-control decoding improves the total ROUGE score, compared with truncating, for both encoder–decoder CTC and encoder-only NAUS models (Rows 6, 9, 15, & 18), although its dynamic programming is slower. Nevertheless, our non-autoregressive NAUS with length control is ~200 times faster than search and ~3 times faster\n3To the best of our knowledge, the other two nonautoregressive supervised summarization models are Yang et al. (2021) and Qi et al. (2021). Their code and pretrained models are not available, making replication difficult.\n4The standard minimal encoder–decoder NAR model has 6 layers for the encoder and another 6 layers for the decoder (Vaswani et al., 2017). Our NAUS only has a 6-layer encoder. Our pilot study shows that more layers do not further improve performance in our encoder-only architecture.\nthan the AR Transformer. Human Evaluation. We also conducted human evaluation with a focus on truncating and lengthcontrol decodings. This is because truncating may generate incomplete sentences, which cannot be adequately evaluated by automatic metrics as their ROUGE scores are close.\nSpecifically, we invited three human annotators to compare the two decoding algorithms for NAUS on 50 randomly selected samples, in the setting of Group B, Table 1 (Gigaword headline generation with a target length of 10). The annotation was conducted in a pairwise manner in terms of overall quality and fluency/completeness; average results (wins/loses/ties) are shown in Table 5. It should be mentioned that our annotation was strictly blind: the samples of two systems were presented in random order and annotators did not know which system generated a sample.\nAs seen, our length-control decoding algorithm largely outperforms the truncating approach in terms of both the overall quality and fluency/completeness. The results are statistically significant (p-values< 0.01) in a one-sided binomial test. This verifies that length-control decoding is important for summarization, as truncating yields incomplete sentences, which are reflected by ROUGE scores.\nAdditional results. We analyze the beam search in length-control decoding in Appendix C and present a case study in Appendix D. We also show length-transfer performance in Appendix E."
+    }, {
+      "heading" : "4 Related Work",
+      "text" : "Summarization systems can be generally categorized into two paradigms: extractive and abstractive. Extractive systems extract certain sentences and clauses from input, for example, based on salient features (Zhou and Rush, 2019) or feature construction (He et al., 2012). Abstraction systems generate new utterances as the summary, e.g., by sequence-to-sequence models trained in a supervised way (Liu et al., 2021; Zhang et al., 2020).\nRecently, unsupervised abstractive summarization is attracting increasing attention. For example, Yang et al. (2020) propose to use the Lead baseline (first several sentences) as the pseudo-groundtruth. However, such an approach only works with wellstructured articles (such as CNN/DailyMail). Wang and Lee (2018) and Baziotis et al. (2019) use cycle consistency for unsupervised summarization. Zhou and Rush (2019) propose a step-by-step decomposable scoring function and perform beam search for generate summarization. Schumann et al. (2020) propose an edit-based local search approach, which allows a more comprehensive scoring function and outperforms cycle consistency and beam search.\nOur paper follows Schumann et al. (2020) but trains a machine learning model to improve efficiency and smooth out search noise. Previously, Liu et al. (2020) fine-tune a GPT-2 model based on search results for unsupervised paraphrasing. We extend previous work in a non-trivial way by designing a non-autoregressive generator and further proposing a length-control decoding algorithm.\nNon-autoregressive generation is originally proposed for machine translation (Gu et al., 2018). Recently, Jia et al. (2021) apply non-autoregressive models to extractive document-level summarization. Su et al. (2021) stack a non-autoregressive\nBERT model with a conditional random field (CRF) for abstractive summarization; since the summary is shorter than the input text, their approach puts multiple end-to-sequence (EOS) tokens at the end of the sentence, and thus is unable to utilize the strong input–output correspondence in the summarization task. Yang et al. (2021) apply auxiliary part-of-speech (POS) loss and Qi et al. (2021) explore pretraining strategies for encoder–decoder non-autoregressive summarization; their length is given by POS tag/EOS predictions. All these studies concern supervised summarization, and none can explicitly control the output length. By contrast, our paper focuses on unsupervised summarization. We adopt CTC training in our encoderonly architecture, allowing blank tokens to better align input and output words, which is more appropriate for summarization. We further propose a dynamic programming algorithm to control the summary length."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this work, we propose a non-autoregressive unsupervised summarization model (NAUS), where we further propose a length-control decoding algorithm based on dynamic programming. Experiments show that NAUS not only archives stateof-the-art unsupervised performance on Gigaword headline generation and DUC2004 datasets, but also is much more efficient than search methods and autoregressive models. Appendices present additional analyses and length-transfer experiments.\nLimitation and Future Work. Our paper focuses on unsupervised summarization due to the importance of low-data applications. One limitation is that we have not obtained rigorous empirical results for supervised summarization, where the developed model may also work. This is because previous supervised summarization papers lack explicitly categorization of summary lengths (Yang et al., 2020; Qi et al., 2021), making comparisons unfair and problematic (Schumann et al., 2020). This is also evidenced by Su et al. (2021), where the same model may differ by a few ROUGE points when generating summaries of different lengths. Nevertheless, we have compared with Su et al. (2021) in our setting and show the superiority of the NAUS under fair comparison. We plan to explore supervised summarization in future work after we establish a rigorous experimental setup, which is beyond the scope of this paper."
+    }, {
+      "heading" : "A Proof of Theorem 1",
+      "text" : "Theorem 1. (1) If repeating tokens are not merged, then the proposed length-control algorithm with beam size B = 1 finds the exact optimum BS,T being the most probable length-T sentence given by S prediction slots. (2) If we merge repeating tokens predicted by CTC-trained models, the above algorithm may not be exact.\nProof. [Part (1)] This part concerns a variant of our decoding algorithm, which only removes the blank token but does not merge consecutive repeated tokens to a single word, i.e., Eqn. (10) is removed. We denote this by Γ′, for example, Γ′(a aabb ) = aaabb, as opposed to Γ(a aabb ) = aabb in our algorithm. We now show that, based on Γ′, our dynamic programming algorithm in §2.3 with beam size B = 1 is an exact inference algorithm.\nWe define βs,t = maxb:|b|=s,|Γ′(b)|=t P (b|x), where | · | denotes the length of a sequence. In other words, βs,t is the maximum probability of s tokens that are reduced to t words.\nAccording to the definition, we have\nβ1,0 = P (w1 = |x) (13) β1,1 = maxw1 6= P (w1|x) (14) βs,t = 0 for s > t (15)\nIn (13), β1,0 refers to the probability of one token that is reduced to zero words, in which case, the first predicted token can only be the blank token , corresponding to Eqn. (9) with s = 1 and t = 0. Likewise, β1,1 is the maximum probability of one token that is reduced to one word. Thus, it is the probability of the most probable non- token, corresponding to Eqn. (11) with s = 1 and t = 0. Eqn. (15) asserts that fewer tokens cannot be reduced to more words; it is used for mathematical derivations, but need not to be explicitly implemented in our algorithm in §2.3.\nThe recursion variable βs,t is computed by βs,t = max { βs−1,t · P (ws = |x),\nβs−1,t−1 ·maxws 6= P (ws|x) } (16)\nIn other words, the variable βs,t can inherit βs−1,t with a predicted blank token , corresponding to Eqn. (9); or it can inherit βs−1,t−1 with a predicted non- token, corresponding to Eqn. (11). Specially, if t = 0, then the second term has βs−1,−1 undefined, and thus is ignored in the max operation.\nWe need the max operator to take the higher probability in the two cases, since βs,t is the maximum probability of s tokens being reduced to t words. This corresponds to Eqn. (12) with beam size B = 1.\nTo sum up, our inductive calculation guarantees that βS,T is the exact maximum probability of maxb:|b|=S,|Γ′(b)|=T P (b|x) for the desired length T with S generation slots; our algorithm (if not merging repeating tokens) gives the corresponding BS,T as argmaxP (b|x) under the same constraints, concluding the proof of Part (1).\n[Part (2)] CTC training merges consecutive repeated tokens to a single word, unless separated by the blank token (Graves et al., 2006). Since our model is trained by CTC, we should adopt this rule in inference as well. We show in this part that our algorithm, with beam size B = 1, does not yield the exact optimum with an example in Table 5.\nWe consider generating a sentence of two words from the two prediction slots, i.e., S = T = 2. Apparently, the optimal sequence is “I like” with probability 0.39 · 0.9 = 0.351. However, the algorithm would predict B1,1 = {“like”} because “like” is the most probably token in the first slot. Then, our algorithm will give B2,2 = {“like I”}, because it has to select a non-repeating token based on Γ, yielding a non-optimal solution.\nIt is noted that, if we do not merge repeating tokens as in Γ′, our algorithm will give the exact optimum “like like” in the above example. This shows that merging consecutive repeated tokens requires the decoding algorithm to correct early predictions, and thus, our dynamic programming becomes an approximate inference. Nevertheless, our algorithm is able to generate a sequence of the desired length properly; its approximation happens only when the algorithm compares more repetitions with fewer s versus more s with fewer repetitions. Such approximation is further alleviated by beam search in our dynamic programming. Therefore, the proposed length-control algorithm is\nbetter than truncating a longer sentence; especially, our approach generates more fluent and complete sentences.\nB Implementation Details\nOur NAUS had a Transformer encoder as the basic structure, generally following the settings in Vaswani et al. (2017): 6 encoder layers, each having 8 attention heads. The dimension was 512 for attention and 2048 for feed-forward modules.\nOur training used a batch size of 4K tokens, with a maximum of 200K updates. We used Adam with β = (0.9, 0.98). In general, the learning rate warmed up to 5e-4 in the first 10K steps, and then decayed to 1e-9 with the inverse square-root schedule, except that we find the maximum learning rate of 1e-4 worked better for headline generation with the summary length of 8. We set the `2 weight decay to 0.01. Our length-control decoding algorithm had a beam size of 6. More details can be found in our repository (Footnote 1).\nOur NAUS training is based on Schumann et al. (2020)’s prediction on the input of the Gigaword headline generation training set. We show performance against the number of training samples in Figure 3. As seen, NAUS outperforms its search teacher even with a small set of 0.1 million samples. The performance saturates as the number of samples increases. Based on this analysis, we used 3 million samples from the 3.8 million Gigaword training set to train our NAUS models."
+    }, {
+      "heading" : "C Analysis of Beam Search",
+      "text" : "As mentioned, our length-control decoding algorithm involves beam search within its dynamic programming, because the algorithm does not find the exact optimum when it merges repeating words.\nWe analyze the effect of the beam size in our lengthcontrol algorithm.\nIn addition, we compare our approach with CTC beam search (Graves et al., 2006).5 Typically, a CTC-trained non-autoregressive model can be decoded either greedily or by beam search. The greedy decoding finds the most probable token at each step, i.e., w∗i = argmaxwi P (wi|x), and reduces the tokens to a sentence by Γ(w1, · · · ,wT ), where T is the number of decoding steps. The CTC beam search algorithm searches for the most likely sentence by marginalizing all token sequences that are reduced to y, i.e., argmaxy ∑ w:Γ(w)=y P (w|x).\nWe show results in Figure 4, where we chose 10- word Gigaword headline generation as the testbed with our NAUS model (Group B, Table 1). Notice that CTC beam search does not control the output length, and for fair comparison, we truncated its generated summaries. This also shows that our novel decoding approach and CTC beam search are distinct algorithms.\nAs seen in Figure 4a, the beam search does play a role in our length-control algorithm. When the beam enlarges from 1 to 6, the performance (orange solid line) increases by 1.2 points in ∆R, the difference of total ROUGE in comparison with Schumann et al. (2020) under our replication (Row 10, Table 1). However, further increasing the beam size does not yield additional performance gain. This is consistent with previous literature in autoregressive generation (Meister et al., 2020), which also suggests a beam size of 5–7 is the best in their applications. In terms of the efficiency (Figure 4b), a larger beam size monotonically increases the inference time. However, the overhead of beam\n5Our implementation of CTC beam search is based on https://github.com/parlance/ctcdecode\nsearch is relatively small in our dynamic programming, and thus we chose a beam size of 6 in our experiments.\nOur length-control algorithm significantly outperforms CTC beam search (dashed blue lines) in terms of both ∆R and efficiency. Especially, CTC beam search is three times slower, and degrades more significantly than our length-control decoding when the beam size increases."
+    }, {
+      "heading" : "D Case Study",
+      "text" : "We show in Table 6 example summaries generated by our NAUS with truncating and length-control decoding, as well as the previous state-of-the-art method (Schumann et al., 2020). We observe that NAUS without length control generates slightly longer summaries, and if truncated, the output may be incomplete; by contrast, our length-control algorithm can generate a fluent and complete sentence of the desired length by dynamic programming. Compared with Schumann et al. (2020), our NAUS (length control) generates a more informative summary that includes the main clause (united nations condemned), which also appears in the reference summary."
+    }, {
+      "heading" : "E Length-Transfer Summary Generation",
+      "text" : "In the main paper, we present results where our NAUS is trained on search outputs (Schumann et al., 2020), which have the same length as the inference target. This follows the common assumption in machine learning that training and test samples are independently identically distributed.\nIn this appendix, we show the performance of length-transfer summary generation, where the prediction has a different length from that of training. We denote such a model by NAUSi→j , referring to training with i words and testing for j words.\nAs seen in Groups A & B in Table 7, NAUS with length transfer is slightly worse than NAUS trained on the correct length, which is understandable. Nevertheless, length-transfer decoding still outperforms the search teacher and other baselines.\nMoreover, we consider the third setting in Schumann et al. (2020), where the target length is 50% of the input. Since it takes time to obtain pseudogroundtruths given by the edit-based search, we would directly transfer already trained NAUS models to this setting by our length-control decoding. Results are shown in Group C, Table 7. We observe NASU10→50% is better than NASU8→50%, which makes much sense because the latter has a larger gap during transfer. Remarkably, both NASU8→50% and NASU10→50% outperform Schumann et al. (2020) and other baselines, achieving new state-of-the-art unsupervised performance on this setting as well.\nWe further compare with Su et al. (2021), who use a length penalty to encourage short summaries. However, their length control works in the statistical sense but may fail for individual samples. Moreover, such a soft length penalty cannot generate longer summaries than trained. Even in the setting of 10→ 8, their generates summaries are slightly longer than required, while the performance degrades much faster than NAUS.\nThese results show that our novel length-control decoding algorithm is not only effective when generating summaries of similar length to the training targets, but also generalizes well to different desired summary lengths without re-training. In general, our NAUS is an effective and efficient unsupervised summarization system with the ability of explicit length control."
+    } ],
+    "references" : [ {
+      "title" : "Muppet: Massive multi-task representations with pre-finetuning",
+      "author" : [ "Armen Aghajanyan", "Anchit Gupta", "Akshat Shrivastava", "Xilun Chen", "Luke Zettlemoyer", "Sonal Gupta." ],
+      "venue" : "arXiv preprint arXiv:2101.11038.",
+      "citeRegEx" : "Aghajanyan et al\\.,? 2021",
+      "shortCiteRegEx" : "Aghajanyan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Better fine-tuning by reducing representational collapse",
+      "author" : [ "Armen Aghajanyan", "Akshat Shrivastava", "Anchit Gupta", "Naman Goyal", "Luke Zettlemoyer", "Sonal Gupta." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Aghajanyan et al\\.,? 2020",
+      "shortCiteRegEx" : "Aghajanyan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Seq3: Differentiable sequence-to-sequence-to-sequence autoencoder for unsupervised abstractive sentence compression",
+      "author" : [ "Christos Baziotis", "Ion Androutsopoulos", "Ioannis Konstas", "Alexandros Potamianos." ],
+      "venue" : "Proceedings of the Conference of",
+      "citeRegEx" : "Baziotis et al\\.,? 2019",
+      "shortCiteRegEx" : "Baziotis et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Imputer: Sequence modelling via imputation and dynamic programming",
+      "author" : [ "William Chan", "Chitwan Saharia", "Geoffrey Hinton", "Mohammad Norouzi", "Navdeep Jaitly." ],
+      "venue" : "Proceedings of the International Conference on Machine Learning, pages",
+      "citeRegEx" : "Chan et al\\.,? 2020",
+      "shortCiteRegEx" : "Chan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hedge trimmer: A parse-and-trim approach to headline generation",
+      "author" : [ "Bonnie Dorr", "David Zajic", "Richard Schwartz." ],
+      "venue" : "Proceedings of the HLT-NAACL 03 Text Summarization Workshop, pages 1–8.",
+      "citeRegEx" : "Dorr et al\\.,? 2003",
+      "shortCiteRegEx" : "Dorr et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Unsupervised sentence compression using denoising autoencoders",
+      "author" : [ "Thibault Févry", "Jason Phang." ],
+      "venue" : "Proceedings of the Conference on Computational Natural Language Learning, pages 413– 422.",
+      "citeRegEx" : "Févry and Phang.,? 2018",
+      "shortCiteRegEx" : "Févry and Phang.",
+      "year" : 2018
+    }, {
+      "title" : "English Gigaword",
+      "author" : [ "David Graff", "Junbo Kong", "Ke Chen", "Kazuaki Maeda." ],
+      "venue" : "Linguistic Data Consortium, Philadelphia.",
+      "citeRegEx" : "Graff et al\\.,? 2003",
+      "shortCiteRegEx" : "Graff et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Connectionist temporal classification: Labelling unsegmented sequence data with recurrent neural networks",
+      "author" : [ "Alex Graves", "Santiago Fernández", "Faustino Gomez", "Jürgen Schmidhuber." ],
+      "venue" : "Proceedings of the International Conference on Ma-",
+      "citeRegEx" : "Graves et al\\.,? 2006",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Non-autoregressive neural machine translation",
+      "author" : [ "Jiatao Gu", "James Bradbury", "Caiming Xiong", "Victor OK Li", "Richard Socher." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Gu et al\\.,? 2018",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Fully nonautoregressive neural machine translation: tricks of the trade",
+      "author" : [ "Jiatao Gu", "Xiang Kong." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-IJCNLP 2021, pages 120– 133.",
+      "citeRegEx" : "Gu and Kong.,? 2021",
+      "shortCiteRegEx" : "Gu and Kong.",
+      "year" : 2021
+    }, {
+      "title" : "Flexible nonautoregressive extractive summarization with threshold: How to extract a non-fixed number of summary sentences",
+      "author" : [ "Ruipeng Jia", "Yanan Cao", "Haichao Shi", "Fang Fang", "Pengfei Yin", "Shi Wang." ],
+      "venue" : "Proceedings of the AAAI Conference",
+      "citeRegEx" : "Jia et al\\.,? 2021",
+      "shortCiteRegEx" : "Jia et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Offline reinforcement learning from human feedback in real-world sequence-to-sequence tasks",
+      "author" : [ "Julia Kreutzer", "Stefan Riezler", "Carolin Lawrence." ],
+      "venue" : "Proceedings of the Workshop on Structured Prediction for NLP, pages 37–43.",
+      "citeRegEx" : "Kreutzer et al\\.,? 2021",
+      "shortCiteRegEx" : "Kreutzer et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Deterministic non-autoregressive neural sequence modeling by iterative refinement",
+      "author" : [ "Jason Lee", "Elman Mansimov", "Kyunghyun Cho." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural Language Processing, pages 1173–1182.",
+      "citeRegEx" : "Lee et al\\.,? 2018",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unsupervised text generation by learning from search",
+      "author" : [ "Jingjing Li", "Zichao Li", "Lili Mou", "Xin Jiang", "Michael Lyu", "Irwin King." ],
+      "venue" : "Advances in Neural Information Processing Systems, pages 10820– 10831.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Unsupervised paraphrasing by simulated annealing",
+      "author" : [ "Xianggen Liu", "Lili Mou", "Fandong Meng", "Hao Zhou", "Jie Zhou", "Sen Song." ],
+      "venue" : "Proceedings of the Annual Meeting of the Association for Computational Linguistics, pages 302–312.",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "RefSum: Refactoring neural summarization",
+      "author" : [ "Yixin Liu", "Zi-Yi Dou", "Pengfei Liu." ],
+      "venue" : "Proceedings of the Annual Meeting of the Association for Computational Linguistics, pages 1437–1448.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "If beam search is the answer, what was the question",
+      "author" : [ "Clara Meister", "Ryan Cotterell", "Tim Vieira" ],
+      "venue" : "In Proceedings of the Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Meister et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Meister et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language as a latent variable: Discrete generative models for sentence compression",
+      "author" : [ "Yishu Miao", "Phil Blunsom." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural Language Processing, pages 319–328.",
+      "citeRegEx" : "Miao and Blunsom.,? 2016",
+      "shortCiteRegEx" : "Miao and Blunsom.",
+      "year" : 2016
+    }, {
+      "title" : "Automatic summarization",
+      "author" : [ "Ani Nenkova", "Sameer Maskey", "Yang Liu." ],
+      "venue" : "Proceedings of the Annual Meeting of the Association for Computational Linguistics, pages 1–86.",
+      "citeRegEx" : "Nenkova et al\\.,? 2011",
+      "shortCiteRegEx" : "Nenkova et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "An introduction to DUC-2004: Intrinsic evaluation of generic news text summarization systems",
+      "author" : [ "Paul Over", "James Yen." ],
+      "venue" : "Proceedings of the Document Understanding Conference.",
+      "citeRegEx" : "Over and Yen.,? 2004",
+      "shortCiteRegEx" : "Over and Yen.",
+      "year" : 2004
+    }, {
+      "title" : "Bang: Bridging autoregressive and non-autoregressive generation with large scale",
+      "author" : [ "Weizhen Qi", "Yeyun Gong", "Jian Jiao", "Yu Yan", "Weizhu Chen", "Dayiheng Liu", "Kewen Tang", "Houqiang Li", "Jiusheng Chen", "Ruofei Zhang", "Ming Zhou", "Nan Duan" ],
+      "venue" : null,
+      "citeRegEx" : "Qi et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Glancing transformer for non-autoregressive neural machine translation",
+      "author" : [ "Lihua Qian", "Hao Zhou", "Yu Bao", "Mingxuan Wang", "Lin Qiu", "Weinan Zhang", "Yong Yu", "Lei Li." ],
+      "venue" : "Proceedings of the Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Qian et al\\.,? 2021",
+      "shortCiteRegEx" : "Qian et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A neural attention model for abstractive sentence summarization",
+      "author" : [ "Alexander M. Rush", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural Language Processing, pages 379–389.",
+      "citeRegEx" : "Rush et al\\.,? 2015",
+      "shortCiteRegEx" : "Rush et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Non-autoregressive machine translation with latent alignments",
+      "author" : [ "Chitwan Saharia", "William Chan", "Saurabh Saxena", "Mohammad Norouzi." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural Language Processing, pages 1098–1108.",
+      "citeRegEx" : "Saharia et al\\.,? 2020",
+      "shortCiteRegEx" : "Saharia et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Discrete optimization for unsupervised sentence summarization with word-level extraction",
+      "author" : [ "Raphael Schumann", "Lili Mou", "Yao Lu", "Olga Vechtomova", "Katja Markert." ],
+      "venue" : "Proceedings of the Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Schumann et al\\.,? 2020",
+      "shortCiteRegEx" : "Schumann et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Nonautoregressive text generation with pre-trained language models",
+      "author" : [ "Yixuan Su", "Deng Cai", "Yan Wang", "David Vandyke", "Simon Baker", "Piji Li", "Nigel Collier." ],
+      "venue" : "Proceedings of the Conference of the European Chapter of the Association for Compu-",
+      "citeRegEx" : "Su et al\\.,? 2021",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Learning to encode text as human-readable summaries using generative adversarial networks",
+      "author" : [ "Yaushian Wang", "Hung-Yi Lee." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural Language Processing, pages 4187–4195.",
+      "citeRegEx" : "Wang and Lee.,? 2018",
+      "shortCiteRegEx" : "Wang and Lee.",
+      "year" : 2018
+    }, {
+      "title" : "BottleSum: Unsupervised and selfsupervised sentence summarization using the information bottleneck principle",
+      "author" : [ "Peter West", "Ari Holtzman", "Jan Buys", "Yejin Choi." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural",
+      "citeRegEx" : "West et al\\.,? 2019",
+      "shortCiteRegEx" : "West et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "TED: A pretrained unsupervised summarization model with theme modeling and denoising",
+      "author" : [ "Ziyi Yang", "Chenguang Zhu", "Robert Gmyr", "Michael Zeng", "Xuedong Huang", "Eric Darve." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural",
+      "citeRegEx" : "Yang et al\\.,? 2020",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BBN/UMD at DUC-2004: Topiary",
+      "author" : [ "David Zajic", "Bonnie Dorr", "Richard Schwartz." ],
+      "venue" : "Proceedings of the HLT-NAACL Document Understanding Workshop, pages 112–119.",
+      "citeRegEx" : "Zajic et al\\.,? 2004",
+      "shortCiteRegEx" : "Zajic et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "PEGASUS: Pre-training with extracted gap-sentences for abstractive summarization",
+      "author" : [ "Jingqing Zhang", "Yao Zhao", "Mohammad Saleh", "Peter Liu." ],
+      "venue" : "Proceedings of the International Conference on Machine Learning, pages 11328–11339.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Simple unsupervised summarization by contextual matching",
+      "author" : [ "Jiawei Zhou", "Alexander Rush." ],
+      "venue" : "Proceedings of the Annual Meeting of the Association for Computational Linguistics, pages 5101– 5106.",
+      "citeRegEx" : "Zhou and Rush.,? 2019",
+      "shortCiteRegEx" : "Zhou and Rush.",
+      "year" : 2019
+    }, {
+      "title" : "2020) under our replication (Row 10, Table 1). However, further increasing the beam size does not yield additional performance gain. This is consistent with previous literature in autoregressive generation (Meister et al., 2020)",
+      "author" : [ "Schumann" ],
+      "venue" : null,
+      "citeRegEx" : "Schumann,? \\Q2020\\E",
+      "shortCiteRegEx" : "Schumann",
+      "year" : 2020
+    }, {
+      "title" : "2020): attack on russian embassy",
+      "author" : [ "Schumann" ],
+      "venue" : null,
+      "citeRegEx" : "Schumann,? \\Q2020\\E",
+      "shortCiteRegEx" : "Schumann",
+      "year" : 2020
+    }, {
+      "title" : "NAUS (length control) generates a more informative summary that includes the main clause (united nations condemned)",
+      "author" : [ "Schumann" ],
+      "venue" : null,
+      "citeRegEx" : "Schumann,? \\Q2020\\E",
+      "shortCiteRegEx" : "Schumann",
+      "year" : 2020
+    }, {
+      "title" : "2020), where the target length is 50% of the input. Since it takes time to obtain pseudogroundtruths given by the edit-based",
+      "author" : [ "Schumann" ],
+      "venue" : null,
+      "citeRegEx" : "Schumann,? \\Q2020\\E",
+      "shortCiteRegEx" : "Schumann",
+      "year" : 2020
+    }, {
+      "title" : "2021), who use a length penalty to encourage short summaries. However, their length control works in the statistical sense but may fail for individual samples",
+      "author" : [ "Su" ],
+      "venue" : null,
+      "citeRegEx" : "Su,? \\Q2021\\E",
+      "shortCiteRegEx" : "Su",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 19,
+      "context" : "It has extensive real-world applications such as headline generation (Nenkova et al., 2011).",
+      "startOffset" : 69,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 32,
+      "context" : "State-of-the-art text summarization models are typically trained in a supervised way with large training corpora, comprising pairs of long texts and their summaries (Zhang et al., 2020; Aghajanyan et al., 2020, 2021).",
+      "startOffset" : 165,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 11,
+      "context" : "Due to the indifferentiability of the compressed sentence space, such an approach requires reinforcement learning (or its variants), which makes the training difficult (Kreutzer et al., 2021).",
+      "startOffset" : 168,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 6,
+      "context" : "We conducted experiments on Gigaword headline generation (Graff et al., 2003) and DUC2004 (Over and Yen, 2004) datasets.",
+      "startOffset" : 57,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 13,
+      "context" : "Compared with training an autoregressive model from search (Li et al., 2020), non-autoregressive generation predicts all the words in parallel, further improving inference efficiency by several times.",
+      "startOffset" : 59,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 27,
+      "context" : "Specifically, we propose to use multi-layer Transformer (Vaswani et al., 2017) as the nonautoregressive architecture for summarization.",
+      "startOffset" : 56,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 27,
+      "context" : "Our model can be thought of as an encoderonly architecture, differing from a typical encoder– decoder model with cross attention (Vaswani et al., 2017; Baziotis et al., 2019; Zhou and Rush, 2019).",
+      "startOffset" : 129,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 2,
+      "context" : "Our model can be thought of as an encoderonly architecture, differing from a typical encoder– decoder model with cross attention (Vaswani et al., 2017; Baziotis et al., 2019; Zhou and Rush, 2019).",
+      "startOffset" : 129,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 33,
+      "context" : "Our model can be thought of as an encoderonly architecture, differing from a typical encoder– decoder model with cross attention (Vaswani et al., 2017; Baziotis et al., 2019; Zhou and Rush, 2019).",
+      "startOffset" : 129,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 8,
+      "context" : "In addition, non-autoregressive generation suffers from a common problem that words may be repeated in consecutive steps (Gu et al., 2018; Lee et al., 2018); thus, CTC merges repeated words unless separated by .",
+      "startOffset" : 121,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 12,
+      "context" : "In addition, non-autoregressive generation suffers from a common problem that words may be repeated in consecutive steps (Gu et al., 2018; Lee et al., 2018); thus, CTC merges repeated words unless separated by .",
+      "startOffset" : 121,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 14,
+      "context" : "(2020) show that the main evaluation metric ROUGE (Lin, 2004) is sensitive to the summary length, and longer summaries tend to achieve higher ROUGE scores.",
+      "startOffset" : 50,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 23,
+      "context" : "The head generation dataset (Rush et al., 2015) is constructed from the Gigaword news corpus (Graff et al.",
+      "startOffset" : 28,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2015) is constructed from the Gigaword news corpus (Graff et al., 2003), where the first sentence of a news article is considered as input text and the news title is considered as the summary.",
+      "startOffset" : 53,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 25,
+      "context" : "It should be emphasized that, when NAUS learns from search, we only use the input of the training corpus: we perform search (Schumann et al., 2020) for each input, and train our NAUS from the search results.",
+      "startOffset" : 124,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 20,
+      "context" : "The DUC2004 dataset (Over and Yen, 2004) is designed for testing only with 500 samples, where we also take the first sentence of an article as the input text.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 14,
+      "context" : "We evaluated the quality of predicted summaries by ROUGE scores (Lin, 2004), which are the most widely used metrics in previous work (Wang and Lee, 2018; Baziotis et al.",
+      "startOffset" : 64,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 28,
+      "context" : "We evaluated the quality of predicted summaries by ROUGE scores (Lin, 2004), which are the most widely used metrics in previous work (Wang and Lee, 2018; Baziotis et al., 2019; Zhou and Rush, 2019).",
+      "startOffset" : 133,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 2,
+      "context" : "We evaluated the quality of predicted summaries by ROUGE scores (Lin, 2004), which are the most widely used metrics in previous work (Wang and Lee, 2018; Baziotis et al., 2019; Zhou and Rush, 2019).",
+      "startOffset" : 133,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 33,
+      "context" : "We evaluated the quality of predicted summaries by ROUGE scores (Lin, 2004), which are the most widely used metrics in previous work (Wang and Lee, 2018; Baziotis et al., 2019; Zhou and Rush, 2019).",
+      "startOffset" : 133,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 28,
+      "context" : "We followed the standard evaluation scripts and evaluated headline generation by ROUGE F1 (Wang and Lee, 2018; Baziotis et al., 2019; Schumann et al., 2020) and DUC2004 by Truncate ROUGE Recall (Dorr et al.",
+      "startOffset" : 90,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 2,
+      "context" : "We followed the standard evaluation scripts and evaluated headline generation by ROUGE F1 (Wang and Lee, 2018; Baziotis et al., 2019; Schumann et al., 2020) and DUC2004 by Truncate ROUGE Recall (Dorr et al.",
+      "startOffset" : 90,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 25,
+      "context" : "We followed the standard evaluation scripts and evaluated headline generation by ROUGE F1 (Wang and Lee, 2018; Baziotis et al., 2019; Schumann et al., 2020) and DUC2004 by Truncate ROUGE Recall (Dorr et al.",
+      "startOffset" : 90,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020) and DUC2004 by Truncate ROUGE Recall (Dorr et al., 2003; West et al., 2019).",
+      "startOffset" : 45,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2020) and DUC2004 by Truncate ROUGE Recall (Dorr et al., 2003; West et al., 2019).",
+      "startOffset" : 45,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 5,
+      "context" : "Despite its simplicity, the Lead approach is a strong summarization baseline adopted in most previous work (Févry and Phang, 2018; Baziotis et al., 2019).",
+      "startOffset" : 107,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 2,
+      "context" : "Despite its simplicity, the Lead approach is a strong summarization baseline adopted in most previous work (Févry and Phang, 2018; Baziotis et al., 2019).",
+      "startOffset" : 107,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 18,
+      "context" : "Wang and Lee (2018) utilize cycle consistency (Miao and Blunsom, 2016) for unsupervised summarization; Zhou and Rush (2019) perform beam search towards a step-by-step decomposable score of fluency and contextual matching.",
+      "startOffset" : 46,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 25,
+      "context" : "Both are unable to explicitly control the summary length: in a fair comparison of length 10 (Group B, Table 1), their performance is worse than the (previous) state-of-the-art approach (Schumann et al., 2020),2 which performs edit-based local search.",
+      "startOffset" : 185,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 2,
+      "context" : "The cycle-consistency approach (Baziotis et al., 2019; West et al., 2019) does not perform well on this dataset, outperformed by an early rule-based syntax tree trimming approach (Zajic et al.",
+      "startOffset" : 31,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 29,
+      "context" : "The cycle-consistency approach (Baziotis et al., 2019; West et al., 2019) does not perform well on this dataset, outperformed by an early rule-based syntax tree trimming approach (Zajic et al.",
+      "startOffset" : 31,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2019) does not perform well on this dataset, outperformed by an early rule-based syntax tree trimming approach (Zajic et al., 2004) and the state-of-the-art edit-based search (Schumann et al.",
+      "startOffset" : 113,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2004) and the state-of-the-art edit-based search (Schumann et al., 2020).",
+      "startOffset" : 51,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 25,
+      "context" : "The performance of our NAUS model is consistent with Table 1, outperforming all previous methods in terms of the total ROUGE score, and being 100–1000 times faster than the search approach (Schumann et al., 2020).",
+      "startOffset" : 189,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 24,
+      "context" : "Such results are highly consistent with the translation literature (Saharia et al., 2020; Chan et al., 2020; Gu and Kong, 2021; Qian et al., 2021).",
+      "startOffset" : 67,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 3,
+      "context" : "Such results are highly consistent with the translation literature (Saharia et al., 2020; Chan et al., 2020; Gu and Kong, 2021; Qian et al., 2021).",
+      "startOffset" : 67,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 9,
+      "context" : "Such results are highly consistent with the translation literature (Saharia et al., 2020; Chan et al., 2020; Gu and Kong, 2021; Qian et al., 2021).",
+      "startOffset" : 67,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 22,
+      "context" : "Such results are highly consistent with the translation literature (Saharia et al., 2020; Chan et al., 2020; Gu and Kong, 2021; Qian et al., 2021).",
+      "startOffset" : 67,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 26,
+      "context" : "We also experimented with previous non-autoregressive work for supervised summarization (Su et al., 2021)3 in our learning-fromsearch setting.",
+      "startOffset" : 88,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 27,
+      "context" : "(4)The standard minimal encoder–decoder NAR model has 6 layers for the encoder and another 6 layers for the decoder (Vaswani et al., 2017).",
+      "startOffset" : 116,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 33,
+      "context" : "Extractive systems extract certain sentences and clauses from input, for example, based on salient features (Zhou and Rush, 2019) or feature construction (He et al.",
+      "startOffset" : 108,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 16,
+      "context" : ", by sequence-to-sequence models trained in a supervised way (Liu et al., 2021; Zhang et al., 2020).",
+      "startOffset" : 61,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 32,
+      "context" : ", by sequence-to-sequence models trained in a supervised way (Liu et al., 2021; Zhang et al., 2020).",
+      "startOffset" : 61,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 8,
+      "context" : "Non-autoregressive generation is originally proposed for machine translation (Gu et al., 2018).",
+      "startOffset" : 77,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 30,
+      "context" : "This is because previous supervised summarization papers lack explicitly categorization of summary lengths (Yang et al., 2020; Qi et al., 2021), making comparisons unfair and problematic (Schumann et al.",
+      "startOffset" : 107,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 21,
+      "context" : "This is because previous supervised summarization papers lack explicitly categorization of summary lengths (Yang et al., 2020; Qi et al., 2021), making comparisons unfair and problematic (Schumann et al.",
+      "startOffset" : 107,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2021), making comparisons unfair and problematic (Schumann et al., 2020).",
+      "startOffset" : 51,
+      "endOffset" : 74
+    } ],
+    "year" : 0,
+    "abstractText" : "Text summarization aims to generate a short summary for an input text. In this work, we propose a Non-Autoregressive Unsupervised Summarization (NAUS) approach, which does not require parallel data for training. Our NAUS first performs edit-based search towards a heuristically defined score, and generates a summary as pseudo-groundtruth. Then, we train an encoder-only non-autoregressive Transformer based on the search result. We also propose a dynamic programming approach for length-control decoding, which is important for the summarization task. Experiments on two datasets show that NAUS achieves state-of-the-art performance for unsupervised summarization, yet largely improving inference efficiency. Further, our algorithm is able to perform explicit length-transfer summary generation.1",
+    "creator" : null
+  }
+}

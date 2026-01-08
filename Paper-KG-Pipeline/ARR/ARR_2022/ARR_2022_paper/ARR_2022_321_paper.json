@@ -1,0 +1,1120 @@
+{
+  "name" : "ARR_2022_321_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Bidimensional Leaderboards: Generate and Evaluate Language Hand in Hand",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Recent modeling advances have led to improved natural language generation in applications such as machine translation and summarization (Ng et al., 2019; Raffel et al., 2020; Brown et al., 2020, inter alia). This progress is typically measured with\n1Anonymized.\nautomatic scores, such as BLEU (Papineni et al., 2002) and ROUGE (Lin, 2004), evaluated by modeling researchers themselves. These metrics allow for fast, inexpensive development cycles. They were adopted based on reported correlations with human judgments at the time the metrics were introduced, but it has since been established that the correspondence can collapse when models of different types are compared (Callison-Burch et al., 2006) or models become increasingly powerful (Ma et al., 2019; Edunov et al., 2020).\nMeanwhile, many evaluation metrics that improve correlation with human judgments have been proposed (Clark et al., 2019; Zhang et al., 2020b; Sellam et al., 2020; Hessel et al., 2021, inter alia), but this progress is largely ignored by the community of researchers focused on advancing models. Indeed, we found that 68% of the machine translation papers from NAACL and ACL 2020 evaluated their models solely by BLEU, and only 5% measured the performance using recent metrics with\ncontextual representations such as COMET (Rei et al., 2020). Similarly, automatic evaluation in 66% of the summarization papers was done only in terms of ROUGE.2 We believe this separation between generation modeling and automatic evaluation represents a missed opportunity for each subcommunity to more rapidly benefit from the advances of the other.\nWe therefore propose an abstraction of conventional leaderboards, bidimensional leaderboards (BILLBOARDs), that simultaneously facilitates progress in natural language generation and its evaluation (Fig. 1). A BILLBOARD accepts two types of submissions related to a given task and dataset: generators and metrics. Unlike conventional leaderboards, model ranking is not tied to a predetermined set of metrics; the generators are ranked based on the metric that currently correlates best with human judgments. Metric submissions are ranked by their correlations to human judgments, and each is stored as an executable program, which will then be used to evaluate future generation submissions. Our BILLBOARD includes a sparse regression that selects and linearly combines three existing metrics, revealing complementary strengths. All leaderboard scores are readily reproducible, allowing research on generation models and automatic metrics to benefit from each other.\nWe release four BILLBOARDs spanning three generation tasks: the WMT20 EN-DE and WMT20 ZH-EN machine translation tasks (Barrault et al., 2020), the CNNDM summarization task (Hermann et al., 2015), and the MSCOCO image captioning task (Lin et al., 2014). Using the collective analyses of BILLBOARDs, our main findings are as follows. • A simple linear combination of a few (diverse)\nmetrics can sometimes improve correlation. This finding quantifies complementary effects of different metrics and encourages metric developers to seek out aspects of generated text quality not yet measured by existing metrics. • Using linear mixed-effects models, we find that most automatic metrics, especially conventional, reference-based ones such as BLEU and ROUGE, overrate machines over humans in all tasks. This result provides further support for the claim that the metrics should be continually evaluated and updated as our generation models become stronger (and perhaps, closer to humans).\n2We examined all papers whose title contains “machine translation” and “summarization.” See Appendix A for details.\n• When only one reference is available per instance, COMET-QE (a strong referenceless metric with crosslingual contextual representations; Rei et al., 2020) achieves higher correlation with human judgments than all reference-based metrics. This raises a concern about the current standard evaluation practice in machine translation and summarization that uses reference-based metrics with a single reference per instance. • Our findings confirm many others who report that recent metrics achieve substantially higher correlation with human judgments than popular metrics like BLEU and ROUGE in BILLBOARDs. We believe these older metrics continue to be used mainly because modeling researchers value consistency and accessibility of evaluation practice over long periods of time. BILLBOARDs provide a way to maintain long-term comparability of system output while also drawing better conclusions about system quality, using advances in evaluation. All generators continue to be evaluated with new metrics on BILLBOARDs."
+    }, {
+      "heading" : "2 Bidimensional Leaderboards",
+      "text" : "We propose BILLBOARDs to simultaneously drive progress in natural language generation and its evaluation, which are often disconnected in current research. We first describe the general framework (§2.1) and the automatic analyses they provide (§2.2-2.3). We then discuss our design choices (§2.4) and the rubric-based, human judgment data necessary to initialize BILLBOARDs (§2.5)."
+    }, {
+      "heading" : "2.1 BILLBOARD Framework",
+      "text" : "The leaderboard paradigm has driven research on state-of-the-art model performance on many tasks in various fields (e.g., ImageNet, Russakovsky et al., 2015; SQuAD, Rajpurkar et al., 2016). As applications and tasks become more diverse, however, the conventional leaderboard paradigm presents a serious challenge: the assumption becomes too strong that predetermined, automatic metrics can reliably score the system performance over time. In particular, scores from automatic metrics often diverge from human judgments in language generation tasks especially when models become increasingly powerful (Ma et al., 2019).\nMuch recent work proposed new evaluation metrics that improve correlations with human judgments in certain generation tasks (Clark et al., 2019; Zhang et al., 2020b; Sellam et al., 2020; Hessel\net al., 2021, inter alia), but most developers of generation models are not benefiting from them (See Appendix A for our analysis of papers from NAACL/ACL 2020). From the perspective of generation model developers, it is not clear which of these many metrics in the literature is most reliable in which generation task or dataset, resulting in community-wide overuse of long-standing metrics like BLEU and ROUGE. Developers of evaluation metrics, on the other hand, are missing the opportunity to apply their metrics to new generation models and compare with the existing ones. We propose BILLBOARDs that bridge this gap between generation modeling and evaluation development.\nGenerators, Metrics, and Scores A BILLBOARD for a language generation task consists of sets of generators and evaluation metrics: G = {Gi}Ii=1,M = {Mj}Jj=1. Each generator Gi takes as input Xk (e.g., source text in machine translation) and generates text: Yi,k = Gi(Xk). A metric Mj assigns a score to each generated text given the generation input and the corresponding set of references Rk: si,j,k = Mj(Yi,k,Rk, Xk). The last two arguments to the function are optional; some metrics do not require references (i.e., referenceless or quality estimation metrics) or the generation input (e.g., BLEU). We then compute the aggregate score si,j by averaging si,j,k over K test examples.\nRankings In contrast to standard leaderboards, BILLBOARDs have a dynamic set of evaluation metrics, and generators are not ranked by a predefined metric. We first rank the metrics by measuring their correlations to human judgments as commonly done in the generation evaluation literature (Zhang et al., 2020b; Sellam et al., 2020). Let hi,k be a human score for Yi,k (i.e., output from generator Gi on input Xk). We compute the instance-level Pearson correlation for every metric Mj between hi,k and si,j,k (Mj score for Yi,k). All metrics are ranked by their correlations. We then use the top metric Mj∗ to rank the generators in the descending order of si,j∗ . We defer our discussions on alternative design choices (§2.4) and human evaluations (§2.5). We note, however, that the overall framework of BILLBOARDs still holds regardless of these decisions."
+    }, {
+      "heading" : "2.2 Ensemble of Metrics",
+      "text" : "So far, we have assumed that metrics are used individually in isolation, but BILLBOARDs provide a unique opportunity to examine metrics collectively.\nDifferent metrics can capture different aspects of generation quality; even if a metric is not sufficiently informative in isolation, it might reflect an important aspect of text quality that the existing metrics overlook. Here we consider a straightforward and interpretable ensemble of metrics using a regression model with ℓ1 regularization (Tibshirani, 1994). Let the ensemble’s score be\nĥi,k = J∑ j=1 wj · si,j,k,\nwhere wj is a scalar coefficient associated with the jth metric. We optimize the vector of coefficients w with the pairs of output text and a human score {Yi,k, hi,k}Kk=1 from the test data:\nw = argmin w K∑ k=1 ( hi,k − ĥi,k )2 + λ∥w∥1\nThe ℓ1 regularization produces sparse coefficients and improves interpretability by removing highly correlated metrics. Moreover, it avoids the need for practitioners to run many metrics to obtain an ensemble score when used outside our BILLBOARDs. Our goal for the ensemble is to provide a useful signal to the research community, rather than to achieve the best possible correlation with human judges at a given time; we tune λ to get three nonzero coefficients. Every metric is standardized by its mean and standard deviation on the test data.\nSimilar to the individual metrics, we rank this ensemble metric by its correlation to the human judgments. To make fair comparisons, we simulate situations that the ensemble is applied to a newly submitted generator that has no human evaluations. Specifically, we perform cross validation that holds out the human judgments for each generator Gi and runs regression on the rest; we then apply these I regression models to the corresponding held-out data and calculate the overall correlation. We will see that the ensemble metric outperforms all individual metrics in some cases, suggesting that different metrics can capture different aspects. Reproduciblity The ensemble metric is updated every time a new metric is submitted (Fig. 1). For reproducibility, we keep track of every past ensemble metric with a signature that indicates its coefficients, λ, and input metrics in the backend. Similar to SACREBLEU (Post, 2018), model developers can report the signature for easy replication of their scores from the ensemble metric.3 Further, all gen-\n3E.g., ensemble.wmt20-zh-en+refs.AB+version.1.\neration outputs are saved on the leaderboards, so model developers can download outputs from all past models and compare in any way."
+    }, {
+      "heading" : "2.3 Mixed-Effects Model Analysis",
+      "text" : "Recent work (Kasai et al., 2021b) observed that automatic metrics tend to overrate machine-generated text over human one on the MSCOCO image captioning task (Chen et al., 2015). This problem is particularly severe in conventional metrics that are based on n-gram overlap such as BLEU and CIDEr (Vedantam et al., 2015). This raises a significant concern about the continuous use of these conventional metrics in generation tasks as models become increasingly powerful (and more similar to humans); those metrics unintentionally discourage researchers from developing human-like, strong generation models. To quantify this undesirable property, we propose a linear mixed-effects model that compares the two groups of machineand human-generated text. The underlying model assumes that si,j,k, the score from metric Mj for generator Gi and test example k, can be expressed as (the intercept term is suppressed for brevity): si,j,k=β j 01{Gi is machine}+β j 1hi,k+γk+ϵi,j,k where γk is the random effect for example k, and ϵi,j,k is Gaussian noise. Intuitively, β j 0 measures how much metric Mj overrates machine generation over human one, compared against the human judgment hi,k. β j 0 = 0 means being neutral, and indeed we will find that βj0 is significantly positive in most cases (§4). We standardize all metric scores over the test samples to compare the size of βj0. We apply the lme4 package (Bates et al., 2015)."
+    }, {
+      "heading" : "2.4 Design Choices and Discussion",
+      "text" : "In our current setup, we make several design choices for metrics and their rankings: • M.1 Metrics are expected to positively correlate\nwith the generation output quality. • M.2 Metrics are ranked by their instance-level\nPearson correlations with human judgments. • M.3 When available, reference-based metrics use\nmultiple references per instance. M.1 implies that we need to take the negative of metric scores that are intended to negatively correlate (e.g., TER, Snover et al., 2006). This normalization is also done in WMT metric competitions (Callison-Burch et al., 2007, 2008, inter alia).\nWhile instance-level correlations are commonly used to evaluate and compare automatic metrics for\nvarious language generation tasks (Sellam et al., 2020; Fabbri et al., 2021; Hessel et al., 2021, inter alia), there are several alternatives to M.2. For example, Pearson, Spearman’s rank, or Kendall rank correlations can be used on a system (i.e., generator) level (Callison-Burch et al., 2007; Macháček and Bojar, 2014; Mathur et al., 2020b). However, such system-level correlations would substantially reduce data points to compare automatic scores, resulting in many ties in the ranking. Spearman’s and Kendall rank correlations become brittle when multiple generators are similar in overall output quality; penalizing a metric for swapping two similar generators is misleading (Macháček and Bojar, 2014). Moreover, if a metric can perform well on an instance level, it can be used to augment human judgments by, for example, flagging likely wrong ratings (Mathur et al., 2020b). Thus, we encourage researchers to develop metrics that correlate well with human judgments on an instance level. Prior work also points out other problems in ranking metrics like outlier effects where outlier systems have a disproportionately large effect on the overall correlation (Mathur et al., 2020b,a). We therefore assume M.2 in the current version of BILLBOARDs, but this can be modified in a future version.\nM.3 is supported by our experimental results in §4 that multiple references substantially improve reference-based metrics, and a single reference is often insufficient to outperform strong referenceless metrics. Some metrics have specifications for multiple references (e.g., BLEU, CIDEr). In the other cases, we evaluate outputs against every reference and take the maximum score, following prior work on image captioning evaluation (Zhang et al., 2020b; Hessel et al., 2021).4"
+    }, {
+      "heading" : "2.5 Human Evaluation",
+      "text" : "Human evaluations are required to initialize BILLBOARDs; they are used to rank metrics, train the metric ensembling model, and assess how much each metric overrates machines. Recent work, however, points out problems when evaluations are done by crowdworkers even when extensive quality controls are performed (Gillick and Liu, 2010; Toral et al., 2018; Freitag et al., 2021; Clark et al., 2021). Freitag et al. (2021) show that rubric-based machine translation evaluations by professional translators led to substantially different genera-\n4Intuitively, the maximum score measures the distance to the closest out of equally valid generations.\nsampled instances with diverging evaluations in two areas and conducted binary meta-evaluations (good or bad quality ). Meta-evaluations agree more with the expert evaluations ( > in the upper left squares).\ntor rankings from the crowdsource evaluations in WMT 2020 (Barrault et al., 2020), where WMT participants or Amazon Mechanical Turkers directly assess each translation’s adequacy by a single score (direct assessment). These crowdworker evaluations depend highly on individual annotators’ discretion and understanding of the annotation scheme (Freitag et al., 2021; Clark et al., 2021), making it difficult to decompose, interpret, and validate (Kasai et al., 2021b). Moreover, these direct assessment scores make it difficult to interpret evaluation results for downstream applications where some aspects are particularly important (e.g., accessibility for people with visual impairments in image captioning, Gleason et al., 2020; gender bias in machine translation, Stanovsky et al., 2019).\nMotivated by this line of work, we perform metaevaluations to compare crowdsourced and rubricbased expert evaluations. Fig. 2 plots overall scores for test examples from WMT20 ZH-EN (Barrault et al., 2020; Freitag et al., 2021) and CNNDM summarization (Fabbri et al., 2021). Each instance is evaluated by averaging the same number of crowdworkers and expert scores for fair comparisons. We see that substantially many instances fall into disagreement: crowdworkers give much higher scores than experts (lower right square) or the reverse\n(upper left square). We sample and shuffle 20/25 examples from either type and ask a meta-evaluator to make a binary decision (good or bad quality\n).5 Meta-evaluations agree more with the expert evaluations (e.g., 22 and 0 in the upper left and lower right squares for CNNDM, respectively). In the examples on the left, crowdworkers fail to properly assess a valid translation with different structure than the reference (posted a video to celebrate vs. congratulated via video) or a summary that combines information from different parts of the article. The examples on the right illustrate that crowdworkers can be fooled by inaccurate yet fluent generations (does not know the reason vs. does not know if Sanchez decided). Given this result, we decide to initialize our BILLBOARDs with rubricbased expert evaluations for all generation tasks. We still encourage future work to explore ways to improve crowdsourced evaluations for scalability."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : "Having established the framework, we set up BILLBOARDs for three natural language generation tasks: machine translation, summarization, and image captioning. To maximize the performance of\n5The meta-evaluations were done by a bilingual speaker (WMT20 ZH-EN) and the first author of this paper (CNNDM).\nreference-based metrics, we use as many references as possible for each task. See §4 for an analysis on the effect of varying numbers of references."
+    }, {
+      "heading" : "3.1 Tasks",
+      "text" : "Machine Translation We experiment with two language pairs from the WMT 2020 news translation task (Barrault et al., 2020): Chinese→English (WMT20 ZH-EN) and English→German (WMT20 EN-DE). We use outputs from all submitted translation systems.6 These two language pairs have expert, rubric-based scores (MQM) from Freitag et al. (2021) for a subset of 10 submitted systems, including the top-performing systems and human translations. Each output sentence is evaluated by three professional translators. Following Freitag et al. (2021), the three scores are averaged to get an instance-level score.\nWe use all human translations available as a reference set for reference-based metrics. Concretely, every test instance in WMT20 ZH-EN has two translations provided by different human translation services: Human-A and Human-B (Barrault et al., 2020). In addition to Human-A and Human-B, WMT20 EN-DE provides a translation that is created by linguists who are asked to paraphrase Human-A and Human-B as much as possible (Human-P, Freitag et al., 2020). These paraphrased translations are shown to increase correlations with human judgments by mitigating the translationese effect and diversifying the reference when the generation quality is measured by reference-based metrics (Freitag et al., 2020).\nAlong with all submitted generators in WMT20 ZH-EN and WMT20 EN-DE, we train three transformer baselines with the fairseq library (Ott et al., 2019) and place them in our BILLBOARDs: transformer-base, transformer-large, and transformer-large-ensemble with similar hyperparameters (e.g., 6-layer encoder and decoder) to the ones trained on the WMT16 EN-DE data in Vaswani et al. (2017).7 These baselines allow researchers to compare their translation models without resource-intensive techniques such as backtranslation (Sennrich et al., 2016a), model ensembling, and deep encoders (Kasai et al., 2021a). These techniques are all used in top-performing systems of WMT20 (Wu et al., 2020a; Kiyono et al., 2020) but might be infeasible in many re-\n6https://www.statmt.org/wmt20/ translation-task.html.\n7Data and models are available at anonymized.\nsearch settings. See Appendix B for a list of all hyperparameters for the baselines.\nSummarization We use the CNN/DailyMail corpus (CNNDM, Hermann et al., 2015; Nallapati et al., 2016). We use the standard train/dev./test split and 24 models from Fabbri et al. (2021). 100 test articles are annotated with 10 summaries written by humans (Kryscinski et al., 2019). For those 100 articles, rubric-based, expert evaluations for 18 generators, including human-written highlights, are provided by Fabbri et al. (2021).8 Each output summary is evaluated by three experts along four dimensions: coherence (collective quality of all summary sentences), consistency (factual alignment with the article, penalizing for hallucinations), fluency (quality of the individual sentences), and relevance (selection of important content). An instancelevel score is computed by averaging scores over all these categories and the three experts. Note that this aggregation method can be modified, depending on the downstream of interest (Kasai et al., 2021b). All 10 human-written summaries are used as the reference set for reference-based metrics.9\nImage Captioning We use the MSCOCO dataset (Lin et al., 2014) that consists of everyday-scene photos sampled from Flickr. Every image is annotated with five captions written by crowdworkers (Chen et al., 2015). We apply the standard Karpathy split (Karpathy and Fei-Fei, 2015). For each of 500 test images, rubric-based evaluations (THUMB 1.0) are available for five systems, including one caption from a crowdworker (Kasai et al., 2021b). Similar to machine translation and summarization, we use all five crowdworker captions as a reference set for reference-based metrics."
+    }, {
+      "heading" : "3.2 Mixed-Effects Models",
+      "text" : "Our mixed-effects model analyzes how much every automatic metric overrates machines over humans (§2.3). This means that we need to free up one human generation per instance to measure its scores in the reference-based metrics. For machine translation, we score Human-B using the reference set of Human-A (WMT20 ZH-EN) or Human-A and Human-P (WMT20 EN-DE). For CNNDM, we use\n8Some of the outputs are lowercased and/or tokenized. In these cases, we apply the NLTK detokenizer (Bird et al., 2009) and/or Stanford CoreNLP truecaser (Manning et al., 2014).\n9Prior work used a concatenation of author-written highlights as a reference, but here we do not add it to the reference set. This is because these highlights are sometimes noisy (e.g., containing urls) or lack coherence (Fabbri et al., 2021).\nRefOnlyC: Kasai et al. (2021b). COMET-QE is a referenceless metric. BLEURT is specifically trained to evaluate into-English translations. RefCLIP-S uses image features unlike most metrics for image captioning.\nconcatenated highlights as human-generated summaries and use the 10 human-written summaries from Kryscinski et al. (2019) as the reference. We follow Kasai et al. (2021b) for MSCOCO and score their randomly-selected Human caption using the other four as the reference. As the distinction between the reference and human generation (e.g., Human-A vs. Human B on WMT20 ZH-EN) is arbitrary, we found that swapping the roles would still lead to similar results (See Appendix E)."
+    }, {
+      "heading" : "4 Results and Analysis",
+      "text" : "Here we discuss the current results and make several key observations about the state of language generation evaluation. Table 1 summarizes the four BILLBOARDs. It is particularly noteworthy that COMET, a metric designed for machine translation, achieves the best correlation on the CNNDM summarization task as well. COMET evaluates the similarity between the crosslingual representations from XLM-RoBERTa (Conneau et al., 2020) for input text and its translation candidate. But these crosslingual representations can, of course, be used monolingually for English summarization. This illustrates an additional benefit of BILLBOARDs that centralize different generation tasks and find surprising task transferability of learning-based metrics. See Appendices B and C for lists of all participating generators and metrics.\nEnsemble Metric The rightmost section of Table 1 shows the chosen metrics and their coefficients in the ensemble (§2.2). On the machine translation tasks, the ensemble metric outperforms the top individual metric.10 In particular, we see a substantial gain of 0.06 points in WMT20 ZH-EN. The ref-\n10We found a major reason for the anomaly in CNNDM; an outlier generator (the GPT-2 zero-shot model; Ziegler et al., 2019) has a disproportionately large effect on the regression models. The ensemble metric outperformed the top individual metric of COMET when the zero-shot model was removed.\nerenceless metric of COMET-QE is selected both for WMT20 ZH-EN and WMT20 EN-DE, suggesting complementary effects of diverse metrics. To further test this hypothesis, we perform ablations that drop one out of the three metrics at a time (Table 2). We see that only dropping COMET-QE would result in a decrease in the correlation score. This implies that the referenceless metric provides important information that the others do not.\nMixed-Effects Models Seen in Table 3 are the results from our analysis that measures how much metrics overrate machines over humans (§2.3). We see that the fixed-effect coefficient β0 is significantly positive in most cases. Referenceless metrics tend to have smaller coefficients. This can be due to the more diverse nature of human text than machine-generated text; reference-based metrics give a low score to human text that differs from the references even if it is of high quality. The conventional n-gram overlap-based metrics (BLEU, ROUGE, and CIDEr) have particularly large coefficients. These results suggest that the evaluation practice should be regularly updated as our generation model becomes stronger (and perhaps, more similar to human generation) in the future. Note that unlike the other tasks, “human-generated text” for CNNDM summarization is an automatic concatenation of author highlights, which contains substantial noise (Fabbri et al., 2021). This might explain the neutral and negative coefficients.\nEffects of the Number of References Fig. 3 plots correlations over varying numbers of references.\nshown as well as one popular metric. COMET-QE and CLIP-S are referenceless. See §E for the other metrics.\n1 2 0.4\n0.6\n# References\nC or re la ti on\n(A) ZH-EN\n1 2 3 0.2\n0.4\n# References\n(B) EN-DE\n2 4 6 8 10\n0.2\n0.4\n# References\n(C) CNNDM\nCOMET COMET-QE BLEU ROUGE-L\nFigure 3: Correlations with varying numbers of references. In all cases, one reference is not sufficient to\noutperform the referenceless COMET-QE metric. The default ROUGE assumes English input.\nCOMET was the top-performing reference-based metric regardless of the number of references, but we observe that it underperforms the refererenceless metric when only one reference is given. Model performance in machine translation and summarization is commonly measured by applying reference-based metrics against one reference per instance in the research community. Our finding thus raises a further concern about the current evaluation practice. Finally, we see that popular choices of BLEU and ROUGE metrics have much lower correlations than the recent metrics over various numbers of references, in line with the recent studies (Mathur et al., 2020a, inter alia)."
+    }, {
+      "heading" : "5 Related and Future Work",
+      "text" : "Related Benchmarks WMT organizes the metric competition track in parallel with the translation task every year (Mathur et al., 2020b; Barrault et al., 2020, inter alia). Participants submit automatic scores for the translation outputs from the paral-\nlel translation task. Unfortunately, most of these new metrics are not used by subsequent machine translation work, perhaps because they are tested solely against the concurrent translation submissions and it is up to model developers to execute or even implement new metrics. The GEM workshop (Gehrmann et al., 2021) conducts extensive analysis of models and evaluation methods over a wide set of generation tasks. BILLBOARDs ease the burden through standard leaderboard experience where generator developers only need to upload generation outputs for the test split. BILLBOARDs also offer automatic ensembling of metrics and quantify the diversity that a new metric adds. The human-in-the-loop GENIE leaderboard (Khashabi et al., 2021) centralizes crowdsourced evaluations for generation tasks. The current BILLBOARD setup is based on rubric-based, expert evaluation data from previous work, but future work can explore ways to improve crowdsourced evaluations and use them to update BILLBOARDs. From Bidimensional to Multidimensional BILLBOARDs lend themselves to a natural extension: multidimensional leaderboards. In particular, generation models have more aspects than generation quality, such as training and inference efficiency, sample efficiency, and robustness. These aspects are often ignored in the current leaderboard paradigm but are important to better serving practitioners’ needs (Schwartz et al., 2019; Ethayarajh and Jurafsky, 2020). There are ongoing modeling and benchmarking efforts especially for efficient machine translation (Heafield et al., 2020; Peng et al., 2021, inter alia). We leave this extension to future work and specifically target the gap between generation modeling and evaluation."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We introduced BILLBOARDs, a simple yet powerful generalization of leaderboards that bridges the gap between generation modeling and evaluation research. We established four BILLBOARDs on machine translation, summarization, and image captioning tasks. We demonstrated that their builtin analysis of metric ensembling and mixed-effects modeling revealed key insights into the current state of natural language generation and its evaluation methods. BILLBOARDs allow for a standard leaderboard experience both on the modeling and evaluation sides. We invite submissions from researchers through our website."
+    }, {
+      "heading" : "Appendices",
+      "text" : ""
+    }, {
+      "heading" : "A Case Studies of Evaluation Practice",
+      "text" : "Fig. 4 depicts breakdowns of evaluation metrics used in the papers on machine translation and summarization from NAACL and ACL 2021. We examined all papers whose title contains “machine translation” and “summarization.” We see the clear gap between generation modeling and evaluation research; most researchers do not take advantage of recent metrics that correlate better with human judgments."
+    }, {
+      "heading" : "B Participating Generators",
+      "text" : "Here we list the generators submitted in the initial BILLBOARDs."
+    }, {
+      "heading" : "B.1 WMT20 ZH-EN",
+      "text" : "We use all 16 submissions for the WMT20 ZHEN task (Barrault et al., 2020)11 as well as our own three transformer baselines that were implemented in fairseq (Ott et al., 2019). Our baselines allow researchers to compare their translation models without resource-intensive techniques such as backtranslation (Sennrich et al., 2016a), model ensembling, and deep encoders (Kasai et al., 2021a). Tables 4 and 5 list the hyperprameters. We generally follow the setting from Vaswani et al. (2017).\n11https://www.statmt.org/wmt20/results. html.\nWe use newstest-2019 as the dev. set and the official training data.12 We apply Moses tokenization (Koehn et al., 2007) and BPE with 32K operations (Sennrich et al., 2016b) to English text. We tokenize Chinese text with the Jieba package,13 following Hassan et al. (2018). Separately from English, BPE with 32K operations is then applied to Chinese. The decoder input and output embeddings are tied. Moses detokenization is applied to get the final outputs in the last step. We make the three models and preprocessed train/dev. data publicly available.14 Table 6 lists all generators and their automatic evaluation scores from the top-performing metric (ensemble in this case)."
+    }, {
+      "heading" : "B.2 WMT20 EN-DE",
+      "text" : "Similar to WMT20 ZH-EN, we use all 14 submissions for the WMT20 EN-DE task along with our three transformer baselines. The same hyperparameters are chosen as in WMT20 ZH-EN (Tables 4 and 5). We preprocess both English and German text by the Moses tokenizer and joint BPE with 32K operations. All embeddings are shared. We apply the Moses detokenizer to get the final outputs. Table 7 shows the generators and their automatic\n12http://www.statmt.org/wmt20/ translation-task.html.\n13https://github.com/fxsjy/jieba. 14Anonymized."
+    }, {
+      "heading" : "Generator Description Score",
+      "text" : "evaluation scores from the top-performing metric (ensemble)."
+    }, {
+      "heading" : "B.3 CNNDM Summarization",
+      "text" : "We submit all 26 models from Fabbri et al. (2021).15 Table 8 shows all models and their automatic evaluation scores from the top-performing metric (COMET)."
+    }, {
+      "heading" : "B.4 MSCOCO Image Captioning",
+      "text" : "We submit the four strong models from the literature (Kasai et al., 2021b).16 They share similar\n15https://github.com/Yale-LILY/SummEval. 16https://github.com/jungokasai/THumB/\ntree/master/mscoco."
+    }, {
+      "heading" : "Generator Description Score",
+      "text" : "pipeline structure but vary in model architecture, (pre)training data, model size, and (pre)training objective. Table 9 shows the models with their papers and automatic scores from the top-performing metric (RefCLIP-S)."
+    }, {
+      "heading" : "C Participating Metrics",
+      "text" : "Table 10 discusses details and configurations of the automatic metrics that we implement in our initial BILLBOARDs.\n17Model with CIDEr optmization, https://github. com/microsoft/Oscar/blob/master/VinVL_ MODEL_ZOO.md#Image-Captioning-on-COCO.\n18Model with CIDEr optmization. 19Model with cross-entropy optimization, https:\n//vision-explorer.allenai.org/image_ captioning."
+    }, {
+      "heading" : "Generator Description Score",
+      "text" : ""
+    }, {
+      "heading" : "Generator Description Score",
+      "text" : "20SACREBLEU implementation of sentence-level BLEU4; https://github.com/mjpost/sacreBLEU/ blob/v1.2.12/sacrebleu.py#L999.\n21HuggingFace implementation (Wolf et al., 2020). 22https://github.com/mjpost/sacrebleu. 23https://www.nltk.org/_modules/nltk/\ntranslate/meteor_score.html. 24https://github.com/m-popovic/chrF. 25https://github.com/salaniz/ pycocoevalcap. 26https://github.com/rwth-i6/CharacTER. 27https://github.com/ThomasScialom/ summa-qa. 28https://huggingface.co/metrics/bleurt. 29https://github.com/Unbabel/COMET/. 30https://github.com/thompsonb/prism."
+    }, {
+      "heading" : "Metric Description Refs. Src. Cont.",
+      "text" : ""
+    }, {
+      "heading" : "D Additional Ensemble Metric Ablations",
+      "text" : "Seen in Table 11 are ablation studies for the ensemble metrics where one of the three selected metrics is removed at a time. Dropping one metric often has no impact on the correlation score, suggesting that these metrics are highly redundant and capture similar aspects of the output quality. BILLBOARDs encourage researchers to explore ways to diversify automatic evaluations by updating the ensemble metric every time a new metric is submitted."
+    }, {
+      "heading" : "E Additional Mixed-Effects Analysis",
+      "text" : "Table 12 presents fixed-effect coefficients that measure how much each automatic metric overrates machines over humans (§2.3). With some exceptions in CNNDM summarization, almost all automatic metrics underrate human generations (significantly positive coefficients). Table 13 swaps the roles of human-generated text, but we still see similar patterns: almost all metrics overrate machines over humans, but the problem is mitigated in COMETQE, a referenceless, quality estimation metric. This confirms that our findings hold independently of the design choice.\n31https://github.com/salaniz/ pycocoevalcap.\nCOMET-QE is a referenceless metric."
+    }, {
+      "heading" : "F Crowdworker vs. Rubric-based Expert Evaluations",
+      "text" : "Seen in Table 14 are examples where crowdworker evaluators (Barrault et al., 2020) and professional translators (Freitag et al., 2021) disagree: crowdworkers give lower scores to the human-generated translations than the machine-generated ones. The first case requires document-level context to properly evaluate. Document-level context and diversity in high-quality human translations can mislead crowdworkers.\nCOMET-QE, Prism-src, SummaQA and CLIP-S are referenceless metrics. In both WMT20 ZH-EN and WMT20 EN-DE, Human-B is evaluated as human-generated translations. Human-A (WMT20 ZH-EN) and Human-A and Human-P (WMT20 EN-DE) are used as the reference set for reference-based metrics.\nmachines over humans, but the problem is less severe in the referenceless metric of COMET-QE."
+    } ],
+    "references" : [ {
+      "title" : "2021b). Moreover, these direct assessment scores make it difficult to interpret evaluation results for downstream applications where some aspects are particularly important (e.g., accessibility for people with visual impairments in image",
+      "author" : [ "Kasai" ],
+      "venue" : null,
+      "citeRegEx" : "Kasai,? \\Q2021\\E",
+      "shortCiteRegEx" : "Kasai",
+      "year" : 2021
+    }, {
+      "title" : "2020; gender bias in machine translation",
+      "author" : [ "captioning", "Gleason" ],
+      "venue" : "Stanovsky et al.,",
+      "citeRegEx" : "captioning and Gleason,? \\Q2019\\E",
+      "shortCiteRegEx" : "captioning and Gleason",
+      "year" : 2019
+    }, {
+      "title" : "2021) for a subset of 10 submitted",
+      "author" : [ "Freitag" ],
+      "venue" : null,
+      "citeRegEx" : "Freitag,? \\Q2021\\E",
+      "shortCiteRegEx" : "Freitag",
+      "year" : 2021
+    }, {
+      "title" : "COMET-QE is a referenceless",
+      "author" : [ "VinVL-large: Zhang" ],
+      "venue" : "Summary of BILLBOARDs as of Jan",
+      "citeRegEx" : "Zhang,? \\Q2022\\E",
+      "shortCiteRegEx" : "Zhang",
+      "year" : 2022
+    }, {
+      "title" : "into-English translations. RefCLIP-S uses image features unlike most metrics for image captioning. concatenated highlights as human-generated summaries and use the 10 human-written summaries from Kryscinski et al",
+      "author" : [ "Kasai" ],
+      "venue" : null,
+      "citeRegEx" : "Kasai,? \\Q2021\\E",
+      "shortCiteRegEx" : "Kasai",
+      "year" : 2021
+    }, {
+      "title" : "SPICE: semantic propositional image caption evaluation",
+      "author" : [ "Peter Anderson", "Basura Fernando", "Mark Johnson", "Stephen Gould." ],
+      "venue" : "Proc. of ECCV.",
+      "citeRegEx" : "Anderson et al\\.,? 2016",
+      "shortCiteRegEx" : "Anderson et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Bottom-up and top-down attention for image captioning and visual question answering",
+      "author" : [ "Peter Anderson", "Xiaodong He", "Chris Buehler", "Damien Teney", "Mark Johnson", "Stephen Gould", "Lei Zhang." ],
+      "venue" : "Proc. of CVPR.",
+      "citeRegEx" : "Anderson et al\\.,? 2018",
+      "shortCiteRegEx" : "Anderson et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "METEOR: An automatic metric for MT evaluation with improved correlation with human judgments",
+      "author" : [ "Satanjeev Banerjee", "Alon Lavie." ],
+      "venue" : "Proc. of the ACL Workshop on Intrinsic and Extrinsic Evaluation Measures for Machine Translation and/or",
+      "citeRegEx" : "Banerjee and Lavie.,? 2005",
+      "shortCiteRegEx" : "Banerjee and Lavie.",
+      "year" : 2005
+    }, {
+      "title" : "Findings of the 2020 conference on machine translation (WMT20)",
+      "author" : [ "Monz", "Makoto Morishita", "Masaaki Nagata", "Toshiaki Nakazawa", "Santanu Pal", "Matt Post", "Marcos Zampieri." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Monz et al\\.,? 2020",
+      "shortCiteRegEx" : "Monz et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Fitting linear mixed-effects models using lme4",
+      "author" : [ "Douglas Bates", "Martin Mächler", "Ben Bolker", "Steve Walker." ],
+      "venue" : "Journal of Statistical Software.",
+      "citeRegEx" : "Bates et al\\.,? 2015",
+      "shortCiteRegEx" : "Bates et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Findings of the WMT 2020 biomedical translation shared task: Basque, Italian and Russian as new additional languages",
+      "author" : [ "Siu", "Philippe Thomas", "Federica Vezzani", "Maika Vicente Navarro", "Dina Wiemann", "Lana Yeganova." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Siu et al\\.,? 2020",
+      "shortCiteRegEx" : "Siu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Natural Language Processing with Python",
+      "author" : [ "Steven Bird", "Evan Klein", "Edward Loper." ],
+      "venue" : "Cambridge University Press.",
+      "citeRegEx" : "Bird et al\\.,? 2009",
+      "shortCiteRegEx" : "Bird et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Better rewards yield better summaries: Learning to summarise without references",
+      "author" : [ "Florian Böhm", "Yang Gao", "Christian M. Meyer", "Ori Shapira", "Ido Dagan", "Iryna Gurevych." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Böhm et al\\.,? 2019",
+      "shortCiteRegEx" : "Böhm et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "STRASS: A light and effective method for extractive summarization based on sentence embeddings",
+      "author" : [ "Léo Bouscarrat", "Antoine Bonnefoy", "Thomas Peel", "Cécile Pereira." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Bouscarrat et al\\.,? 2019",
+      "shortCiteRegEx" : "Bouscarrat et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Language models are few-shot learners",
+      "author" : [ "Clark", "Christopher Berner", "Sam McCandlish", "Alec Radford", "Ilya Sutskever", "Dario Amodei." ],
+      "venue" : "Proc. of NeurIPS.",
+      "citeRegEx" : "Clark et al\\.,? 2020",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "meta-) evaluation of machine translation",
+      "author" : [ "Chris Callison-Burch", "Cameron Fordyce", "Philipp Koehn", "Christof Monz", "Josh Schroeder." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Callison.Burch et al\\.,? 2007",
+      "shortCiteRegEx" : "Callison.Burch et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Further meta-evaluation of machine translation",
+      "author" : [ "Chris Callison-Burch", "Cameron Fordyce", "Philipp Koehn", "Christof Monz", "Josh Schroeder." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Callison.Burch et al\\.,? 2008",
+      "shortCiteRegEx" : "Callison.Burch et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Re-evaluating the role of Bleu in machine translation research",
+      "author" : [ "Chris Callison-Burch", "Miles Osborne", "Philipp Koehn." ],
+      "venue" : "Proc. of EACL.",
+      "citeRegEx" : "Callison.Burch et al\\.,? 2006",
+      "shortCiteRegEx" : "Callison.Burch et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "DiDi’s machine translation system for WMT2020",
+      "author" : [ "Tanfang Chen", "Weiwei Wang", "Wenyang Wei", "Xing Shi", "Xiangang Li", "Jieping Ye", "Kevin Knight." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Microsoft COCO captions: Data collection and evaluation",
+      "author" : [ "Xinlei Chen", "Hao Fang", "Tsung-Yi Lin", "Ramakrishna Vedantam", "Saurabh Gupta", "Piotr Dollár", "C. Lawrence Zitnick" ],
+      "venue" : null,
+      "citeRegEx" : "Chen et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Fast abstractive summarization with reinforce-selected sentence rewriting",
+      "author" : [ "Yen-Chun Chen", "Mohit Bansal." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Chen and Bansal.,? 2018",
+      "shortCiteRegEx" : "Chen and Bansal.",
+      "year" : 2018
+    }, {
+      "title" : "All that’s ‘human’ is not gold: Evaluating human evaluation of generated text",
+      "author" : [ "Elizabeth Clark", "Tal August", "Sofia Serrano", "Nikita Haduong", "Suchin Gururangan", "Noah A. Smith." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Clark et al\\.,? 2021",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Sentence mover’s similarity: Automatic evaluation for multi-sentence texts",
+      "author" : [ "Elizabeth Clark", "Asli Celikyilmaz", "Noah A. Smith." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Clark et al\\.,? 2019",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "Proc.",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proc. of NAACL.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Unified language model pre-training for natural language understanding and generation",
+      "author" : [ "Li Dong", "Nan Yang", "Wenhui Wang", "Furu Wei", "Xiaodong Liu", "Yu Wang", "Jianfeng Gao", "Ming Zhou", "Hsiao-Wuen Hon." ],
+      "venue" : "Proc. of NeurIPS.",
+      "citeRegEx" : "Dong et al\\.,? 2019",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BanditSum: Extractive summarization as a contextual bandit",
+      "author" : [ "Yue Dong", "Yikang Shen", "Eric Crawford", "Herke van Hoof", "Jackie Chi Kit Cheung." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Dong et al\\.,? 2018",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "On the evaluation of machine translation systems trained with back-translation",
+      "author" : [ "Sergey Edunov", "Myle Ott", "Marc’Aurelio Ranzato", "Michael Auli" ],
+      "venue" : "In Proc. of ACL",
+      "citeRegEx" : "Edunov et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Edunov et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Utility is in the eye of the user: A critique of NLP leaderboards",
+      "author" : [ "Kawin Ethayarajh", "Dan Jurafsky." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Ethayarajh and Jurafsky.,? 2020",
+      "shortCiteRegEx" : "Ethayarajh and Jurafsky.",
+      "year" : 2020
+    }, {
+      "title" : "Question answering as an automatic evaluation metric for news article summarization",
+      "author" : [ "Matan Eyal", "Tal Baumel", "Michael Elhadad." ],
+      "venue" : "Proc. of NAACL.",
+      "citeRegEx" : "Eyal et al\\.,? 2019",
+      "shortCiteRegEx" : "Eyal et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SummEval: Re-evaluating summarization evaluation",
+      "author" : [ "Alexander R Fabbri", "Wojciech Kryściński", "Bryan McCann", "Caiming Xiong", "Richard Socher", "Dragomir Radev." ],
+      "venue" : "TACL.",
+      "citeRegEx" : "Fabbri et al\\.,? 2021",
+      "shortCiteRegEx" : "Fabbri et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Experts, errors, and context: A large-scale study of human evaluation for machine translation",
+      "author" : [ "Markus Freitag", "George Foster", "David Grangier", "Viresh Ratnakar", "Qijun Tan", "Wolfgang Macherey" ],
+      "venue" : null,
+      "citeRegEx" : "Freitag et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Freitag et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BLEU might be guilty but references are not innocent",
+      "author" : [ "Markus Freitag", "David Grangier", "Isaac Caswell." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Freitag et al\\.,? 2020",
+      "shortCiteRegEx" : "Freitag et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The GEM benchmark: Natural language generation, its evaluation and metrics",
+      "author" : [ "Akhila Yerukola", "Jiawei Zhou." ],
+      "venue" : "Proc. of GEM.",
+      "citeRegEx" : "Yerukola and Zhou.,? 2021",
+      "shortCiteRegEx" : "Yerukola and Zhou.",
+      "year" : 2021
+    }, {
+      "title" : "Bottom-up abstractive summarization",
+      "author" : [ "Sebastian Gehrmann", "Yuntian Deng", "Alexander Rush." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Gehrmann et al\\.,? 2018",
+      "shortCiteRegEx" : "Gehrmann et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The University of Edinburgh’s submission to the German-to-English and English-toGerman tracks in the WMT 2020 news translation and zero-shot translation robustness tasks",
+      "author" : [ "Ulrich Germann." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Germann.,? 2020",
+      "shortCiteRegEx" : "Germann.",
+      "year" : 2020
+    }, {
+      "title" : "Non-expert evaluation of summarization systems is risky",
+      "author" : [ "Dan Gillick", "Yang Liu." ],
+      "venue" : "Proc. of the NAACL HLT 2010 Workshop on Creating Speech and Language Data with Amazon’s Mechanical Turk.",
+      "citeRegEx" : "Gillick and Liu.,? 2010",
+      "shortCiteRegEx" : "Gillick and Liu.",
+      "year" : 2010
+    }, {
+      "title" : "Twitter a11y: A browser extension to make twitter images accessible",
+      "author" : [ "Cole Gleason", "Amy Pavel", "Emma McCamey", "Christina Low", "Patrick Carrington", "Kris M. Kitani", "Jeffrey P. Bigham." ],
+      "venue" : "Proc. of CHI.",
+      "citeRegEx" : "Gleason et al\\.,? 2020",
+      "shortCiteRegEx" : "Gleason et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Soft layer-specific multi-task summarization with entailment and question generation",
+      "author" : [ "Han Guo", "Ramakanth Pasunuru", "Mohit Bansal." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Guo et al\\.,? 2018",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The AFRL WMT20 news translation systems",
+      "author" : [ "Jeremy Gwinnup", "Tim Anderson." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Gwinnup and Anderson.,? 2020",
+      "shortCiteRegEx" : "Gwinnup and Anderson.",
+      "year" : 2020
+    }, {
+      "title" : "Achieving human parity on automatic Chinese to English news translation",
+      "author" : [ "Xu Tan", "Fei Tian", "Lijun Wu", "Shuangzhi Wu", "Yingce Xia", "Dongdong Zhang", "Zhirui Zhang", "Ming Zhou" ],
+      "venue" : null,
+      "citeRegEx" : "Tan et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Tan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Findings of the fourth workshop on neural generation and translation",
+      "author" : [ "Kenneth Heafield", "Hiroaki Hayashi", "Yusuke Oda", "Ioannis Konstas", "Andrew Finch", "Graham Neubig", "Xian Li", "Alexandra Birch." ],
+      "venue" : "Proc. of WNGT.",
+      "citeRegEx" : "Heafield et al\\.,? 2020",
+      "shortCiteRegEx" : "Heafield et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomás Kociský", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Proc. of NeurIPS.",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "CLIPScore: A referencefree evaluation metric for image captioning",
+      "author" : [ "Jack Hessel", "Ari Holtzman", "Maxwell Forbes", "Ronan Le Bras", "Yejin Choi." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Hessel et al\\.,? 2021",
+      "shortCiteRegEx" : "Hessel et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A unified model for extractive and abstractive summarization using inconsistency loss",
+      "author" : [ "Wan-Ting Hsu", "Chieh-Kai Lin", "Ming-Ying Lee", "Kerui Min", "Jing Tang", "Min Sun." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Hsu et al\\.,? 2018",
+      "shortCiteRegEx" : "Hsu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Closed-book training to improve summarization encoder memory",
+      "author" : [ "Yichen Jiang", "Mohit Bansal." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Jiang and Bansal.,? 2018",
+      "shortCiteRegEx" : "Jiang and Bansal.",
+      "year" : 2018
+    }, {
+      "title" : "Deep visualsemantic alignments for generating image descriptions",
+      "author" : [ "Andrej Karpathy", "Li Fei-Fei." ],
+      "venue" : "Proc. of CVPR.",
+      "citeRegEx" : "Karpathy and Fei.Fei.,? 2015",
+      "shortCiteRegEx" : "Karpathy and Fei.Fei.",
+      "year" : 2015
+    }, {
+      "title" : "Deep encoder, shallow decoder: Reevaluating non-autoregressive machine translation",
+      "author" : [ "Jungo Kasai", "Nikolaos Pappas", "Hao Peng", "James Cross", "Noah A. Smith." ],
+      "venue" : "Proc. of ICLR.",
+      "citeRegEx" : "Kasai et al\\.,? 2021a",
+      "shortCiteRegEx" : "Kasai et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Transparent human evaluation for image captioning",
+      "author" : [ "Jungo Kasai", "Keisuke Sakaguchi", "Lavinia Dunagan", "Jacob Morrison", "Ronan Le Bras", "Yejin Choi", "Noah A. Smith" ],
+      "venue" : null,
+      "citeRegEx" : "Kasai et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Kasai et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "GENIE: A leaderboard for human-in-the-loop evaluation of text generation",
+      "author" : [ "Smith", "Daniel S. Weld" ],
+      "venue" : null,
+      "citeRegEx" : "Smith and Weld.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Smith and Weld.",
+      "year" : 2021
+    }, {
+      "title" : "Tohoku-AIP-NTT at WMT 2020 news translation task",
+      "author" : [ "Shun Kiyono", "Takumi Ito", "Ryuto Konno", "Makoto Morishita", "Jun Suzuki." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Kiyono et al\\.,? 2020",
+      "shortCiteRegEx" : "Kiyono et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural text summarization: A critical evaluation",
+      "author" : [ "Wojciech Kryscinski", "Nitish Shirish Keskar", "Bryan McCann", "Caiming Xiong", "Richard Socher." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Kryscinski et al\\.,? 2019",
+      "shortCiteRegEx" : "Kryscinski et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving abstraction in text summarization",
+      "author" : [ "Wojciech Kryściński", "Romain Paulus", "Caiming Xiong", "Richard Socher." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Kryściński et al\\.,? 2018",
+      "shortCiteRegEx" : "Kryściński et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "BART: Denoising sequence-to-sequence pre-training for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "SJTU-NICT’s supervised and unsupervised neural machine translation systems for the WMT20 news translation task",
+      "author" : [ "Zuchao Li", "Hai Zhao", "Rui Wang", "Kehai Chen", "Masao Utiyama", "Eiichiro Sumita." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Proc. of Text Summarization Branches Out.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Microsoft COCO: common objects in context",
+      "author" : [ "Tsung-Yi Lin", "Michael Maire", "Serge J. Belongie", "Lubomir D. Bourdev", "Ross B. Girshick", "James Hays", "Pietro Perona", "Deva Ramanan", "Piotr Dollár", "C. Lawrence Zitnick." ],
+      "venue" : "Proc. of ECCV.",
+      "citeRegEx" : "Lin et al\\.,? 2014",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Text summarization with pretrained encoders",
+      "author" : [ "Yang Liu", "Mirella Lapata." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Liu and Lapata.,? 2019",
+      "shortCiteRegEx" : "Liu and Lapata.",
+      "year" : 2019
+    }, {
+      "title" : "Results of the WMT19 metrics shared task: Segment-level and strong MT systems pose big challenges",
+      "author" : [ "Qingsong Ma", "Johnny Wei", "Ondřej Bojar", "Yvette Graham." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Ma et al\\.,? 2019",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Results of the WMT14 metrics shared task",
+      "author" : [ "Matouš Macháček", "Ondřej Bojar." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Macháček and Bojar.,? 2014",
+      "shortCiteRegEx" : "Macháček and Bojar.",
+      "year" : 2014
+    }, {
+      "title" : "The Stanford CoreNLP natural language processing toolkit",
+      "author" : [ "Christopher D. Manning", "Mihai Surdeanu", "John Bauer", "Jenny Finkel", "Steven J. Bethard", "David McClosky." ],
+      "venue" : "Proc. of ACL System Demonstrations.",
+      "citeRegEx" : "Manning et al\\.,? 2014",
+      "shortCiteRegEx" : "Manning et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Tangled up in BLEU: Reevaluating the evaluation of automatic machine translation evaluation metrics",
+      "author" : [ "Nitika Mathur", "Timothy Baldwin", "Trevor Cohn." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Mathur et al\\.,? 2020a",
+      "shortCiteRegEx" : "Mathur et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Results of the WMT20 metrics shared task",
+      "author" : [ "Nitika Mathur", "Johnny Wei", "Markus Freitag", "Qingsong Ma", "Ondřej Bojar." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Mathur et al\\.,? 2020b",
+      "shortCiteRegEx" : "Mathur et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "WeChat neural machine translation systems for WMT20",
+      "author" : [ "Fandong Meng", "Jianhao Yan", "Yijin Liu", "Yuan Gao", "Xianfeng Zeng", "Qinsong Zeng", "Peng Li", "Ming Chen", "Jie Zhou", "Sifan Liu", "Hao Zhou." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Meng et al\\.,? 2020",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "PROMT systems for WMT 2020 shared news translation task",
+      "author" : [ "Alexander Molchanov." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Molchanov.,? 2020",
+      "shortCiteRegEx" : "Molchanov.",
+      "year" : 2020
+    }, {
+      "title" : "Abstractive text summarization using sequence-tosequence RNNs and beyond",
+      "author" : [ "Ramesh Nallapati", "Bowen Zhou", "Cícero Nogueira dos Santos", "Çaglar Gülçehre", "Bing Xiang." ],
+      "venue" : "Proc. of CoNLL.",
+      "citeRegEx" : "Nallapati et al\\.,? 2016",
+      "shortCiteRegEx" : "Nallapati et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Ranking sentences for extractive summarization with reinforcement learning",
+      "author" : [ "Shashi Narayan", "Shay B. Cohen", "Mirella Lapata." ],
+      "venue" : "Proc. of NAACL.",
+      "citeRegEx" : "Narayan et al\\.,? 2018",
+      "shortCiteRegEx" : "Narayan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Facebook FAIR’s WMT19 news translation task submission",
+      "author" : [ "Nathan Ng", "Kyra Yee", "Alexei Baevski", "Myle Ott", "Michael Auli", "Sergey Edunov." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Ng et al\\.,? 2019",
+      "shortCiteRegEx" : "Ng et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "eTranslation’s submissions to the WMT 2020 news translation task",
+      "author" : [ "Csaba Oravecz", "Katina Bontcheva", "László Tihanyi", "David Kolovratnik", "Bhavani Bhaskar", "Adrien Lardilleux", "Szymon Klocek", "Andreas Eisele." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Oravecz et al\\.,? 2020",
+      "shortCiteRegEx" : "Oravecz et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "fairseq: A fast, extensible toolkit for sequence modeling",
+      "author" : [ "Myle Ott", "Sergey Edunov", "Alexei Baevski", "Angela Fan", "Sam Gross", "Nathan Ng", "David Grangier", "Michael Auli." ],
+      "venue" : "Proc. of NAACL Demonstrations.",
+      "citeRegEx" : "Ott et al\\.,? 2019",
+      "shortCiteRegEx" : "Ott et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BLEU: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Multireward reinforced summarization with saliency and entailment",
+      "author" : [ "Ramakanth Pasunuru", "Mohit Bansal." ],
+      "venue" : "Proc. of NAACL.",
+      "citeRegEx" : "Pasunuru and Bansal.,? 2018",
+      "shortCiteRegEx" : "Pasunuru and Bansal.",
+      "year" : 2018
+    }, {
+      "title" : "Random feature attention",
+      "author" : [ "Hao Peng", "Nikolaos Pappas", "Dani Yogatama", "Roy Schwartz", "Noah Smith", "Lingpeng Kong." ],
+      "venue" : "Proc. of ICLR.",
+      "citeRegEx" : "Peng et al\\.,? 2021",
+      "shortCiteRegEx" : "Peng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "chrF: character n-gram F-score for automatic MT evaluation",
+      "author" : [ "Maja Popović." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Popović.,? 2015",
+      "shortCiteRegEx" : "Popović.",
+      "year" : 2015
+    }, {
+      "title" : "chrF++: words helping character n-grams",
+      "author" : [ "Maja Popović." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Popović.,? 2017",
+      "shortCiteRegEx" : "Popović.",
+      "year" : 2017
+    }, {
+      "title" : "A call for clarity in reporting BLEU scores",
+      "author" : [ "Matt Post." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Post.,? 2018",
+      "shortCiteRegEx" : "Post.",
+      "year" : 2018
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J. Liu." ],
+      "venue" : "JLMR, 21.",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "SQuAD: 100,000+ questions for machine comprehension of text",
+      "author" : [ "Pranav Rajpurkar", "Jian Zhang", "Konstantin Lopyrev", "Percy Liang." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Rajpurkar et al\\.,? 2016",
+      "shortCiteRegEx" : "Rajpurkar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "COMET: A neural framework for MT evaluation",
+      "author" : [ "Ricardo Rei", "Craig Stewart", "Ana C Farinha", "Alon Lavie." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Rei et al\\.,? 2020",
+      "shortCiteRegEx" : "Rei et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ImageNet large scale visual recognition challenge",
+      "author" : [ "Olga Russakovsky", "Jia Deng", "Hao Su", "Jonathan Krause", "Sanjeev Satheesh", "Sean Ma", "Zhiheng Huang", "Andrej Karpathy", "Aditya Khosla", "Michael Bernstein", "Alexander C. Berg", "Li Fei-Fei." ],
+      "venue" : "IJCV.",
+      "citeRegEx" : "Russakovsky et al\\.,? 2015",
+      "shortCiteRegEx" : "Russakovsky et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Green AI",
+      "author" : [ "Roy Schwartz", "Jesse Dodge", "Noah A. Smith", "Oren Etzioni." ],
+      "venue" : "CACM.",
+      "citeRegEx" : "Schwartz et al\\.,? 2019",
+      "shortCiteRegEx" : "Schwartz et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Answers unite! unsupervised metrics for reinforced summarization models",
+      "author" : [ "Thomas Scialom", "Sylvain Lamprier", "Benjamin Piwowarski", "Jacopo Staiano." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Scialom et al\\.,? 2019",
+      "shortCiteRegEx" : "Scialom et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Get to the point: Summarization with pointergenerator networks",
+      "author" : [ "Abigail See", "Peter J. Liu", "Christopher D. Manning." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "See et al\\.,? 2017",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "BLEURT: Learning robust metrics for text generation",
+      "author" : [ "Thibault Sellam", "Dipanjan Das", "Ankur P Parikh." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Sellam et al\\.,? 2020",
+      "shortCiteRegEx" : "Sellam et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving neural machine translation models with monolingual data",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Sennrich et al\\.,? 2016a",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Sennrich et al\\.,? 2016b",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "An entity-driven framework for abstractive summarization",
+      "author" : [ "Eva Sharma", "Luyang Huang", "Zhe Hu", "Lu Wang." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Sharma et al\\.,? 2019",
+      "shortCiteRegEx" : "Sharma et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "OPPO’s machine translation systems for WMT20",
+      "author" : [ "Tingxun Shi", "Shiyu Zhao", "Xiaopu Li", "Xiaoxue Wang", "Qian Zhang", "Di Ai", "Dawei Dang", "Xue Zhengshan", "Jie Hao." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Shi et al\\.,? 2020",
+      "shortCiteRegEx" : "Shi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A study of translation edit rate with targeted human annotation",
+      "author" : [ "Matthew Snover", "Bonnie Dorr", "Rich Schwartz", "Linnea Micciulla", "John Makhoul." ],
+      "venue" : "Proc. of AMTA.",
+      "citeRegEx" : "Snover et al\\.,? 2006",
+      "shortCiteRegEx" : "Snover et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Evaluating gender bias in machine translation",
+      "author" : [ "Gabriel Stanovsky", "Noah A. Smith", "Luke Zettlemoyer." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Stanovsky et al\\.,? 2019",
+      "shortCiteRegEx" : "Stanovsky et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatic machine translation evaluation in many languages via zero-shot paraphrasing",
+      "author" : [ "Brian Thompson", "Matt Post." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Thompson and Post.,? 2020",
+      "shortCiteRegEx" : "Thompson and Post.",
+      "year" : 2020
+    }, {
+      "title" : "Regression shrinkage and selection via the Lasso",
+      "author" : [ "Robert Tibshirani." ],
+      "venue" : "Journal of the Royal Statistical Society, Series B.",
+      "citeRegEx" : "Tibshirani.,? 1994",
+      "shortCiteRegEx" : "Tibshirani.",
+      "year" : 1994
+    }, {
+      "title" : "Attaining the unattainable? reassessing claims of human parity in neural machine translation",
+      "author" : [ "Antonio Toral", "Sheila Castilho", "Ke Hu", "Andy Way." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Toral et al\\.,? 2018",
+      "shortCiteRegEx" : "Toral et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Proc. of NeurIPS.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "CIDEr: Consensus-based image description evaluation",
+      "author" : [ "Ramakrishna Vedantam", "C. Lawrence Zitnick", "Devi Parikh." ],
+      "venue" : "Proc. of CVPR.",
+      "citeRegEx" : "Vedantam et al\\.,? 2015",
+      "shortCiteRegEx" : "Vedantam et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "When a good translation is wrong in context: Context-aware machine translation improves on deixis, ellipsis, and lexical cohesion",
+      "author" : [ "Elena Voita", "Rico Sennrich", "Ivan Titov." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Voita et al\\.,? 2019",
+      "shortCiteRegEx" : "Voita et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "CharacTer: Translation edit rate on character level",
+      "author" : [ "Weiyue Wang", "Jan-Thorsten Peter", "Hendrik Rosendahl", "Hermann Ney." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Wang et al\\.,? 2016",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "HW-TSC’s participation in the WMT 2020 news translation shared task",
+      "author" : [ "Daimeng Wei", "Hengchao Shang", "Zhanglin Wu", "Zhengzhe Yu", "Liangyou Li", "Jiaxin Guo", "Minghan Wang", "Hao Yang", "Lizhi Lei", "Ying Qin", "Shiliang Sun." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Wei et al\\.,? 2020",
+      "shortCiteRegEx" : "Wei et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "HuggingFace’s transformers: State-of-the-art natural language processing",
+      "author" : [ "Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "Proc. of EMNLP: System Demonstrations.",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The Volctrans machine translation system for WMT20",
+      "author" : [ "Liwei Wu", "Xiao Pan", "Zehui Lin", "Yaoming Zhu", "Mingxuan Wang", "Lei Li." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Wu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Tencent neural machine translation systems for the WMT20 news translation task",
+      "author" : [ "Shuangzhi Wu", "Xing Wang", "Longyue Wang", "Fangxu Liu", "Jun Xie", "Zhaopeng Tu", "Shuming Shi", "Mu Li." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Wu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning to extract coherent summary via deep reinforcement learning",
+      "author" : [ "Yuxiang Wu", "Baotian Hu." ],
+      "venue" : "Proc. of AAAI.",
+      "citeRegEx" : "Wu and Hu.,? 2018",
+      "shortCiteRegEx" : "Wu and Hu.",
+      "year" : 2018
+    }, {
+      "title" : "Neural extractive text summarization with syntactic compression",
+      "author" : [ "Jiacheng Xu", "Greg Durrett." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Xu and Durrett.,? 2019",
+      "shortCiteRegEx" : "Xu and Durrett.",
+      "year" : 2019
+    }, {
+      "title" : "The DeepMind Chinese– English document translation system at WMT2020",
+      "author" : [ "Dal Lago", "Yotam Doron", "Susannah Young", "Phil Blunsom", "Chris Dyer." ],
+      "venue" : "Proc. of WMT.",
+      "citeRegEx" : "Lago et al\\.,? 2020",
+      "shortCiteRegEx" : "Lago et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "PEGASUS: Pre-training with extracted gap-sentences for abstractive summarization",
+      "author" : [ "Jingqing Zhang", "Yao Zhao", "Mohammad Saleh", "Peter J. Liu." ],
+      "venue" : "Proc. of ICML.",
+      "citeRegEx" : "Zhang et al\\.,? 2020a",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "VinVL: Making visual representations matter in vision-language models",
+      "author" : [ "Pengchuan Zhang", "Xiujun Li", "Xiaowei Hu", "Jianwei Yang", "Lei Zhang", "Lijuan Wang", "Yejin Choi", "Jianfeng Gao." ],
+      "venue" : "Proc. of CVPR 2021.",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BERTScore: Evaluating text generation with BERT",
+      "author" : [ "Tianyi Zhang", "Varsha Kishore", "Felix Wu", "Kilian Q. Weinberger", "Yoav Artzi." ],
+      "venue" : "Proc. of ICLR.",
+      "citeRegEx" : "Zhang et al\\.,? 2020b",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural latent extractive document summarization",
+      "author" : [ "Xingxing Zhang", "Mirella Lapata", "Furu Wei", "Ming Zhou." ],
+      "venue" : "Proc. of EMNLP.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unified vision-language pre-training for image captioning and VQA",
+      "author" : [ "Luowei Zhou", "Hamid Palangi", "Lei Zhang", "Houdong Hu", "Jason J. Corso", "Jianfeng Gao." ],
+      "venue" : "Proc. of AAAI.",
+      "citeRegEx" : "Zhou et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural document summarization by jointly learning to score and select sentences",
+      "author" : [ "Qingyu Zhou", "Nan Yang", "Furu Wei", "Shaohan Huang", "Ming Zhou", "Tiejun Zhao." ],
+      "venue" : "Proc. of ACL.",
+      "citeRegEx" : "Zhou et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Fine-tuning language models from human preferences",
+      "author" : [ "Daniel M. Ziegler", "Nisan Stiennon", "Jeffrey Wu", "Tom B. Brown", "Alec Radford", "Dario Amodei", "Paul F. Christiano", "Geoffrey Irving" ],
+      "venue" : null,
+      "citeRegEx" : "Ziegler et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Ziegler et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "2021).15 Table 8 shows all models and their automatic evaluation scores from the top-performing metric (COMET)",
+      "author" : [ "Fabbri" ],
+      "venue" : null,
+      "citeRegEx" : "Fabbri,? \\Q2021\\E",
+      "shortCiteRegEx" : "Fabbri",
+      "year" : 2021
+    }, {
+      "title" : "CNNDM summarization generators and reference papers",
+      "author" : [ "Sharma" ],
+      "venue" : "(Manning et al.,",
+      "citeRegEx" : "Sharma,? \\Q2014\\E",
+      "shortCiteRegEx" : "Sharma",
+      "year" : 2014
+    }, {
+      "title" : "Additional Ensemble Metric Ablations Seen in Table 11 are ablation studies for the ensemble metrics where one of the three selected metrics is removed at a time. Dropping one metric often",
+      "author" : [ "D respectively" ],
+      "venue" : null,
+      "citeRegEx" : "respectively.,? \\Q2019\\E",
+      "shortCiteRegEx" : "respectively.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 70,
+      "context" : "automatic scores, such as BLEU (Papineni et al., 2002) and ROUGE (Lin, 2004), evaluated by modeling researchers themselves.",
+      "startOffset" : 31,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 55,
+      "context" : ", 2002) and ROUGE (Lin, 2004), evaluated by modeling researchers themselves.",
+      "startOffset" : 18,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 17,
+      "context" : "They were adopted based on reported correlations with human judgments at the time the metrics were introduced, but it has since been established that the correspondence can collapse when models of different types are compared (Callison-Burch et al., 2006) or models become increasingly powerful (Ma et al.",
+      "startOffset" : 226,
+      "endOffset" : 255
+    }, {
+      "referenceID" : 58,
+      "context" : ", 2006) or models become increasingly powerful (Ma et al., 2019; Edunov et al., 2020).",
+      "startOffset" : 47,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2006) or models become increasingly powerful (Ma et al., 2019; Edunov et al., 2020).",
+      "startOffset" : 47,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 78,
+      "context" : "contextual representations such as COMET (Rei et al., 2020).",
+      "startOffset" : 41,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2020), the CNNDM summarization task (Hermann et al., 2015), and the MSCOCO image captioning task (Lin et al.",
+      "startOffset" : 38,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 56,
+      "context" : ", 2015), and the MSCOCO image captioning task (Lin et al., 2014).",
+      "startOffset" : 46,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 78,
+      "context" : "• When only one reference is available per instance, COMET-QE (a strong referenceless metric with crosslingual contextual representations; Rei et al., 2020) achieves higher correlation with human judgments than all reference-based metrics.",
+      "startOffset" : 62,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 58,
+      "context" : "In particular, scores from automatic metrics often diverge from human judgments in language generation tasks especially when models become increasingly powerful (Ma et al., 2019).",
+      "startOffset" : 161,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 106,
+      "context" : "We first rank the metrics by measuring their correlations to human judgments as commonly done in the generation evaluation literature (Zhang et al., 2020b; Sellam et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 83,
+      "context" : "We first rank the metrics by measuring their correlations to human judgments as commonly done in the generation evaluation literature (Zhang et al., 2020b; Sellam et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 91,
+      "context" : "Here we consider a straightforward and interpretable ensemble of metrics using a regression model with l1 regularization (Tibshirani, 1994).",
+      "startOffset" : 121,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 75,
+      "context" : "Similar to SACREBLEU (Post, 2018), model developers can report the signature for easy replication of their scores from the ensemble metric.",
+      "startOffset" : 21,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2021b) observed that automatic metrics tend to overrate machine-generated text over human one on the MSCOCO image captioning task (Chen et al., 2015).",
+      "startOffset" : 132,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 94,
+      "context" : "This problem is particularly severe in conventional metrics that are based on n-gram overlap such as BLEU and CIDEr (Vedantam et al., 2015).",
+      "startOffset" : 116,
+      "endOffset" : 139
+    }, {
+      "referenceID" : 59,
+      "context" : "Spearman’s and Kendall rank correlations become brittle when multiple generators are similar in overall output quality; penalizing a metric for swapping two similar generators is misleading (Macháček and Bojar, 2014).",
+      "startOffset" : 190,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 62,
+      "context" : "Moreover, if a metric can perform well on an instance level, it can be used to augment human judgments by, for example, flagging likely wrong ratings (Mathur et al., 2020b).",
+      "startOffset" : 150,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 106,
+      "context" : "In the other cases, we evaluate outputs against every reference and take the maximum score, following prior work on image captioning evaluation (Zhang et al., 2020b; Hessel et al., 2021).",
+      "startOffset" : 144,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 43,
+      "context" : "In the other cases, we evaluate outputs against every reference and take the maximum score, following prior work on image captioning evaluation (Zhang et al., 2020b; Hessel et al., 2021).",
+      "startOffset" : 144,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 36,
+      "context" : "Recent work, however, points out problems when evaluations are done by crowdworkers even when extensive quality controls are performed (Gillick and Liu, 2010; Toral et al., 2018; Freitag et al., 2021; Clark et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 92,
+      "context" : "Recent work, however, points out problems when evaluations are done by crowdworkers even when extensive quality controls are performed (Gillick and Liu, 2010; Toral et al., 2018; Freitag et al., 2021; Clark et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 31,
+      "context" : "Recent work, however, points out problems when evaluations are done by crowdworkers even when extensive quality controls are performed (Gillick and Liu, 2010; Toral et al., 2018; Freitag et al., 2021; Clark et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 21,
+      "context" : "Recent work, however, points out problems when evaluations are done by crowdworkers even when extensive quality controls are performed (Gillick and Liu, 2010; Toral et al., 2018; Freitag et al., 2021; Clark et al., 2021).",
+      "startOffset" : 135,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 31,
+      "context" : "These crowdworker evaluations depend highly on individual annotators’ discretion and understanding of the annotation scheme (Freitag et al., 2021; Clark et al., 2021), making it difficult to decompose, interpret, and validate (Kasai et al.",
+      "startOffset" : 124,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 21,
+      "context" : "These crowdworker evaluations depend highly on individual annotators’ discretion and understanding of the annotation scheme (Freitag et al., 2021; Clark et al., 2021), making it difficult to decompose, interpret, and validate (Kasai et al.",
+      "startOffset" : 124,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 31,
+      "context" : "2 plots overall scores for test examples from WMT20 ZH-EN (Barrault et al., 2020; Freitag et al., 2021) and CNNDM summarization (Fabbri et al.",
+      "startOffset" : 58,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 32,
+      "context" : "These paraphrased translations are shown to increase correlations with human judgments by mitigating the translationese effect and diversifying the reference when the generation quality is measured by reference-based metrics (Freitag et al., 2020).",
+      "startOffset" : 225,
+      "endOffset" : 247
+    }, {
+      "referenceID" : 69,
+      "context" : "Along with all submitted generators in WMT20 ZH-EN and WMT20 EN-DE, we train three transformer baselines with the fairseq library (Ott et al., 2019) and place them in our BILLBOARDs: transformer-base, transformer-large, and transformer-large-ensemble with similar hyperparameters (e.",
+      "startOffset" : 130,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 84,
+      "context" : "7 These baselines allow researchers to compare their translation models without resource-intensive techniques such as backtranslation (Sennrich et al., 2016a), model ensembling, and deep encoders (Kasai et al.",
+      "startOffset" : 134,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 47,
+      "context" : ", 2016a), model ensembling, and deep encoders (Kasai et al., 2021a).",
+      "startOffset" : 46,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 99,
+      "context" : "These techniques are all used in top-performing systems of WMT20 (Wu et al., 2020a; Kiyono et al., 2020) but might be infeasible in many re-",
+      "startOffset" : 65,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 50,
+      "context" : "These techniques are all used in top-performing systems of WMT20 (Wu et al., 2020a; Kiyono et al., 2020) but might be infeasible in many re-",
+      "startOffset" : 65,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 65,
+      "context" : "Summarization We use the CNN/DailyMail corpus (CNNDM, Hermann et al., 2015; Nallapati et al., 2016).",
+      "startOffset" : 46,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 51,
+      "context" : "100 test articles are annotated with 10 summaries written by humans (Kryscinski et al., 2019).",
+      "startOffset" : 68,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 56,
+      "context" : "Image Captioning We use the MSCOCO dataset (Lin et al., 2014) that consists of everyday-scene photos sampled from Flickr.",
+      "startOffset" : 43,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 19,
+      "context" : "Every image is annotated with five captions written by crowdworkers (Chen et al., 2015).",
+      "startOffset" : 68,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 46,
+      "context" : "We apply the standard Karpathy split (Karpathy and Fei-Fei, 2015).",
+      "startOffset" : 37,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 11,
+      "context" : "In these cases, we apply the NLTK detokenizer (Bird et al., 2009) and/or Stanford CoreNLP truecaser (Manning et al.",
+      "startOffset" : 46,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 60,
+      "context" : ", 2009) and/or Stanford CoreNLP truecaser (Manning et al., 2014).",
+      "startOffset" : 42,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 30,
+      "context" : ", containing urls) or lack coherence (Fabbri et al., 2021).",
+      "startOffset" : 37,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 23,
+      "context" : "COMET evaluates the similarity between the crosslingual representations from XLM-RoBERTa (Conneau et al., 2020) for input text and its translation candidate.",
+      "startOffset" : 89,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 110,
+      "context" : "We found a major reason for the anomaly in CNNDM; an outlier generator (the GPT-2 zero-shot model; Ziegler et al., 2019) has a disproportionately large effect on the regression models.",
+      "startOffset" : 71,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 30,
+      "context" : "Note that unlike the other tasks, “human-generated text” for CNNDM summarization is an automatic concatenation of author highlights, which contains substantial noise (Fabbri et al., 2021).",
+      "startOffset" : 166,
+      "endOffset" : 187
+    } ],
+    "year" : 0,
+    "abstractText" : "Natural language processing researchers have identified limitations of evaluation methodology for generation tasks, with new questions raised about the validity of automatic metrics and of crowdworker judgments. Meanwhile, efforts to improve generation models tend to focus on simple n-gram overlap metrics (e.g., BLEU, ROUGE). We argue that new advances on models and metrics should each more directly benefit and inform the other. We therefore propose a generalization of leaderboards, bidimensional leaderboards (BILLBOARDs), that simultaneously tracks progress in language generation tasks and metrics for their evaluation. Unlike conventional unidimensional leaderboards that sort submitted systems by predetermined metrics, a BILLBOARD accepts both generators and evaluation metrics as competing entries. A BILLBOARD automatically creates an ensemble metric that selects and linearly combines a few metrics based on a global analysis across generators. Further, metrics are ranked based on their correlation with human judgments. We release four BILLBOARDs for machine translation, summarization, and image captioning.1 We demonstrate that a linear ensemble of a few diverse metrics sometimes substantially outperforms existing metrics in isolation. Our mixed-effects model analysis shows that most automatic metrics, especially the reference-based ones, overrate machine over human generation, demonstrating the importance of updating metrics as generation models become stronger (and perhaps more similar to humans) in the future.",
+    "creator" : null
+  }
+}

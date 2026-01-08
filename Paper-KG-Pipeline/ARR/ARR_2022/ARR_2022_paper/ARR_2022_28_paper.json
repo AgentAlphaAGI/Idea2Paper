@@ -1,0 +1,762 @@
+{
+  "name" : "ARR_2022_28_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Modern neural networks methods are capable of mapping data from one domain to another. Prominent examples include translation of text between languages (Vaswani et al., 2017; Artetxe et al., 2018; Lample et al., 2017), emoji creation from human faces (Taigman et al., 2017), and stylistic transfer of speech (Yuan et al., 2021). In Natural Language Processing (NLP), the umbrella term attribute transfer (Jin et al., 2020b) (or domain transfer) refers to similar methods1. The aim is to maximally 1While the literature primary utilizes the term style transfer, we adopt the more general term attribute as suggested by Jin et al. (2020a).\npreserve the semantics of the source sentence (“content”) but change other properties (“attributes”), such as sentiment (Jin et al., 2020b), expertise (Cao et al., 2020), formality (Rao and Tetreault, 2018) or a combination of them (Subramanian et al., 2018).\nText style transfer, a popular form of attribute transfer, regards “style” as any attribute that changes between datasets (Jin et al., 2020a). Building on the progress of supervised transfer models, recent works have focused on unsupervised style transfer that avoids costly annotation of parallel sentences. However, models built using unsupervised methods perform poorly when compared to supervised (parallel) training (Artetxe et al., 2020). These methods, while capable of achieving the target domain characteristics, often fail to maintain the invariant content. Figure 1 illustrates one such example, where a sentence from the BOOKS domain is translated to the MOVIE domain. While the translated sentence “Loved the movie” has correctly transferred the attribute (style), it does not have the same length, does not retain the personal noun (“I”), nor use a domainappropriate proper noun. Comparatively, the higherfidelity transfer “I absolutely enjoyed Spielberg’s direction”, maintains such constraints of identity, in addition to being an aptly transferred sentence.\nThis problem setting is an important application of text transfer, as enforcing constraints of identity can help maintain the brand identity when the product descriptions are mapped from one commercial product to another. They can also help in data augmentation for downstream domain adaptation NLP applications (§ 5). Constraints of identity are\nexplored extensively in the computer vision task of cross-domain image generation. (Taigman et al., 2017), but these issues are unexplored in NLP.\nIn this paper, we improve unsupervised attribute transfer by enforcing invariances via explicit constraints. Current methods in text attribute transfer lack mechanisms to explicitly enforce such constraints between the source and the transferred sentence. In this work, we map text between two domains with a focus on maintaining constraints of identity between them. To this end, we build upon unsupervised text style transfer work by introducing an additional explicit regularization component in the latent space of a GAN-based seq2seq network through two complementary losses. Unlike the adversarial losses in the GAN framework, our proposed losses cooperatively reduce the same objective. The first loss is a contrastive loss (Le-Khac et al., 2020) that brings sentences that have similar constraints closer and pushes sentences that are dissimilar farther away. The second loss is a classification loss that helps maintain the sentence identity via constraints from the latent vectors (Odena et al., 2017).\nOur approach, while simple and aimed at maintaining constraints, improves the overall performance of the generation. We demonstrate these gains over three datasets: YELP (Zhao et al., 2018b), IMDB (Dai et al., 2019) and POLITICAL (Prabhumoye et al., 2018), generating six constraints including lexical, syntactic and domain-specific. The introduced cooperative losses satisfy the constraints more effectively compared against strong baselines. Since multiple attributes can change between two domains (Subramanian et al., 2018), we test our method on one such dataset and show that the constraints of identity are maintained more effectively (§ 4.4.2). To the best of our knowledge, our approach is the first to introduce cooperative losses in a GAN-like setup for NLG."
+    }, {
+      "heading" : "2 Preliminaries",
+      "text" : "Task Setup: We consider two sets of sentences (or corpora) S= {x1src, x2src, ... xmsrc} and T = {x1trg,x2trg, ...xntrg}, as the source and target domains, respectively. Each corpus — which we interpret as domains — contain discernable attributes, ranging from sentiment (e.g., positive vs. negative), topics, political slant (e.g., democratic vs. republican), or some combination (Li et al., 2018; Lample et al., 2019). The overall task is to rewrite a piece of text si ∈ S to ti ∈ T , such that\nthe translation changes the attributes varying across the two domains but retains the remaining content. While content retention is not explicitly defined in the literature, we design this new task of constrained unsupervised attribute transfer that assigns explicit constraints C = {c1, c2, ... , c|C|}, to be retained. These constraints can be defined at various levels of a sentence: lexical, syntactic and domain-specific.\nAdversarially Regularized Autoencoder (ARAE): To perform unsupervised attribute transfer, we consider seq2seq models that encode source sentences to a latent space and then decodes them to the target sentences. ARAEs (Zhao et al., 2018b) are the auto-encoder variants of the Generative Adversarial Network (GAN) (Goodfellow et al., 2014) framework. They learn smooth latent spaces (by imposing implicit priors) to ease the sampling of latent sentences. ARAEs have been widely adopted in tasks like unsupervised text generation (Huang et al., 2020), topic modeling (Hu et al., 2020), among others, and form the backbone of our proposed model.\nARAE consists of an auto-encoder with a deterministic encoder encθ :X →Z that encodes sentences into a latent space; i.e., z=encθ(x)∼Pz , and a conditional decoder pφ(x|z) that generates a sentence given a latent code. ARAE regularizes this latent space utilizing a GAN-like setup that includes an implicit prior obtained from a parameterized generator network encψ : N (0, I) → Z . Here, encψ maps a noise sample s ∼ N (0, I) to the corresponding prior latent code z̄=encψ(s)∼Pz̄ .\nA critic crcξ :Z →R then learns to distinguish between real and generated samples, whereas both encθ and encψ are adversarially trained to fool the critic. This results in a minimax optimization which implicitly minimizes the JS-Divergence between the two distributions Pz and Pz̄:\nmin ψ max ξ E z∼Pz [crcξ(z)]− E z̄∼Pz̄ [crcξ(z̄)] (1)\nThe training involves three optimizations: i) reducing the auto-encoder loss Lae, which tries to reconstruct the input and encourages copying behavior and maintain semantics similar to original text (Eq. 2); ii) optimizing the critic’s loss Lcri to distinguish between real and fake samples (Eq. 3); and iii) training the encoder and generator loss\nTied encθ z z ∼ Pz\ncriticξ ℝ\ngenψ\ndecϕ\nz̃ z̃ ∼ Pz̃ ϵ \uD835\uDCA9(0,1)\nencθ z\ncriticξ\nencψ\ndecϕ\ndecηz̃\nTarget \uD835\uDCAF\nxtgt Source \uD835\uDCAETarget \uD835\uDCAF ̂xtgt\nℒae ℒcri ℒadvℝ\nxtgt\nx̂src\nx̂trg\nxsrc\nLadv to fool the critic (Eq. 4):\nLae(θ,φ)= E z∼Pz [−log pφ(x|z)] , (2) Lcrc(ξ)= −E z∼Pz [crcξ(z)]+ E z̄∼Pz̄ [crcξ(z̄)] , (3) Ladv(θ,ψ)= E z∼Pz [crcξ(z)]− E z̄∼Pz̄ [crcξ(z̄)] . (4)"
+    }, {
+      "heading" : "3 Proposed Method",
+      "text" : "3.1 Base Model (ARAEseq2seq)\nWhile ARAE is an auto-encoder that recreates input x → x̂, our requirement is to translate sentences from one domain to another. Given this, we modify the ARAE to a seq2seq variant such that we can translate two input sentences from both source and target domains; i.e., xsrc→ x̂tgt and xtgt→ x̂src.\nTo achieve this, we utilize encθ to encode xsrc and repurpose encψ to encode xtgt. We obtain their latent codes (z,z̄) which we name as (zs,zt), i.e., zs=encθ(xsrc) and zt=encψ(xtgt).\nNext, to generate sentences, we consider two decoders x̂src∼pφ(x|z) and x̂tgt∼pη(x|z). Here, z can be either zs or zt based on whether we autoencode (e.g., pφ (x|zs=encθ(xsrc))) or translate (e.g., pφ ( x|zt=encψ(xtgt) ) ). Unlike ARAE’s single decoder, we incorporate two decoders to enable bi-directional translation.\nIn the above process, instead of sampling s from a noise distribution like N (0, I) and passing it through a generator encψ, we feed it text from the target domain T and a decoder decη that decodes text in T . This is inspired from Cycle-GAN (Zhu et al., 2017), where instead of matching the noise distributionN , we match the distribution of T .\nIn addition, we tie the weights of the encoders from both domains, so that the encoders learn to encode domain-agnostic information. Tying encoder weights has also been used by unsupervised machine translation (Artetxe et al., 2018; Lample et al., 2017) and multiple other works (Mai et al., 2020; Huang\nAlgorithm 1: ARAEseq2seq + CLF + CONTRA 1 for each training iteration do 2 1) Train the Auto-encoders: 3 Sample xsrc∼S , xtrg∼T 4 zs=encθ(xsrc), z\nt=encψ(xtrg) 5 Backprop loss,Lae(θ,φ),Lae(ψ,η) 6 2) Train the Critic: 7 Sample xsrc∼S , xtrg∼T 8 zs=encθ(xsrc), z t=encψ(xtrg) 9 zscrc=crc hid ξ (z s), ztcrc=crc hid ξ (z t)\n10 lcrc←Lcrc(ξ) 11 2a) Critic Co-op Training: 12 Backprop loss, lcrc+λ1Lcon(ξ)+λ2Lclf (ξ, δ) 13 3) Adversarial Training: 14 Sample xsrc∼S , xtrg∼T 15 zs=encθ(xsrc), z\nt=encψ(xtrg) 16 Backprop loss,Ladv(θ,ψ) 17 3a) Encoder Co-op Training: 18 Backprop loss,\nλ1Lcon(θ, φ)+λ2Lclf (θ, φ, δ)\net al., 2020; Hu et al., 2020; Artetxe et al., 2018)2."
+    }, {
+      "heading" : "3.2 Adding Constraints via Co-op Training",
+      "text" : "While the latent space in ARAEseq2seq learns to match S and T sentences, there is no guarantee on translations maintaining the “content”. This issue is particularly pronounced in unsupervised attribute transfer due to lack of parallel sentences between S and T .\nTo alleviate the issue, we propose to learn a structured latent space which embodies notions of our constraints in its embedded latent codes. This ensure that instances with similar constraints are closer in the latent space. In particular, we propose\n2We tried with separate encoders and decoders, but encoders with tied weights work best\ntwo types of optimization — self-supervised and discriminative — to maintain the constraints better."
+    }, {
+      "heading" : "3.2.1 Cooperative Contrastive Learning",
+      "text" : "We use contrastive representation learning to regularize the latent space, such that encoders bring two sentences sharing similar constraints closer together (positive pairs), and force dissimilar ones away (negative pairs). For example, sentences of similar lengths (irrespective of their domains) should be closer together.\nAmong many self-supervised metric losses such as Triplet Loss (Hoffer and Ailon, 2015) and NT-Xent loss (Chen et al., 2020), we use one that is amenable to multiple positive instances (Khosla et al., 2020). Given a sentence si∈S in a mini-batch of sizeB, we mine P positive sentences each from S and T that share the same constraints with si. This contrastive loss is given by:\nLcon(θ,ψ,ξ)=− 1\n|P | log  P∑ j=1 e(zi·zj)∑B\\{i} k=1 e (zi·zk) , (5)\nwhere z’s are representations obtained from the encoders in S, T or representations obtained from the last layer of critic crcξ . Ci are a set of constraints for a sentence. Recently, (Kang and Park, 2020) introduced the cooperative loss in the adversarial setup where contrastive losses are added to both the critic and generator for GANs. Unlike the normal opposing losses of the generator and the critic, both of them cooperatively reduce the contrastive loss. We follow a similar principle and add the loss to both the encoders and the critic (Lines 18)."
+    }, {
+      "heading" : "3.2.2 Cooperative Classification",
+      "text" : "Contrastive learning might be sub-optimal if we do not mine good quality positive and negative samples (Tian et al., 2020). To address this, we propose another way to regularize the latent space. Similar to ACGAN (Odena et al., 2017), we encourage the encoders and the critic to cooperatively reduce a classification loss. We include a classifierDδ :Z→R|C| that predicts the different constraints C of the sentences and the binary cross entropy loss is reduced. Lclf (θ,φ,ξ,δ)=− |C|∑ c=1 log ( σ(lc) yc(1−σ(lc))1−yc ) ,\n(6)\nwhere |C| is the number of constraints per sentence, σ is the sigmoid function and lc are the logits\nproduced by the classifier for zi. As in contrastive loss, the zi can be produced by encoders of S, T or from the hidden layers of the critic.\nThe overall training process is highlighted in Algorithm 1 where Lcon and Lclf are weighted by λ1 and λ2. We choose λ1, λ2∈{0,1}."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "Datasets. We use three datasets with single attribute changes: i) Yelp Reviews: business reviews listed on Yelp, labeled as either a positive or negative sentiment. ii) IMDb Movie Reviews: consists of movie reviews (Dai et al., 2019) also labelled as positive or negative. iii) Political Slant: consists of Facebook posts from the politicians of the United States Senate and the House of Representatives (Prabhumoye et al., 2018), labeled with either democratic/republican slant. See Appendix A for dataset statistics.\nConstraints: We constrain every sentence along six diverse dimensions that we desire to control between the two domains: i)Lexical: Sentence length – The transferred sentence should maintain a length similar to the original sentence (binarized to long sentences with 10 or or more words or short otherwise). ii)Syntactic: Presence of personal pronouns (binarized to indicate the presence of a personal pronoun); number of adjectives (categorical up to 5); number of proper nouns (categorical up to 3); syntactic tree height (categorical up to 10). iii) Domain specific – number of domain-specific attributes (Li et al., 2018) (categorical up to 5). Further, we label the sentence with a constraint-specific, catch-all label if the bounds are beyond what we mention above. Since the distribution of the labels may be different, we report the F1 score on our constraints."
+    }, {
+      "heading" : "4.1 Model Details",
+      "text" : "For the encoders, we use a one-layer LSTM network with 300 hidden dimensions for all the datasets. For the critics and classification loss, we use a two-layer multilayer perceptron with 100 hidden units. Our learning rates and methods to stabilize training are discussed in Appendix B."
+    }, {
+      "heading" : "4.2 Evaluation Setup",
+      "text" : "Automatic Evaluation: Our automatic evaluation considers the following three prominent criteria: i) Semantic Similarity (SIM): Measured between source and translated target sentences using encoders (Wieting et al., 2019), instead of n-gram metrics like BLEU (Papineni et al., 2002) which\nhave weak correlations with human judgments. ii)Transfer Accuracy (ACC): The transferred sentence should belong to the target domain and a classifier is trained to distinguish between the source and the target sentence. We use fastText classifiers (Joulin et al., 2017) for every dataset. We achieve accuracy of 97.9 for YELP, 96.9 for IMDB and 97.1 for POLITICAL. iii) Fluency (FL): A transferred sentence should be grammatically correct. We fine-tune a RoBERTa-large model on the COLA (Warstadt et al., 2018) dataset to indicate whether a sentence is linguistically acceptable. Finally, we combine the three scores into an aggregate, following the criteria suggested by Krishna et al. (2020):\nAGG= 1 |S| ∑ s∈S ACC (s)·SIM (s)·FL (s)\nHuman Evaluation: We also perform an indicative human evaluation where we randomly sample 100 samples from each of the three datasets and hire three researchers to rate every sentence for FL, SIM and ACC on a 3-point scale (Krishna et al., 2020)."
+    }, {
+      "heading" : "4.3 Baselines",
+      "text" : "We compare ARAEseq2seq with the following baselines: a) DRG: The Delete, Retrieve, Generate method that deletes domain specific attributes, retrieves a template and generates the target domain text (Li et al., 2018). We use the stronger, entire system rather than the weaker DELETEONLY and RETRIEVEONLY baselines; b) ARAE: Adversarially regularized autoencoders our system is based on (Zhao et al., 2018b); c) ARAEseq2seq: Our model without the contrastive learning or cooperative classifier; d) ARAEseq2seq + CONTRA: Our model with the contrastive learning; e) ARAEseq2seq + CLF: Our model with the cooperative classifier;\nf) ARAEseq2seq+CLF+CONTRA: Our model with both the cooperative losses. The closest model to ours is from (Huang et al., 2020). However, we were not able to reproduce the results.3"
+    }, {
+      "heading" : "4.4 Results",
+      "text" : ""
+    }, {
+      "heading" : "4.4.1 Overall Results",
+      "text" : "ARAEseq2seq + CONTRA and ARAEseq2seq + CLF consistently perform better than DRG and ARAE on the AGG score (Table 1). The AGG for YELP is 20.6 (vs. 19.8), for IMDB it is 28.1 (vs. 19.9) and for POLITICAL 25.5 (vs. 11.0). Although cooperative loss reduction aims to satisfy the constraints between two domains, our results show that further regularization of the latent space not only brings advantages in satisfying the constraints but also improves performance (Lavoie-Marchildon et al., 2020).\nEffect of Cooperative Loss Reduction on ACC and FL and SIM: Across datasets, reducing cooperative losses improves ACC and FL and SIM to ARAE. Although DRG produces sentences with high SIM as most of the text from the original sentence is retained after the delete step, there is a large trade-off with ACC resulting in low AGG scores. Also, compared to ARAE, adding cooperative losses significantly increases the SIM, with the highest increase observed for POLITICAL. The reasons for this could be two-fold: i) since we mine positive sentences from a corpus that is grounded in real world events, most lexically-similar sentences may also be semantically similar (Guu et al., 2018), and ii) since we tie the encoders from the source and target domain, we extract domain-agnostic information before generation, which retains content.\nFluency (FL) also improves over all datasets. We hypothesize that reducing cooperative losses reg3Repeated attempts to obtain the original source code failed.\nularizes the latent space bringing fluent sentences closer together, enabling the decoder to produce semantically similar and linguistically acceptable sentences. The improvement for POLITICAL is less; we find these source sentences themselves are less fluent and contain many U.S. political acronyms, and that our system produces many out-of-vocabulary words affecting fluency.\nNucleus Sampling: Our system achieves the highest AGG score with greedy decoding. We also experiment with nucleus sampling (Holtzman et al., 2019) with different p values, as in Table 1, which does produce more diversity, increasing ACC as expected. However we find that with higher values of p, there is a trade-off with SIM resulting in a lower AGG score overall — similar to Krishna et al. (2020).\nEffect of the Number of Positives: The number of positive and negative samples used for contrastive learning (Eq. 5) have a significant effect on the overall performance (Khosla et al., 2020; Chen et al., 2020; Henaff, 2020). Table 2 (rows |P | ∈ {1,2,5,10}) shows the AGG scores on IMDB (for one of the runs), for different number of positives. We find that AGG is the highest with 2 positives per sample as also used by Khosla et al. (2020). Although increasing the number of negatives is beneficial for contrastive learning, when more than one positive example is available, making use of them brings further improvements (Khosla et al., 2020).\nCooperative Losses are Important on Both the Generator and Critic: Table 2 shows the importance of adding the cooperative losses on the generator and critic. First, we see that adding the cooperative losses on both the generator and the critic is crucial for the overall performance.\nWhile adding the cooperative contrastive loss to both the generator and critic increases FL and ACC while maintaining similar levels of SIM, adding the cooperative classification loss improves SIM which shows the complementary nature of the losses.\nHuman Evaluation: We average the results and present it in Table 3. DRG produces marginally better semantically similar sentences. Compared to ARAE, our model performs well except for in YELP. This may be because we use nucleus sampling with 0.9 which optimizes for diversity rather than similarity. On other metrics we perform on par or better than our competing systems. (See Appendix D)\nQualitative Examples: Table 4 shows examples of the quality of transferred examples (see Appendix C for more). Mistakes made by the model can be attributed to poor understanding of the original semantics, lack of diversity, and not producing attribute-specific words."
+    }, {
+      "heading" : "4.4.2 Maintaining Constraints",
+      "text" : "Figure 3 shows that introducing the cooperative losses significantly outperform DRG and ARAE in maintaining constraints. Specifically the ARAEseq2seq + CLF model performs better than ARAEseq2seq+ CONTRA. One reason could be that, finding the appropriate positives and strong negatives can be problematic for contrastive learning. On the other hand, the classifier’s objective is simpler and forces the encoder to produce representations that satisfy the different constraints effectively.\nA seemingly easy to maintain constraint is the length of the sentence. However, seq2seq systems have a difficulty of maintaining appropriate lengths (Murray and Chiang, 2018). With no additional regularization ARAE does not maintain the length as well as ARAEseq2seq + CLF. On the other hand, compared to the lexical constraints, syntactic attributes like descriptiveness, tree height and domain specific constraints present challenges, with significantly lower F scores. ARAEseq2seq + CLF produces significantly better results in maintaining them. This shows that obtaining improvements on the overall AGG does not necessarily translate to producing outputs that satisfy constraints. DRG maintains the proper noun for IMDB effectively, because it con-\ntains a wide variety of actor and movie names. They are retained verbatim after the delete operation.\nMultiple Attribute Datasets: To test whether our model can satisfy constraints across domains where multiple attributes change, we use the multi-attribute dataset released by (Lample et al., 2019). We chose the ASIAN and MEXICAN as two domains. Each of these domains can have multiple attributes like positive and negative sentiment text, different gender attributions to sentences, etc. We compare our ARAEseq2seq + CLF model with the ARAEseq2seq and ARAE in Figure 4. The results are more pronounced in this case with ARAEseq2seq + CLF having clear advantage over ARAEseq2seq. This shows that even with multiple attributes changing between domains, cooperatively reducing losses can satisfy different constraints more effectively.\nQualitative Examples: Table 5 shows examples of our model maintaining constraints compared to ARAE. Sometimes, ARAE hallucinates and adds personal pronouns like “my” to the text even when there are no personal pronouns (row 1) and in other cases, it fails to ensure that the personal pronoun is retained (row 2). Also, our model produces sentences where the number of proper nouns are retained (Chris Klein vs. Robert De Niro), whereas ARAE does not."
+    }, {
+      "heading" : "5 Discussion",
+      "text" : "Cycle Consistency Loss: a) In Latent Spaces - Cycle consistency in latent spaces has been shown to improve word level tasks, such as cross lingual dictionary construction (Mohiuddin and Joty, 2019) and topic modeling (Hu et al., 2020). A recent work from (Huang et al., 2020) claims to improve unsuper-\nvised style transfer using such losses. In our experiments, however, it did not result in any noticeable performance improvement 4. Given this, we hypothesize that cycle consistency might be too restrictive for sentence level tasks. b) Using Back-TranslationBack-translation is another alternative to ensure semantic consistency between source and the target sentence (Prabhumoye et al., 2018; Artetxe et al., 2018; Lample et al., 2017). However, in our case, since we are training an ARAE, it would involve an additional inference and auto-encoder training step which is expensive and we defer exploring this.\nUsing Transformers: We also replace our LSTM auto-encoders with both pre-trained and randomly initialized transformer encoder–decoders (Rothe et al., 2020). Although we found an increase in the AGG, it was mostly because of very high SIM and very low ACC. Reducing the number of layers, attention heads would still result in a large model that is still prone to copying text. This reveals the potential challenges of training transformers with unpaired mappings, and is an important future work.\nTransferred sentences as Adversarial Examples: We demonstrate an important application of our proposed constrained transfer by considering them as adversarial examples for domain adaptation. Domain Adversarial Neural Network (DANN) (Ganin et al., 2017) is an unsupervised domain adaptation method that improves performance of an endtask (e.g, sentiment analysis) on a target domain considering only supervised data from source domain. We train DANN for sentiment analysis on amazon reviews dataset (He and McAuley, 2016) with DVD as source and ELECTRONICS as the target domain – achieving an accuracy of 83.75% on ELECTRONICS.\nNext, we train the best variant of ARAEseq2seq to transfer a separate set DVD reviews to ELECTRONICS reviews and use them as adversarial examples to test the DANN model 5. We find that the accuracy of DANN on the ELECTRONICS domain reduces by∼3 points. This shows the potential application of domain transferred sentences as adversarial examples. Similar ideas have been tried for image style transfer (Xu et al., 2020), but needs more investigation in text attribute transfer.\n4Repeated attempts to obtain source codes failed. 5Since each of DVD and ELECTRONICS contain positive and negative reviews, we test whether transferred sentences maintain the appropriate sentiment and find the accuracy to be 79%."
+    }, {
+      "heading" : "6 Related Work",
+      "text" : "Text attribute transfer has a vast literature (Jin et al., 2020a) with deep learning methods becoming popular. The methods are either supervised – requiring parallel data and unsupervised. Supervised methods repurpose Sequence to Sequence models used in machine translation to achieve the goals (Rao and Tetreault, 2018). However, obtaining parallel data is cumbersome and thus unsupervised methods that consider pseudo-parallel data have become popular.\nDisentanglement approaches are the prevalent approach to tackle unsupervised attribute transfer: attributes and content are separated in latent dimension. To disentangle the attributes adversarial methods maximize the loss of a pretrained attribute classifier (Li et al., 2020; Fu et al., 2018; Zhao et al., 2018a; John et al., 2019). However, the literature has paid little attention in defining and preserving content. Cycle consistency losses – imposing that reconstruction from the target style sentence should resemble the source sentence – is the most prevalent (Prabhumoye et al., 2018; Logeswaran et al., 2018; Dai et al., 2019; Huang et al., 2020; Yi et al., 2020). However, this is expensive, non differentiable requiring reinforcement learning techniques to enforce it. Our work defines the different constraints that should be preserved and adds simple differentiable contrastive learning losses to preserve them.\nIn recent times, text style transfer models are moving away from disentanglement approaches (Subramanian et al., 2018). Recent works that use transformers for style transfer also have adopted this (Dai et al., 2019; Krishna et al., 2020). However, these methods do not explicitly maintain the constraints between the two styles which is the main aim of our work."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "Text style transfer works focuses on retaining content and changing the style of sentences but does not maintain other desirable constraints. We address this by introducing two cooperative losses to the GAN-inspired Adversarially Regularized Autoencoder (ARAE) that further regularizes the latent space. While satisfying the constraints our methods brings significant improvements in overall score. While we focus on simple constraints at the sentence- and word-level, future work can add phrase-level and more fine-grained constraints. Potential future work may explore reinforcement learning losses to directly optimize the constraints."
+    }, {
+      "heading" : "A Dataset Statistics",
+      "text" : "Dataset Statistics: We provide a summary of the dataset statistics in Table 6. We include datasets of varied length and complexity. Apart from having different topics, the IMDB dataset is more formal compared to the more colloquial YELP. We fix the maximum vocabulary size for YELP, IMDB and POLITICAL at 30K which is also the default maximum vocab size used in (Zhao et al., 2018b)."
+    }, {
+      "heading" : "B Hyper-parameter Details",
+      "text" : "Training: For all our experiments we set the learning rate of the auto-encoder (lrae) to 1e-3 and (lrdisc) to 1e-4. The number of discriminator steps (ndis) is set to 5. The Adam optimizer parameters β1=0.5 and β2=0.9, which ensures a more conservative optimization and is known to improve stability. We also add a gradient penalty to the loss function of the discriminator that stabilizes training. All the suggestions for stabilizing training are mostly obtained from (Arjovsky and Bottou, 2017).\nInference: We used nucleus sampling with p ∈ [0.6,0.9]. We tried different temperatures of scaling the softmax (Guo et al., 2017) - 0.4, 0.5, 0.6, 0.7 and chose the one that produced the best result on the dev set."
+    }, {
+      "heading" : "C Transfer Results",
+      "text" : "More transfer results are mention in Table 8. Examples where our system fails with plausible explanation are given in Table 9. Examples of translation from the multi-attribute dataset is shown in Table 10."
+    }, {
+      "heading" : "D More details on Human Evaluation",
+      "text" : "For FL, 0 indicates not fluent at all, 1 indicates somewhat fluent and 2 is a completely fluent sentence. We explicitly ask the annotators to consider semantic similarity for SIM, irrespective of whether the target sentence shares some phrases with the source sentence, with 1 indicating no semantic similarity and 3 indicating complete semantic similarity. For ACC, 1 indicates that the target sentence has only the source sentence style while 2 indicates good transfer to the target style.\nWe calculate the Krippendorff’s alpha to assess the inter annotator agreement. Table 7 shows the inter-annotator agreement. An α of 0.4 is considered good agreeement (Hedayatnia et al., 2020). We have moderate to good agreements on all the datasets for different measures. On more inspection we found that the disagreements in fluency mostly arrives for small phrases like \"my fav\" although is an accepted phrase in social media text is considered 2 by one annotator and 3 by another. We also further note that, smaller sentences were easier to judge and had better agreement rates on SIM compared to longer sentences.\nInformation about participants: We hire three graduate researchers in NLP (average age 25) for the annotation task who are well versed in English. We obtained permission for their participation and compensated them appropriately according to hourly wages in the country. The specific instruction given to them for the evaluation are as follows. Consider two sentences\n• Source sentence: Sentence from the source domain\n• Target sentence: The transferred sentence produced by one of the systems\nFor every target sentence you will be asked to rate it according to three measures described below.\nFluency: Indicate how fluent the target sentence is (regardless of whether the sentence is appropriately transferred to the target sentence)\n1 - Not fluent at all - Does not look like an English sentence.\n2 - Fluent but with some mistakes - Fluent but with some grammatical errors\n3 - Entirely fluent. - A good English Sentence\nSimilarity: Indicate how semantically similar the target sentence is.\n1 - Does not share any words/phrases with the source sentence and/or is not semantically similar (does not share high level topics of the sentence) 2 - Shares some words/phrases with the source sentence and/or has moderate level of semantic similarity (talks about similar high level topics) 3 - Shares appropriate words/phrases with the source sentence and is highly semantically similar Accuracy: Indicate whether the target sentence is accurately transferred to the target domain\nSentiment Transfer 1 - The target sentiment is not evident in the target sentence at all. Has words expressing opposite sentiment\n2 - Neutral Sentiment. Choose this option, if it has both positive and negative sentiment\n3 - The target sentiment is evident in the target sentiment. Has appropriate sentiment bearing words.\nIf the sentence itself has no sentiment then chose 2\nPolitical Orientation 1 - Talks about topics with the other orientation. For example, if the target style is democratic and the target sentence talks about conservative issues like abortion, gun control\n2 - Neutral. 3 - Talks about topics with the correct orientation. For example, if the target style is democratic and talks about progressive issues like liberty, free speech, Elizabeth Warren, Joe Biden, gay rights etc."
+    } ],
+    "references" : [ {
+      "title" : "Towards principled methods for training generative adversarial networks",
+      "author" : [ "Martín Arjovsky", "Léon Bottou." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings.",
+      "citeRegEx" : "Arjovsky and Bottou.,? 2017",
+      "shortCiteRegEx" : "Arjovsky and Bottou.",
+      "year" : 2017
+    }, {
+      "title" : "Unsupervised neural machine translation",
+      "author" : [ "Mikel Artetxe", "Gorka Labaka", "Eneko Agirre", "Kyunghyun Cho" ],
+      "venue" : null,
+      "citeRegEx" : "Artetxe et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Artetxe et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A call for more rigor in unsupervised cross-lingual learning",
+      "author" : [ "Mikel Artetxe", "Sebastian Ruder", "Dani Yogatama", "Gorka Labaka", "Eneko Agirre." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages",
+      "citeRegEx" : "Artetxe et al\\.,? 2020",
+      "shortCiteRegEx" : "Artetxe et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Expertise style transfer: A new task towards better communication between experts and laymen",
+      "author" : [ "Yixin Cao", "Ruihao Shui", "Liangming Pan", "Min-Yen Kan", "Zhiyuan Liu", "Tat-Seng Chua." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association",
+      "citeRegEx" : "Cao et al\\.,? 2020",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey E. Hinton." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Vir-",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Style transformer: Unpaired text style transfer without disentangled latent representation",
+      "author" : [ "Ning Dai", "Jianze Liang", "Xipeng Qiu", "Xuanjing Huang." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Dai et al\\.,? 2019",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Style transfer in text: Exploration and evaluation",
+      "author" : [ "Zhenxin Fu", "Xiaoye Tan", "Nanyun Peng", "Dongyan Zhao", "Rui Yan." ],
+      "venue" : "Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence, (AAAI18), the 30th innovative Applications of Artificial",
+      "citeRegEx" : "Fu et al\\.,? 2018",
+      "shortCiteRegEx" : "Fu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Domain-adversarial training of neural networks",
+      "author" : [ "Yaroslav Ganin", "Evgeniya Ustinova", "Hana Ajakan", "Pascal Germain", "Hugo Larochelle", "François Laviolette", "Mario Marchand", "Victor S. Lempitsky." ],
+      "venue" : "Gabriela Csurka, editor, Domain Adaptation in Com-",
+      "citeRegEx" : "Ganin et al\\.,? 2017",
+      "shortCiteRegEx" : "Ganin et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Generative adversarial networks",
+      "author" : [ "Aaron C. Courville", "Yoshua Bengio." ],
+      "venue" : "CoRR, abs/1406.2661.",
+      "citeRegEx" : "Courville and Bengio.,? 2014",
+      "shortCiteRegEx" : "Courville and Bengio.",
+      "year" : 2014
+    }, {
+      "title" : "On calibration of modern neural networks",
+      "author" : [ "Chuan Guo", "Geoff Pleiss", "Yu Sun", "Kilian Q. Weinberger." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017, volume 70 of",
+      "citeRegEx" : "Guo et al\\.,? 2017",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Generating sentences by editing prototypes",
+      "author" : [ "Kelvin Guu", "Tatsunori B. Hashimoto", "Yonatan Oren", "Percy Liang." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 6:437–450.",
+      "citeRegEx" : "Guu et al\\.,? 2018",
+      "shortCiteRegEx" : "Guu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Ups and downs: Modeling the visual evolution of fashion trends with one-class collaborative filtering",
+      "author" : [ "Ruining He", "Julian J. McAuley." ],
+      "venue" : "Proceedings of the 25th International Conference on World Wide Web, WWW 2016, Montreal, Canada,",
+      "citeRegEx" : "He and McAuley.,? 2016",
+      "shortCiteRegEx" : "He and McAuley.",
+      "year" : 2016
+    }, {
+      "title" : "Policy-driven neural response generation for knowledge-grounded dialog systems",
+      "author" : [ "Behnam Hedayatnia", "Karthik Gopalakrishnan", "Seokhwan Kim", "Yang Liu", "Mihail Eric", "Dilek Hakkani-Tur." ],
+      "venue" : "Proceedings of the 13th International Conference",
+      "citeRegEx" : "Hedayatnia et al\\.,? 2020",
+      "shortCiteRegEx" : "Hedayatnia et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Data-efficient image recognition with contrastive predictive coding",
+      "author" : [ "Olivier Henaff." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pages 4182–4192. PMLR.",
+      "citeRegEx" : "Henaff.,? 2020",
+      "shortCiteRegEx" : "Henaff.",
+      "year" : 2020
+    }, {
+      "title" : "Deep metric learning using triplet network",
+      "author" : [ "Elad Hoffer", "Nir Ailon." ],
+      "venue" : "Similarity-Based Pattern Recognition, pages 84–92, Cham. Springer International Publishing.",
+      "citeRegEx" : "Hoffer and Ailon.,? 2015",
+      "shortCiteRegEx" : "Hoffer and Ailon.",
+      "year" : 2015
+    }, {
+      "title" : "The curious case of neural text degeneration",
+      "author" : [ "Ari Holtzman", "Jan Buys", "Maxwell Forbes", "Yejin Choi." ],
+      "venue" : "CoRR, abs/1904.09751.",
+      "citeRegEx" : "Holtzman et al\\.,? 2019",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural topic modeling with cycleconsistent adversarial training",
+      "author" : [ "Xuemeng Hu", "Rui Wang", "Deyu Zhou", "Yuxuan Xiong." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 9018–9030,",
+      "citeRegEx" : "Hu et al\\.,? 2020",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Cycle-consistent adversarial autoencoders for unsupervised text style transfer",
+      "author" : [ "Yufang Huang", "Wentao Zhu", "Deyi Xiong", "Yiye Zhang", "Changjian Hu", "Feiyu Xu." ],
+      "venue" : "Proceedings of the 28th International Conference on Computational Linguistics, pages",
+      "citeRegEx" : "Huang et al\\.,? 2020",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep learning for text style transfer: A survey",
+      "author" : [ "Di Jin", "Zhijing Jin", "Zhiting Hu", "Olga Vechtomova", "Rada Mihalcea." ],
+      "venue" : "CoRR, abs/2011.00416. 9",
+      "citeRegEx" : "Jin et al\\.,? 2020a",
+      "shortCiteRegEx" : "Jin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "2020b. Deep learning for text attribute transfer: A survey",
+      "author" : [ "Di Jin", "Zhijing Jin", "Rada Mihalcea" ],
+      "venue" : null,
+      "citeRegEx" : "Jin et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Jin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Disentangled representation learning for non-parallel text style transfer",
+      "author" : [ "Vineet John", "Lili Mou", "Hareesh Bahuleyan", "Olga Vechtomova." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages",
+      "citeRegEx" : "John et al\\.,? 2019",
+      "shortCiteRegEx" : "John et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Bag of tricks for efficient text classification",
+      "author" : [ "Armand Joulin", "Edouard Grave", "Piotr Bojanowski", "Tomas Mikolov." ],
+      "venue" : "Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics: Volume 2, Short Papers,",
+      "citeRegEx" : "Joulin et al\\.,? 2017",
+      "shortCiteRegEx" : "Joulin et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Contragan: Contrastive learning for conditional image generation",
+      "author" : [ "Minguk Kang", "Jaesik Park." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December",
+      "citeRegEx" : "Kang and Park.,? 2020",
+      "shortCiteRegEx" : "Kang and Park.",
+      "year" : 2020
+    }, {
+      "title" : "Supervised contrastive learning",
+      "author" : [ "Prannay Khosla", "Piotr Teterwak", "Chen Wang", "Aaron Sarna", "Yonglong Tian", "Phillip Isola", "Aaron Maschinot", "Ce Liu", "Dilip Krishnan." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Con-",
+      "citeRegEx" : "Khosla et al\\.,? 2020",
+      "shortCiteRegEx" : "Khosla et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Reformulating unsupervised style transfer as paraphrase generation",
+      "author" : [ "Kalpesh Krishna", "John Wieting", "Mohit Iyyer." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 737–762,",
+      "citeRegEx" : "Krishna et al\\.,? 2020",
+      "shortCiteRegEx" : "Krishna et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unsupervised machine translation using monolingual corpora",
+      "author" : [ "Guillaume Lample", "Ludovic Denoyer", "Marc’Aurelio Ranzato" ],
+      "venue" : "only. CoRR,",
+      "citeRegEx" : "Lample et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multipleattribute text rewriting",
+      "author" : [ "Guillaume Lample", "Sandeep Subramanian", "Eric Michael Smith", "Ludovic Denoyer", "Marc’Aurelio Ranzato", "Y-Lan Boureau" ],
+      "venue" : "In 7th International Conference on Learning Representations,",
+      "citeRegEx" : "Lample et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Integrating categorical semantics into unsupervised domain translation",
+      "author" : [ "Samuel Lavoie-Marchildon", "Faruk Ahmed", "Aaron C. Courville." ],
+      "venue" : "CoRR, abs/2010.01262.",
+      "citeRegEx" : "Lavoie.Marchildon et al\\.,? 2020",
+      "shortCiteRegEx" : "Lavoie.Marchildon et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Contrastive representation learning: A framework and review",
+      "author" : [ "Phuc H. Le-Khac", "Graham Healy", "Alan F. Smeaton." ],
+      "venue" : "IEEE Access, 8:193907–193934.",
+      "citeRegEx" : "Le.Khac et al\\.,? 2020",
+      "shortCiteRegEx" : "Le.Khac et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Delete, retrieve, generate: a simple approach to sentiment and style transfer",
+      "author" : [ "Juncen Li", "Robin Jia", "He He", "Percy Liang." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter",
+      "citeRegEx" : "Li et al\\.,? 2018",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Complementary auxiliary classifiers for labelconditional text generation",
+      "author" : [ "Yuan Li", "Chunyuan Li", "Yizhe Zhang", "Xiujun Li", "Guoqing Zheng", "Lawrence Carin", "Jianfeng Gao." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Content preserving text generation with attribute controls",
+      "author" : [ "Lajanugen Logeswaran", "Honglak Lee", "Samy Bengio." ],
+      "venue" : "CoRR, abs/1811.01135.",
+      "citeRegEx" : "Logeswaran et al\\.,? 2018",
+      "shortCiteRegEx" : "Logeswaran et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Plug and play autoencoders for conditional text generation",
+      "author" : [ "Florian Mai", "Nikolaos Pappas", "Ivan Montero", "Noah A. Smith", "James Henderson." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing, EMNLP",
+      "citeRegEx" : "Mai et al\\.,? 2020",
+      "shortCiteRegEx" : "Mai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Revisiting adversarial autoencoder for unsupervised word translation with cycle consistency and improved training",
+      "author" : [ "Tasnim Mohiuddin", "Shafiq Joty." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Mohiuddin and Joty.,? 2019",
+      "shortCiteRegEx" : "Mohiuddin and Joty.",
+      "year" : 2019
+    }, {
+      "title" : "Correcting length bias in neural machine translation",
+      "author" : [ "Kenton Murray", "David Chiang." ],
+      "venue" : "Proceedings of the Third Conference on Machine Translation: Research Papers, pages 212–223, Brussels, Belgium. Association for Computational Linguistics.",
+      "citeRegEx" : "Murray and Chiang.,? 2018",
+      "shortCiteRegEx" : "Murray and Chiang.",
+      "year" : 2018
+    }, {
+      "title" : "Conditional image synthesis with auxiliary classifier gans",
+      "author" : [ "Augustus Odena", "Christopher Olah", "Jonathon Shlens." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11",
+      "citeRegEx" : "Odena et al\\.,? 2017",
+      "shortCiteRegEx" : "Odena et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Style transfer through back-translation",
+      "author" : [ "Shrimai Prabhumoye", "Yulia Tsvetkov", "Ruslan Salakhutdinov", "Alan W Black." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages",
+      "citeRegEx" : "Prabhumoye et al\\.,? 2018",
+      "shortCiteRegEx" : "Prabhumoye et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dear sir or madam, may I introduce the GYAFC dataset: Corpus, benchmarks and metrics for formality style transfer",
+      "author" : [ "Sudha Rao", "Joel R. Tetreault." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computa-",
+      "citeRegEx" : "Rao and Tetreault.,? 2018",
+      "shortCiteRegEx" : "Rao and Tetreault.",
+      "year" : 2018
+    }, {
+      "title" : "Leveraging pre-trained checkpoints for sequence generation tasks",
+      "author" : [ "Sascha Rothe", "Shashi Narayan", "Aliaksei Severyn." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 8:264–280.",
+      "citeRegEx" : "Rothe et al\\.,? 2020",
+      "shortCiteRegEx" : "Rothe et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unsupervised cross-domain image generation",
+      "author" : [ "Yaniv Taigman", "Adam Polyak", "Lior Wolf." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings. OpenReview.net.",
+      "citeRegEx" : "Taigman et al\\.,? 2017",
+      "shortCiteRegEx" : "Taigman et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "What makes for good views for contrastive learning",
+      "author" : [ "Yonglong Tian", "Chen Sun", "Ben Poole", "Dilip Krishnan", "Cordelia Schmid", "Phillip Isola" ],
+      "venue" : "In Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information",
+      "citeRegEx" : "Tian et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Tian et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural network acceptability judgments",
+      "author" : [ "Alex Warstadt", "Amanpreet Singh", "Samuel R Bowman." ],
+      "venue" : "arXiv preprint arXiv:1805.12471.",
+      "citeRegEx" : "Warstadt et al\\.,? 2018",
+      "shortCiteRegEx" : "Warstadt et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Beyond BLEU:training neural machine translation with semantic similarity",
+      "author" : [ "John Wieting", "Taylor Berg-Kirkpatrick", "Kevin Gimpel", "Graham Neubig." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Wieting et al\\.,? 2019",
+      "shortCiteRegEx" : "Wieting et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Towards feature space adversarial attack",
+      "author" : [ "Qiuling Xu", "Guanhong Tao", "Siyuan Cheng", "Lin Tan", "Xiangyu Zhang." ],
+      "venue" : "CoRR, abs/2004.12385.",
+      "citeRegEx" : "Xu et al\\.,? 2020",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Text style transfer via learning style instance supported latent space",
+      "author" : [ "Xiaoyuan Yi", "Zhenghao Liu", "Wenhao Li", "Maosong Sun." ],
+      "venue" : "Proceedings of the Twenty-Ninth International Joint Conference on Artificial Intelligence, IJCAI 2020, pages 3801–3807.",
+      "citeRegEx" : "Yi et al\\.,? 2020",
+      "shortCiteRegEx" : "Yi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving zero-shot voice style transfer via disentangled representation learning",
+      "author" : [ "Siyang Yuan", "Pengyu Cheng", "Ruiyi Zhang", "Weituo Hao", "Zhe Gan", "Lawrence Carin." ],
+      "venue" : "arXiv preprint arXiv:2103.09420.",
+      "citeRegEx" : "Yuan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yuan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Adversarially regularized autoencoders",
+      "author" : [ "Junbo Zhao", "Yoon Kim", "Kelly Zhang", "Alexander Rush", "Yann LeCun." ],
+      "venue" : "Proceedings of the 35th International Conference on Machine Learning, volume 80 of Proceedings of Machine Learning Research,",
+      "citeRegEx" : "Zhao et al\\.,? 2018a",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Adversarially regularized autoencoders",
+      "author" : [ "Junbo Jake Zhao", "Yoon Kim", "Kelly Zhang", "Alexander M. Rush", "Yann LeCun." ],
+      "venue" : "Proceedings of the 35th International Conference on Machine Learning, ICML 2018, Stockholmsmässan, Stockholm, Sweden,",
+      "citeRegEx" : "Zhao et al\\.,? 2018b",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unpaired image-to-image translation using cycle-consistent adversarial networks",
+      "author" : [ "Jun-Yan Zhu", "Taesung Park", "Phillip Isola", "Alexei A. Efros." ],
+      "venue" : "IEEE International Conference on Computer Vision, ICCV 2017, Venice, Italy, October 22-29, 2017,",
+      "citeRegEx" : "Zhu et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 42,
+      "context" : "Prominent examples include translation of text between languages (Vaswani et al., 2017; Artetxe et al., 2018; Lample et al., 2017), emoji creation from human faces (Taigman et al.",
+      "startOffset" : 65,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 1,
+      "context" : "Prominent examples include translation of text between languages (Vaswani et al., 2017; Artetxe et al., 2018; Lample et al., 2017), emoji creation from human faces (Taigman et al.",
+      "startOffset" : 65,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 25,
+      "context" : "Prominent examples include translation of text between languages (Vaswani et al., 2017; Artetxe et al., 2018; Lample et al., 2017), emoji creation from human faces (Taigman et al.",
+      "startOffset" : 65,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2017), emoji creation from human faces (Taigman et al., 2017), and stylistic transfer of speech (Yuan et al.",
+      "startOffset" : 41,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 47,
+      "context" : ", 2017), and stylistic transfer of speech (Yuan et al., 2021).",
+      "startOffset" : 42,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2020b), expertise (Cao et al., 2020), formality (Rao and Tetreault, 2018) or a combination of them (Subramanian et al.",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2020), formality (Rao and Tetreault, 2018) or a combination of them (Subramanian et al.",
+      "startOffset" : 19,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 18,
+      "context" : "Text style transfer, a popular form of attribute transfer, regards “style” as any attribute that changes between datasets (Jin et al., 2020a).",
+      "startOffset" : 122,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 2,
+      "context" : "However, models built using unsupervised methods perform poorly when compared to supervised (parallel) training (Artetxe et al., 2020).",
+      "startOffset" : 112,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 40,
+      "context" : "(Taigman et al., 2017), but these issues are unexplored in NLP.",
+      "startOffset" : 0,
+      "endOffset" : 22
+    }, {
+      "referenceID" : 28,
+      "context" : "The first loss is a contrastive loss (Le-Khac et al., 2020) that brings sentences that have similar constraints closer and pushes sentences that are dissimilar farther away.",
+      "startOffset" : 37,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 35,
+      "context" : "The second loss is a classification loss that helps maintain the sentence identity via constraints from the latent vectors (Odena et al., 2017).",
+      "startOffset" : 123,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 49,
+      "context" : "We demonstrate these gains over three datasets: YELP (Zhao et al., 2018b), IMDB (Dai et al.",
+      "startOffset" : 53,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2018b), IMDB (Dai et al., 2019) and POLITICAL (Prabhumoye et al.",
+      "startOffset" : 15,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2019) and POLITICAL (Prabhumoye et al., 2018), generating six constraints including lexical, syntactic and domain-specific.",
+      "startOffset" : 22,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 49,
+      "context" : "ARAEs (Zhao et al., 2018b) are the auto-encoder variants of the Generative Adversarial Network (GAN) (Goodfellow et al.",
+      "startOffset" : 6,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 17,
+      "context" : "ARAEs have been widely adopted in tasks like unsupervised text generation (Huang et al., 2020), topic modeling (Hu et al.",
+      "startOffset" : 74,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2020), topic modeling (Hu et al., 2020), among others, and form the backbone of our proposed model.",
+      "startOffset" : 24,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 50,
+      "context" : "This is inspired from Cycle-GAN (Zhu et al., 2017), where instead of matching the noise distributionN , we match the distribution of T .",
+      "startOffset" : 32,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 1,
+      "context" : "Tying encoder weights has also been used by unsupervised machine translation (Artetxe et al., 2018; Lample et al., 2017) and multiple other works (Mai et al.",
+      "startOffset" : 77,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 25,
+      "context" : "Tying encoder weights has also been used by unsupervised machine translation (Artetxe et al., 2018; Lample et al., 2017) and multiple other works (Mai et al.",
+      "startOffset" : 77,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 14,
+      "context" : "Among many self-supervised metric losses such as Triplet Loss (Hoffer and Ailon, 2015) and NT-Xent loss (Chen et al.",
+      "startOffset" : 62,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 4,
+      "context" : "Among many self-supervised metric losses such as Triplet Loss (Hoffer and Ailon, 2015) and NT-Xent loss (Chen et al., 2020), we use one that is amenable to multiple positive instances (Khosla et al.",
+      "startOffset" : 104,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2020), we use one that is amenable to multiple positive instances (Khosla et al., 2020).",
+      "startOffset" : 68,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 22,
+      "context" : "Recently, (Kang and Park, 2020) introduced the cooperative loss in the adversarial setup where contrastive losses are added to both the critic and generator for GANs.",
+      "startOffset" : 10,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 41,
+      "context" : "Contrastive learning might be sub-optimal if we do not mine good quality positive and negative samples (Tian et al., 2020).",
+      "startOffset" : 103,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 35,
+      "context" : "Similar to ACGAN (Odena et al., 2017), we encourage the encoders and the critic to cooperatively reduce a classification loss.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 5,
+      "context" : "ii) IMDb Movie Reviews: consists of movie reviews (Dai et al., 2019) also labelled as positive or negative.",
+      "startOffset" : 50,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 37,
+      "context" : "iii) Political Slant: consists of Facebook posts from the politicians of the United States Senate and the House of Representatives (Prabhumoye et al., 2018), labeled with either democratic/republican slant.",
+      "startOffset" : 131,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 29,
+      "context" : "iii) Domain specific – number of domain-specific attributes (Li et al., 2018) (categorical up to 5).",
+      "startOffset" : 60,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 44,
+      "context" : "Automatic Evaluation: Our automatic evaluation considers the following three prominent criteria: i) Semantic Similarity (SIM): Measured between source and translated target sentences using encoders (Wieting et al., 2019), instead of n-gram metrics like BLEU (Papineni et al.",
+      "startOffset" : 198,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2019), instead of n-gram metrics like BLEU (Papineni et al., 2002) which",
+      "startOffset" : 45,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 21,
+      "context" : "We use fastText classifiers (Joulin et al., 2017) for every dataset.",
+      "startOffset" : 28,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 43,
+      "context" : "We fine-tune a RoBERTa-large model on the COLA (Warstadt et al., 2018) dataset to indicate whether a sentence is linguistically acceptable.",
+      "startOffset" : 47,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 24,
+      "context" : "Human Evaluation: We also perform an indicative human evaluation where we randomly sample 100 samples from each of the three datasets and hire three researchers to rate every sentence for FL, SIM and ACC on a 3-point scale (Krishna et al., 2020).",
+      "startOffset" : 223,
+      "endOffset" : 245
+    }, {
+      "referenceID" : 29,
+      "context" : "We compare ARAEseq2seq with the following baselines: a) DRG: The Delete, Retrieve, Generate method that deletes domain specific attributes, retrieves a template and generates the target domain text (Li et al., 2018).",
+      "startOffset" : 198,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 49,
+      "context" : "We use the stronger, entire system rather than the weaker DELETEONLY and RETRIEVEONLY baselines; b) ARAE: Adversarially regularized autoencoders our system is based on (Zhao et al., 2018b); c) ARAEseq2seq: Our model without the contrastive learning or cooperative classifier; d) ARAEseq2seq + CONTRA: Our model with the contrastive learning; e) ARAEseq2seq + CLF: Our model with the cooperative classifier; f) ARAEseq2seq+CLF+CONTRA: Our model with both the cooperative losses.",
+      "startOffset" : 168,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 17,
+      "context" : "The closest model to ours is from (Huang et al., 2020).",
+      "startOffset" : 34,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 27,
+      "context" : "Although cooperative loss reduction aims to satisfy the constraints between two domains, our results show that further regularization of the latent space not only brings advantages in satisfying the constraints but also improves performance (Lavoie-Marchildon et al., 2020).",
+      "startOffset" : 241,
+      "endOffset" : 273
+    }, {
+      "referenceID" : 10,
+      "context" : "The reasons for this could be two-fold: i) since we mine positive sentences from a corpus that is grounded in real world events, most lexically-similar sentences may also be semantically similar (Guu et al., 2018), and ii) since we tie the encoders from the source and target domain, we extract domain-agnostic information before generation, which retains content.",
+      "startOffset" : 195,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 15,
+      "context" : "We also experiment with nucleus sampling (Holtzman et al., 2019) with different p values, as in Table 1, which does produce more diversity, increasing ACC as expected.",
+      "startOffset" : 41,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 23,
+      "context" : "5) have a significant effect on the overall performance (Khosla et al., 2020; Chen et al., 2020; Henaff, 2020).",
+      "startOffset" : 56,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 4,
+      "context" : "5) have a significant effect on the overall performance (Khosla et al., 2020; Chen et al., 2020; Henaff, 2020).",
+      "startOffset" : 56,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 13,
+      "context" : "5) have a significant effect on the overall performance (Khosla et al., 2020; Chen et al., 2020; Henaff, 2020).",
+      "startOffset" : 56,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 23,
+      "context" : "Although increasing the number of negatives is beneficial for contrastive learning, when more than one positive example is available, making use of them brings further improvements (Khosla et al., 2020).",
+      "startOffset" : 181,
+      "endOffset" : 202
+    }, {
+      "referenceID" : 34,
+      "context" : "However, seq2seq systems have a difficulty of maintaining appropriate lengths (Murray and Chiang, 2018).",
+      "startOffset" : 78,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 26,
+      "context" : "Multiple Attribute Datasets: To test whether our model can satisfy constraints across domains where multiple attributes change, we use the multi-attribute dataset released by (Lample et al., 2019).",
+      "startOffset" : 175,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 33,
+      "context" : "Cycle Consistency Loss: a) In Latent Spaces Cycle consistency in latent spaces has been shown to improve word level tasks, such as cross lingual dictionary construction (Mohiuddin and Joty, 2019) and topic modeling (Hu et al.",
+      "startOffset" : 169,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 16,
+      "context" : "Cycle Consistency Loss: a) In Latent Spaces Cycle consistency in latent spaces has been shown to improve word level tasks, such as cross lingual dictionary construction (Mohiuddin and Joty, 2019) and topic modeling (Hu et al., 2020).",
+      "startOffset" : 215,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 17,
+      "context" : "A recent work from (Huang et al., 2020) claims to improve unsuper-",
+      "startOffset" : 19,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 37,
+      "context" : "b) Using Back-TranslationBack-translation is another alternative to ensure semantic consistency between source and the target sentence (Prabhumoye et al., 2018; Artetxe et al., 2018; Lample et al., 2017).",
+      "startOffset" : 135,
+      "endOffset" : 203
+    }, {
+      "referenceID" : 1,
+      "context" : "b) Using Back-TranslationBack-translation is another alternative to ensure semantic consistency between source and the target sentence (Prabhumoye et al., 2018; Artetxe et al., 2018; Lample et al., 2017).",
+      "startOffset" : 135,
+      "endOffset" : 203
+    }, {
+      "referenceID" : 25,
+      "context" : "b) Using Back-TranslationBack-translation is another alternative to ensure semantic consistency between source and the target sentence (Prabhumoye et al., 2018; Artetxe et al., 2018; Lample et al., 2017).",
+      "startOffset" : 135,
+      "endOffset" : 203
+    }, {
+      "referenceID" : 39,
+      "context" : "Using Transformers: We also replace our LSTM auto-encoders with both pre-trained and randomly initialized transformer encoder–decoders (Rothe et al., 2020).",
+      "startOffset" : 135,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 7,
+      "context" : "Domain Adversarial Neural Network (DANN) (Ganin et al., 2017) is an unsupervised domain adaptation method that improves performance of an endtask (e.",
+      "startOffset" : 41,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 11,
+      "context" : "We train DANN for sentiment analysis on amazon reviews dataset (He and McAuley, 2016) with DVD as source and ELECTRONICS as the target domain – achieving an accuracy of 83.",
+      "startOffset" : 63,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 45,
+      "context" : "Similar ideas have been tried for image style transfer (Xu et al., 2020), but needs more investigation in text attribute transfer.",
+      "startOffset" : 55,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 18,
+      "context" : "Text attribute transfer has a vast literature (Jin et al., 2020a) with deep learning methods becoming popular.",
+      "startOffset" : 46,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 38,
+      "context" : "Supervised methods repurpose Sequence to Sequence models used in machine translation to achieve the goals (Rao and Tetreault, 2018).",
+      "startOffset" : 106,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 37,
+      "context" : "Cycle consistency losses – imposing that reconstruction from the target style sentence should resemble the source sentence – is the most prevalent (Prabhumoye et al., 2018; Logeswaran et al., 2018; Dai et al., 2019; Huang et al., 2020; Yi et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 252
+    }, {
+      "referenceID" : 31,
+      "context" : "Cycle consistency losses – imposing that reconstruction from the target style sentence should resemble the source sentence – is the most prevalent (Prabhumoye et al., 2018; Logeswaran et al., 2018; Dai et al., 2019; Huang et al., 2020; Yi et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 252
+    }, {
+      "referenceID" : 5,
+      "context" : "Cycle consistency losses – imposing that reconstruction from the target style sentence should resemble the source sentence – is the most prevalent (Prabhumoye et al., 2018; Logeswaran et al., 2018; Dai et al., 2019; Huang et al., 2020; Yi et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 252
+    }, {
+      "referenceID" : 17,
+      "context" : "Cycle consistency losses – imposing that reconstruction from the target style sentence should resemble the source sentence – is the most prevalent (Prabhumoye et al., 2018; Logeswaran et al., 2018; Dai et al., 2019; Huang et al., 2020; Yi et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 252
+    }, {
+      "referenceID" : 46,
+      "context" : "Cycle consistency losses – imposing that reconstruction from the target style sentence should resemble the source sentence – is the most prevalent (Prabhumoye et al., 2018; Logeswaran et al., 2018; Dai et al., 2019; Huang et al., 2020; Yi et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 252
+    }, {
+      "referenceID" : 5,
+      "context" : "Recent works that use transformers for style transfer also have adopted this (Dai et al., 2019; Krishna et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 24,
+      "context" : "Recent works that use transformers for style transfer also have adopted this (Dai et al., 2019; Krishna et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 117
+    } ],
+    "year" : 0,
+    "abstractText" : "Automatic transfer of text between domains has become popular in recent times. One of its aims is to preserve the semantic content while adapting to the target domain. However, it does not explicitly maintain other attributes between the source and translated text: e.g., text length and descriptiveness. Maintaining constraints in transfer has several downstream applications, including data augmentation and debiasing. We introduce a method for such constrained unsupervised text style transfer by introducing two complementary losses to the generative adversarial network (GAN) family of models. Unlike the competing losses used in GANs, we introduce cooperative losses where the discriminator and the generator cooperate and reduce the same loss. The first is a contrastive loss and the second is a classification loss — aiming to regularize the latent space further and bring similar sentences across domains closer together. We demonstrate that such training retains lexical, syntactic, and domain-specific constraints between domains for multiple benchmark datasets, including ones where more than one attribute change. We show that the complementary cooperative losses improve text quality, according to both automated and human evaluation measures.",
+    "creator" : null
+  }
+}

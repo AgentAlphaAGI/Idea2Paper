@@ -1,0 +1,482 @@
+{
+  "name" : "ARR_2022_52_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Bridging the Generalization Gap in Text-to-SQL Parsing with Schema Expansion",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Text-to-SQL parsing is the task of translating natural language questions over provided tables to SQL queries which can be executed to produce answers. In recent years, with the availability of large-scale datasets (e.g., Zhong et al., 2017; Yu et al., 2018), neural semantic parsers have witnessed significant success on this task. However, recent work (Suhr et al., 2020; Lee et al., 2021) has suggested that these state-of-the-art parsers are far from successful in terms of out-of-domain generalization in real scenarios, where users may ask ques-\ntions related to potentially very large tables with the goal of improving their productivity (e.g., while they are viewing or editing a large Excel spreadsheet). In such scenarios, it is common to encounter tables specific to new domains that were never encountered before while training a parser. Perhaps the most challenging aspect of domain generalization is that models need to understand domain-specific phrases that they have not seen before, and translate them into logical form segments that involve references to table elements (e.g., column names or aggregation operations over columns). This is mainly because of two kinds of abstract operations, shown in Figure 1, that are challenging for new domains:\n1. Column Matching: The task of mapping natural language phrases to the most relevant columns (e.g., mapping “Income” to the \"Wages\" column). This can be challenging because some mappings may be implicit or may require domain knowledge. 2. Column Operations: The task of mapping natural language phrases to composite expressions over table columns. For example, in Figure 1, we need to map income to just \"Wages\" for one table, and to \"Salary\" + \"Stock\" for another table. Similarly, consider the \"Term\" column in Figure 2. Some questions may ask about the term duration\nwhile others may ask about the term start. Each of these questions requires mapping the corresponding phrase to an expression that refers to this column (e.g., \"Term\". 2 - \"Term\". 1 for the former and \"Term\". 1 for the latter).\nWhile recent approaches rely on pre-trained language models (e.g., Yin et al., 2020; Deng et al., 2021) for addressing the column matching challenge, column operations remain relatively unexplored due to the lack of evaluation benchmarks.\nTo this end, we first propose two new benchmarks: a synthetic dataset and a train/test repartitioning of the SQUALL dataset (Shi et al., 2020); both capable of quantifying out-of-domain generalization on column operations. We then show that existing neural parsers underperform on both benchmarks, because they require an impractically large amount of in-domain training data— which is not available in our setting—to effectively “memorize” mappings from natural language phrases to program fragments. Finally, we propose a new method for making any existing text-to-SQL parsers aware of prior information that may be available about the domains of interest. Specifically, we propose two new components: schema expansion and schema pruning.\nSchema expansion uses heuristics to expand columns into sets of derived columns based solely on their types (all schemas are assumed to be typed which tends to be true for both relational databases and Excel spreadsheets in practice; Excel uses a built-in type inference mechanism). Relying on generic types enables this method to apply to new domains, as long as they make use of similar underlying types. This process allows us to transform complex program fragments (e.g., \"Term\". 2 - \"Term\". 1) into simpler ones (e.g., \"Term Duration\") that are better aligned with the natural language questions, thus making the underlying parser’s job easier.\nWhile schema expansion may result in a large number of unnecessary expanded columns, schema pruning then prunes the set of relevant columns that final parser is allowed to look at, based on both the questions and the expanded schemas.\nOur experiments show that schema expansion and schema pruning can boost the underlying parsers’ performance by up to 13.8% relative accuracy (5.1% absolute) on the new SQUALL data split. Furthermore, they also boost performance over the original SQUALL data splits by up to 4.2% relative (1.9% absolute). One of our main goals in this paper is to put attention on the difficult problem of domain generalization by providing a new evaluation benchmark, as well as an initial direction for solving this problem."
+    }, {
+      "heading" : "2 Background",
+      "text" : "Task. Semantic parsing has been widely studied in the context of multiple other tasks like instruction following (Chen and Mooney, 2011; Artzi and Zettlemoyer, 2013), code generation (Oda et al., 2015; Iyer et al., 2018), knowledge graph question answering (Berant et al., 2013; Yih et al., 2015), etc. We focus on using tables as the context in which semantic parsing is performed, where the goal is to translate pairs of natural language questions and tables to executable SQL queries, also known as text-to-SQL parsing (Androutsopoulos et al., 1995; Minock et al., 2008). Note that, while we focus on questions in the English language, there exists prior work on multilingual semantic parsing as well (Jie and Lu, 2014; Sherborne et al., 2020) and the contributions of our work also apply there. Formally, our goal is to map a pair (q, T ), where q is a natural language question and T is a table, to an executable program π that, when executed against table T , will produce the answer α to question q. We focus on the fully-supervised set-\nting where the target executable program π∗ is provided as supervision for training our parser.\nOut-of-Domain Generalization. Generalization in machine learning is often defined as the ability to do well on a test set after learning from a training set, where all examples in both sets are drawn independently from the same distribution (i.i.d. generalization). However, as Gu et al. (2021) argue, in real-world applications such as semantic parsing, the test data may involve new compositional structures (compositional generalization), or new domains (domain generalization) that are not encountered during training. Existing work in compositional generalization for semantic parsing has focused on using synthetic datasets (e.g., Keysers et al., 2020; Lake and Baroni, 2018), or repartitioning existing text-to-SQL datasets into new train and test splits (e.g., Finegan-Dollak et al., 2018). Both approaches have generally shown that compositional generalization remains an important challenge (e.g., Shaw et al., 2021). We focus on the arguably even more challenging domain generalization problem, also known as domain adaptation, where entire domains may never be encountered during training or may only be encountered a small number of times (Motiian et al., 2017). Even though this problem has been studied extensively in the context of classification (Daumé III and Marcu, 2006), machine translation (Daumé III and Jagarlamudi, 2011), and question answering (Talmor and Berant, 2019), it remains underexplored for semantic parsing. However, to be applicable in real scenarios, semantic parsers should be able to generalize to new domains, since collecting domain-specific labeled data is often prohibitively expensive. Recent approaches have focused on data synthesis (Yin et al., 2021), meta-learning (Wang et al., 2021), relation-aware schema encoding (Wang et al., 2020), and encoder pre-training (Yin et al., 2020; Herzig et al., 2020; Yu et al., 2020; Deng et al., 2021). In this paper, we hone in on one aspect of domain generalization that we shall broadly refer to as column operations and which was introduced in §1 and illustrated in Figure 1.\nEvaluation Benchmarks. Text-to-SQL parsing became popular after the introduction of large-scale datasets and evaluation benchmarks. Zhong et al. (2017) first introduced WIKISQL, which contains Wikipedia tables paired with questions and annotated with SQL queries, albeit the queries are generated from a limited set of templates. SPIDER was introduced by Yu et al. (2018) the following year. It contains more complex questions and SQL queries and focuses on generalizing to previously unseen database schemas, but the dataset has the artifact from its annotation design that the references columns are often mentioned verbatim in the natural language questions. Deng et al. (2021) attempt to address this limitation by repartitioning SPIDER to produce a more realistic benchmark, and Lee et al. (2021) propose a challenging test set from Kaggle for evaluating parsers trained on SPIDER dataset. However, as Suhr et al. (2020) point out, SPIDER uses a simplified\nsetting which excludes examples that involve multiple columns (e.g., adding two columns together), as well as ones that require background knowledge. These benchmarks are thus limited in their usefulness for evaluating parsers in real-world settings where they may encounter complex questions that require mapping specific phrases to expressions over table columns, rather than to a single column. Also, while both WIKISQL and SPIDER assume “simple” tables with only String- or Number-valued columns, in practice we may encounter tables where the columns themselves may have structured types (e.g., TimeSpan). For example, consider the table shown on the top left of Figure 2. In this case, the \"Term\" column is of type TimeSpan and consists of two Numbers that represent the beginning and the end of the timespan. In this case, users may ask questions that require constructing expressions to access nested elements from the \"Term\" column (e.g., “How long was Pier’s term?”). Recently, Shi et al. (2020) introduced SQUALL, a dataset that annotates WIKITABLEQUESTIONS (Pasupat and Liang, 2015) with SQL queries and refined column types like Date, Score, (T1, T2), and List[T]. However, SQUALL distributes tables evenly between the train and test splits, thus not allowing us to evaluate the kind of out-of-domain generalization we are interested in. Therefore as we will show in the following section, we aim to addresses this limitation by repartitioning SQUALL into new train and test splits. Neural Text-to-SQL Parsers. Neural encoder-decoder models have recently gained popularity for text-to-SQL parsing (e.g., Xu et al., 2017). We focus on two models that represent the current state-of-the-art for SQUALL and SPIDER, respectively: SEQ2SEQ of Shi et al. (2020) and SMBOP of Rubin and Berant (2021). Both models concatenate the question with a textual representation of the table schema, separated by a special [SEP] token, and feed the combined sequence to a pre-trained instance of the BERT (Devlin et al., 2019) language model. The activations of the last layer represent the encoded representations of the question and the table schema. SEQ2SEQ then uses a autoregressive decoder, which represents programs as token sequences and at each decoding step it: (1) predicts the next token type (i.e., whether the next token is a SQL keyword, a column name, or a literal value), and (2) predicts the token conditioned on its type. SMBOP, on the other hand, uses bottom-up decoding, which represents programs as abstract syntax trees and constructs these trees in a bottom-up fashion (i.e., it starts by predicting the leave nodes and then recursively composes generated sub-trees into new trees and ranks them, in a way that resembles beam search), until it reaches the tree root. We refer the reader to the aforementioned papers for details."
+    }, {
+      "heading" : "3 Proposed Evaluation Benchmarks",
+      "text" : "Our goal is to design an evaluation benchmark that has the following out-of-domain generalization properties: (i) the training data involves a different set of domains\nthan the test data, (ii) the questions and tables that appear in the train and test data are non-overlapping, not only in terms of the domains they belong to, but also in terms of the program fragments that they contain, and (iii) To simulate the more challenging setting that often encountered in real applications, the test data is biased to contain more examples that involve both nested column access operations, like getting the start of a \"term\" in Figure 2, as well as composite column expressions, like getting the duration of a \"term\". To this end, we propose a new synthetic dataset and a repartitioning of the SQUALL dataset into new train/test splits."
+    }, {
+      "heading" : "3.1 Synthetic Dataset",
+      "text" : "We consider three fictional domains inspired by common uses of tables: finance, sports, and science. We explain our synthetic dataset generation process through a running example as follows:\n1. For each domain, we declare a set of formulas that relate different quantities (e.g., \"Income\" = \"Salary\" + \"Stock\"). The primitives used in these formulas define the set of available columns. 2. For each column we declare a set of noun phrases that can be used to refer to it (e.g., “wages” for \"Income\", and “base salary” for “salary”). And we define the SQL query template that shall be used for all programs: SELECT <column> FROM t WHERE \"Year\" = <year>, and a question template What was <column> in <year>? Note that the \"Year\" column is special and is included in all examples of this synthetic dataset. 3. We first sample a formula, and a variable from that formula (e.g., sample \"Income\" from formula \"Income\" = \"Salary\" + \"Stock\" ). We then generate a question asking for this variable, randomly replacing the variable with a noun phrase in the corresponding referring set, and randomly generate a year value (e.g., use “wages” to replace “income” and generate a question “What was [wages] in [2011]?”). 4. To generate the target program π∗, we randomly drop a variable from the sampled formula in step 3. If the asked value corresponds to this variable, we transform its reference in the SQL query so that it is expressed as a function of the columns that are kept (e.g., \"Salary\" + \"Stock\"), otherwise we use the column name (e.g., \"Income\"). 5. To generate a table schema we first add a \"Year\" column and two of the columns that were not sampled from the formula (e.g., \"Salary\" and \"Stock\"). We then sample k other columns and add them to schema (k = 15 in our experiments) as distractor columns. Note that we do not generate full tables for this synthetic dataset since we do not evaluate on table cell selections.\nWe construct benchmark datasets by first generating 1,000 examples per domain and then iterating over the\ndomains and keeping the data generated for the current domain as our test data, while using the data of the remaining two domains for training. This results in three datasets, each with 2,000 train examples and 1,000 test examples. More details on the declarations for our domains can be found in Appendix A.1."
+    }, {
+      "heading" : "3.2 SQUALL Repartitioning",
+      "text" : "Aside from the synthetic dataset we also propose to repartition SQUALL into new train and test data splits, with a focus on the aforementioned out-of-domain generalization properties. The original splits for SQUALL were produced by uniformly sampling 20% of the tables to produce the test set and using the remaining 80% as the train set. This process was repeated 5 times and the evaluation metric results were averaged over the results obtained for each repetition. This resulted in similar tables being included in both the train and test sets (e.g., tables referring to two different basketball matches, but having identical schemas), and few examples in the test set required column operations. In order to avoid this, we propose the following algorithm for automatically constructing data splits focused on out-of-domain generalization on column operations:\n1. Collect the table schemas used across all examples in the train and dev splits of the dataset (there are about 1,600 schemas; note that the test set is not annotated with SQL queries). 2. Construct a graph by treating each schema as a node, and adding an edge for each pair of schemas that share more than 33% of their columns. 3. Find all the connected components of the graph. Each defines a cluster of table schemas. 4. Each table has a set of SQL queries associated with it: one for each example that uses this table. For each query we check if it is a SELECT of a single column or if it is a SELECT that involves column operations such as field accessors or arithmetic operations. We associate each cluster with the number of queries that involve such column operations. 5. We sort the clusters based on this number, in decreasing order, and then use the first 20% as the test set and the remaining as the train set. Note that adding a cluster to the train/test set is equivalent to adding all examples that use tables included in this cluster. This step will result in disproportionally\nmore column operations being used in our test set than the train set, which means the model will need to learn to generalize well in this setting to do well in this dataset.\nIn the following sections we pay special attention to four data subcategories that are representative of the out-of-domain generalization setting for SQUALL:\n– Score Expressions: Represents SQL queries that include expressions over columns of type Score (e.g., a query selecting the score difference for a basketball game). – Score Accessors: Represents SQL queries that include field accessors for columns of type Score (e.g., a column with the results of a basketball game, like “89-72”, and a query that requires accessing the first element of this score; i.e., “89”). – Date Expressions: Similar to Score expressions except using the Date and TimeSpan type (e.g., a query asking for the duration of a presidency term). – Date Accessors: Similar to Score Accessors, except using the Date and TimeSpan type (e.g., a query asking for the start of a term).\nWe shall refer to these categories when reporting experimental results in §5. We provide statistics for the resulting dataset in Table 1."
+    }, {
+      "heading" : "4 Proposed Method",
+      "text" : "In this section we propose a simple approach for tackling this specific out-of-domain generalization problem that ought to serve as evidence that it is a real problem and that it is solvable, as well as a reference point for evaluating future approaches. Our approach consists of two new components that can be used in combination with any existing text-to-SQL parser: schema expansion and schema pruning. These components interact with the parser by preprocessing the table that is fed to it as input. This is illustrated in Figure 2.\nAs discussed in §1, there are two kinds of challenges related to out-of-domain generalization in text-to-SQL parsing, column matching and column operations, with the latter being more challenging. The goal of schema expansion is to reduce column operations to column matching, by adding synthetic columns to the table schema, which correspond to expressions or accessors over existing columns (e.g., it may add a column that represents the sum of two columns). This is based on the intuition that learning (or rather memorizing) the ways in which different types of columns can be composed together requires a large amount of in-domain training data. Instead, we propose to inject prior knowledge as to what kind of symbolic operations are possible based solely on the column types in a schema. This reduces column operations to column matching by effectively bringing the target programs closer to their surface form in the natural language question (e.g., \"Income\" can now map to a synthetic column that corresponds to the\nsum of \"Salary\" and \"Stock\", instead of having the parser produce the sum expression directly). Since our expansion is based on column types, we argue that it’s reasonable to assume that all schemas are typed and our expansion could be applied to any new domain. It’s also worth noting that even though our templates may not cover all cases, 1 when applying to new domains, developers can declare a few templates of their interest and apply schema expansion on these templates, which is a more cost-effective way compared with collecting large in-domain training data to train the parser.\nNaturally, having a component that expands the table schema means that we may end up with large schemas that the parser has to deal with, which will often involve a lot of irrelevant columns (partially because the schema expansion component does not peek at the question). This can result in increased latency which is not desirable in real-world systems. To this end, we introduce a schema pruning component which looks at both the expanded table schema and the question and decides which columns to prune before invoking the parser. It can be argued that this pruning is as hard as parsing itself, but there is evidence from other areas that it can indeed be helpful (e.g., vocabulary selection; Chen et al., 2019; Xu et al., 2021). As we shall show schema pruning can actually provide an additional boost in accuracy, depending on architecture of the underlying parser."
+    }, {
+      "heading" : "4.1 Schema Expansion",
+      "text" : "A domain developer first declares a set of templates that specify the ways in which different column types can interact (e.g., it specifies that given a typed TimeSpan column that contains two subfields, 1 and 2, the expression TimeSpan. 2 - TimeSpan. 1 can be constructed that represents a duration), and the names for each such interaction (e.g., \"Duration\").2 The schema expansion component receives as input this set of templates along with the table schema and returns an expanded schema that includes additional columns generated by using all applicable templates. For our SQUALL experiments, we declared the templates shown in Table 2. Although these templates are somewhat tailored to this dataset, our main goal is to show that there is considerable room for improvement in this challenging generalization scenario, and that even a very simple approach requiring minimal manual effort can result in significant boosts."
+    }, {
+      "heading" : "4.2 Schema Pruning",
+      "text" : "We propose a simple schema pruning approach that is inspired by vocabulary selection methods in machine translation. Let us denote the input question by q and the input column names after expansion by c1, . . . , cM . We concatenate the question and the column names as [CLS] q [SEP] c1 [SEP] ... [SEP]\n1An interesting future work is to automatically expand schema using large pre-trained language models\n2Having a name that accurately represents the meaning of column operation results is desired, as semantic parser is sensitive to column names for column matching.\ncM [SEP] and feed the resulting sequence to a BERT encoder (Devlin et al., 2019). We then define the embedding of each column, ci, as the final-layer representation of the last token of that column’s name. Finally, we define the probability that a column should be kept as pi = Softmax (MLP(ci)). We train this model based on whether each column is used in the corresponding SQL program. At inference time, we need to choose a threshold on the predicted probabilities for deciding whether to prune a column or not. We assume a transductive setting and choose this threshold such that the ratio of pruned columns over the test set equals to the ratio of pruned columns over the train set plus a constant hyperparameter to account for fact that accuracy will likely be lower for the test set than the train set. Note that assuming a transductive setting is fine because in a realworld system we could be tuning this threshold based on the last t requests made to the model. While this is not equivalent, assuming a large enough t, we should be able to adapt this threshold using the same approach. Negative Column Sampling. As is evident from Figure 2, we also introduce a negative column sampling component. This is because we train our pruning model on the same data that we use to train the underlying parser (aside from the modified table schemas) and thus the pruning model can become good at pruning all irrelevant columns over this dataset. This will result in the underlying parser being unable to handle situations where irrelevant columns are left in by the pruning model. To this end, during training we introduce some irrelevant columns (i.e., negative column sampling) to improve the robustness of the underlying parser. We found that making sure to always include at least 3 columns in the schemas was sufficient and equivalent to randomly sampling 1 or 2 additional columns for each training example, and so that is what we did in our experiments."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : "We performed experiments on the two proposed benchmarks (as well as the existing version of the SQUALL benchmark), using the two current state-of-the-art parser\narchitectures presented in §2 in combination with our proposed schema expansion and pruning components.3"
+    }, {
+      "heading" : "5.1 Experimental Setup",
+      "text" : "As described in §3, our synthetic benchmark consists of three domains, finance, sports and science. We repeat our experiments once for each domain. For each repetition we test on one of the domains, while training on the other two. For SQUALL, we present results on our repartitioned split from §3.2. For both datasets, we also include results for three i.i.d. splits. In each experiment, we compare four different configurations for the parsers: (1) Base: the underlying parser (i.e., SEQ2SEQ or SMBOP), (2) Base + P: Base while also using our schema pruning component, (3) Base + E: Base while also using our schema expansion component, and (4) Base + P + E: Base while also using both of our schema expansion and pruning components. We repeat each experiment 3 times using different random seeds and report mean exact match accuracy (i.e., fraction of examples where the predicted SQL queries exactly match the gold queries), and standard error for this mean.4"
+    }, {
+      "heading" : "5.2 Results",
+      "text" : "Synthetic Benchmark Results. Our results for this benchmark are presented in the top part of Table 3. A first observation is that performance on the i.i.d. split for the baseline parsers is significantly better than on the domain-based splits. Interestingly, our expansion and pruning components still provide a significant boost over baseline performance in this setting (up to 43.7%\n3Our evaluation benchmarks along with code for reproducing our experiments are available at http://anonymous.\n4For SQUALL researchers often also report execution accuracy, which measures the fraction of examples for which executing the predicted SQL queries results in the correct answer to the input question. However, we found that for 7% of the examples that are representative of out-of-domain generalization, executing the gold SQL queries does not yield the correct answer (e.g., in cases where the correct answer is a sub-string of a cell value). Therefore we chose to only report exact match accuracy in our experiments.\nabsolute accuracy / 83.2% relative). However, the baseline parsers are practically unusable in the domain-based splits. In this case, our approach provides a very significant accuracy boost, rendering them useful (up to 55.0% absolute / 327.4% relative).\nSQUALL Benchmark Results. Our results for this benchmark are presented in the bottom part of Table 3. Similar to the synthetic benchmark, we observe that both parsers perform reasonably well on the i.i.d. split, but significantly underperform in our repartitioned benchmark. This is consistent with earlier observations by Suhr et al. (2020) and Lee et al. (2021). Furthermore, we observe that our expansion component helps boost the accuracy of both parsers significantly (up to 5.1% absolute / 13.8% relative) and the pruning component provides some small further improvements on top of that. However, we notice that the pruning component is not as helpful for SMBOP as it is for SEQ2SEQ, which we provide detailed analysis in §5.4. Drilling down a bit further, we observe that most gains are due to the data categories we defined in §3.2. Perhaps most importantly, we get a 47.0% absolute accuracy gain (1,468.8% relative) for SMBOP on the “Date Expressions” category alone. This can be largely attributed to our schema expansion component, where by incorporating prior domain knowledge we are effectively reducing the original column operations problem to a column matching problem, which is significantly easier. As a result, we get significant improvements on both “Expression” data categories. We do not observe the same for “Accessor” categories, which we address in the following section."
+    }, {
+      "heading" : "5.3 When is Schema Expansion Helpful?",
+      "text" : "From Table 3, schema expansion does not seem to help much for “Accessor” expressions (i.e., Base + P performs as well as or slightly better than Base + E + P on those categories). In order to further understand the contribution of schema expansion, we conducted an ablation study where we compare the proposed Base + P + E with three more approaches: (1) E Expressions: the schema expansion component only uses “Expression” templates, (2) E Accessors: the schema expansion com-\nponent only uses “Accessor” templates, (3) P Oracle: the schema pruning model is replaced with an oracle model that always only keeps the columns that are used in the gold SQL queries (so the parser only has to figure out how to use them, rather than also figuring out which ones to use). Note that (3) will be discussed in the following section. We present the results for this ablation study in Table 4. We observe that expanding “Expressions” but not “Accessors” boosts performance on the “Expressions” categories, and similarly for “Accessors”. More importantly though we see that using either one alone performs worse than using both types of expansion, indicating that they both provide value and that they work well together."
+    }, {
+      "heading" : "5.4 When is Schema Pruning Helpful?",
+      "text" : "It is evident from Table 3 that schema pruning is useful both on its own (i.e., Base + P), but also on top of schema expansion (i.e., Base + E + P). For SMBOP, we observe that Base + P is more or less on par with Base. Though this may seem inconsistent with the SEQ2SEQ results at first, it is not actually surprising because SMBOP keeps the most relevant columns in the beam during bottom-up decoding, and thus it is implicitly already using a schema pruning component. Furthermore, we observe that schema pruning is especially useful on top of schema expansion for the column operation data categories (“Expressions” and “Accessors”). This is because in the corresponding examples we end up with a significantly larger number of expanded columns that labeled as negatives when training the pruning model. Schema pruning then filters most of these irrelevant columns before training the underlying parser, resulting in a more robust training procedure. Finally, in Table 4 we observe that P Oracle performs really well, indicating that investing in a good schema pruning model would be meaningful for improving generalization performance.\nSchema Pruning Decision Threshold. As discussed in §4, the proposed schema pruning component requires setting a decision threshold hyperparameter. We already described the way we do this in §4, but it is also worth analyzing the impact of this decision on the overall\nparser accuracy. This is because, intuitively we expect that too aggressive pruning will likely cause cascading errors, while too conservative pruning would not be very effective and end up being equivalent to not using any pruning at all. To this end, we conducted a study for how the parser accuracy varies as a function of the schema pruning model hyperparameter which was discussed in §4. We performed this experiment using the SEQ2SEQ model which is more affected by the pruning component, over our repartitioned SQUALL benchmark. The results are shown in Figure 3. It is evident that aggressive pruning has a more significant negative impact on accuracy then conservative pruning."
+    }, {
+      "heading" : "5.5 Limitations",
+      "text" : "The proposed method is of course not without any limitations and in this section we would like to put attention on some of them. While schema expansion does help significantly when tackling out-of-domain generalization on column operations, there are a lot of cases that it cannot directly handle as currently designed. For example, consider the question-table pair shown in Figure 4. In this case the original table contains a \"Score\" column and a \"Result\" column. The interpretation of these columns is very domain-specific and in this case, \"Score\" refers to the score in a game right before the player of that row scored a goal, while \"Result\" refers to the final score of the game. Our schema expansion component cannot help with resolving distinctions of this kind. Arguably, one might say this is a challenge inherently related to column matching, but putting details aside, our approach coupled with the proposed benchmarks does help show that column operations pose a sig-\nnificant challenge for existing text-to-SQL parsers, and this paper provides a reference point that future work can build upon. Also, note that while constructing expansion templates requires some effort and may initially seem like a limitation of our approach, we have shown that this effort can be small relative to the amount of training data that would need to be annotated otherwise."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper we introduced and focused on column operations, an important challenge related to out-of-domain generalization for Text-to-SQL parsing. We proposed two new evaluation benchmarks—one based on a new synthetic dataset and one based on a repartitioning of the SQUALL dataset—and showed that current stateof-the-art parsers significantly underperform when it comes to this form of generalization. We then proposed a simple way to incorporate prior domain knowledge to the parser via a new component called schema expansion that allows us to reduce the column operations challenge to column matching; an arguably easier challenge. We also introduced a schema pruning component allowing us to scale schema expansion, and showed that when paired together, these two components can boost the performance of arbitrary underlying Text-to-SQL parsers by a significant amount (up to 13.8% relative accuracy gain / 5.1% absolute in our experiments). We hope that this work puts attention on this important challenge and provides a reference point for future work to build upon. Possible directions include making the schema expansion component learnable or prompting models like GPT-3 (Brown et al., 2020) to address it."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Synthetic Dataset Table 5 presents all formulas used to constructing synthetic benchmarks. To evaluate out-of-domain generalization, we ensure formulas in each domain do not overlap with other domains."
+    } ],
+    "references" : [ {
+      "title" : "Natural language interfaces to databases–an introduction",
+      "author" : [ "Ion Androutsopoulos", "Graeme D Ritchie", "Peter Thanisch." ],
+      "venue" : "Natural language engineering.",
+      "citeRegEx" : "Androutsopoulos et al\\.,? 1995",
+      "shortCiteRegEx" : "Androutsopoulos et al\\.",
+      "year" : 1995
+    }, {
+      "title" : "Weakly supervised learning of semantic parsers for mapping instructions to actions",
+      "author" : [ "Yoav Artzi", "Luke Zettlemoyer." ],
+      "venue" : "Transactions of the Association for Computational Linguistics.",
+      "citeRegEx" : "Artzi and Zettlemoyer.,? 2013",
+      "shortCiteRegEx" : "Artzi and Zettlemoyer.",
+      "year" : 2013
+    }, {
+      "title" : "Semantic parsing on freebase from question-answer pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "Proceedings of Empirical Methods in Natural Language Processing.",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Learning to interpret natural language navigation instructions from observations",
+      "author" : [ "David Chen", "Raymond Mooney." ],
+      "venue" : "Proceedings of the Association for the Advancement of Artificial Intelligence.",
+      "citeRegEx" : "Chen and Mooney.,? 2011",
+      "shortCiteRegEx" : "Chen and Mooney.",
+      "year" : 2011
+    }, {
+      "title" : "How large a vocabulary does text classification need? a variational approach to vocabulary selection",
+      "author" : [ "Wenhu Chen", "Yu Su", "Yilin Shen", "Zhiyu Chen", "Xifeng Yan", "William Yang Wang." ],
+      "venue" : "Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Chen et al\\.,? 2019",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Domain adaptation for machine translation by mining unseen words",
+      "author" : [ "Hal Daumé III", "Jagadeesh Jagarlamudi." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "III and Jagarlamudi.,? 2011",
+      "shortCiteRegEx" : "III and Jagarlamudi.",
+      "year" : 2011
+    }, {
+      "title" : "Domain adaptation for statistical classifiers",
+      "author" : [ "Hal Daumé III", "Daniel Marcu." ],
+      "venue" : "Journal of artificial Intelligence research.",
+      "citeRegEx" : "III and Marcu.,? 2006",
+      "shortCiteRegEx" : "III and Marcu.",
+      "year" : 2006
+    }, {
+      "title" : "Structure-grounded pretraining for text-to-sql",
+      "author" : [ "Xiang Deng", "Ahmed Hassan Awadallah", "Christopher Meek", "Oleksandr Polozov", "Huan Sun", "Matthew Richardson." ],
+      "venue" : "Conference of the North American Chapter of the Association for Computational",
+      "citeRegEx" : "Deng et al\\.,? 2021",
+      "shortCiteRegEx" : "Deng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Conference of the North American Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving textto-SQL evaluation methodology",
+      "author" : [ "Zhang", "Dragomir Radev." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Zhang and Radev.,? 2018",
+      "shortCiteRegEx" : "Zhang and Radev.",
+      "year" : 2018
+    }, {
+      "title" : "Beyond iid: three levels of generalization for question answering on knowledge bases",
+      "author" : [ "Yu Gu", "Sue Kase", "Michelle Vanni", "Brian Sadler", "Percy Liang", "Xifeng Yan", "Yu Su." ],
+      "venue" : "Proceedings of the World Wide Web Conference.",
+      "citeRegEx" : "Gu et al\\.,? 2021",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Tapas: Weakly supervised table parsing via pre-training",
+      "author" : [ "Jonathan Herzig", "Pawel Krzysztof Nowak", "Thomas Mueller", "Francesco Piccinno", "Julian Eisenschlos." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Herzig et al\\.,? 2020",
+      "shortCiteRegEx" : "Herzig et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Mapping language to code in programmatic context",
+      "author" : [ "Srinivasan Iyer", "Ioannis Konstas", "Alvin Cheung", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of Empirical Methods in Natural Language Processing.",
+      "citeRegEx" : "Iyer et al\\.,? 2018",
+      "shortCiteRegEx" : "Iyer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multilingual semantic parsing: Parsing multiple languages into semantic representations",
+      "author" : [ "Zhanming Jie", "Wei Lu." ],
+      "venue" : "Proceedings of International Conference on Computational Linguistics.",
+      "citeRegEx" : "Jie and Lu.,? 2014",
+      "shortCiteRegEx" : "Jie and Lu.",
+      "year" : 2014
+    }, {
+      "title" : "Measuring compositional generalization: A comprehensive method",
+      "author" : [ "Daniel Keysers", "Nathanael Schärli", "Nathan Scales", "Hylke Buisman", "Daniel Furrer", "Sergii Kashubin", "Nikola Momchev", "Danila Sinopalnikov", "Lukasz Stafiniak", "Tibor Tihon" ],
+      "venue" : null,
+      "citeRegEx" : "Keysers et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Keysers et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Generalization without systematicity: On the compositional skills of sequence-to-sequence recurrent networks",
+      "author" : [ "Brenden Lake", "Marco Baroni." ],
+      "venue" : "Proceedings of the International Conference of Machine Learning.",
+      "citeRegEx" : "Lake and Baroni.,? 2018",
+      "shortCiteRegEx" : "Lake and Baroni.",
+      "year" : 2018
+    }, {
+      "title" : "KaggleDBQA: Realistic evaluation of text-to-SQL parsers",
+      "author" : [ "Chia-Hsuan Lee", "Oleksandr Polozov", "Matthew Richardson." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Lee et al\\.,? 2021",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Towards building robust natural language interfaces to databases",
+      "author" : [ "Michael Minock", "Peter Olofsson", "Alexander Näslund." ],
+      "venue" : "International Conference on Application of Natural Language to Information Systems.",
+      "citeRegEx" : "Minock et al\\.,? 2008",
+      "shortCiteRegEx" : "Minock et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Few-shot adversarial domain adaptation",
+      "author" : [ "Saeid Motiian", "Quinn Jones", "Seyed Iranmanesh", "Gianfranco Doretto." ],
+      "venue" : "Proceedings of Advances in Neural Information Processing Systems.",
+      "citeRegEx" : "Motiian et al\\.,? 2017",
+      "shortCiteRegEx" : "Motiian et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Learning to generate pseudo-code from source code using statistical machine translation",
+      "author" : [ "Yusuke Oda", "Hiroyuki Fudaba", "Graham Neubig", "Hideaki Hata", "Sakriani Sakti", "Tomoki Toda", "Satoshi Nakamura." ],
+      "venue" : "International Conference on",
+      "citeRegEx" : "Oda et al\\.,? 2015",
+      "shortCiteRegEx" : "Oda et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Compositional semantic parsing on semi-structured tables",
+      "author" : [ "Panupong Pasupat", "Percy Liang." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Pasupat and Liang.,? 2015",
+      "shortCiteRegEx" : "Pasupat and Liang.",
+      "year" : 2015
+    }, {
+      "title" : "SmBoP: Semiautoregressive bottom-up semantic parsing",
+      "author" : [ "Ohad Rubin", "Jonathan Berant." ],
+      "venue" : "Conference of the North American Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Rubin and Berant.,? 2021",
+      "shortCiteRegEx" : "Rubin and Berant.",
+      "year" : 2021
+    }, {
+      "title" : "Compositional generalization and natural language variation: Can a semantic parsing approach handle both",
+      "author" : [ "Peter Shaw", "Ming-Wei Chang", "Panupong Pasupat", "Kristina Toutanova" ],
+      "venue" : "Proceedings of the Association for Computational Linguistics",
+      "citeRegEx" : "Shaw et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Shaw et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bootstrapping a crosslingual semantic parser",
+      "author" : [ "Tom Sherborne", "Yumo Xu", "Mirella Lapata." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP.",
+      "citeRegEx" : "Sherborne et al\\.,? 2020",
+      "shortCiteRegEx" : "Sherborne et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On the potential of lexico-logical alignments for semantic parsing to SQL queries",
+      "author" : [ "Tianze Shi", "Chen Zhao", "Jordan Boyd-Graber", "Hal Daumé III", "Lillian Lee." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP.",
+      "citeRegEx" : "Shi et al\\.,? 2020",
+      "shortCiteRegEx" : "Shi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploring unexplored generalization challenges for cross-database semantic parsing",
+      "author" : [ "Alane Suhr", "Ming-Wei Chang", "Peter Shaw", "Kenton Lee." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Suhr et al\\.,? 2020",
+      "shortCiteRegEx" : "Suhr et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multiqa: An empirical investigation of generalization and transfer in reading comprehension",
+      "author" : [ "Alon Talmor", "Jonathan Berant." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Talmor and Berant.,? 2019",
+      "shortCiteRegEx" : "Talmor and Berant.",
+      "year" : 2019
+    }, {
+      "title" : "Meta-learning for domain generalization in semantic parsing",
+      "author" : [ "Bailin Wang", "Mirella Lapata", "Ivan Titov." ],
+      "venue" : "Conference of the North American Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Wang et al\\.,? 2021",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Rat-sql: Relation-aware schema encoding and linking for textto-sql parsers",
+      "author" : [ "Bailin Wang", "Richard Shin", "Xiaodong Liu", "Oleksandr Polozov", "Matthew Richardson." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Vocabulary learning via optimal transport for neural machine translation",
+      "author" : [ "Jingjing Xu", "Hao Zhou", "Chun Gan", "Zaixiang Zheng", "Lei Li." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Xu et al\\.,? 2021",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Sqlnet: Generating structured queries from natural language without reinforcement learning",
+      "author" : [ "Xiaojun Xu", "Chang Liu", "Dawn Song." ],
+      "venue" : "arXiv preprint arXiv:1711.04436.",
+      "citeRegEx" : "Xu et al\\.,? 2017",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Semantic parsing via staged query graph generation: Question answering with knowledge base",
+      "author" : [ "Wen-tau Yih", "Ming-Wei Chang", "Xiaodong He", "Jianfeng Gao." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Yih et al\\.,? 2015",
+      "shortCiteRegEx" : "Yih et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "TaBERT: Pretraining for joint understanding of textual and tabular data",
+      "author" : [ "Pengcheng Yin", "Graham Neubig", "Wen tau Yih", "Sebastian Riedel." ],
+      "venue" : "Proceedings of the Association for Computational Linguistics.",
+      "citeRegEx" : "Yin et al\\.,? 2020",
+      "shortCiteRegEx" : "Yin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On the ingredients of an effective zero-shot semantic parser",
+      "author" : [ "Pengcheng Yin", "John Wieting", "Avirup Sil", "Graham Neubig." ],
+      "venue" : "arXiv preprint arXiv:2110.08381.",
+      "citeRegEx" : "Yin et al\\.,? 2021",
+      "shortCiteRegEx" : "Yin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Grappa: Grammar-augmented pre-training for table semantic parsing",
+      "author" : [ "Tao Yu", "Chien-Sheng Wu", "Xi Victoria Lin", "Yi Chern Tan", "Xinyi Yang", "Dragomir Radev", "Caiming Xiong" ],
+      "venue" : "In Proceedings of the International Conference on Learning Representations",
+      "citeRegEx" : "Yu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Spider: A large-scale human-labeled dataset for complex and cross-domain semantic pars",
+      "author" : [ "Tao Yu", "Rui Zhang", "Kai Yang", "Michihiro Yasunaga", "Dongxu Wang", "Zifan Li", "James Ma", "Irene Li", "Qingning Yao", "Shanelle Roman", "Zilin Zhang", "Dragomir Radev" ],
+      "venue" : null,
+      "citeRegEx" : "Yu et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Seq2SQL: Generating structured queries from natural language using reinforcement learning",
+      "author" : [ "Victor Zhong", "Caiming Xiong", "Richard Socher." ],
+      "venue" : "arXiv preprint arXiv:1709.00103. 10",
+      "citeRegEx" : "Zhong et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhong et al\\.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 35,
+      "context" : "Text-to-SQL parsers map natural language questions to programs that are executable over tables to generate answers, and are typically evaluated on large-scale datasets like SPIDER (Yu et al., 2018).",
+      "startOffset" : 180,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 24,
+      "context" : "To study this problem, we first propose a synthetic dataset along with a repurposed train/test split of the SQUALL dataset (Shi et al., 2020) as new benchmarks to quantify domain generalization over column operations, and find existing state-of-the-art parsers struggle in these benchmarks.",
+      "startOffset" : 123,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 35,
+      "context" : "In recent years, with the availability of large-scale datasets (e.g., Zhong et al., 2017; Yu et al., 2018), neural semantic parsers have witnessed significant success on this task.",
+      "startOffset" : 63,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 25,
+      "context" : "However, recent work (Suhr et al., 2020; Lee et al., 2021) has suggested that these state-of-the-art parsers are far from successful in terms of out-of-domain generalization in real scenarios, where users may ask quesName Income",
+      "startOffset" : 21,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 16,
+      "context" : "However, recent work (Suhr et al., 2020; Lee et al., 2021) has suggested that these state-of-the-art parsers are far from successful in terms of out-of-domain generalization in real scenarios, where users may ask quesName Income",
+      "startOffset" : 21,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 7,
+      "context" : "While recent approaches rely on pre-trained language models (e.g., Yin et al., 2020; Deng et al., 2021) for addressing the column matching challenge, column operations remain relatively unexplored due to the lack of evaluation benchmarks.",
+      "startOffset" : 60,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 24,
+      "context" : "To this end, we first propose two new benchmarks: a synthetic dataset and a train/test repartitioning of the SQUALL dataset (Shi et al., 2020); both capable of quantifying out-of-domain generalization on column operations.",
+      "startOffset" : 124,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 3,
+      "context" : "Semantic parsing has been widely studied in the context of multiple other tasks like instruction following (Chen and Mooney, 2011; Artzi and Zettlemoyer, 2013), code generation (Oda et al.",
+      "startOffset" : 107,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 1,
+      "context" : "Semantic parsing has been widely studied in the context of multiple other tasks like instruction following (Chen and Mooney, 2011; Artzi and Zettlemoyer, 2013), code generation (Oda et al.",
+      "startOffset" : 107,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 19,
+      "context" : "Semantic parsing has been widely studied in the context of multiple other tasks like instruction following (Chen and Mooney, 2011; Artzi and Zettlemoyer, 2013), code generation (Oda et al., 2015; Iyer et al., 2018), knowledge graph question answering (Berant et al.",
+      "startOffset" : 177,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 12,
+      "context" : "Semantic parsing has been widely studied in the context of multiple other tasks like instruction following (Chen and Mooney, 2011; Artzi and Zettlemoyer, 2013), code generation (Oda et al., 2015; Iyer et al., 2018), knowledge graph question answering (Berant et al.",
+      "startOffset" : 177,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2018), knowledge graph question answering (Berant et al., 2013; Yih et al., 2015), etc.",
+      "startOffset" : 44,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2018), knowledge graph question answering (Berant et al., 2013; Yih et al., 2015), etc.",
+      "startOffset" : 44,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 0,
+      "context" : "We focus on using tables as the context in which semantic parsing is performed, where the goal is to translate pairs of natural language questions and tables to executable SQL queries, also known as text-to-SQL parsing (Androutsopoulos et al., 1995; Minock et al., 2008).",
+      "startOffset" : 219,
+      "endOffset" : 270
+    }, {
+      "referenceID" : 17,
+      "context" : "We focus on using tables as the context in which semantic parsing is performed, where the goal is to translate pairs of natural language questions and tables to executable SQL queries, also known as text-to-SQL parsing (Androutsopoulos et al., 1995; Minock et al., 2008).",
+      "startOffset" : 219,
+      "endOffset" : 270
+    }, {
+      "referenceID" : 13,
+      "context" : "Note that, while we focus on questions in the English language, there exists prior work on multilingual semantic parsing as well (Jie and Lu, 2014; Sherborne et al., 2020) and the contributions of our work also apply there.",
+      "startOffset" : 129,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 23,
+      "context" : "Note that, while we focus on questions in the English language, there exists prior work on multilingual semantic parsing as well (Jie and Lu, 2014; Sherborne et al., 2020) and the contributions of our work also apply there.",
+      "startOffset" : 129,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 15,
+      "context" : "Existing work in compositional generalization for semantic parsing has focused on using synthetic datasets (e.g., Keysers et al., 2020; Lake and Baroni, 2018), or repartitioning existing text-to-SQL datasets into new train and test splits (e.",
+      "startOffset" : 107,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 18,
+      "context" : "We focus on the arguably even more challenging domain generalization problem, also known as domain adaptation, where entire domains may never be encountered during training or may only be encountered a small number of times (Motiian et al., 2017).",
+      "startOffset" : 224,
+      "endOffset" : 246
+    }, {
+      "referenceID" : 26,
+      "context" : "Even though this problem has been studied extensively in the context of classification (Daumé III and Marcu, 2006), machine translation (Daumé III and Jagarlamudi, 2011), and question answering (Talmor and Berant, 2019), it remains underexplored for semantic parsing.",
+      "startOffset" : 194,
+      "endOffset" : 219
+    }, {
+      "referenceID" : 33,
+      "context" : "Recent approaches have focused on data synthesis (Yin et al., 2021), meta-learning (Wang et al.",
+      "startOffset" : 49,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2021), meta-learning (Wang et al., 2021), relation-aware schema encoding (Wang et al.",
+      "startOffset" : 23,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2021), relation-aware schema encoding (Wang et al., 2020), and encoder pre-training (Yin et al.",
+      "startOffset" : 40,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020), and encoder pre-training (Yin et al., 2020; Herzig et al., 2020; Yu et al., 2020; Deng et al., 2021).",
+      "startOffset" : 34,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2020), and encoder pre-training (Yin et al., 2020; Herzig et al., 2020; Yu et al., 2020; Deng et al., 2021).",
+      "startOffset" : 34,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2020), and encoder pre-training (Yin et al., 2020; Herzig et al., 2020; Yu et al., 2020; Deng et al., 2021).",
+      "startOffset" : 34,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020), and encoder pre-training (Yin et al., 2020; Herzig et al., 2020; Yu et al., 2020; Deng et al., 2021).",
+      "startOffset" : 34,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 20,
+      "context" : "(2020) introduced SQUALL, a dataset that annotates WIKITABLEQUESTIONS (Pasupat and Liang, 2015) with SQL queries and refined column types like Date, Score, (T1, T2), and List[T].",
+      "startOffset" : 70,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 8,
+      "context" : "Both models concatenate the question with a textual representation of the table schema, separated by a special [SEP] token, and feed the combined sequence to a pre-trained instance of the BERT (Devlin et al., 2019) language model.",
+      "startOffset" : 193,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 4,
+      "context" : "It can be argued that this pruning is as hard as parsing itself, but there is evidence from other areas that it can indeed be helpful (e.g., vocabulary selection; Chen et al., 2019; Xu et al., 2021).",
+      "startOffset" : 134,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 29,
+      "context" : "It can be argued that this pruning is as hard as parsing itself, but there is evidence from other areas that it can indeed be helpful (e.g., vocabulary selection; Chen et al., 2019; Xu et al., 2021).",
+      "startOffset" : 134,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 8,
+      "context" : "cM [SEP] and feed the resulting sequence to a BERT encoder (Devlin et al., 2019).",
+      "startOffset" : 59,
+      "endOffset" : 80
+    } ],
+    "year" : 0,
+    "abstractText" : "Text-to-SQL parsers map natural language questions to programs that are executable over tables to generate answers, and are typically evaluated on large-scale datasets like SPIDER (Yu et al., 2018). We argue that existing benchmarks fail to capture a certain out-ofdomain generalization problem that is of significant practical importance: matching domain specific phrases to composite operation over columns. To study this problem, we first propose a synthetic dataset along with a repurposed train/test split of the SQUALL dataset (Shi et al., 2020) as new benchmarks to quantify domain generalization over column operations, and find existing state-of-the-art parsers struggle in these benchmarks. We then propose to address this problem by incorporating prior domain knowledge through preprocessing table schemas, and design a method that consists of two components: schema expansion and schema pruning, which can be easily applied to different base parsers. We show that on this domain generalization over column operations problem, our proposed method significantly outperforms baseline parsers, and as a result boosting the underlying parsers’ overall performance by up to 13.8% relative accuracy gain (5.1% absolute) on the new SQUALL data split. Our goal is to direct attention on a challenging aspect of out-of-domain generalization by providing a new evaluation benchmark, as well as an initial direction for solving this problem, and reference point for future work.",
+    "creator" : null
+  }
+}

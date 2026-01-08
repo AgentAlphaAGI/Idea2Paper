@@ -1,0 +1,655 @@
+{
+  "name" : "ARR_2022_249_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Multilingual Generative Language Models for Zero-Shot Cross-Lingual Event Argument Extraction",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Event argument extraction (EAE) aims to recognize the entities serving as event arguments and identify their corresponding roles. As illustrated by the English example in Figure 1, given a trigger word “destroyed” for a Conflict:Attack event, an event argument extractor is expected to identify “commando”, “Iraq”, and “post” as the event arguments and predict their corresponding roles.\nZero-shot cross-lingual EAE has attracted considerable attention since it eliminates the requirement of labeled data for constructing EAE models in low-resource languages (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021). In this setting, the model is trained on examples in the source languages and directly tested on instances in the target languages.\nRecently, generation-based models1 have shown strong performances on monolingual structured prediction tasks (Yan et al., 2021; Huang et al., 2021; Paolini et al., 2021), including EAE (Li et al., 2021; Hsu et al., 2021). These works treat structured prediction problems as language generation tasks and fine-tune pre-trained generative language models to generate outputs following designed templates such that the final predictions can be easily decoded from the outputs. Compared to the traditional classification-based models (Wang et al., 2019; Lin et al., 2020), they better capture the structures and dependencies between entities, as the templates provide additional declarative information.\nDespite the successes, the designs of templates in prior works are language-dependent, which makes it hard to extend them to the zero-shot cross-lingual transfer setting. Naively applying such models trained on the source languages to the target languages usually generates code-switching outputs, yielding poor performance for zero-shot crosslingual transfer 2, as we will empirically show in\n1We use pre-trained generative (language) models to refer to pre-trained models with encoder-decoder structure, such as BART (Lewis et al., 2020), T5 (Raffel et al., 2020), and mBART (Liu et al., 2020). For models adapting these pretrained generative models to generate texts for downstream applications, we denote them as generation-based models.\n2For example, TANL (Paolini et al., 2021) is trained to generate [Two soldiers|target] were attacked.\nSection 5.4. To the best of our knowledge, how to design language-agnostic generation-based models for zero-shot cross-lingual structured prediction problems is still an open question.\nIn this work, we present a study of leveraging multilingual pre-trained generative models for zero-shot cross-lingual event argument extraction and propose X-GEAR (Cross-lingual Generative Event Argument extractoR). X-GEAR enables the knowledge transfer across languages by languageagnostic templates, which serve as a bridge to connect arguments in different languages. Given an input passage and a carefully designed prompt that contains an event trigger and the corresponding language-agnostic template, X-GEAR is trained to generate a sentence that fills in the languageagnostic template with arguments. X-GEAR inherits the strength of generation-based models — it captures the event structures and the dependencies between entities better than classification-based models. In addition, the pre-trained decoder inherently identifies named entities as candidates for event arguments, and does not need an additional module for named entity recognition.\nWe conduct experiments on two multilingual EAE datasets: ACE-2005 (Doddington et al., 2004) and ERE (Song et al., 2015). The results demonstrate that X-GEAR outperforms the state-of-the-art zero-shot cross-lingual EAE models. We further perform ablation studies to justify our design and present comprehensive error analysis to understand the limitations of using multilingual generationbased models for zero-shot cross-lingual transfer."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Zero-shot cross-lingual structured prediction. Zero-shot cross-lingual learning becomes an emerging research topic as it eliminates the requirement of labeled data for training models in low-resource languages. Various structured prediction tasks have be studied, including named entity recognition (Pan et al., 2017; Hu et al., 2020), dependency parsing (Ahmad et al., 2019), relation extraction (Zou et al., 2018; Ni and Florian, 2019), and event argument extraction (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021). Most of them are classification-based models that build classifiers on top of a multilingual pre-trained masked\nto represent Two soldiers being a target argument. When directly apply it to an instance in Chinese, the ground truth for TANL becomes [两位士兵|target]被攻击, which is a sentence alternating between Chinese and English.\nlanguage models. To further deal with the discrepancy between languages, some of them require additional information, such as bilingual dictionaries (Liu et al., 2019; Ni and Florian, 2019), translation pairs (Zou et al., 2018), and dependency parse trees (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021). However, as pointed out by previous literature (Li et al., 2021; Hsu et al., 2021), classification-based models are less powerful to model dependencies between entities compared to generation-based models.\nGeneration-based structured prediction. Several works have demonstrated the great success of generation-based models on monolingual structured prediction tasks, including named entity recognition (Yan et al., 2021), relation extraction (Huang et al., 2021; Paolini et al., 2021), and event extraction (Du et al., 2021; Li et al., 2021; Hsu et al., 2021; Lu et al., 2021). Yet, as mentioned in Section 1, their designed generating targets are language-dependent. Accordingly, directly applying their methods to the zero-shot cross-lingual setting would result in less-preferred performance.\nPrompting methods. There are growing interests recently to incorporate prompts on pre-trained language models in order to guide the models’ behavior or elicit knowledge (Peng et al., 2019; Shin et al., 2020; Schick and Schütze, 2021; Qin and Eisner, 2021; Scao and Rush, 2021). Following the taxonomy in (Liu et al., 2021), these methods can be classified depending on whether the language models’ parameters are tuned and on whether trainable prompts are introduced. Our method belongs to the category that fixes the prompts and tune the language models’ parameters. Despite the flourish of the research in prompting methods, there is only limited attention being put on multilingual tasks (Winata et al., 2021)."
+    }, {
+      "heading" : "3 Zero-Shot Cross-Lingual Event Argument Extraction",
+      "text" : "We focus on zero-shot cross-lingual EAE. Given an input passage and an event trigger, an EAE model identifies arguments and their corresponding roles. More specifically, as illustrated by the training examples in Figure 2, given an input passage x and an event trigger t (killed) belonging to an event type e (Life:Die), an EAE model predicts a list of arguments a = [a1, a2, ..., al] (coalition, civilians, woman, missile, houses) and their corresponding roles r = [r1, r2, .., rl]\n(Agent, Victim, Victim, Instrument, Place). In the zero-shot cross-lingual setting, the training set Xtrain = {(xi, ti, ei,ai, ri)}Ni=1 belongs to the source languages while the testing set Xtest = {(xi, ti, ei,ai, ri)}Mi=1 are in the target languages.\nSimilar to monolingual EAE, zero-shot crosslingual EAE models are expected to capture the dependencies between arguments and make structured predictions accordingly. However, unlike monolingual EAE, a zero-shot cross-lingual EAE model has to overcome the differences between languages (e.g., grammars, word orders) and learn to transfer the knowledge from the source languages to the target languages."
+    }, {
+      "heading" : "4 Proposed Method",
+      "text" : "We formulate zero-shot cross-lingual EAE as a language generation task and propose X-GEAR (Cross-lingual Generative Event Argument extractoR), which is depicted in Figure 2. There are two challenges raised by this formulation: (1) The generated output string needs to be easily decoded into final predictions. (2) The input language may vary during training and testing; therefore, the output strings have to reflect the change of the input language accordingly while remaining wellstructured so the first point still holds.\nWe address these challenges by designing language-agnostic templates. Specifically, given an input passage x and a designed prompt that encodes the given trigger t, its event type e, and other auxiliary information, X-GEAR generates an output string following a language-agnostic template. The language-agnostic template is designed to be\ndecoded easily so that the process of extracting the final argument predictions a and role predictions r from the generated output string can be easily executed. Moreover, since the template is language-agnostic, our method works regardless of the input language.\nX-GEAR fine-tunes a multilingual pre-trained generative model, such as mBART-50 (Tang et al., 2020) or mT5 (Xue et al., 2021), while it is augmented with copy mechanism to better adapt to input language change. We present its details as follows, including the language-agnostic templates, the target output string, and the input format."
+    }, {
+      "heading" : "4.1 Language-Agnostic Template",
+      "text" : "We create a language-agnostic template Te for every event type e. For each event type, we list all its possible associated roles3 and form a unique HTML-tag-style template for that event type e. More precisely, in Figure 2, the Life:Die event is associated with four roles: Agent, Victim, Instrument, and Place. As a result, the template for Life:Die events is designed as:\n<Agent>[None]</Agent><Victim>[None]</Victim>\n<Instrument>[None]</Instrument><Place>[None]</Place>.\nFor the ease of understanding, we use English words to present the template. However, these tokens ([None], <Agent>, </Agent>, <Victim>, etc.) are encoded as special tokens4 that the pre-\n3The associated roles can be obtained by skimming training data or directly from the annotation guideline if provided.\n4In fact , the special tokens can be replaced by any other format, such as <–token1–> or </–token1–>. Here, we use\ntrained models have never seen and thus their representations need to be learned from scratch. Since these special tokens are not associate with any language and are not pre-trained, they are considered as language-agnostic."
+    }, {
+      "heading" : "4.2 Target Output String",
+      "text" : "X-GEAR learns to generate target output strings that follow the form of language-agnostic templates. Given an example (x, t, e,a, r), we first pick out the language-agnostic template Te for the event type e and then replace all “[None]” in Te with the corresponding arguments in a according to their roles r. If there are multiple arguments for one role, we concatenate them with a special token “[and]”. For instance, the training example in Figure 2 has two arguments (civilians and woman) for the Victim role, and the corresponding part of the output string would be\n<Victim> civilians [and] woman</Victim>.\nBy applying this rule, the full output string for the training example in Figure 2 becomes\n<Agent> coalition</Agent><Victim> civilians[and]\nwoman</Victim><Instrument> missile</Instrument>\n<Place> houses</Place>.\nSince the output string is in the HTML-tag style, we can easily decode the argument and role predictions from the generated output string via a simple rule-based algorithm."
+    }, {
+      "heading" : "4.3 Input Format",
+      "text" : "As we mentioned previously, the key for the generative formulation of zero-shot cross-lingual EAE is to guide the model to generate output strings in a desired format. To facilitate this behavior, we instruct X-GEAR by feeding the input passage x as well as a prompt together, as shown by Figure 2. The prompt contains all valuable information for the model to make predictions, including a trigger t and a language-agnostic template Te. Notice that we do not explicitly include the event type e in the prompt because the template Te implicitly contains this information. Later on, in Section 6.1, we will demonstrate the experiments on explicitly adding event type e to the prompt and discuss about its influence on the cross-lingual transferability.\n<Agent> and </Agent> to highlight that arguments between these two special tokens are corresponding to the Agent role."
+    }, {
+      "heading" : "4.4 Training",
+      "text" : "To enable X-GEAR to generate sentences in different languages, we resort multilingual pre-trained generative model to be our base model, which models the conditional probability of generating a new token given the previous generated tokens and the input context to the encoder c, i.e,\nP (x|c) = ∏ i Pgen(xi|x<i, c),\nwhere xi is the output of the decoder at step i.\nCopy mechanism. Although the multilingual pretrained generative models can generate sequences in many languages, fully relying on them may results in generating hallucinating arguments (Li et al., 2021). Observing that most of the tokens in the target output string appear in the input sequence 5, we augment the multilingual pre-trained generative models with copy mechanism to help X-GEAR better adapt to the cross-lingual scenario. Specifically, we follow See et al. (2017) to decide the conditional probability of generating a token t as a weighted sum of the vocabulary distribution computed by multilingual pre-trained generative model Pgen and copy distribution Pcopy PX-GEAR(xi = t|x<i, c) =\nwcopy · Pcopy(t)+(1− wcopy) · Pgen(xi = t|x<i, c)\nwhere wcopy ∈ [0, 1] is the copy probability computed by passing the decoder hidden state at time step i to a linear layer. As for Pcopy, it refers to the probability over input tokens weighted by the crossattention that the last decoder layer computed (at time step i). Our model is then trained end-to-end with the following loss:\nL = − log ∑ i PX-GEAR(xi|x<i, c)."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Datasets",
+      "text" : "We consider two commonly used event extraction datasets: ACE-2005 and ERE. We consider English, Arabic, and Chinese annotations for ACE2005 (Doddington et al., 2004) and follow the preprocessing in Wadden et al. (2019) to keep 33 event types and 22 argument roles. ERE (Song et al., 2015) is created by the Deep Exploration and Filtering of Test program. We consider its English and Spanish annotations and follow the preprocessing\n5Except for the special token [and].\nin Lin et al. (2020) to keep 38 event types and 21 argument roles. Detailed statistics and preprocessing steps about the two datasets are in Appendix A.\nNotice that prior works working on zero-shot cross-lingual transfer of event arguments mostly focus on event argument role labeling (Subburathinam et al., 2019; Ahmad et al., 2021), where they assume ground truth entities are provided during both training and testing. In their experimental data splits, events in a sentence can be scattered in all training, development, and test split since they treat each event-entity pair as a different instance. In this work, we consider event argument extraction (Wang et al., 2019; Wadden et al., 2019; Lin et al., 2020), which is a more realistic setting."
+    }, {
+      "heading" : "5.2 Evaluation Metric",
+      "text" : "We follow previous work (Lin et al., 2020; Ahmad et al., 2021) and consider the argument classification F1 score to measure the performance of models. An argument-role pair is counted as correct if both the argument offsets and the role type match the ground truth. Given the ground truth arguments a, ground truth roles r, predicted arguments ã, and predicted roles r̃, the argument classification F1 score is defined as the F1 score between the set {(ai, ri)} and the set {(ãj , r̃j)}. For every model, we experiment it with three different random seeds and report the average results."
+    }, {
+      "heading" : "5.3 Compared Models",
+      "text" : "We compare the following models and their implementation details are listed in Appendix B.\n• OneIE (Lin et al., 2020), the state-of-the-art for monolingual event extraction, is a classificationbased model trained with multitasking, including entity extraction, relation extraction, event extraction, and event argument extraction. We simply replace its pre-trained embedding with XLM-RoBERTa-large (Conneau et al., 2020) to fit the zero-shot cross-lingual setting. Note that the multi-task learning makes OneIE require additional annotations, such as named entity annotations and relation annotations.\n• CL-GCN (Subburathinam et al., 2019) is a classification-based model for cross-lingual event argument role labeling (EARL). It considers dependency parsing annotations to bridge different languages and use GCN layers (Kipf and Welling, 2017) to encode the parsing information. We follow the implementation of previ-\nous work (Ahmad et al., 2021) and add two GCN layers on top of XLM-RoBERTa-large. Since CL-GCN focuses on EARL tasks, which assume the ground truth entities are available during testing, we add one name entity recognition module jointly trained with CL-GCN.\n• GATE (Ahmad et al., 2021), the state-of-theart model for zero-shot cross-lingual EARL, is a classification-based model which considers dependency parsing annotations as well. Unlike CL-GCN, it uses a Transformer layer (Vaswani et al., 2017) with modified attention to encode the parsing information. We follow the original implementation and add two GATE layers on top of pre-trained multilingual language models 6. Similar to CL-GCN, we add one name entity recognition module jointly trained with GATE.\n• TANL (Paolini et al., 2021) is a generationbased model for monolingual EAE. Their predicted target is a sentence that embeds labels into the input passage, such as [Two soldiers|target] were attacked, which indicates that “Two soldiers” is a “target” argument. To adapt TANL to zero-shot cross-lingual EAE, we change its pre-trained generative model from T5 (Raffel et al., 2020) to mT5-base (Xue et al., 2021).\n• X-GEAR is our proposed model. We consider three different pre-trained generative language models: mBART-50-large (Tang et al., 2020), mT5-base, and mT5-large (Xue et al., 2021)."
+    }, {
+      "heading" : "5.4 Results",
+      "text" : "Table 1 and Table 2 list the results on ACE-2005 and ERE, respectively, with all combinations of source languages and target languages. Note that all the models have similar numbers of parameters except for X-GEAR with mT5-large.\nComparison to prior generation-based models. We first observe that TANL has poor performance when transferring to different languages. The reason is that its language-dependent template makes TANL easily generate code-switching outputs 7,\n6To better compare our method with this strong baseline, we consider three different pre-trained multilingual language models for GATE – (1) XLM-RoBERTa-large (2) mBART-50large (3) mT5-base. For mBART-50-large and mT-base, we follow BART’s recipe (Lewis et al., 2020) to extract features for EAE predictions. Specifically, the input passage is fed into both encoder and decoder, and the final token representations are elicited from the decoder output.\n7Such as the example shown in footnote 2.\nwhich is a case that pre-trained generative model rarely seen, leading to the poor performance. In contrast, X-GEAR considers the language-agnostic templates and achieve better performance for zeroshot cross-lingual transfer.\nComparison to classification models. X-GEAR with mT5-base outperforms OneIE, CL-GCN, and GATE on almost all the combinations of the source language and the target language. This suggests that our proposed method is indeed a promising approach for zero-shot cross-lingual EAE.\nIt is worth noting that OneIE, CL-GCN, and GATE require additional pipeline named entity recognition module to make predictions. Moreover, CL-GCN and GATE needs additional dependency parsing annotations to align the representations of different languages. On the contrary, X-GEAR is able to leverage the learned knowledge from the pre-trained generative models and therefore no additional modules or annotations are needed.\nComparison to different pre-trained generative language models. Interestingly, using mT5-base is more effective than using mBART-50-large for\nX-GEAR, even if they have similar amount of parameters. We conjecture that the use of special tokens leads to this difference. mBART-50 has different begin-of-sequence (BOS) tokens for different languages. During generation, we have to specify which BOS token we would like to use as the start token. We guess that this language specific BOS token makes mBART-50 harder to transfer the knowledge from the source language to the target language. Unlike mBART-50, mT5 does not have such language specific BOS tokens. During generation, mT5 uses the padding token as the start token to generate sequence. This design is more general and benefit zero-shot cross-lingual transfer.\nLarger pre-trained models are better. Finally, we demonstrate that the performance of X-GEAR can be further boosted with a larger pre-trained generative language models. As shown by Table 1 and Table2, X-GEAR with mT5-large achieves the best scores on most of the cases."
+    }, {
+      "heading" : "6 Analysis",
+      "text" : ""
+    }, {
+      "heading" : "6.1 Ablation Studies",
+      "text" : "Copy mechanism. We first study the effect of copy mechanism. Table 3 lists the performance of XGEAR with and without copy mechanism. It shows improvements of adding copy mechanism when using mT5-large and mT-base. However, interestingly, adding copy mechanism is not effective to mBART-50. We conjecture that this is because the pre-trained objective of mBART-50 is denoising and reconstructing the original sentence (Liu et al., 2020), hence, it has already learn to copy tokens from the input. Therefore, adding copy mechanism is less useful. In contrast, the pre-trained objective of mT5 is to only generate tokens been masked out,\nresulting in lacking ability to copy input. Thus, the copy mechanism becomes beneficial to mT5.\nIncluding event type in prompts. In Section 4, we mentioned that the designed prompt for XGEAR consists of only the input sentence and the language-agnostic template. In this section, we discuss whether explicitly including the event type information in the prompt is helpful. We consider three ways to include the event type information:\n• English tokens. We put the English version of the event type in the prompt even if we are training or testing on non-English languages, for example, using Attack for the event type Attack.\n• Translated tokens. For each event type, we prepare the translated version of that event type token. For example, both Attack and攻击 represents the Attack event type. During training or testing, we decide the used token(s) according to the language of the input passage. Since all the event types are written in English in ACE-2005 and ERE, we use off-the-self machine translation tool to perform the translation.\n• Special tokens. We create a special token for every event type and let the model to learn the representations of the special tokens from scratch. For instance, we use <-attack-> to represent the Attack event type.\nTable 4 shows the ablation study. In most cases, including event type information in the prompt drops the performance. One crucial reason is that one word in a language can be mapped to several words in another language. For example, the Life event type is related to Marry, Divorce, Born, and Die four sub-event types. In English, we can use just one word Life to cover all four sub-event types. However, In Chinese, when talking about Marry and Divorce, Life should be translated to “生活”; when talking about Born and Die, Life should be translated to “生命” in Chinese. This mismatch\ncauses the performance drop when considering event types in prompts. Currently, we conclude that it is hard to use the information of event types in an appropriate way. How to resolve this challenge is considered as our future work.\nInfluence of role order in templates. The order of roles in the designed language-agnostic templates can potentially influence the performance. When designing the templates, we intentionally make the order of roles close to the order in natural sentences8. To study the effect of different orders, we train X-GEAR with templates with different random orders and report the results in Table 5. X-GEAR with random orders still achieve good performance but slightly worse than the original order. It suggests that X-GEAR is not very sensitive to different templates while providing appropriate order of roles can lead to a small improvement.\nUsing English tokens instead of special tokens for roles in templates. In Section 4, we mentioned that we use language-agnostic templates to facilitate cross-lingual transfer. To further validate the effectiveness of language-agnostic template. We conduct experiments using English tokens as the templates. Specifically, we set format\nAgent: [None]<SEP> Victim: [None]<SEP> Instrument:\n[None]<SEP> Place: [None]\nto be the template for Life:Die events. Hence, for non-English instances, the targeted output string\n8For example, types related to subject and object are listed first and types related to methods and places are listed last.\n33%\n27%\n13%\n10%\n10% 7%\nError Distribution for X-GEAR (ar ⇒ en)\nErrors on both monolingual and cross-lingual model Over Generate Others Annotation Error Label Disagreement on Different Language Split Grammar Difference between Languages\n40%\n23%\n10%\n10%\n10% 7%\nError Distribution for X-GEAR (zh⇒ en)\nErrors on both monolingual and cross-lingual model Generate a word that not in the passage Others Generate a correct prediction, but in Chinese Annotatoin Error Label Disagreement on Different Language Split\nFigure 3: Distribution of errors that made by X-GEAR (mT5-base). Left: The distribution for our model that transfers from Arabic to English; Right: The distribution for our model trained on Chinese and tested on English.\nis a code-switching sequence. Table 6 lists the results. We can observe that applying languageagnostic templates bring X-GEAR 1.3 F1 scores improvements in average."
+    }, {
+      "heading" : "6.2 Error Analysis",
+      "text" : "We perform error analysis on X-GEAR (mT5-base) when transferring from Arabic to English and transferring from Chinese to English. For each case, we sample 30 failed examples and present the distribution of various error types in Figure 3. The detailed explanation of each error type are listed in the Appendix C. Among all the errors, we highlight two specific categories — “Generate a word that is not in the passage” and “Generate a correct prediction, but in Chinese”. These errors can be resolved by applying constrained decoding (Cao et al., 2021) to force all the generated tokens appearing in input.\nTable 7 presents the result of X-GEAR with constrained decoding. We observe that adapting such constraints indeed helps the cross-lingual transferability, yet it also hurts the performance at some monolingual cases. We conduct qualitative inspection on the predictions. The observation is that constrained decoding algorithm although guarantees all generated tokens appearing in the input, the coercive method breaks the overall sequence distri-\nbution that learned. Hence, in many monolingual examples, once one of the token is corrected by constrained decoding, its following generated sequence changes a lot, while the original predicted suffixed sequence using beam decoding are actually correct. This leads to performance decrease9."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "We present the first generation-based models for zero-shot cross-lingual event argument extraction. To overcome the discrepancy between languages, we design language-agnostic templates and propose X-GEAR, which well capture output dependencies and can be used without additional named entity extraction modules. Our experimental results show that X-GEAR outperforms the current state-of-the-art, which demonstrates the potential of using language generation framework to solve zero-shot cross-lingual structured prediction tasks.\n9Indeed, similar situation happens to cross-lingual cases; however, since the original performance for cross-lingual transfer is not high enough, the benefits of correcting tokens is more significant than this drawback."
+    }, {
+      "heading" : "A Dataset Statistics and Data Preprocessing",
+      "text" : "Table 8 presents the detailed statistics for the ACE2005 dataset and ERE dataset.\nFor the English and Chinese splits in ACE-2005, we use the setting provided by Wadden et al. (2019) and Lin et al. (2020), respectively. As for Arabic part, we adopt the setup proposed by Xu et al. (2021). Observing that part of the sentence breaks made from Xu et al. (2021) being extremely long for pretrained models to encode, we perform additional preprocessing and postprocessing procedures for Arabic data. Specifically, we split Arabic sentences into several portions that any of the portion is shorter than 80 tokens. Then, we map the models’ predictions of the split sentences back to the original sentence during postprocessing.\nB Implementation Details\nWe describe the implementation details for all the models as follows:\n• OneIE (Lin et al., 2020). We use their provided code10 to train the model with the provided default settings. It is worth mention that for the Arabic split in the ACE-2005 dataset, OneIE is trained with only entity extraction, event extraction, and event argument extraction since there is no relation labels in Xu et al. (2021)’s preprocessing script. All other parameters are set to the default values.\n• CL-GCN (Subburathinam et al., 2019). We refer the released code from Ahmad et al. (2021)11\nto re-implement the CL-GCN method. Specifically, we adapt the baseline framework that described and implemented in OneIE’s code (Lin et al., 2020), but we remove its relation extraction module and add two layers of GCN on top of XLM-RoBERTa-large. The pos-tag and dependency parsing annotations are obtained by applying Stanza (Qi et al., 2020). All other parameters are set to the be the same as the training of OneIE.\n• GATE (Ahmad et al., 2021). We refer the official released code from Ahmad et al. (2021) to re-implement GATE. Similar to CL-GCN, we adapt the baseline framework that described and implemented in OneIE’s code, but we remove\n10http://blender.cs.illinois.edu/ software/oneie/\n11https://github.com/wasiahmad/GATE\nits relation extraction module and add two layers of GATE on top of XLM-RoBERTa-large, mT5, or mBART-50-large. The pos-tag and dependency parsing annotations are also obtained by applying Stanza (Qi et al., 2020). The hyperparameter of δ in GATE is set to be [2, 2, 4, 4, ∞,∞,∞,∞]. All other parameters are set to the be the same as the training of OneIE.\n• TANL (Paolini et al., 2021). To adapt TANL to zero-shot cross-lingual EAE, we adapt the public code12 and replace its pre-trained based model T5 (Raffel et al., 2020) with mT5-base (Xue et al., 2021). All other parameters are set to their default values.\n• X-GEAR is our proposed model. We consider three different pre-trained generative language models: mBART-50-large (Tang et al., 2020), mT5-base, and mT5-large (Xue et al., 2021). When fine-tune the pre-trained models, we set the learning rate to 10−4 for mT5, and 10−5 for mBART-50-large. The batch size is set to 8. The number of training epochs is 60."
+    }, {
+      "heading" : "C Error Categories",
+      "text" : "In Section 6.2, we present error analysis on XGEAR (mT5-base). In this section, we detail the categories that we used for that study.\nErrors on both monolingual and cross-lingual model. We compare the predicted results from X-GEAR(ar ⇒ en) with X-GEAR(en ⇒ en), or from X-GEAR(zh⇒ en) with X-GEAR(en⇒ en). If their predictions are similar and both of them are wrong when compared to the gold output, we classify the error to this category. To overcome the errors in this category, the potential solution is to improve monolingual models for EAE tasks.\nOver generate. Errors in this category happen more often in X-GEAR(ar⇒ en). It is likely because the entities in Arabic are usually much longer than that in English, when measuring by the number of sub-words. Based on our statistics, the average entity span length is 2.85 for Arabic, and is 2.00 for English (length of sub-words). This leads to the natural for our X-GEAR(ar⇒ en) to overly generate some tokens even though they have captured the correct concept. An example is that the model predicts “The EU foreign ministers”, while the ground truth is “ministers”.\n12https://github.com/amazon-research/ tanl\nLabel disagreement on different language split. The annotations for the ACE dataset in different language split contain some ambiguity. For example, given sentence “He now also advocates letting in U.S. troops for a war against Iraq even though it is a fellow Muslim state.” and the queried trigger “war”, the annotations in English tends to label Iraq as the Place where the event happen, while similar situations in other languages will mark Iraq as the Target for the war.\nGrammar difference between languages. An example for this category is “... Blackstone Group would buy Vivendi’s theme park division, including Universal Studios Hollywood ...” and the queried trigger “buy”. We observe that X-GEAR(ar⇒ en) predicts Videndi as the Artifact been sold and division is the Seller, while X-GEAR(en⇒ en) can correctly understand that Videndi are the Seller and division is the Artifact. We hypothesize the reason being the differences between the grammar in Arabic and English. The word order of the sentence “Vivendi’s theme park division” in Arabic is reversed with its English counterpart, that is, “theme park division” will be written before “Vivendi” in Arabic. Such difference leads to the errors in this category.\nGenerate a word that is not in the passage. In X-GEAR(zh⇒ en), we observe several errors regarding generating a word that is not in the passage. There are two typical situations. The first case is that X-GEAR(zh⇒ en) presents difficulty understanding singular and plural nouns. For example, the model will generate “studios” as prediction while only “studio” appear in the passage. This is because the concept regarding the differences between singular and plural nouns are less emphasized in Chinese. The second cases is that XGEAR(zh⇒ en) will generate random predictions in Chinese.\nGenerate a correct prediction, but in Chinese. This is a special case of “Generate a word that is not in the passage”. In this category, we observe\nthat although the prediction is in Chinese (hence, a wrong prediction), it is correct if we translate the prediction into English.\nFrom these examples, we highlight two remaining challenges for future studies. First, there are several errors raising because of the discrepancies between the source language and the target language, such as the output length distribution mismatching or the grammar differences. Prior works like GATE (Ahmad et al., 2021) use pos-tags and dependency parsing to mitigate the grammar difference, and we leave it as a future work to study how to leverage such supplementary information into the generation-based framework. Also, a potential research question on how to alleviate the language differences in zero-shot cross-lingual transfer tasks.\nSecond, we demonstrate that even though we have already incorporated copy mechanism to facilitate the generation in target language, it is still challenging for the model to be fully controlled when adapting to cross-lingual cases. In Section 6.2, we have already presented the results of applying constrained decoding to alleviate such errors. However, the improvement on cross-lingual transfer cases sacrifice the monolingual results. This raise a future research question — whether we can control the generation more “softly” so that the improvement can be consistent on both monolingual cases and cross-lingual cases."
+    }, {
+      "heading" : "D Constrained Decoding Detailed Results",
+      "text" : "Table 9 shows the detailed results for X-GEAR using constrained decoding algorithm during testing time. We directly apply constrained decoding algorithms on the trained models we have in Table 1."
+    } ],
+    "references" : [ {
+      "title" : "GATE: graph attention transformer encoder for cross-lingual relation and event extraction",
+      "author" : [ "Wasi Uddin Ahmad", "Nanyun Peng", "Kai-Wei Chang." ],
+      "venue" : "Thirty-Fifth AAAI Conference on Artificial Intelligence (AAAI).",
+      "citeRegEx" : "Ahmad et al\\.,? 2021",
+      "shortCiteRegEx" : "Ahmad et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "On difficulties of cross-lingual transfer with order differences: A case study on dependency parsing",
+      "author" : [ "Wasi Uddin Ahmad", "Zhisong Zhang", "Xuezhe Ma", "Eduard H. Hovy", "Kai-Wei Chang", "Nanyun Peng." ],
+      "venue" : "Proceedings of the 2019 Conference of the",
+      "citeRegEx" : "Ahmad et al\\.,? 2019",
+      "shortCiteRegEx" : "Ahmad et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual autoregressive entity linking",
+      "author" : [ "Nicola De Cao", "Ledell Wu", "Kashyap Popat", "Mikel Artetxe", "Naman Goyal", "Mikhail Plekhanov", "Luke Zettlemoyer", "Nicola Cancedda", "Sebastian Riedel", "Fabio Petroni." ],
+      "venue" : "arXiv preprint",
+      "citeRegEx" : "Cao et al\\.,? 2021",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "In",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The automatic content extraction (ACE) program - tasks, data, and evaluation",
+      "author" : [ "George R. Doddington", "Alexis Mitchell", "Mark A. Przybocki", "Lance A. Ramshaw", "Stephanie M. Strassel", "Ralph M. Weischedel." ],
+      "venue" : "Proceedings of the Fourth International",
+      "citeRegEx" : "Doddington et al\\.,? 2004",
+      "shortCiteRegEx" : "Doddington et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "GRIT: generative role-filler transformers for document-level event entity extraction",
+      "author" : [ "Xinya Du", "Alexander M. Rush", "Claire Cardie." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics",
+      "citeRegEx" : "Du et al\\.,? 2021",
+      "shortCiteRegEx" : "Du et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Degree: A data-efficient generative event extraction model",
+      "author" : [ "I-Hung Hsu", "Kuan-Hao Huang", "Elizabeth Boschee", "Scott Miller", "Prem Natarajan", "Kai-Wei Chang", "Nanyun Peng." ],
+      "venue" : "arXiv preprint arXiv:2108.12724.",
+      "citeRegEx" : "Hsu et al\\.,? 2021",
+      "shortCiteRegEx" : "Hsu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "XTREME: A massively multilingual multitask benchmark for evaluating cross-lingual generalisation",
+      "author" : [ "Junjie Hu", "Sebastian Ruder", "Aditya Siddhant", "Graham Neubig", "Orhan Firat", "Melvin Johnson." ],
+      "venue" : "Proceedings of the 37th International",
+      "citeRegEx" : "Hu et al\\.,? 2020",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Document-level entity-based extraction as template generation",
+      "author" : [ "Kung-Hsiang Huang", "Sam Tang", "Nanyun Peng." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Huang et al\\.,? 2021",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Semisupervised classification with graph convolutional networks",
+      "author" : [ "Thomas N. Kipf", "Max Welling." ],
+      "venue" : "5th International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Kipf and Welling.,? 2017",
+      "shortCiteRegEx" : "Kipf and Welling.",
+      "year" : 2017
+    }, {
+      "title" : "BART: denoising sequence-to-sequence pretraining for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Documentlevel event argument extraction by conditional generation",
+      "author" : [ "Sha Li", "Heng Ji", "Jiawei Han." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Tech-",
+      "citeRegEx" : "Li et al\\.,? 2021",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A joint neural model for information extraction with global features",
+      "author" : [ "Ying Lin", "Heng Ji", "Fei Huang", "Lingfei Wu." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Lin et al\\.,? 2020",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural cross-lingual event detection with minimal parallel resources",
+      "author" : [ "Jian Liu", "Yubo Chen", "Kang Liu", "Jun Zhao." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Confer-",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Pretrain, prompt, and predict: A systematic survey of prompting methods in natural language processing",
+      "author" : [ "Pengfei Liu", "Weizhe Yuan", "Jinlan Fu", "Zhengbao Jiang", "Hiroaki Hayashi", "Graham Neubig." ],
+      "venue" : "arXiv preprint arXiv:2107.13586.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Trans. Assoc. Comput. Linguistics, 8:726–742.",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Text2event: Controllable sequence-tostructure generation for end-to-end event extraction",
+      "author" : [ "Yaojie Lu", "Hongyu Lin", "Jin Xu", "Xianpei Han", "Jialong Tang", "Annan Li", "Le Sun", "Meng Liao", "Shaoyi Chen." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the",
+      "citeRegEx" : "Lu et al\\.,? 2021",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving cross-lingual transfer for event argument extraction with language-universal sentence structures",
+      "author" : [ "Minh Van Nguyen", "Thien Huu Nguyen." ],
+      "venue" : "Proceedings of the Sixth Arabic Natural Language Processing Workshop.",
+      "citeRegEx" : "Nguyen and Nguyen.,? 2021",
+      "shortCiteRegEx" : "Nguyen and Nguyen.",
+      "year" : 2021
+    }, {
+      "title" : "Neural cross-lingual relation extraction based on bilingual word embedding mapping",
+      "author" : [ "Jian Ni", "Radu Florian." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language 9",
+      "citeRegEx" : "Ni and Florian.,? 2019",
+      "shortCiteRegEx" : "Ni and Florian.",
+      "year" : 2019
+    }, {
+      "title" : "Crosslingual name tagging and linking for 282 languages",
+      "author" : [ "Xiaoman Pan", "Boliang Zhang", "Jonathan May", "Joel Nothman", "Kevin Knight", "Heng Ji." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Pan et al\\.,? 2017",
+      "shortCiteRegEx" : "Pan et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Structured prediction as translation between augmented natural languages",
+      "author" : [ "Giovanni Paolini", "Ben Athiwaratkun", "Jason Krone", "Jie Ma", "Alessandro Achille", "Rishita Anubhai", "Cícero Nogueira dos Santos", "Bing Xiang", "Stefano Soatto." ],
+      "venue" : "9th",
+      "citeRegEx" : "Paolini et al\\.,? 2021",
+      "shortCiteRegEx" : "Paolini et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Text generation with exemplar-based adaptive decoding",
+      "author" : [ "Hao Peng", "Ankur P. Parikh", "Manaal Faruqui", "Bhuwan Dhingra", "Dipanjan Das." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Lin-",
+      "citeRegEx" : "Peng et al\\.,? 2019",
+      "shortCiteRegEx" : "Peng et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Stanza: A python natural language processing toolkit for many human languages",
+      "author" : [ "Peng Qi", "Yuhao Zhang", "Yuhui Zhang", "Jason Bolton", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Qi et al\\.,? 2020",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning how to ask: Querying lms with mixtures of soft prompts",
+      "author" : [ "Guanghui Qin", "Jason Eisner." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies",
+      "citeRegEx" : "Qin and Eisner.,? 2021",
+      "shortCiteRegEx" : "Qin and Eisner.",
+      "year" : 2021
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J. Liu." ],
+      "venue" : "J. Mach. Learn. Res.",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "How many data points is a prompt worth? In Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT)",
+      "author" : [ "Teven Le Scao", "Alexander M. Rush" ],
+      "venue" : null,
+      "citeRegEx" : "Scao and Rush.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Scao and Rush.",
+      "year" : 2021
+    }, {
+      "title" : "Exploiting cloze-questions for few-shot text classification and natural language inference",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics (EACL).",
+      "citeRegEx" : "Schick and Schütze.,? 2021",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "Get to the point: Summarization with pointergenerator networks",
+      "author" : [ "Abigail See", "Peter J. Liu", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, ACL 2017, Vancouver, Canada, July 30",
+      "citeRegEx" : "See et al\\.,? 2017",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Autoprompt: Eliciting knowledge from language models with automatically generated prompts",
+      "author" : [ "Taylor Shin", "Yasaman Razeghi", "Robert L. Logan IV", "Eric Wallace", "Sameer Singh." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Shin et al\\.,? 2020",
+      "shortCiteRegEx" : "Shin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "From light to rich ERE: annotation of entities, relations, and events",
+      "author" : [ "Zhiyi Song", "Ann Bies", "Stephanie M. Strassel", "Tom Riese", "Justin Mott", "Joe Ellis", "Jonathan Wright", "Seth Kulick", "Neville Ryant", "Xiaoyi Ma." ],
+      "venue" : "Proceedings of the The 3rd Workshop",
+      "citeRegEx" : "Song et al\\.,? 2015",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Cross-lingual structure transfer for relation and event extraction",
+      "author" : [ "Ananya Subburathinam", "Di Lu", "Heng Ji", "Jonathan May", "Shih-Fu Chang", "Avirup Sil", "Clare R. Voss." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Subburathinam et al\\.,? 2019",
+      "shortCiteRegEx" : "Subburathinam et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual translation with extensible multilingual pretraining and finetuning",
+      "author" : [ "Yuqing Tang", "Chau Tran", "Xian Li", "Peng-Jen Chen", "Naman Goyal", "Vishrav Chaudhary", "Jiatao Gu", "Angela Fan." ],
+      "venue" : "arXiv preprint arXiv:2008.00401.",
+      "citeRegEx" : "Tang et al\\.,? 2020",
+      "shortCiteRegEx" : "Tang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Entity, relation, and event extraction with contextualized span representations",
+      "author" : [ "David Wadden", "Ulme Wennberg", "Yi Luan", "Hannaneh Hajishirzi." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and",
+      "citeRegEx" : "Wadden et al\\.,? 2019",
+      "shortCiteRegEx" : "Wadden et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "HMEAE: hierarchical modular event argument extraction",
+      "author" : [ "Xiaozhi Wang", "Ziqi Wang", "Xu Han", "Zhiyuan Liu", "Juanzi Li", "Peng Li", "Maosong Sun", "Jie Zhou", "Xiang Ren." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Language models are few-shot multilingual learners",
+      "author" : [ "Genta Indra Winata", "Andrea Madotto", "Zhaojiang Lin", "Rosanne Liu", "Jason Yosinski", "Pascale Fung." ],
+      "venue" : "arXiv preprint arXiv:2109.07684.",
+      "citeRegEx" : "Winata et al\\.,? 2021",
+      "shortCiteRegEx" : "Winata et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Gradual fine-tuning for low-resource domain adaptation",
+      "author" : [ "Haoran Xu", "Seth Ebner", "Mahsa Yarmohammadi", "Aaron Steven White", "Benjamin Van Durme", "Kenton W. Murray." ],
+      "venue" : "arXiv preprint arXiv:2103.02205.",
+      "citeRegEx" : "Xu et al\\.,? 2021",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "mt5: A massively multilingual pre-trained text-to-text transformer",
+      "author" : [ "Linting Xue", "Noah Constant", "Adam Roberts", "Mihir Kale", "Rami Al-Rfou", "Aditya Siddhant", "Aditya Barua", "Colin Raffel." ],
+      "venue" : "Proceedings of the 2021 Conference of the North",
+      "citeRegEx" : "Xue et al\\.,? 2021",
+      "shortCiteRegEx" : "Xue et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A unified generative framework for various NER subtasks",
+      "author" : [ "Hang Yan", "Tao Gui", "Junqi Dai", "Qipeng Guo", "Zheng Zhang", "Xipeng Qiu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th Interna-",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Adversarial feature adaptation for cross-lingual relation classification",
+      "author" : [ "Bowei Zou", "Zengzhuang Xu", "Yu Hong", "Guodong Zhou." ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics (COLING).",
+      "citeRegEx" : "Zou et al\\.,? 2018",
+      "shortCiteRegEx" : "Zou et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 30,
+      "context" : "Zero-shot cross-lingual EAE has attracted considerable attention since it eliminates the requirement of labeled data for constructing EAE models in low-resource languages (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 171,
+      "endOffset" : 244
+    }, {
+      "referenceID" : 0,
+      "context" : "Zero-shot cross-lingual EAE has attracted considerable attention since it eliminates the requirement of labeled data for constructing EAE models in low-resource languages (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 171,
+      "endOffset" : 244
+    }, {
+      "referenceID" : 17,
+      "context" : "Zero-shot cross-lingual EAE has attracted considerable attention since it eliminates the requirement of labeled data for constructing EAE models in low-resource languages (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 171,
+      "endOffset" : 244
+    }, {
+      "referenceID" : 38,
+      "context" : "Recently, generation-based models1 have shown strong performances on monolingual structured prediction tasks (Yan et al., 2021; Huang et al., 2021; Paolini et al., 2021), including EAE (Li et al.",
+      "startOffset" : 109,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 8,
+      "context" : "Recently, generation-based models1 have shown strong performances on monolingual structured prediction tasks (Yan et al., 2021; Huang et al., 2021; Paolini et al., 2021), including EAE (Li et al.",
+      "startOffset" : 109,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 20,
+      "context" : "Recently, generation-based models1 have shown strong performances on monolingual structured prediction tasks (Yan et al., 2021; Huang et al., 2021; Paolini et al., 2021), including EAE (Li et al.",
+      "startOffset" : 109,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 34,
+      "context" : "Compared to the traditional classification-based models (Wang et al., 2019; Lin et al., 2020), they better capture the structures and dependencies between entities, as the templates provide additional declarative information.",
+      "startOffset" : 56,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 12,
+      "context" : "Compared to the traditional classification-based models (Wang et al., 2019; Lin et al., 2020), they better capture the structures and dependencies between entities, as the templates provide additional declarative information.",
+      "startOffset" : 56,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 10,
+      "context" : "We use pre-trained generative (language) models to refer to pre-trained models with encoder-decoder structure, such as BART (Lewis et al., 2020), T5 (Raffel et al.",
+      "startOffset" : 124,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2020), T5 (Raffel et al., 2020), and mBART (Liu et al.",
+      "startOffset" : 12,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 20,
+      "context" : "(2)For example, TANL (Paolini et al., 2021) is trained to generate [Two soldiers|target] were attacked.",
+      "startOffset" : 21,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 4,
+      "context" : "We conduct experiments on two multilingual EAE datasets: ACE-2005 (Doddington et al., 2004) and ERE (Song et al.",
+      "startOffset" : 66,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 19,
+      "context" : "Various structured prediction tasks have be studied, including named entity recognition (Pan et al., 2017; Hu et al., 2020), dependency parsing (Ahmad et al.",
+      "startOffset" : 88,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 7,
+      "context" : "Various structured prediction tasks have be studied, including named entity recognition (Pan et al., 2017; Hu et al., 2020), dependency parsing (Ahmad et al.",
+      "startOffset" : 88,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2020), dependency parsing (Ahmad et al., 2019), relation extraction (Zou et al.",
+      "startOffset" : 28,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2019), relation extraction (Zou et al., 2018; Ni and Florian, 2019), and event argument extraction (Subburathinam et al.",
+      "startOffset" : 29,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2019), relation extraction (Zou et al., 2018; Ni and Florian, 2019), and event argument extraction (Subburathinam et al.",
+      "startOffset" : 29,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2018; Ni and Florian, 2019), and event argument extraction (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 61,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2018; Ni and Florian, 2019), and event argument extraction (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 61,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2018; Ni and Florian, 2019), and event argument extraction (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 61,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 13,
+      "context" : "To further deal with the discrepancy between languages, some of them require additional information, such as bilingual dictionaries (Liu et al., 2019; Ni and Florian, 2019), translation pairs (Zou et al.",
+      "startOffset" : 132,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 18,
+      "context" : "To further deal with the discrepancy between languages, some of them require additional information, such as bilingual dictionaries (Liu et al., 2019; Ni and Florian, 2019), translation pairs (Zou et al.",
+      "startOffset" : 132,
+      "endOffset" : 172
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2019; Ni and Florian, 2019), translation pairs (Zou et al., 2018), and dependency parse trees (Subburathinam et al.",
+      "startOffset" : 49,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2018), and dependency parse trees (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 36,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2018), and dependency parse trees (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 36,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2018), and dependency parse trees (Subburathinam et al., 2019; Ahmad et al., 2021; Nguyen and Nguyen, 2021).",
+      "startOffset" : 36,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 11,
+      "context" : "pointed out by previous literature (Li et al., 2021; Hsu et al., 2021), classification-based models are less powerful to model dependencies between entities compared to generation-based models.",
+      "startOffset" : 35,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 6,
+      "context" : "pointed out by previous literature (Li et al., 2021; Hsu et al., 2021), classification-based models are less powerful to model dependencies between entities compared to generation-based models.",
+      "startOffset" : 35,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 38,
+      "context" : "Several works have demonstrated the great success of generation-based models on monolingual structured prediction tasks, including named entity recognition (Yan et al., 2021), relation extraction (Huang et al.",
+      "startOffset" : 156,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2021), relation extraction (Huang et al., 2021; Paolini et al., 2021), and event extraction (Du et al.",
+      "startOffset" : 29,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2021), relation extraction (Huang et al., 2021; Paolini et al., 2021), and event extraction (Du et al.",
+      "startOffset" : 29,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 21,
+      "context" : "There are growing interests recently to incorporate prompts on pre-trained language models in order to guide the models’ behavior or elicit knowledge (Peng et al., 2019; Shin et al., 2020; Schick and Schütze, 2021; Qin and Eisner, 2021; Scao and Rush, 2021).",
+      "startOffset" : 150,
+      "endOffset" : 257
+    }, {
+      "referenceID" : 28,
+      "context" : "There are growing interests recently to incorporate prompts on pre-trained language models in order to guide the models’ behavior or elicit knowledge (Peng et al., 2019; Shin et al., 2020; Schick and Schütze, 2021; Qin and Eisner, 2021; Scao and Rush, 2021).",
+      "startOffset" : 150,
+      "endOffset" : 257
+    }, {
+      "referenceID" : 26,
+      "context" : "There are growing interests recently to incorporate prompts on pre-trained language models in order to guide the models’ behavior or elicit knowledge (Peng et al., 2019; Shin et al., 2020; Schick and Schütze, 2021; Qin and Eisner, 2021; Scao and Rush, 2021).",
+      "startOffset" : 150,
+      "endOffset" : 257
+    }, {
+      "referenceID" : 23,
+      "context" : "There are growing interests recently to incorporate prompts on pre-trained language models in order to guide the models’ behavior or elicit knowledge (Peng et al., 2019; Shin et al., 2020; Schick and Schütze, 2021; Qin and Eisner, 2021; Scao and Rush, 2021).",
+      "startOffset" : 150,
+      "endOffset" : 257
+    }, {
+      "referenceID" : 25,
+      "context" : "There are growing interests recently to incorporate prompts on pre-trained language models in order to guide the models’ behavior or elicit knowledge (Peng et al., 2019; Shin et al., 2020; Schick and Schütze, 2021; Qin and Eisner, 2021; Scao and Rush, 2021).",
+      "startOffset" : 150,
+      "endOffset" : 257
+    }, {
+      "referenceID" : 14,
+      "context" : "Following the taxonomy in (Liu et al., 2021), these methods can",
+      "startOffset" : 26,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 35,
+      "context" : "Despite the flourish of the research in prompting methods, there is only limited attention being put on multilingual tasks (Winata et al., 2021).",
+      "startOffset" : 123,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 31,
+      "context" : "X-GEAR fine-tunes a multilingual pre-trained generative model, such as mBART-50 (Tang et al., 2020) or mT5 (Xue et al.",
+      "startOffset" : 80,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 11,
+      "context" : "Although the multilingual pretrained generative models can generate sequences in many languages, fully relying on them may results in generating hallucinating arguments (Li et al., 2021).",
+      "startOffset" : 169,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 4,
+      "context" : "We consider English, Arabic, and Chinese annotations for ACE2005 (Doddington et al., 2004) and follow the preprocessing in Wadden et al.",
+      "startOffset" : 65,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 29,
+      "context" : "ERE (Song et al., 2015) is created by the Deep Exploration and Filtering of Test program.",
+      "startOffset" : 4,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 30,
+      "context" : "Notice that prior works working on zero-shot cross-lingual transfer of event arguments mostly focus on event argument role labeling (Subburathinam et al., 2019; Ahmad et al., 2021), where they assume ground truth entities are provided during",
+      "startOffset" : 132,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 0,
+      "context" : "Notice that prior works working on zero-shot cross-lingual transfer of event arguments mostly focus on event argument role labeling (Subburathinam et al., 2019; Ahmad et al., 2021), where they assume ground truth entities are provided during",
+      "startOffset" : 132,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 34,
+      "context" : "In this work, we consider event argument extraction (Wang et al., 2019; Wadden et al., 2019; Lin et al., 2020), which is a more realistic setting.",
+      "startOffset" : 52,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 33,
+      "context" : "In this work, we consider event argument extraction (Wang et al., 2019; Wadden et al., 2019; Lin et al., 2020), which is a more realistic setting.",
+      "startOffset" : 52,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 12,
+      "context" : "In this work, we consider event argument extraction (Wang et al., 2019; Wadden et al., 2019; Lin et al., 2020), which is a more realistic setting.",
+      "startOffset" : 52,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 12,
+      "context" : "• OneIE (Lin et al., 2020), the state-of-the-art for monolingual event extraction, is a classificationbased model trained with multitasking, including entity extraction, relation extraction, event extraction, and event argument extraction.",
+      "startOffset" : 8,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 3,
+      "context" : "We simply replace its pre-trained embedding with XLM-RoBERTa-large (Conneau et al., 2020) to fit the zero-shot cross-lingual setting.",
+      "startOffset" : 67,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 30,
+      "context" : "• CL-GCN (Subburathinam et al., 2019) is a classification-based model for cross-lingual event argument role labeling (EARL).",
+      "startOffset" : 9,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 9,
+      "context" : "It considers dependency parsing annotations to bridge different languages and use GCN layers (Kipf and Welling, 2017) to encode the parsing information.",
+      "startOffset" : 93,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 0,
+      "context" : "We follow the implementation of previous work (Ahmad et al., 2021) and add two GCN layers on top of XLM-RoBERTa-large.",
+      "startOffset" : 46,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 0,
+      "context" : "• GATE (Ahmad et al., 2021), the state-of-theart model for zero-shot cross-lingual EARL, is a classification-based model which considers dependency parsing annotations as well.",
+      "startOffset" : 7,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 32,
+      "context" : "Unlike CL-GCN, it uses a Transformer layer (Vaswani et al., 2017) with modified attention to encode the parsing information.",
+      "startOffset" : 43,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 20,
+      "context" : "• TANL (Paolini et al., 2021) is a generationbased model for monolingual EAE.",
+      "startOffset" : 7,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 24,
+      "context" : "To adapt TANL to zero-shot cross-lingual EAE, we change its pre-trained generative model from T5 (Raffel et al., 2020) to mT5-base (Xue et al.",
+      "startOffset" : 97,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 31,
+      "context" : "We consider three different pre-trained generative language models: mBART-50-large (Tang et al., 2020), mT5-base, and mT5-large (Xue et al.",
+      "startOffset" : 83,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 10,
+      "context" : "For mBART-50-large and mT-base, we follow BART’s recipe (Lewis et al., 2020) to extract features for EAE predictions.",
+      "startOffset" : 56,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 15,
+      "context" : "We conjecture that this is because the pre-trained objective of mBART-50 is denoising and reconstructing the original sentence (Liu et al., 2020), hence, it has already learn to copy tokens from the input.",
+      "startOffset" : 127,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 2,
+      "context" : "These errors can be resolved by applying constrained decoding (Cao et al., 2021) to force all the generated tokens appearing in input.",
+      "startOffset" : 62,
+      "endOffset" : 80
+    } ],
+    "year" : 0,
+    "abstractText" : "We present a study on leveraging multilingual pre-trained generative language models for zero-shot cross-lingual event argument extraction (EAE). By formulating EAE as a language generation task, our method effectively encodes the event structures and better captures the dependencies between arguments compared to previous classificationbased EAE models. We wrap arguments into a sequence using language-agnostic templates, which are compatible with any languages, hence, facilitate cross-lingual transfer. Our model finetunes multilingual pre-trained generative language models to generate sentences that fill in the language-agnostic template with arguments. The trained model can then be directly applied to target languages. Experimental results demonstrate that the proposed model outperforms the current state-of-the-art on zero-shot cross-lingual EAE. Comprehensive studies and error analysis are presented to better understand the advantages and the current limitations of using multilingual pretrained generative language models for zeroshot cross-lingual transfer.",
+    "creator" : null
+  }
+}

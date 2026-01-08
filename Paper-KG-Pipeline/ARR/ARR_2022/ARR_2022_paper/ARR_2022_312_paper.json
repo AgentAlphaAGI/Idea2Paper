@@ -1,0 +1,596 @@
+{
+  "name" : "ARR_2022_312_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Boosting coherence of language models",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Language models are commonly evaluated for their ability to generate, rank, or classify coherent spans of text. However, LMs learn from data that may violate pragmatic norms. In addition, autoregressive LMs are typically fit to a multi-objective problem: simultaneously maximizing token likelihoods conditioned on many lengths of truncated context (§2.1). Yet, at generation or scoring time, distributions are conditioned on the entire prompt or previously generated string, which is known to be coherent or even guaranteed to influence the output.\nWe show that large LMs, such as GPT-2 and -3 (Radford et al., 2019; Brown et al., 2020) exhibit failures in long-range coherence (Fig. 1). Samples from these LMs have an unnaturally low density of words that require many tokens of preceding context to predict (§4.1), and the scores that the models give to completions of prompts indicate that they are oversensitive to recent context (§5). To remedy these failures, we propose coherence boosting, a simple inference-time procedure that increases the effect of distant words on predicted token distributions. A pretrained model is viewed as an ensemble\nof experts that produce token distributions conditioned on varying lengths of context. These experts are log-linearly mixed to form a predictor that is superior to the base model (§2).\nCoherence boosting greatly improves prediction of words that depend on a long context, as evidenced by state-of-the-art results on tasks specially meant to assess models’ attention to distant words (§3). In generation of generic text and dialog responses, we show that coherence boosting brings the frequency of occurrence of such words close to that seen in natural text (§4). Beyond generation, we study diverse multiple-choice tasks (§5), in which examples are known to be highly coherent. Coherence boosting does not modify the base model and depends on a single parameter than can be estimated in one pass through a validation set, yet is an competitive adaptation algorithm."
+    }, {
+      "heading" : "1.1 Background and related work",
+      "text" : "Balance between satisfaction of short-range statistical constraints and maintenance of long-range structure was a central question of language generation long before neural language modeling: =- gram models and early neural language models commonly used ‘backing-off’ schemes that adaptively assign interpolation weights to predictors with different context lengths (Chen and Goodman, 1996; Bengio et al., 2003). Neural language modeling brought a need for recurrent units with better numerical properties for propagating information over long distances (Hochreiter and Schmidhuber, 1997; Cho et al., 2014) and eventually saw the reintroduction of alignment variables (Brown et al., 1993) into generation in the form of attention (Bahdanau et al., 2015; Vaswani et al., 2017). Attention is at the core of Transformer LMs, including GPT.\nLanguage models are being trained on and adapted to ever-longer input sequences (Beltagy et al., 2020; Zaheer et al., 2020; Roy et al., 2021; Press et al., 2021), but they remain undersensi-\ntive to distant content or syntax (Khandelwal et al., 2018; Sun et al., 2021) and are easily fooled by recency bias in few-shot prompts (Zhao et al., 2021) or multi-turn conversations (Sankar et al., 2019).\nRecent work has continued to study inferencetime procedures that prevent text sampled from LMs from degenerating into nonsense. Most of these procedures, such as tempered sampling and top-:/top-? truncation (Fan et al., 2018; Holtzman et al., 2019), independently modify the output distribution at each generation step to decrease its entropy and diminish its low-likelihood tail. Holtzman et al. (2019) and Meister and Cotterell (2021) found that such local modifications increase the quality of long generated sequences; we adopt and extend their methodology in §4.1.\nFor dialog systems, Li et al. (2016) propose a decoding scheme that maximizes a mutual information criterion, which explicitly optimizes for dependence of generated text on prompts – a special case of coherence boosting. In multiple-choice tasks, where a model must choose one of several given completions of a prompt, Brown et al. (2020) observe that selecting the completion that maximizes ?(completion|prompt) often favors completions having high unconditional likelihood (likeli-\nhood following an empty or dummy prompt) and, for some tasks, chooses to divide the scores of candidate answers by their unconditional likelihoods. This is also a special case of coherence boosting.\nSuch scoring modifications are more thoroughly studied by Zhao et al. (2021); Holtzman et al. (2021). The latter attributes the problem to ‘surface form competition’: there are many variants of the correct completion that together may capture a large part of probability mass, but the form of the given answer choice alone is not the most likely. However, we show that other causes are at play: surface form competition is impossible when the completion is known to be a single token and the range of choices is the whole vocabulary (§3), and it is not applicable to open-ended generation (§4)."
+    }, {
+      "heading" : "2 Coherence boosting",
+      "text" : "In this section, 5 is an autoregressive LM over a vocabulary + with learnable parameters \\, taking as input a variable number of tokens (up to a maximum context length \") and producing a vector of next-token likelihoods:\n5 (F1, . . . , F=; \\) ∈ Δ(+), F1, . . . , F= ∈ +,\nwhere Δ(+) is the probability simplex over + . We will write the F-th component of this output vector as a conditional likelihood, 5 (F | F1, . . . , F=; \\).\nWe denote by 5: the model evaluated on only the last : input tokens, ignoring earlier tokens:\n5: (F1, . . . , F=; \\) := 5 (F=−:+1, . . . , F=; \\).\nCoherence boosting for next-token prediction. Coherence boosting for a model 5 selects realvalued weights \" = (U1, U2, . . . , U\" ) and produces a new language model 5\", defined by\n5\" (F1, . . . , F=; \\)\n:= softmax ( \"∑ :=1 U: log 5: (F1, . . . , F=; \\) ) , (1)\nwhere log is taken element-wise, or, equivalently,\n5\" (F |F1, . . . , F=; \\) ∝ \"∏ :=1 5: (F |F1, . . . , F=; \\)U: .\nThis is a weighted product-of-experts model, where the ‘experts’ are copies of the base model 5 evaluated on different context lengths.\nBecause evaluating 5 is expensive, we use sparse weights \", as the expression (1) depends only on those 5: for which U: ≠ 0. In Fig. 1 and in the experiments, we allow \" to have only two nonzero entries: when computing likelihoods of words following a sequence of length =, we consider weighted products of 5max := 5= (the full context) and an 5: with : ≤ = (a short context, either of fixed length or decided by prompt structure as in §4.2).\nAs its name suggests, coherence boosting resembles log-linear boosting for multiclass classification (Friedman et al., 2000). However, our weak classifiers are pretrained and share all of their parameters, not obtained by an iterative procedure of training on reweighted data, and we permit negative weights.\nCoherence boosting for answer selection. In multiple-choice problems, a LM must choose the best answer following a context, which consists of a premise or passage followed by a shorter premisefree context (either a short phrase, such as “Answer:”, that incites the LM to generate an answer in the right format, or a hypothesis that depends on the premise). The full context is the concatenation of the premise and the premise-free context (§C).\nBy the autoregressive factorization, the model 5 assigns conditional likelihoods to sequences of\ntokens following context. A typical model for answer selection ranks the candidate answers 08 (sequences of tokens) by 5 (08 | full context; \\) and outputs the highest-ranked 08 . Coherence boosting chooses a parameter U and ranks the choices by:\nlog 5 (08 | full context; \\) + + U log 5 (08 | premise-free context; \\). (2)\nThis is a log-linear combination of two models: 5 evaluated with full context and with a partial context. When U = 0, ranking by (2) is equivalent to ranking by the base model. When U = −1, it is equivalent to dividing the base model’s score by the score of each answer conditioned on the prompt (short context), and thus to maximizing pointwise mutual information between the premise and the answer conditional on the premise-free context. Unlike Brown et al. (2020); Holtzman et al. (2021), our formulation allows the premise-free context to include information specific to the example, not only a domain-specific dummy prompt.\nWe expect coherence boosting to correct for an oversensitivity to the premise-free context, and thus the optimal U will typically be negative (see §5)."
+    }, {
+      "heading" : "2.1 Why should boosting models be better than full-length predictors?",
+      "text" : "Multi-objective training. As we will now see, the training of the model 5 simultaneously fits all of the predictors 5: , which share parameters \\. Each training iteration samples a sequence (or batch of sequences) of a chosen maximum length \" + 1 from the data distribution D and minimizes the average negative log-likelihood (NLL) of all words following the parts of the sequence that precede them: the optimization criterion is:\nEF1...F\"+1∼D 1 \" \"∑ :=1 − log 5 (F:+1 |F1, . . . , F: ; \\).\nIf D is uniform over all length-(\" + 1) subsequences of a training corpus, any given word is equally to likely to appear in all positions within a sampled sequence1, and the criterion is equal to\n\"∑ :=1 1 \" E [− log 5: (F\"+1 |F1, . . . , F\" ; \\)]︸ ︷︷ ︸\nL: (\\)\n, (3)\n1Many authors leave unspecified the way in which training batches are formed from a corpus of input documents. Here we assume that all training documents are concatenated into one (very long) document separated by end-of-text tokens and ignore minute effects near the start and end of this document.\nThis is a uniform scalarization of an \"-task problem: the :-th objective L: (\\) is the expected NLL of a word in the corpus following : context words.\nThis situation is different from that seen at generation time. If the text generated so far is F1F2 . . . F=, the distribution from which the next word F=+1 is sampled is 5= (F1, . . . , F=; \\) – only the ensemble member using full context is used. However, if the string F1 . . . F=F=+1 had been seen in training, 5 would have been trained to predict F=+1 given all partial contexts, with equal weight given to all prediction losses. Thus, 5 is trained to make predictions on data it never sees in evaluation, and may be prevented from optimally learning to use long context: parameters that locally optimize (3) are locally Pareto-optimal for the set of prediction losses L1, . . . ,L\" , but not necessarily optimal for any individual L: . An ensemble of the 5: (: ≤ =) may be a better predictor than 5= alone. (See §A for further analysis of when this occurs.)\nUndertraining. The parameters \\ are shared by the predictors 5: , and modeling power must be spread among the losses L: (\\). The short-context predictors are easier to fit, while sequences in which long context affects the prediction are rare. We expect sensitivity to long context, and precision in modeling its effect, to be especially diminished if the model is undertrained.\nDistribution shift. While the training procedure causes a bias against the influence of longer contexts on generation, we see the opposite bias in downstream tasks (question answering, natural language inference, adversarial probes for common sense): Many modern NLP benchmarks try to challenge models to use long context (§3, §5)."
+    }, {
+      "heading" : "3 Experiments: LAMBADA",
+      "text" : "The LAMBADA dataset (Paperno et al., 2016) tests LMs’ understanding of long-range dependencies by measuring the prediction of the final words in\npassages of several sentences. The task explicitly requires reasoning over a broad context: humans can reliably guess the last word when given a whole passage, but not when given only the last sentence.\nWe perform experiments with the GPT family of models, closely replicating the evaluation setting of Radford et al. (2019).2 We predict the final word as the top-ranked token under the boosted model 5max 5 U: :\n, where 5max is the model taking the full available context and :, U: are the chosen length and coefficient of the short context. To choose : and U: , we do a grid search on the validation set and apply the best values to the testing set.\nResults. Table 1 shows the accuracies and optimal parameter values :∗, U∗\n: . Coherence boosting\nvastly reduces prediction error for all models. In particular, the boosted GPT-2 Small performs better than the original GPT-3 2.7B. The boosted GPT-3 175B achieves a new state of the art.\nOther than the impressive performance gain, we highlight two observations. (1) The optimal U: is always negative, indicating that the optimal mixture of models penalizes the influence of short-range context relative to long-range context. (2) With increasing model size, the optimal U: and : become closer to 0. This means that bigger models capture long-range coherence better than small models, as they have less need to penalize the effect of short context. (Fig. 2 shows the accuracy curves for all models by sweeping U: with a fixed : . The peak clearly moves to the left as model size grows.)\n2Certain details are omitted by Radford et al. (2019). Based on https://github.com/openai/gpt-2/ issues/131, we nearly match baseline accuracy by predicting the last subword token, rather than the last word."
+    }, {
+      "heading" : "4 Experiments: Language generation",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Generic text",
+      "text" : "The experiment in this section extends that of Holtzman et al. (2019). A selection of 5000 articles from WebText (Radford et al., 2019) is taken as a reference corpus of human-written text. A language model (for us, GPT-2 Large) is prompted to generate text conditioned only on the first sentence of each of these articles, up to a maximum of 200 tokens, yielding 5000 machine-generated texts.\nThe human-written and machine-generated texts are compared by four automatic metrics: perplexity under the base LM, self-BLEU-4 (Zhu et al. (2018); the mean BLEU-4 score of a generated text with respect to all other generated texts as references), Zipf coefficient (the linear regression coefficient between log-rank and log-frequency of generated tokens) and repetition (the fraction of generated texts that end in a repeating sequence of tokens). It is desirable for a model and inference procedure to produce text that is as close as possible in these metrics to the human-written reference.\nWe add three measures of long-range coherence: Long-range repetition (LR=): For a whole number = and document , let (( ) be the number of distinct tokens in , and let '= ( ) be the number of distinct tokens for which the distance between their first and last occurrence in is at least = positions. The long-range repetition score LR= of a corpus { 1, . . . , 5000} is a macro-average:\nLR= := ∑5000\n8=1 '= ( 8)∑5000 8=1 (( 8) .\nThis simple measure of lexical coherence favors repetition of words long after they are first used, but gives lower weight to documents that degenerate into repetition of a short span. Long-dependent token frequency (LTF): A long-dependent token is one to which the base LM assigns a likelihood of at least 20% given its full context, but a likelihood of less than 5% given only the 20 tokens of context preceding it. We compute the frequency of long-dependent tokens among all generated tokens. Long-short likelihood difference (X): The mean difference in likelihoods assigned to tokens by the base LM conditioned on full context and conditioned on 20 tokens of context.\nWe sample 5000 document completions from GPT-2 Large following sampling procedures with\na range of boosting schemes. We consider models of the form 5 U:\n: 5\n1−U: max , for : ∈ {8, 16, 32, 64} and\nU: ∈ {−0.4,−0.2,−0.1,−0.05,−0.025, 0}. (Such a parametrization of boosting parameters was chosen to ensure that when the context has length less than : – or the distant context has very little effect on the next word – the boosted model becomes equivalent to the untempered 5max.) Top-? truncation with ? = 0.95 was applied to all models.\nResults. Metrics of two of the best models, with : = 32, U: = −0.05 and : = 64, U: = −0.1, are shown in Table 2. In particular, the latter model generates text that is closer to the human reference, or equally close, to the pure top-? sampling (U: = 0) baseline in all metrics, with the greatest improvement seen in the coherence measures.\nFig. 3 shows the dependence of selected metrics on : and U: . Coherence boosting brings all metrics closer to those of human text. As : increases, the optimal U: grows in magnitude. This is expected: the predictive effect of tokens more than : positions away decreases with : ( 5: approaches 5max).\nWe also note that a simple sampling with temperature 0.9 performs better than top-? sampling in most of the coherence metrics. This suggests that the improvements accomplished by top-? truncation come at the cost of introducing a bias towards tokens that are predictable from a short context. Coherence boosting corrects this bias without sacrificing the gains in other measures.\nAn example of human, top-?, and coherence boosting outputs is shown in Table B.1."
+    }, {
+      "heading" : "4.2 Dialog systems",
+      "text" : "This experiment is based on the Dialog System Technology Challenge 7 (DSTC7) (Galley et al., 2019), which benchmarks generation of dialog responses conditioned on one or more turns of conversation context. As a base model, we use DialoGPT (Zhang et al., 2020b), a GPT-2 Small variant that demonstrated strong results on this task.\nDialog systems’ responses to the 2208 conversation prompts3 are scored against human-written reference responses (five for each example). Following Zhang et al. (2020b), we use the =-gram overlap metrics NIST (Doddington, 2002), BLEU (Papineni et al., 2002), and METEOR (Lavie and Agarwal, 2007), as well as two intrinsic measures of =-gram diversity from Li et al. (2016); Zhang\n3The DSTC7 evaluation data, scraped from Reddit, is undisclosed; we reacquire it using officially released code.\net al. (2018): Distinct-= and Entropy-=. It is desirable for a dialog system to reach scores close to those of the human responses in all metrics.\nIn addition to the decoding algorithms considered by (Zhang et al., 2020b) – beam search and greedy decoding – we consider greedy decoding with a coherence boosting model. As long and short predictors, we use DialoGPT conditioned on the full conversation context and on only the (context-free) response generated so far. That is, if the conversation context is ( and the text generated so far is F1 . . . F: , then F:+1 is predicted using the model 5max 5 U:+1, evaluated on the string ( 〈sep〉 F1 . . . F: , where 〈sep〉 is the turn separator token. We consider U ∈ {0,−0.1, . . . ,−0.8}.\nResults. Table 3 shows the metrics of the boosting models that reach the peak average NIST and BLEU scores (U = −0.3 and U = −0.7). Increasing the magnitude of U leads to responses that are more relevant to the prompt (higher BLEU and NIST) and more diverse than those from greedy decoding. As −U grows large, the boosting model favors creative responses that are relevant to the prompt (high NIST), but simple responses that are common in the reference data become unlikely (low BLEU).4\n4Galley et al. (2019) argue that NIST and diversity metrics are more informative measures than BLEU for multi-reference scoring, since BLEU favors systems that often produce responses with little relation to the prompt (e.g., “I don’t know”).\nWe observed that the responses with U = −0.7, despite the superior metrics, are more likely to be ungrammatical and innovate words in an effort to use tokens relevant to the prompt. In practice, improving dialog systems with coherence boosting may require techniques to prevent these side effects, such as repetition penalties or relaxation of greedy decoding to low-temperature sampling.\nFinally, we note that the learning of DialoGPT was initialized with a pretrained GPT-2 and uses GPT-2’s end-of-text token as the turn separator. This choice may reduce DialoGPT’s attention to past turns, as tokens preceding the end-of-text token are never informative in GPT-2’s training data."
+    }, {
+      "heading" : "5 Experiments: Language understanding",
+      "text" : "We evaluate coherence boosting on language understanding and inference tasks, where examples are expected to be highly coherent. Code for the experiments in this section is included in the SI.\nWe study 5 categories of tasks with 15 datasets. (1) Cloze tasks: StoryCloze (Mostafazadeh et al., 2016), HellaSwag (Zellers et al., 2019), and COPA (Roemmele et al., 2011). (2) Question answering: CommonsenseQA (CsQA) (Talmor et al., 2019), OpenBookQA (OBQA) (Mihaylov et al., 2018), ARC Easy / Challenge (ARC-E/C) (Clark et al., 2018), and PIQA (Bisk et al., 2020). (3) Text classification: SST-2/5 (Socher et al., 2013),\nTREC (Voorhees and Tice, 2000), AGNews (Zhang et al., 2015). (4) Natural language inference: RTE (Dagan et al., 2005), CB (De Marneffe et al., 2019), and BoolQ (Clark et al., 2019). (5) Fact knowledge retrieval: LAMA (Petroni et al., 2019).\nAll tasks except LAMA are formulated as multiple-choice problems. We convert text classification and inference tasks to multiple-choice tasks by choosing meaningful answer words, e.g., “True”/“False”. The prediction is made by selecting the choice with the highest LM likelihood.\nFor in-context learning of GPT models, prompt formats greatly impact performance. We follow previous work (Brown et al., 2020; Zhao et al., 2021; Holtzman et al., 2019) to create natural prompts to enlarge the effectiveness of in-context learning, but we do not aim to optimize the full and context-free prompt format: our goal is to evaluate coherence boosting models with a fixed prompt. The prompt formats we use are listed in Table C.1. As described in §2, within each prompt we identify\na premise-free context, which is used as the context for the short-range model in coherence boosting.\nFor each dataset, we pick the optimal value U∗ of the parameter U on the validation set and report the accuracy on testing set. (If no testing set is publicly available, we choose U on a subset of the training set and report the final number on the validation set.) Across all experiments, we do not put any few-shot examples in the prompt.\nFor the knowledge retrieval task, we follow Zhao et al. (2021)’s data split of LAMA and evaluate GPT models on facts whose missing answers are at the end of the sentence (to fit the nature of autoregressive language models). We limit the prompt length to be larger than 5 tokens and rerun the model from Zhao et al. (2021) on the new data.\nResults: Multiple-choice tasks. Results of three representative base models on all multiplechoice tasks are presented in Table 4. (Results for all models are in Tables D.1 and D.2.) We compare\nour best model with two baselines, U = 0 ( 5max) and U = −1. The former one is the original fullcontext model, while the latter is, for most tasks, a form of unconditional probability normalization as performed by Brown et al. (2020); Holtzman et al. (2021). We also compare our best model with other inference methods (Holtzman et al., 2021; Min et al., 2021) in Tables D.3 and D.4.\nBy comparing the third column with the first two columns within each model in Table 4, we can see that our method with the selected U generally improves the accuracy on all tasks. Some of the improvements are dramatic, where boosted GPT-2 Small outperforms GPT-2 XL’s base model (e.g., CsQA, OBQA, ARC-C) and is even comparable with GPT-3 175B’s base model (e.g., SST-2, SST-5, RTE). We make similar conclusions when comparing coherence boosting with other inference methods in Tables D.3 and D.4.\nWe observe that the optimal U depends on tasks and models (fourth column within each model), which means that U cannot be heuristically set to 0 or −1 as in past work. This finding suggests the necessity of searching for an optimal U. We visualize the accuracy curve by varying U in the testing set of all datasets. We show the curve for StoryCloze in Fig. 4 and present similar figures for all tasks in Figs. D.1 and D.2.\nConsistent with the results on LAMBADA (§3),\nthe optimal U is usually negative, and its absolute value tends to decrease with the model size. We selected the optimal U by the validation set, but future work may explore automatic and adaptive methods for setting this parameter. Notice that all experiments required only a single pass through the data to compute answer likelihoods conditioned on full and premise-free contexts – no iterative gradient-based finetuning was applied.\nResults: Knowledge retrieval. Unlike LAMBADA, where long contexts are required for inferring the last word, LAMA contains much shorter sentences for knowledge facts, i.e., (subject, relation, object). A recent study (Cao et al., 2021) shows that the prediction is biased by the relation in the short context, i.e., the answer to a prompt (e.g., “Dante was born in ___”) can be induced by the relation (“was born in”) without the subject. Coherence boosting mitigates the influence of those short contexts by making the prediction dependent on a longer context containing the subject.\nWe present results for all models on LAMA in Table 5. We also compare our model with contextual calibration (CC) (Zhao et al., 2021), which processes the LM’s output probabilities with a loglinear model.5 Coherence boosting with the selected U and : outperforms both the base model and CC by significant margins."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We have illustrated the hyposensitivity of pretrained language models to long-range content and proposed a simple inference-time remedy. Future work can consider training regimes that encourage learning of long dependencies, adaptive selection of boosting weights, mimicking coherence boosting by scaling attention at different distances, and comparative analysis of optimal weights for various text domains and language model architectures.\nProcedures that force LMs to be more focused on a prompt, or a specific part of it, when generating or ranking tokens can benefit algorithms that search for combinations of words through sampling. It would be interesting to use coherence boosting in non-autoregressive text generation algorithms, such as to accelerate the mixing of MCMC methods for constrained text generation (Miao et al., 2019; Zhang et al., 2020a; Malkin et al., 2021).\n5Note that CC applies a log-linear model to the probability domain, not the logit domain, which does not have an information-theoretic interpretation.\nEthics statement\nWe hope and expect to see a nonnegative net societal impact from better text generation and ranking algorithms in general and from this work in particular. As we have shown, there is room to improve the inference procedures used with small language models, which incur lower costs than training and evaluation of large models. However, researchers should bear in mind the risks and potential misuse of automatic generation of long-form text."
+    }, {
+      "heading" : "A On multi-objective training and log-linear weights",
+      "text" : "The section extends the discussion in §2.1. Recall that the language model 5 is trained on the multi-objective loss (3):\n\"∑ :=1\n_: EF1...F\"+1∈D [− log 5: (F\"+1 |F1, . . . , F\" ; \\)]︸ ︷︷ ︸ L: (\\) , _: = 1 \" .\nAs we saw in the main text, the scalarization weights _: are uniform as a consequence of the training regime. However, evaluation procedures effectively give nonuniform weight to the \" prediction losses.\nSome vector calculus. Denote by \\̂ (,) a local optimum of the above optimization problem for general linear combination weights , = (_1, . . . , _\" ). Under suitable regularity conditions, the gradient of the combined loss vanishes: ∑\n:\n_: mL: (\\) m\\\n\\= \\̂ (,)\n= 0. (4)\nAssuming the Hessian A of the optimization criterion ∑\n: _:L: (\\) is nonsingular, we can implicitly differentiate (4) with respect to , to obtain the matrix derivative\nm\\̂ (,) m, = − A−1 m (L1(\\), . . . ,L\" (\\)) m\\)\n\\= \\̂ (,)\n. (5)\nThe local dependence of the losses on the scalarization weights can be expressed as a bilinear form evaluated on mL8\nm\\ and mL 9 m\\ :\nmL8 (\\̂ (,)) m_ 9 = mL8 m\\\n\\= \\̂ (,)\nm\\̂ (,) m_ 9 = − mL8 m\\ A−1 mL 9 m\\)\n\\= \\̂ (,)\n. (6)\nBecause \\̂ is a local minimizer, −A−1 is negative definite. In particular, any mL8 ( \\̂ (,)) m_8\nis negative. This expresses the intuitive fact that if an infinitesimally higher weight is given to some prediction loss in optimization, the value of this loss at the optimum will be infinitesimally lower.\nFor concreteness, consider how the highest-length prediction loss L\" (\\̂ (,)) changes when _\" is increased and the _ 9 ( 9 ≠ 8) are decreased with rate proportional to _ 9 , while ∑ _ 9 is kept constant. That\nis, let # = ( −_1, . . . ,−_8−1, ∑ 9≠8 _ 9 ,−_8+1, . . . ,−_\" ) . Then\n3L8 (\\̂ (, + C#)) 3C = ∑ 9 mL8 m_ 9 V 9 = − mL8 m\\ A−1 ∑ 9 mL 9 m\\) V 9 = − mL8 m\\ A−1 mL8 m\\) ∑ 9 _ 9 ≤ 0, (7)\nwhere the last two equalities follow from (6) and (4), respectively, and the inequality holds because A−1 is positive definite. So we have shown that, in nondegenerate cases, the L\" (\\) term of the optimization criterion decreases under the locally optimal weights \\ when _\" is infinitesimally increased in this way.\nLog-linear mixture of predictors. Returning to coherence boosting, suppose that we aim to build out of the predictors 5: (−; \\ (̂,)) a new predictor 6 that would have lower negative log-likelihood on prediction of a word given the maximum-length context:\nEF1...F\"+1∈D [− log 6(F\"+1 | F1, . . . , F\" )] < E [ − log 5\" (F\"+1 | F1, . . . , F\" ; \\̂ (,)) ] .\nAs we just saw, using this predictor in place of 5\" achieves the same direction of movement in the prediction loss as optimizing with higher weight _\" .\nA naïve guess – not a proper predictor, as its outputs do not sum to 1 – would lightly perturb 5\" by log-linearly mixing small multiples of the 5: weight weights V: summing to 0:\n6 (C) naïve(F1, . . . , F\" ) = exp ( log 5\" (F1, . . . , F\" ; \\̂ (,)) + C ∑ : V: log 5: (−, \\̂ (,)) ) .\nThen, by linearity of expectation,\n3\n3C C=0 E\n[ − log 6 (C)naïve(F\"+1 | F1, . . . , F\" ) ] = ∑ : V:E [ − log 5: (F\"+1 | F1, . . . , F\" ; \\̂ (,)) ] =\n∑ : V:L: (\\̂ (,)). (8)\nThis quantity is negative if, for example, L\" (\\̂ (,)) is minimal among the L: (\\̂ (,)). Reintroducing the normalization condition, we define a candidate function 6 (C) as the normalization of 6 (C) naïve over F\"+1 and compute, with the aid of (8) and using that the 6: are normalized to simplify the\nderivative of log ∑ exp:\n3\n3C C=0 E\n[ − log 6 (C) (F\"+1 | F1, . . . , F\" ) ] =\n∑ : V:L: (\\̂ (,)) + 3 3C C=0 E log ∑ F 6 (C) naïve(F | F1, . . . , F\" )\n= ∑ : V:L: (\\̂ (,)) + E ∑ F 〈∑ : V: log 5: (F1, . . . , F\" ; \\̂ (,)), 5\" (F1, . . . , F\" ; \\̂ (,)) 〉\n= ∑ : V:L: (\\̂ (,)) − ∑ : V:E [ KL ( 5\" (F1, . . . , F\" ; \\̂ (,)) ‖ 5: (F1, . . . , F\" ; \\̂ (,)) ) ] , (9)\nwhere the last line used that ∑ V: = 0.\nIn practice, we are interested in sparse log-linear mixtures. Taking V\" = 1, V: = −1 for a single : , and all other V8 = 0, we conclude that the boosted model proportional to 5 1+C\" 5 −C :\nis a better predictor than 5\" alone if the difference between prediction losses L\" and L: is greater than the average KL divergence between the predictions 5\" and 5: ."
+    }, {
+      "heading" : "B Example WebText completion",
+      "text" : "An example of human, top-?, and coherence boosting outputs is shown in Table B.1. All outputs for all boosting schemes are included in the SI."
+    }, {
+      "heading" : "C Prompt formats for multiple-choice tasks",
+      "text" : ""
+    }, {
+      "heading" : "D Additional results",
+      "text" : ""
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Longformer: The long-document transformer",
+      "author" : [ "Iz Beltagy", "Matthew E. Peters", "Arman Cohan." ],
+      "venue" : "arXiv preprint arXiv:2004.05150.",
+      "citeRegEx" : "Beltagy et al\\.,? 2020",
+      "shortCiteRegEx" : "Beltagy et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A neural probabilistic language model",
+      "author" : [ "Yoshua Bengio", "Réjean Ducharme", "Pascal Vincent", "Christian Janvin." ],
+      "venue" : "Journal of Machine Learning Research, 3:1137–1155.",
+      "citeRegEx" : "Bengio et al\\.,? 2003",
+      "shortCiteRegEx" : "Bengio et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Piqa: Reasoning about physical commonsense in natural language. Association for the Advancement of Artificial Intelligence (AAAI)",
+      "author" : [ "Yonatan Bisk", "Rowan Zellers", "Jianfeng Gao", "Yejin Choi" ],
+      "venue" : null,
+      "citeRegEx" : "Bisk et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Bisk et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The mathematics of statistical machine translation: Parameter estimation",
+      "author" : [ "Peter F. Brown", "Stephen A. Della Pietra", "Vincent J. Della Pietra", "Robert L. Mercer." ],
+      "venue" : "Computational Linguistics, 19(2):263– 311.",
+      "citeRegEx" : "Brown et al\\.,? 1993",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Knowledgeable or educated guess? revisiting language models as knowledge bases",
+      "author" : [ "Boxi Cao", "Hongyu Lin", "Xianpei Han", "Le Sun", "Lingyong Yan", "Meng Liao", "Tong Xue", "Jin Xu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association",
+      "citeRegEx" : "Cao et al\\.,? 2021",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "An empirical study of smoothing techniques for language modeling",
+      "author" : [ "Stanley F. Chen", "Joshua Goodman." ],
+      "venue" : "34th Annual Meeting of the Association for Computational Linguistics, pages 310–318, Santa Cruz, California, USA. Association for Com-",
+      "citeRegEx" : "Chen and Goodman.,? 1996",
+      "shortCiteRegEx" : "Chen and Goodman.",
+      "year" : 1996
+    }, {
+      "title" : "Learning phrase representations using RNN encoder–decoder for statistical machine translation",
+      "author" : [ "Kyunghyun Cho", "Bart van Merriënboer", "Caglar Gulcehre", "Dzmitry Bahdanau", "Fethi Bougares", "Holger Schwenk", "Yoshua Bengio." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Cho et al\\.,? 2014",
+      "shortCiteRegEx" : "Cho et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "BoolQ: Exploring the surprising difficulty of natural yes/no questions",
+      "author" : [ "Christopher Clark", "Kenton Lee", "Ming-Wei Chang", "Tom Kwiatkowski", "Michael Collins", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American",
+      "citeRegEx" : "Clark et al\\.,? 2019",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Think you have solved question answering? Try ARC, the AI2 reasoning challenge",
+      "author" : [ "Peter Clark", "Isaac Cowhey", "Oren Etzioni", "Tushar Khot", "Ashish Sabharwal", "Carissa Schoenick", "Oyvind Tafjord." ],
+      "venue" : "arXiv preprint arXiv:1803.05457.",
+      "citeRegEx" : "Clark et al\\.,? 2018",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The pascal recognising textual entailment challenge",
+      "author" : [ "Ido Dagan", "Oren Glickman", "Bernardo Magnini." ],
+      "venue" : "Machine Learning Challenges Workshop, pages 177–190. Springer.",
+      "citeRegEx" : "Dagan et al\\.,? 2005",
+      "shortCiteRegEx" : "Dagan et al\\.",
+      "year" : 2005
+    }, {
+      "title" : "The commitmentbank: Investigating projection in naturally occurring discourse",
+      "author" : [ "Marie-Catherine De Marneffe", "Mandy Simons", "Judith Tonhauser." ],
+      "venue" : "proceedings of Sinn und Bedeutung, volume 23, pages 107–124.",
+      "citeRegEx" : "Marneffe et al\\.,? 2019",
+      "shortCiteRegEx" : "Marneffe et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatic evaluation of machine translation quality using n-gram cooccurrence statistics",
+      "author" : [ "George R. Doddington." ],
+      "venue" : "Human Language Technology Research.",
+      "citeRegEx" : "Doddington.,? 2002",
+      "shortCiteRegEx" : "Doddington.",
+      "year" : 2002
+    }, {
+      "title" : "Hierarchical neural story generation",
+      "author" : [ "Angela Fan", "Mike Lewis", "Yann Dauphin." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 889–898, Melbourne, Australia. Association",
+      "citeRegEx" : "Fan et al\\.,? 2018",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Additive logistic regression: A statistical view of boosting",
+      "author" : [ "Jerome Friedman", "Trevor Hastie", "Robert Tibshirani." ],
+      "venue" : "The Annals of Statistics, 28:337– 407.",
+      "citeRegEx" : "Friedman et al\\.,? 2000",
+      "shortCiteRegEx" : "Friedman et al\\.",
+      "year" : 2000
+    }, {
+      "title" : "Grounded response generation task at DSTC7",
+      "author" : [ "Michel Galley", "Chris Brockett", "Xiang Gao", "Jianfeng Gao", "William B. Dolan." ],
+      "venue" : "Dialog System Technology Challenges 7 (AAAI workshop). 9",
+      "citeRegEx" : "Galley et al\\.,? 2019",
+      "shortCiteRegEx" : "Galley et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural Computation, 9(8):1735–1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "The curious case of neural text degeneration",
+      "author" : [ "Ari Holtzman", "Jan Buys", "Li Du", "Maxwell Forbes", "Yejin Choi." ],
+      "venue" : "International Conference on Learning Representations (CLR).",
+      "citeRegEx" : "Holtzman et al\\.,? 2019",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Surface form competition: Why the highest probability answer isn’t always right",
+      "author" : [ "Ari Holtzman", "Peter West", "Vered Shwartz", "Yejin Choi", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Process-",
+      "citeRegEx" : "Holtzman et al\\.,? 2021",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Sharp nearby, fuzzy far away: How neural language models use context",
+      "author" : [ "Urvashi Khandelwal", "He He", "Peng Qi", "Dan Jurafsky." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),",
+      "citeRegEx" : "Khandelwal et al\\.,? 2018",
+      "shortCiteRegEx" : "Khandelwal et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "METEOR: An automatic metric for MT evaluation with high levels of correlation with human judgments",
+      "author" : [ "Alon Lavie", "Abhaya Agarwal." ],
+      "venue" : "Proceedings of the Second Workshop on Statistical Machine Translation, pages 228–231, Prague, Czech Repub-",
+      "citeRegEx" : "Lavie and Agarwal.,? 2007",
+      "shortCiteRegEx" : "Lavie and Agarwal.",
+      "year" : 2007
+    }, {
+      "title" : "A diversity-promoting objective function for neural conversation models",
+      "author" : [ "Jiwei Li", "Michel Galley", "Chris Brockett", "Jianfeng Gao", "Bill Dolan." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computa-",
+      "citeRegEx" : "Li et al\\.,? 2016",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Studying word order through iterative shuffling",
+      "author" : [ "Nikolay Malkin", "Sameera Lanka", "Pranav Goel", "Nebojsa Jojic." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 10351–10366, Online and Punta",
+      "citeRegEx" : "Malkin et al\\.,? 2021",
+      "shortCiteRegEx" : "Malkin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language model evaluation beyond perplexity",
+      "author" : [ "Clara Meister", "Ryan Cotterell." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Pro-",
+      "citeRegEx" : "Meister and Cotterell.,? 2021",
+      "shortCiteRegEx" : "Meister and Cotterell.",
+      "year" : 2021
+    }, {
+      "title" : "CGMH: Constrained sentence generation by Metropolis-Hastings sampling. Association for the Advancement of Artificial Intelligence (AAAI)",
+      "author" : [ "Ning Miao", "Hao Zhou", "Lili Mou", "Rui Yan", "Li Lei" ],
+      "venue" : null,
+      "citeRegEx" : "Miao et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Miao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Can a suit of armor conduct electricity? a new dataset for open book question answering",
+      "author" : [ "Todor Mihaylov", "Peter Clark", "Tushar Khot", "Ashish Sabharwal." ],
+      "venue" : "Proceedings of the 2018 Conference on",
+      "citeRegEx" : "Mihaylov et al\\.,? 2018",
+      "shortCiteRegEx" : "Mihaylov et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Noisy channel language model prompting for few-shot text classification",
+      "author" : [ "Sewon Min", "Mike Lewis", "Hannaneh Hajishirzi", "Luke Zettlemoyer." ],
+      "venue" : "arXiv preprint arXiv:2108.04106.",
+      "citeRegEx" : "Min et al\\.,? 2021",
+      "shortCiteRegEx" : "Min et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A corpus and cloze evaluation for deeper understanding of commonsense stories",
+      "author" : [ "Nasrin Mostafazadeh", "Nathanael Chambers", "Xiaodong He", "Devi Parikh", "Dhruv Batra", "Lucy Vanderwende", "Pushmeet Kohli", "James Allen." ],
+      "venue" : "Proceedings of the 2016",
+      "citeRegEx" : "Mostafazadeh et al\\.,? 2016",
+      "shortCiteRegEx" : "Mostafazadeh et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "The LAMBADA dataset: Word prediction requiring a broad discourse context",
+      "author" : [ "Denis Paperno", "Germán Kruszewski", "Angeliki Lazaridou", "Ngoc Quan Pham", "Raffaella Bernardi", "Sandro Pezzelle", "Marco Baroni", "Gemma Boleda", "Raquel Fernández" ],
+      "venue" : null,
+      "citeRegEx" : "Paperno et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Paperno et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pages 311–318, Philadelphia,",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "In Proceedings of the 2019 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Train short, test long: Attention with linear biases enables input length extrapolation",
+      "author" : [ "Ofir Press", "Noah A. Smith", "Mike Lewis." ],
+      "venue" : "arXiv preprint arXiv:2108.12409.",
+      "citeRegEx" : "Press et al\\.,? 2021",
+      "shortCiteRegEx" : "Press et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Choice of plausible alternatives: An evaluation of commonsense causal reasoning",
+      "author" : [ "Melissa Roemmele", "Cosmin Adrian Bejan", "Andrew S. Gordon." ],
+      "venue" : "AAAI Spring Symposium Series.",
+      "citeRegEx" : "Roemmele et al\\.,? 2011",
+      "shortCiteRegEx" : "Roemmele et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Do neural dialog systems use the conversation history effectively? an empirical study",
+      "author" : [ "Chinnadhurai Sankar", "Sandeep Subramanian", "Chris Pal", "Sarath Chandar", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Com-",
+      "citeRegEx" : "Sankar et al\\.,? 2019",
+      "shortCiteRegEx" : "Sankar et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D. Manning", "Andrew Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 2013 Conference on",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Do long-range language models actually use long-range context",
+      "author" : [ "Simeng Sun", "Kalpesh Krishna", "Andrew MattarellaMicke", "Mohit Iyyer" ],
+      "venue" : "In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Sun et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "CommonsenseQA: A question answering challenge targeting commonsense knowledge",
+      "author" : [ "Alon Talmor", "Jonathan Herzig", "Nicholas Lourie", "Jonathan Berant." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Talmor et al\\.,? 2019",
+      "shortCiteRegEx" : "Talmor et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Neural Information Processing Systems (NIPS).",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Building a question answering test collection",
+      "author" : [ "Ellen M Voorhees", "Dawn M Tice." ],
+      "venue" : "Proceedings of the 23rd annual international ACM SIGIR conference on Research and development in information retrieval, pages 200–207.",
+      "citeRegEx" : "Voorhees and Tice.,? 2000",
+      "shortCiteRegEx" : "Voorhees and Tice.",
+      "year" : 2000
+    }, {
+      "title" : "HellaSwag: Can a machine really finish your sentence",
+      "author" : [ "Rowan Zellers", "Ari Holtzman", "Yonatan Bisk", "Ali Farhadi", "Yejin Choi" ],
+      "venue" : "In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Zellers et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Zellers et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Language generation via combinatorial constraint satisfaction: A tree search enhanced MonteCarlo approach",
+      "author" : [ "Maosen Zhang", "Nan Jiang", "Lei Li", "Yexiang Xue." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP 2020, pages",
+      "citeRegEx" : "Zhang et al\\.,? 2020a",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Zhao", "Yann LeCun." ],
+      "venue" : "Neural Information Processing Systems (NIPS).",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Generating informative and diverse conversational responses via adversarial information maximization",
+      "author" : [ "Yizhe Zhang", "Michel Galley", "Jianfeng Gao", "Zhe Gan", "Xiujun Li", "Chris Brockett", "William B. Dolan." ],
+      "venue" : "Neural Information Processing Systems",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "DIALOGPT : Largescale generative pre-training for conversational response generation",
+      "author" : [ "Yizhe Zhang", "Siqi Sun", "Michel Galley", "Yen-Chun Chen", "Chris Brockett", "Xiang Gao", "Jianfeng Gao", "Jingjing Liu", "Bill Dolan." ],
+      "venue" : "Proceedings of the 58th An-",
+      "citeRegEx" : "Zhang et al\\.,? 2020b",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Calibrate before use: Improving few-shot performance of language models",
+      "author" : [ "Zihao Zhao", "Eric Wallace", "Shi Feng", "Dan Klein", "Sameer Singh." ],
+      "venue" : "International Conference on Machine Learning (ICML).",
+      "citeRegEx" : "Zhao et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Texygen: A benchmarking platform for text generation models",
+      "author" : [ "Yaoming Zhu", "Sidi Lu", "Lei Zheng", "Jiaxian Guo", "Weinan Zhang", "Jun Wang", "Yong Yu." ],
+      "venue" : "ACM SIGIR Conference on Research and Development in Information Retrieval.",
+      "citeRegEx" : "Zhu et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 32,
+      "context" : "We show that large LMs, such as GPT-2 and -3 (Radford et al., 2019; Brown et al., 2020) exhibit failures in long-range coherence (Fig.",
+      "startOffset" : 45,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 6,
+      "context" : "Balance between satisfaction of short-range statistical constraints and maintenance of long-range structure was a central question of language generation long before neural language modeling: =gram models and early neural language models commonly used ‘backing-off’ schemes that adaptively assign interpolation weights to predictors with different context lengths (Chen and Goodman, 1996; Bengio et al., 2003).",
+      "startOffset" : 364,
+      "endOffset" : 409
+    }, {
+      "referenceID" : 2,
+      "context" : "Balance between satisfaction of short-range statistical constraints and maintenance of long-range structure was a central question of language generation long before neural language modeling: =gram models and early neural language models commonly used ‘backing-off’ schemes that adaptively assign interpolation weights to predictors with different context lengths (Chen and Goodman, 1996; Bengio et al., 2003).",
+      "startOffset" : 364,
+      "endOffset" : 409
+    }, {
+      "referenceID" : 16,
+      "context" : "Neural language modeling brought a need for recurrent units with better numerical properties for propagating information over long distances (Hochreiter and Schmidhuber, 1997; Cho et al., 2014) and eventually saw the reintroduction of alignment variables (Brown et al.",
+      "startOffset" : 141,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 7,
+      "context" : "Neural language modeling brought a need for recurrent units with better numerical properties for propagating information over long distances (Hochreiter and Schmidhuber, 1997; Cho et al., 2014) and eventually saw the reintroduction of alignment variables (Brown et al.",
+      "startOffset" : 141,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2014) and eventually saw the reintroduction of alignment variables (Brown et al., 1993) into generation in the form of attention (Bahdanau et al.",
+      "startOffset" : 69,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 0,
+      "context" : ", 1993) into generation in the form of attention (Bahdanau et al., 2015; Vaswani et al., 2017).",
+      "startOffset" : 49,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 38,
+      "context" : ", 1993) into generation in the form of attention (Bahdanau et al., 2015; Vaswani et al., 2017).",
+      "startOffset" : 49,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 1,
+      "context" : "Language models are being trained on and adapted to ever-longer input sequences (Beltagy et al., 2020; Zaheer et al., 2020; Roy et al., 2021; Press et al., 2021), but they remain undersensi-",
+      "startOffset" : 80,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 31,
+      "context" : "Language models are being trained on and adapted to ever-longer input sequences (Beltagy et al., 2020; Zaheer et al., 2020; Roy et al., 2021; Press et al., 2021), but they remain undersensi-",
+      "startOffset" : 80,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 19,
+      "context" : "tive to distant content or syntax (Khandelwal et al., 2018; Sun et al., 2021) and are easily fooled by recency bias in few-shot prompts (Zhao et al.",
+      "startOffset" : 34,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 36,
+      "context" : "tive to distant content or syntax (Khandelwal et al., 2018; Sun et al., 2021) and are easily fooled by recency bias in few-shot prompts (Zhao et al.",
+      "startOffset" : 34,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 45,
+      "context" : ", 2021) and are easily fooled by recency bias in few-shot prompts (Zhao et al., 2021) or multi-turn conversations (Sankar et al.",
+      "startOffset" : 66,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2021) or multi-turn conversations (Sankar et al., 2019).",
+      "startOffset" : 36,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 13,
+      "context" : "Most of these procedures, such as tempered sampling and top-:/top-? truncation (Fan et al., 2018; Holtzman et al., 2019), independently modify the output distribution at each generation step to decrease its entropy and diminish its low-likelihood tail.",
+      "startOffset" : 79,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 17,
+      "context" : "Most of these procedures, such as tempered sampling and top-:/top-? truncation (Fan et al., 2018; Holtzman et al., 2019), independently modify the output distribution at each generation step to decrease its entropy and diminish its low-likelihood tail.",
+      "startOffset" : 79,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 14,
+      "context" : "As its name suggests, coherence boosting resembles log-linear boosting for multiclass classification (Friedman et al., 2000).",
+      "startOffset" : 101,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 28,
+      "context" : "The LAMBADA dataset (Paperno et al., 2016) tests LMs’ understanding of long-range dependencies by measuring the prediction of the final words in 2 1 0 1 2 3 0.",
+      "startOffset" : 20,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 32,
+      "context" : "A selection of 5000 articles from WebText (Radford et al., 2019) is taken as a reference corpus of human-written text.",
+      "startOffset" : 42,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 15,
+      "context" : "This experiment is based on the Dialog System Technology Challenge 7 (DSTC7) (Galley et al., 2019), which benchmarks generation of dialog responses conditioned on one or more turns of conversation context.",
+      "startOffset" : 77,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 44,
+      "context" : "As a base model, we use DialoGPT (Zhang et al., 2020b), a GPT-2 Small variant that demonstrated strong results on this task.",
+      "startOffset" : 33,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 12,
+      "context" : "(2020b), we use the =-gram overlap metrics NIST (Doddington, 2002), BLEU (Papineni et al.",
+      "startOffset" : 48,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 29,
+      "context" : "(2020b), we use the =-gram overlap metrics NIST (Doddington, 2002), BLEU (Papineni et al., 2002), and METEOR (Lavie and Agarwal, 2007), as well as two intrinsic measures of =-gram diversity from Li et al.",
+      "startOffset" : 73,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2002), and METEOR (Lavie and Agarwal, 2007), as well as two intrinsic measures of =-gram diversity from Li et al.",
+      "startOffset" : 20,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 44,
+      "context" : "In addition to the decoding algorithms considered by (Zhang et al., 2020b) – beam search and greedy decoding – we consider greedy decoding with a coherence boosting model.",
+      "startOffset" : 53,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 27,
+      "context" : "(1) Cloze tasks: StoryCloze (Mostafazadeh et al., 2016), HellaSwag (Zellers et al.",
+      "startOffset" : 28,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2016), HellaSwag (Zellers et al., 2019), and COPA (Roemmele et al.",
+      "startOffset" : 19,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 37,
+      "context" : "(2) Question answering: CommonsenseQA (CsQA) (Talmor et al., 2019), OpenBookQA (OBQA) (Mihaylov et al.",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2019), OpenBookQA (OBQA) (Mihaylov et al., 2018), ARC Easy / Challenge (ARC-E/C) (Clark et al.",
+      "startOffset" : 27,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2018), ARC Easy / Challenge (ARC-E/C) (Clark et al., 2018), and PIQA (Bisk et al.",
+      "startOffset" : 40,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 42,
+      "context" : "TREC (Voorhees and Tice, 2000), AGNews (Zhang et al., 2015).",
+      "startOffset" : 39,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 10,
+      "context" : "(4) Natural language inference: RTE (Dagan et al., 2005), CB (De Marneffe et al.",
+      "startOffset" : 36,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 30,
+      "context" : "(5) Fact knowledge retrieval: LAMA (Petroni et al., 2019).",
+      "startOffset" : 35,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 45,
+      "context" : "We follow previous work (Brown et al., 2020; Zhao et al., 2021; Holtzman et al., 2019) to create natural prompts to enlarge the effectiveness of in-context learning, but we do not aim to optimize the full and context-free prompt format: our goal is to evaluate coherence boosting models with a fixed prompt.",
+      "startOffset" : 24,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 17,
+      "context" : "We follow previous work (Brown et al., 2020; Zhao et al., 2021; Holtzman et al., 2019) to create natural prompts to enlarge the effectiveness of in-context learning, but we do not aim to optimize the full and context-free prompt format: our goal is to evaluate coherence boosting models with a fixed prompt.",
+      "startOffset" : 24,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 18,
+      "context" : "We also compare our best model with other inference methods (Holtzman et al., 2021; Min et al., 2021) in Tables D.",
+      "startOffset" : 60,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 26,
+      "context" : "We also compare our best model with other inference methods (Holtzman et al., 2021; Min et al., 2021) in Tables D.",
+      "startOffset" : 60,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 5,
+      "context" : "A recent study (Cao et al., 2021) shows that the prediction is biased by the relation in the short context, i.",
+      "startOffset" : 15,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 45,
+      "context" : "We also compare our model with contextual calibration (CC) (Zhao et al., 2021), which processes the LM’s output probabilities with a loglinear model.",
+      "startOffset" : 59,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 24,
+      "context" : "It would be interesting to use coherence boosting in non-autoregressive text generation algorithms, such as to accelerate the mixing of MCMC methods for constrained text generation (Miao et al., 2019; Zhang et al., 2020a; Malkin et al., 2021).",
+      "startOffset" : 181,
+      "endOffset" : 242
+    }, {
+      "referenceID" : 41,
+      "context" : "It would be interesting to use coherence boosting in non-autoregressive text generation algorithms, such as to accelerate the mixing of MCMC methods for constrained text generation (Miao et al., 2019; Zhang et al., 2020a; Malkin et al., 2021).",
+      "startOffset" : 181,
+      "endOffset" : 242
+    }, {
+      "referenceID" : 22,
+      "context" : "It would be interesting to use coherence boosting in non-autoregressive text generation algorithms, such as to accelerate the mixing of MCMC methods for constrained text generation (Miao et al., 2019; Zhang et al., 2020a; Malkin et al., 2021).",
+      "startOffset" : 181,
+      "endOffset" : 242
+    } ],
+    "year" : 0,
+    "abstractText" : "Naturality of long-term information structure – coherence – remains a challenge in language generation. Large language models have insufficiently learned such structure, as their longform generations differ from natural text in measures of coherence. To alleviate this divergence, we propose coherence boosting, an inference procedure that increases the effect of distant context on next-token prediction. We show the benefits of coherence boosting with pretrained models by distributional analyses of generated ordinary text and dialog responses. We also find that coherence boosting with state-of-the-art models for various zeroshot NLP tasks yields performance gains with no additional training.",
+    "creator" : null
+  }
+}

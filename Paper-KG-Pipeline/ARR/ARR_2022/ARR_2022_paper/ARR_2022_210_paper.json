@@ -1,0 +1,531 @@
+{
+  "name" : "ARR_2022_210_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Softmax Bottleneck Makes Language Models Unable to Represent Multi-mode Word Distributions",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "“The greater the ambiguity, the greater the pleasure.” — Milan Kundera"
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Recently, researchers have found that transformerbased language models (LMs), such as GPT-2, can learn to generate better as their sizes grow (Radford et al., 2019; Brown et al., 2020; Kaplan et al., 2020). One natural question arises: Do modern language modeling architectures still have restrictions in their ability to represent the appropriate distribution over next words or masked words?\nIn this paper, we discover that, when predicting the probabilities of becoming the next word given an ambiguous context, GPT-2 is often incapable of assigning the highest probabilities to the appropriate non-synonym candidates. For example, given\nthe input prompt “After debating whether to bow to the woman or the king first, the jester decided on the [MASK]”, we would expect the distribution over the [MASK] fillers to put high probabilities on “woman” or “king” or their synonyms. However, GPT-2 might incorrectly output the king and “queen” as the top two candidates as in Figure 1.\nIn the final softmax layer of GPT-2, the log probabilities of the woman and king are computed based on the dot product between a single hidden state embedding and the global word embeddings of the woman and king, respectively. To have the highest but similar dot products for the two options, the transformer encoder in GPT-2 wants to output the hidden state that is close to the average of the woman embedding and the king embedding. However, the words queen, king, woman, and man tend to form a parallelogram in the embedding space (Mikolov et al., 2013; Ethayarajh et al., 2019; Wang et al., 2019), which means the man and queen also have a similar average. Therefore, GPT-2 are forced to also output the man or queen when it wants to output the woman or king.\nThe problem not only happens to GPT-2 or the words whose embeddings form a parallelogram shape. Even though the hidden state embedding of LMs are contextualized, the embedding of each word in the softmax layer is global and static during the inference time. Globally dissimilar words could all become the suitable next word in a context while other interfering words might be between them, which makes the ideal next word embedding distribution to have multiple modes and cannot be modeled by the single embedding representation.\nIn this work, we propose theorems showing that given any LM using the output softmax layer, when there are more thanN word embeddings in aN−1 dimensional subspace/hyperplane (e.g., 4 embeddings in a two dimensional plane), we can always find a set of possible next words (e.g., woman and king) such that there are some other interfering\nwords between them (e.g., man or queen).\nRecently, mixture of softmax (MoS) (Yang et al., 2018) regains attention as one of the few effective architecture modifications for transformer LM (Narang et al., 2021; Anonymous, 2021). In the meanwhile, Parthiban et al. (2021) show that the softmax bottleneck (Yang et al., 2018) theory is not sufficient to explain the improvement of MoS. Our theorems not only provide geometrical intuitions of why and when the multiple embedding representation such as MoS would do better but also suggest that the softmax bottleneck might not be completely solved even if we adopt a very large hidden state size. For example, no matter how large the hidden state size is, as long as queen - king = woman - man in the embedding space, the LMs cannot output a pair of words in the longer diagonal of the parallelogram as the top two output words.\nAfter better understanding why mixture of softmax (MoS) works well, we propose two enhancements over MoS. The first enhancement considers the hidden states of multiple positions and multiple transformer layers when determining the probability in each softmax; the second enhancement uses different contextualized embeddings to compute the probabilities of different subsets of words.\nThe resulting method, multi-facet softmax (MFS), significantly outperforms the MoS and the GPT-2 with the softmax layer on the perplexity for predicting the next word, especially in ambiguous context and non-English text in OpenWeb-\nText (Radford et al., 2019). Finally, we also show that MFS could improve the performance of GPT-2 on ProtoQA (Boratko et al., 2020), a commonsense question answering dataset where each question has multiple acceptable answers.\nWe summarize our theoretical, methodological, and empirical contributions as follows. • Theory: We show the softmax layer using a sin-\ngle embedding is sometimes not be able to output an appropriate rank of probabilities on a set of words with linearly dependent embeddings.\n• Method: Addressing two weaknesses in MoS (Yang et al., 2018), we propose multi-facet softmax (MFS), a new alternative to the output softmax layer. MFS can replace the softmax in pre-trained LMs to better handle ambiguous contexts without re-training the LMs from scratch.\n• Analysis: Our comprehensive empirical analyses discover and explain several phenomena, such as a) why using multiple embeddings is usually better than the single embedding with the non– linearity, b) why the improvement is larger in ambiguous contexts, less common languages, or GPT-2 compared to BERT, and c) why increasing hidden state size boosts the capability of distinguishing similar words."
+    }, {
+      "heading" : "2 Theoretical Limitations of the Single Embedding in the Softmax Layer",
+      "text" : "In this section, we first review the softmax layer of GPT-2 formally and explain why queen - king =\nwoman - man still tends to hold in contextualized LMs. Next, we present our theoretical analyses, which generalize the woman and king example by showing that the candidate words in a low dimensional subspace would induce the impossibility of ranking some candidates on top of other candidates."
+    }, {
+      "heading" : "2.1 Background",
+      "text" : "The LMs typically use a softmax layer to predict PS(x|ct), the probability of the next word x given the context at the tth position ct:\nPS(x|ct) = exp(hTctwx)∑ x′ exp(h T ctwx′) , (1)\nwhere hct is the tth hidden state in the context c, and wx is the output word embedding for the word x (i.e., the linear weights that project the hidden state to the logit of the word x). Yang et al. (2018) point out that the log probability distribution over all the words in the vocabulary V is log (PS(x|ct)) |x∈V = hTctwx − log (∑\nx′ exp(h T ctwx′) ) |x∈V . The distribution is\na linear projection from the hidden state hct with dimension D, so the degree of freedom in the distribution is only D (i.e., there cannot be more than D linearly independent log distributions). We call this restriction softmax bottleneck thoery.\nDuring training, the ideal output word embedding wx should be close to the hidden states of the contexts hct that co-occur with the word x while far away from the other hidden states. This objective is similar to the objective function of Word2Vec (Mikolov et al., 2013) except that the context embeddings are contextualized (Kong et al., 2020; Li et al., 2020).\nIf a context ct has a higher chance to co-occur with queen compared to king, the context also has a higher chance to co-occur with woman compared to man to a similar degree. This is the main reason that makes queen - king = woman - man in the Word2Vec space (Ethayarajh et al., 2019). Therefore, the same linear relations tend to hold in the output word embedding space of GPT-2 as well (Wang et al., 2019)."
+    }, {
+      "heading" : "2.2 Structural Weakness Theorems from Linear Dependency",
+      "text" : "In addition to words satisfying the analogy relations, the following theorems imply that any linear dependency among the words causes the difficulties of LM in ranking the words in an arbitrary order.\nFor example, woman + king = queen + man makes a LM unable to output woman and king as the top two words in Figure 1.\nTheorem 1. If the nonzero output embeddings of N words are linearly dependent and on one side of a plane through the origin, the output softmax layer cannot rank the N words with an arbitrary order according to their probabilities.\nHere, we provide an intuitive justification: if N embeddings are in a subspace whose dimension is smaller thanN−1, theN embeddings are going to be linearly dependent and some set of words cannot have the top dot products due to the limited degree of freedom in the subspace. In Appendix D, we formally prove the theorem by identifying the sets of words that cannot be ranked top by the single embedding representation.\nIn practice, linear dependency holds approximately instead of exactly. For example, woman = queen + man - king + ε. In this practical condition, the following theorem states that the logits of the bottom words (i.e., man and queen) cannot be much smaller than the logits of the top words (i.e., woman and king).\nTheorem 2. Let the output word embeddings in the set W = {wi 6= 0|i = 1...N} satisfy w1 = a2w2 + ... + aNwN + ε, where the constant a2, ..., aN are neither all zero nor all negative and ||ε|| < . Then, there must be a nontrivial partition P = {G,S} of W such that there is no hidden state ||h|| ≤ r and a threshold τ ≥ r that make minwg∈G hTwg ≥ (1+ δ)τ and maxws∈S h\nTws < τ , where δ = 21+∑i=2...N |ai| . Its proof can be found in Appendix D and Appendix B.1 estimates in GPT-2. Even though, theoretically-speaking, outputting woman and king as the top two words is possible due to the appearance of ε, GPT-2 may not successfully learn to output the optimal h and the optimal hidden state for these four words could lead to the wrong probabilities of the other words. Consequently, GPT-2 sometimes still ranks queen or man higher than woman or king in practice."
+    }, {
+      "heading" : "3 Multi-facet Softmax",
+      "text" : "Using multiple embeddings is a natural solution of modeling a multi-mode distribution. For instance, we can use three embeddings to capture the high probability on the woman and king but low probability on the man and queen in Figure 1.\nhidden states, and partitions, respectively. The green boxes refer to embeddings/vectors. The vocab means the embeddings of all words in the vocabulary. ⊕ refers to concatenation. Lh, Lf , and Lπ are linear projection layers.\nInspired by our geometric analysis on the limitation of the single embedding, we improve the state-of-the-art multiple embedding solution, mixture of softmax (MoS) (Yang et al., 2018) by two enhancements: multiple input hidden states and multiple partitions on the vocabulary."
+    }, {
+      "heading" : "3.1 Mixture of Softmax",
+      "text" : "Yang et al. (2018) propose mixture of softmax (MoS) to allow a LSTM-based (Hochreiter and Schmidhuber, 1997) LM to produce more linearly independent log probability distributions of the output words given different contexts. As in Figure 2 (c), the MoS first uses multiple linear layers Lfk to project a hidden state hct into multiple facet embeddings fct,k = L f k(hct).\n1 The multiple facets fct,k and softmaxes would lead to multiple probability distributions, and output probability is the weighted average of the distributions:\nPMoS(x|ct) = K∑ k=1 πct,k exp(fTct,kwx)∑ x′ exp(f T ct,k wx′) . (2)\nThe prior weights πct,k = exp(Lπk (hct ))∑ k′ exp(L π k′ (hct ))\n, where Lπk is another linear projection for dynamically generating the weights and the projection goes through a softmax to ensure ∑K k=1 πct,k = 1.\n1We remove the tanh layer in the original MoS to improve its performance on GPT-2. See Appendix F.1 for details."
+    }, {
+      "heading" : "3.2 Multiple Input Hidden States",
+      "text" : "To model the multi-mode distribution, the facets (i.e., the embeddings for different softmaxes) should be able to move freely. For example, in Figure 1, we have three facets but only have two modes, so the two embeddings are very close to the word king. However, when we want to output three dissimilar top words such as the king, woman, and knight, one of the facets should be moved to be near to the embedding of the knight.\nTherefore, we want our solution to satisfy two properties: a) the linear transformation matrix in Lfk should have a full rank to avoid limiting the degree of freedom in each facet, and b) the relative location of the facets should be context-dependent. MoS cannot satisfy both properties. If the first one is satisfied, the input hidden state is uniquely determined by a facet (e.g., hct = (L f 1) −1(fct,1)). Then, there exist a global transformation between two facets (e.g., fct,2 = L f 2 ( (Lf1) −1(fct,1) )\n), which violates the second property. In other words, since the facet embeddings are the projection of a single hidden state, the total degree of freedom in all facet embeddings cannot exceed the dimension of the hidden state.\nOur solution to this issue is using more input hidden states to construct the facets. As the orange box in Figure 2, we first concatenate a W ×H block of input hidden states into⊕i=0...W−1,m=1...HhM−mct−i , where M −m is the Transformer layer index and t− i is the index of the ith to the last word in the\ncontext. The W ×H is fixed as 3×3 in this paper. We make its dimension the same as the original hidden state hMct using a linear layer L\nh plus a GELU activation function (Hendrycks and Gimpel, 2016). Then, we concatenate it with the original hidden state to form a new input hidden state\nqct = h M ct ⊕GELU ( Lh(⊕i,mhM−mct−i ) ) . (3)\nThe new input hidden state is passed through the linear transformation Lfk to compute the facets fct,k = L f k(qct) and our prior weights πct,k = exp(Lπk (qct ))∑ k′ exp(L π k′ (qct ))\n. Since the dimension of qct is larger than the dimension of fct,k, the inverse function (Lfk) −1 no longer exists."
+    }, {
+      "heading" : "3.3 Multiple Partitions",
+      "text" : "The next word distribution could have many modes. However, using many softmaxes significantly increases our computational burden because we need to compute the dot product between each facet and all the word embeddings in our vocabulary.\nInspired by our analysis, we propose to split all the words in the vocabulary into multiple partitions and use different facets for different partitions. For example, if we can put any word from {queen, man, woman, king} into one partition and the rest of the words into another partition, we no longer have queen - king = woman - man in either of the partitions. In this method, each word only belongs to one partition, so we only need to compute one dot product for each word. Thus, the extra computational cost only comes from the extra linear projections for preparing the facets.\nIn many contexts ct, the distribution of the next word has only a single mode and the global similarity between words may be useful. Using the multiple partitions alone might lose the similarity information between words in different partitions. Therefore, we propose to only replace the first softmax layer in MoS with the multiple partition method to learn the global similarity of words in different partitions using the other softmaxes. The architecture is illustrated in Figure 2 (d). Formally, we compute the probability using\nPMP (x|ct) = πct,1 exp((f jxct,1) Twx)∑ x′ exp((f jx′ ct,1 )Twx′)\n+ K∑ k=2 πct,k exp(fTct,kwx)∑ x′ exp(f T ct,k wx′) , (4)\nwhere jx is the partition index that the word x belongs to and f jxct,1 is the facet for the jxth partition. Multi-facet softmax (MFS) is equipped with multiple input hidden states and multiple partitions."
+    }, {
+      "heading" : "4 Language Modeling Experiments",
+      "text" : "We evaluate different LM architectures by comparing their capability of predicting the next word in Wikipedia 2021 and a subset of OpenWebText (Radford et al., 2019). In addition to perplexity, we also compare their mean reciprocal ranks (MRR) in Appendix C.1. The size of the training, validation, and testing set are 96%, 2%, and 2% of the whole corpus. After loading the pre-trained GPT-2 models, we train the GPT-2 Small for 1 epoch and GPT-2 Medium for 0.4 epochs. We also test our methods on BERT in Appendix B.2."
+    }, {
+      "heading" : "4.1 Baselines",
+      "text" : "We set different numbers of softmaxes, input hidden states, and partitions in our MFS framework to construct our baselines. The configuration of different baselines could be seen in Table 1.\nSoftmax (GPT-2): Using a single softmax, input hidden state, and partition as in Figure 2 (a) and Equation 1. The baseline is the same as the original GPT-2 except that we add one more linear layer that converts the hidden state hMct to the facet embedding fct,1 as in other methods.\nSigSoftmax (Kanai et al., 2018): The same as Softmax except when predicting the next word, Kanai et al. (2018) add some non-linearity into the softmax layer by multiplying the exponent and sigmoid of the logits.\nSoftmax + Multi-input: Letting Softmax access multiple input hidden states as in Figure 2 (b) and Equation 3. The method is similar to Tenney et al. (2019); Fan et al. (2020), and Tay et al. (2021).\nMoS (Yang et al., 2018): MoS (3) is the mixture of softmax with 3 facets/softmaxes, whose probability comes from Equation 2. We also run the MoS with 4 softmaxes in GPT-2 Small and call the model MoS (4).\nDOC (Takase et al., 2018): Similar to our enhancement using multiple input hidden states, direct output connection (DOC) makes each of their facets coming from a different input hidden state.\nOther configurations include Softmax + Multipartition, which adds four partitions into the softmax, MFS – Multi-partition, which uses only one partition in MFS and could also be viewed as MoS"
+    }, {
+      "heading" : "4.2 Results",
+      "text" : "Table 1 shows that applying MFS to GPT-2 Small achieves more than 15% of the perplexity improvement between GPT-2 Small and GPT-2 Medium, while only increases 5% of their size differences. Except Softmax + Multi-partition, adding multiple input hidden states or partitions in different configurations significantly boost the performances. In Appendix B.3, we further show that the improvement of MFS over Softmax could even become 3-5 times larger in top 5-10% the most ambiguous contexts compared to the rest of the contexts, which suggest that some improvements indeed come from successfully modeling multi-mode distribution.\nMFS usually doubles the perplexity improvements between MoS (3) and Softmax but the running time of MFS remains similar to MoS (3) because MFS only needs a few more linear layers, which is more efficient than adding one more softmax as in MoS (4). DOC is worse than MoS (3). This may be due to a starvation problem: the facet from the last hidden state hMct has the prior probability close to 1 and receives most of the gradients. Finally, compared with Softmax, the mixed results\nin SigSoftmax suggest that adding non-linearity into the softmax layer without modeling the multimode distribution might not always improve the models (Parthiban et al., 2021).\nIn Table 3, we present three contexts from the validation set of different datasets and compare the top three predictions of MFS and Softmax on GPT2 Small. In OpenWebText and Wikipedia 2021, we can see that Softmax misses the correct answer in its top three predictions.\nOpenWebText is mostly composed of English text, but some non-English text in the corpus allows us to compare the capability of different models in a multi-lingual setting. Table 2 shows that multiple embeddings improve the perplexity of the non-English text more than the perplexity of the English text. We hypothesize that the distribution of the next non-English word is more likely to be multi-mode because GPT-2 learns the global token embeddings mostly in the English contexts, which could make the embeddings of similar tokens in non-English contexts far away."
+    }, {
+      "heading" : "5 Evaluation on Ambiguous Templates",
+      "text" : "We synthesize a dataset using templates (Ribeiro et al., 2020) to verify whether the softmax layer in the original GPT-2 really has difficulty in learning to output the bimodal distribution in Figure 1 and whether the multiple embedding methods could overcome the problem. First, we collect the four words with semantic analogy relations in Google analogy dataset (Mikolov et al., 2013). Next, we insert two out of the four words into our manually written templates to form the contexts such as the ones in the last column of Table 3. The templates we used could be found in Appendix F.3. The\ntwo words can be either the diagonal words (e.g., king and woman) or the edge word (e.g., king and queen) in the parallelogram. Finally, we create a dataset with 122k training contexts, 250k validation contexts, and 122k testing contexts, where the word pairs in the testing set are unseen in the training set to see whether the model could learn to output the bimodal distribution in a general way.2\nWe load the models pre-trained on OpenWebText and continue fine-tuning the models on the last word of each sentence for 10 epochs. We report the testing performances of the best model selected by the validation loss. Since the sets of the word pairs in the training and testing set are disjoint, updating the output word embedding would make GPT-2 solve the task by memorizing/overfitting the training set quickly and lead to much worse testing performances. Thus, we freeze the output word embedding during the training.\nTable 4 indicates that when the possible next words are the diagonal words, the Softmax model performs much worse compared to other multiple embedding alternatives. In the edge word dataset, the multiple embedding solutions are still better but have a much smaller gap. MFS – Multi-partition slightly improves MoS. We hypothesize the reason\n2The setting is realistic because any related words could become the next word in some ambiguous contexts and all the words are related in a certain way (Sigman and Cecchi, 2002). We cannot expect the training corpora to contain the ambiguous contexts with so many possible next words.\nis that multiple input hidden states could help the facets to be moved more freely. Finally, multiple partitions seem to cause slight overfitting in this bimodal distribution prediction task.\nWe visualize the predictions in the last column of Table 3. We can see two of the softmaxes are close to Pairs and the remaining one is close to German, while Softmax overestimates the probability of Paris and ranks France higher than the German. The result verifies that the correct probability distribution of the words in some ambiguous context is hard to learn using Softmax."
+    }, {
+      "heading" : "6 Answering Ambiguous Questions",
+      "text" : "ProtoQA (Boratko et al., 2020) is a question answering dataset built for evaluating the commonsense reasoning ability of language models. Each question in ProtoQA is ambiguous and leads to a distribution of possible answers. For instance, the answer of “Name something that people usually do before they leave for work?” is “Shower 0.43, Breakfast 0.30, ...”. The paper discovers that by reformulating the question answering task as a context (e.g., “One thing people usually do before they leave for work is ...”), GPT-2 could generate the possible answers by sampling the next words from its word prediction distribution.\nThe dataset gives us a chance to directly compare the quality of the distributions generated by different LMs in Table 5. After pretraining GPT-2 Medium on the OpenWebText, we fine-tune them\nusing the training data in ProtoQA for 2 epochs. We repeat the fine-tuning 5 times and compare their average perplexity in our validation set. Next, we generate 150 sentences starting from each context and compare the generated answers with the ground truth distribution. For each fine-tuned model, we repeat the generation evaluation 3 times and report the average accuracy of the resulting 15 trials.\nWe can see that the multiple softmaxes, input hidden states, and partitions usually improve the quality of prediction distribution, and the proposed MFS, which combines all modifications, achieves the best performances."
+    }, {
+      "heading" : "7 Related Work",
+      "text" : "Yang et al. (2018) propose the concept of softmax bottleneck, which points out that the dot product in the softmax layer restricts the representation power of outputting arbitrary conditional probabilities. It also proposes MoS to break the softmax bottleneck in an RNN-based LM. Kanai et al. (2018) and Ganea et al. (2019) add nonlinearities into the softmax layer to break the bottleneck more efficiently, but the approaches gain less improvement compared to MoS.\nA limitation of the aforementioned previous work is that they do not tell us which kinds of sentences would be affected by the bottleneck more and whether the order of the top few next words would be affected, which are the main research questions of our work. Contrary to the previous belief that a large hidden state dimension would eliminate the softmax bottleneck, our theorems suggest that some words in a low dimensional subspace could still make the single embedding in the softmax layer become a bottleneck of arbitrarily ranking the output words. Furthermore, our geometric analyses provide an intuitive explanation about why breaking the bottleneck using multiple embeddings leads to better performances compared to only adding the non-linearity.\nDemeter et al. (2020) also analyze the structural weakness of the softmax layer from a geometric perspective. They discover that the words with high prior frequencies could stop the LMs from assigning the high probabilities to rare words. The weakness is different from the softmax bottleneck investigated in this paper. Our work shows that the softmax layer could still prevent the LMs from outputting some top words even if all the possible next words have the same prior frequency.\nAn alternative to model the multi-mode distribution is to use multiple embeddings to represent each output word (Miao et al., 2019). Compared to MoS or our approach that use multiple embeddings to represent each hidden state of the context, their method requires many extra parameters to store different senses of each output word. Another type of related model (Shazeer et al., 2017; Fedus et al., 2021) dynamically routes the signals to different experts (i.e., feed-forward networks) and aggregates their outputs. The methodology is similar to MoS and our approach, but they add the mixture-of-experts layer inside each layer of the Transformer encoder while the proposed MFS is an alternative to the output softmax layer."
+    }, {
+      "heading" : "8 Conclusion",
+      "text" : "When the ideal distribution in the output word embedding space has multiple modes, GPT-2 cannot learn to correctly rank the words in all the modes as the top next words. This shows that the single embedding in the softmax layer, which is used nearly universally by current LMs, constitutes a performance upper bound of predicting the next/masked word. To address the systematic failure caused by these structural weaknesses, we propose multifacet softmax (MFS). In our experiments, we confirm that the MFS significantly outperforms the standard softmax layer and alleviates the softmax bottleneck in the transformer-based LMs such as GPT-2 better than mixture of softmax (MoS)."
+    }, {
+      "heading" : "9 Ethical and Broader Impact",
+      "text" : "This work studies a general limitation of LMs and proposes solutions. The proposed theory can help us to understand that some types of hallucinations, mistakes, or biases of LMs could come from softmax bottleneck and their incapability of modeling the correct distribution. For example, there are 60% of male characters and 40% of female characters in our training corpus. The language generation model might be forced to assign more than 60% probability to male characters as being much more likely to output king than woman in Figure 1.\nRecently, Narang et al. (2021); Anonymous (2021) show that MoS is one of the few architecture modifications of transformer-based LM that can provide consistent improvements in downstream applications. Our work provides a fundamental reason why the multiple embedding representation is better, which could inspire more future studies that propose a better multiple-embedding architecture to improve LMs (e.g., multi-lingual BERT) or downstream applications. As examples, we list several possible future directions in Appendix G.\nFinally, a better LM could lead to both positive and negative societal impacts, but they are not the focus of this paper. Generally speaking, this paper deepens our understanding of the weaknesses of modern LMs and we believe the knowledge can help us to design a better LM that increases the positive impacts and reduces the negative impacts in the future."
+    }, {
+      "heading" : "A Appendix Overview",
+      "text" : "To demonstrate the wide applicability of our approaches, we conduct more experiments such as applying MFS to BERT in Appendix B. We also show more results and conduct more analyses in Appendix C to further support our conclusions. Next, we provide technical details including the proof of our theorems in Appendix D, the method details in Appendix E, and the experiment details in Appendix F. Finally, in Appendix G, we list several directions that could be further studied in the future."
+    }, {
+      "heading" : "B More Experiments",
+      "text" : "We conduct the following five extra experiments to measure the linear dependency among word embeddings in LMs, extend our multi-facet approaches to BERT, confirm the source of the improvement comes from modeling multi-mode distribution, and extend our synthetic experiments to include the output candidate words that have various types of relations and to include the template that favors the single embedding representation."
+    }, {
+      "heading" : "B.1 Linear Dependency among Words",
+      "text" : "As we demonstrate in our theorems, the linear dependency in the word embedding imposes a performance upper bound on LMs. In this experiment, we would like to explore whether the word embeddings are still linearly dependent in a larger LM. Besides, Theorem 2 shows that when N words are linearly dependent after moving one of the embeddings with distance, the LM with the output softmax layer cannot output a large logit margin between two subsets of the N words. We also want to know how small typically are in the pretrained word embedding and compare the from different subsets or different LMs.\nWe randomly select N words in GPT-2 Small and GPT-2 XL and use the minimal eigenvalue of the matrix formed by their N word embeddings to estimate the value.3 The top 2 curves in Figure 3 depict the average of minimal eigenvalues from 1,000 sampled N word sets. As we expect, the eigenvalues decrease as N increases (i.e., easier to become linear dependent in a bigger subset of words). As the hidden state size grows from 768\n3We normalize all the word embeddings by the average of their magnitudes to fairly compare the distances in GPT-2 Small and GPT-2 XL.\nin GPT-2 Small to 1,600 in GPT-2 XL, the minimal eigenvalues increase.\nAs in section 5, we select the 4 words with analogy relation from Google analogy dataset and plot the minimal eigenvalue (averaged over all 4 word sets with an analogy relation) in Figure 3. We can see that the values become much lower and the value of GPT-2 XL is only slightly higher than the value of GPT-2 Small, which shows that the analogous words still tend to have linearly dependent embeddings in a large LM.\nFinally, we select theN similar words by finding the nearest N − 1 words of each query word. We exclude the query word pieces whose first character is not a space, and let the query word pieces be either all the rest of the word pieces or only stop words. Figure 3 shows that the minimal eigenvalues are close to the values of analogous words.\nIntuitively speaking, the similarly low minimal eigenvalues mean that globally similar words tend to have similar probabilities in every context. Our Theorem 2 formally describes a structural weakness of the output softmax layer in terms of distinguishing the similar words. The low minimal eigenvalues and our theory support the recent empirical finds that LM models tend to be confused by the similar words (Zagoury et al., 2021) and further suggest that the problem is more obvious especially when the size of LM is small, the number of possible next word N is large, or the next word candidates include stop words. This provides a potential explanation why the candidates often include stop words when multiple embeddings outperform the single embedding in Table 3 and Ta-\nble 7. Notice that although GPT-2 XL has a better ability to distinguish similar words, it would have difficulty in arbitrarily ranking 20 similar words as having the difficulty in ranking 4 analogous words. Similarly, we expect that the GPT-3 (Brown et al., 2020) would still suffer from the softmax bottleneck as long as the N is large enough."
+    }, {
+      "heading" : "B.2 Language Modeling using BERT",
+      "text" : "To demonstrate that our proposed method could improve the LMs other than GPT-2, we apply multifacet softmax, MFS, to BERT. We test the model on Wikipedia 2021 and the validation size is 0.25% of the whole corpus. After loading pretrained model, we train bert_base_cased for 100k batches and bert_large_cased for 30k batches.\nThe results are presented in Table 6. First, MoS outperforms Softmax on BERT. The results support the finding of Narang et al. (2021) that the softmax bottleneck not only exists in the next word prediction tasks but also in the masked word predic-\ntion tasks. Similar to GPT-2, MFS at least doubles the improvement of MoS. The most improvement over MoS comes from using multiple input hidden states while adding multiple partitions yield a small or no improvement. Finally, the improvement between MFS and Softmax is around 4.5%, which is much smaller than 15% in GPT-2.\nThe smaller improvement supports the conclusion of our geometric analyses that the multi-mode ambiguity intensifies softmax bottleneck. We only observe the one-directional context before the next target word in GPT-2, but we can observe the bidirectional context surrounding the masked target word in BERT. Thus, compared to next word prediction, the multi-mode ambiguity of the masked word prediction occurs less frequently when the masking probability is small (e.g., 15% in BERT). Since the masked word distribution only has a single mode most of the time but we sometimes still want the distribution to have multiple modes, multiple input hidden states can improve the performance by help-\ning the facets to move more freely. On the other hand, multiple partitions are less useful because the distribution rarely has more than three modes."
+    }, {
+      "heading" : "B.3 Analysis of Improvement on Multi-mode Distribution",
+      "text" : "To confirm that the perplexity improvements actually come from modeling the multi-mode distribution, we define a metric to measure how multimode a distribution is, and then we can compare the perplexity improvement from multi-mode distributions and the improvement from the distributions that are close to a single-mode distribution.\nFor the method with multiple embeddings, we first compute the weighted average of all the facets\nfavgct = ∑K\nk=1 πct,kfct,k, where we lower the influence of kth facet embedding fct,k with lower prior weight πct,k and fct,1 = 1 J ∑J j=1 f j ct,1\nif J partitions are used. Figure 4 illustrates favgct and fct,k using the example in the second column of Table 7.\nWe visualize the new average facet using the words that are closest to the favgct in the MFS Avg row of Table 7. We can see that the prediction of MFS Avg is different from MFS but similar to Softmax. This means there are indeed some other words between the actual next word and the other possibilities, which makes the prediction of MFS multi-mode.\nNext, to quantify the difference between MFS and MFS Avg, we define multi-mode ratio as\n∑T b=1 PM (yb|ct)∑T b=1 PM (xb|ct) , where PM could be either PMoS from equation 2 or PMP from equation 4. {y1, ..., yT } is the set of words with embeddings closest to favgct and {x1, ..., xT } is the set of words with highest PM (xb|ct). Using the Wikipedia context in Table 7 as an example, the word project is retrieved by MFS but not by MFS Avg, so its multi-mode ratio for T = 2 is PMFS(hom|ct)+PMFS(dual|ct)PMFS(project|ct)+PMFS(hom|ct) = 0.049+0.046 0.096+0.049 ≈ 0.66. Figure 4 illustrates the relation between the MFS Softmax k and MFS Avg.\nWhen the ratio is closer to 1, the context is less ambiguous and the prediction is closer to a singlemode distribution. We set T = 20 and call the prediction with multi-mode ratio smaller than 0.9 multi-mode distribution and in Table 8,4 we compare the loss (i.e., log of the perplexity) improve-\n4We also tried T=5 or 10 and the trends are similar. If we set the threshold smaller than 0.9, the improvement ratios (e.g., MFS over MoS) would increase but the multi-mode percentages would decrease.\nments in the multi-mode distributions and the improvements in the nearly single-mode distributions.\nTable 8 shows that all the multiple embedding approaches have larger loss improvements when outputting multi-mode distributions. The table shows the results based on GPT-2 Small and the same analysis using GPT-2 Medium also show the same trend. As we use multiple input hidden states and partitions, the differences would be enlarged. Especially when we compare MFS and MFS – Multipartition, the loss improvements of highly ambiguous context is 7 or 8 times larger than the other loss improvements, which means a large portion of the overall improvement lies on a small percentage of ambiguous contexts. For the multi-mode distribution in Wikipedia, the loss improvement between MFS and Softmax could reach 0.10, which is close to the improvement between GPT-2 Small and Medium (0.16). Thus, we expect that if the corpus has more ambiguous contexts, MFS could achieve larger overall loss improvement."
+    }, {
+      "heading" : "B.4 Template-based Analysis on Similar or Dissimilar Nouns",
+      "text" : "To know whether the single embedding also has trouble modeling the distribution over nouns without the analogy relation, we let the different models\nlearn to assign similarly high probabilities to two related nouns in our templates. One example in our synthesized dataset is “I love the banana and the lemon, and my favorite is the [MASK]”. The nouns come from a hypernymy detection benchmark (Shwartz et al., 2017) containing 25,498 noun pairs. The relations between nouns in the benchmark include synonym, antonym, attribute, meronym, hypernym, coordination, event, or random. We further split the noun pairs into two datasets based on their cosine similarity in the output word embedding space of our Softmax baseline. The pairs with the cosine similarity higher than the medium of all cosine similarities are put into the similar word set and the other pairs are put into the dissimilar word set.\nThe results are presented in Table 9. In terms of the training, validation, and testing perplexity, multi-embedding approaches consistently outperform the single-embedding baselines, though the margins are smaller than those from the analogous words. Moreover, the improvement gap is larger when the nouns are dissimilar. We hypothesize that as the word embeddings of nouns become further away from each other, the next word distribution is more likely to be multi-mode and thus could be\nbetter captured by multiple embeddings."
+    }, {
+      "heading" : "B.5 Adversarial Template Analysis",
+      "text" : "To test whether the proposed methods still can effectively utilize the information from the global word embeddings, we design an adversarial template to create the contexts that can only be completed by averaging the global word embeddings. For example, “Miami is not in Wisconsin but is in [MASK]=Florida”.\nIn this task, the validation perplexity of Softmax, MoS, MFS – Multi-partition, and MFS are 2.50, 2.59, 2.54, and 2.88, respectively. Since multiple embeddings are not required, it is not surprising that Softmax performs the best. Nevertheless, the differences are smaller than the differences in Table 4. We believe that the similar losses are due to the fact that multiple embeddings are a generalization of the single embedding, so GPT-2 could learn to generate the same embedding for all facets to mimic the behavior of single embedding if required.\nThe significantly worse performance of MFS here is caused by the multiple partition technique. This result supports our motivation of combining multiple partitions with multiple softmaxes and shows that multiple partitions handle ambiguous contexts better (as shown in Table 8) by sacrificing some global word embedding structures. Nevertheless, a corpus usually has more ambiguous contexts than the adversarial context tested here, so using multiple embeddings and multiple partitions performs better in Wikipedia and OpenWebText overall."
+    }, {
+      "heading" : "C More Results",
+      "text" : "We provide more numbers and analyses of the ambiguous template experiments and language modeling experiments."
+    }, {
+      "heading" : "C.1 Ranking Metric in Language Modeling Experiments",
+      "text" : "We would like to verify that our perplexity improvements come from not only the slight probability differences of each candidate but also the better ranks of the candidates. Thus, in Table 10, we evaluate different models using mean reciprocal rank (MRR). Similar to the perplexity, the MRR improvement from Softmax to MFS is around 15% of the MRR improvement from GPT-2 Small to GPT-2 Medium, which is similar to the percent-\nage of perplexity improvement. This suggests that MFS could lead to not only a better probability prediction but also a better candidate rank prediction."
+    }, {
+      "heading" : "C.2 Perplexity Curves in Language Modeling Experiments",
+      "text" : "In Table 1, we only show the testing perplexity at the end of our training. In Figure 6, we plot the validation perplexity decay curves during the training on OpenWebText. We can see that the performance ranking of each model is stable during the training, while the improvement of each enhancement may vary. For example, in GPT-2 Medium, the improvement of MFS over MFS – Multi-partition is more obvious in epoch 0.25 compared to epoch 0.4."
+    }, {
+      "heading" : "C.3 Perplexity Curves in Template Analysis",
+      "text" : "In Table 4, we only show the lowest validation perplexity after each of the ten epochs. In Figure 5, we plot the training and validation perplexity decay curves.\nThe curves tell us that the multi-embedding models perform better in both training and validation perplexity. As we train the single-embedding models longer, the validation perplexity increases quickly, which implies that using a single embedding to model multi-mode distribution could cause severe overfitting when we predict the next word given an ambiguous context."
+    }, {
+      "heading" : "C.4 Stability in Language Modeling Experiments",
+      "text" : "In our case, training our model requires a huge amount of GPU resources for us, so it is not very feasible to train multiple times using multiple random seeds. We indeed try to use different random seeds for a few models and we confirm that the validation loss difference is at least ten times smaller than the improvement of different models.\nTo verify that our testing dataset is large enough to provide stable perplexity, we randomly split the testing dataset into 10 subsets and compute the standard error of the average testing perplexity of the 10 subsets. We find that the standard error is less than 0.02 perplexity in all models and datasets in Table 1. The standard error is much smaller than most of the improvements, which means our testing dataset is large enough to make the reported perplexity stable. The consistent improvements during the whole training process in Figure 5 further support the stability of our experiments."
+    }, {
+      "heading" : "C.5 ProtoQA Results using WordNet",
+      "text" : "In Table 5, we report the metrics using exact matching. In Table 11, we report the metrics that match the prediction with the ground truth using WordNet (Miller, 1995) and find the scores show a similar trend."
+    }, {
+      "heading" : "C.6 Perplexity Improvement versus Model Size",
+      "text" : "Kaplan et al. (2020) empirically demonstrate that increasing the model size would decrease the loss and their relation follows a scaling law. That is, we can plot the log of model size (i.e., parameter number) versus its loss as in Figure 7, and if a new\nLM model could result in lines that are closer to the origin than the baselines, the new model is better in terms of the loss than only increasing the model size of the baselines.\nFrom Figure 7, we can see that the approaches using multiple embedding are better than the Softmax baseline using single embedding. Although the lines formed by MFS – Multi-partition and MFS are not always closer to the origin than MoS, our perplexity improvement from adding multiple input hidden states or multiple partitions cannot be solely explained by their extra parameters for several reasons:\n• Compared to MoS, the line formed by MFS – Multi-partition becomes slightly closer to origin when the model size is close to GPT-2 Medium.\n• The improvement of MFS – Multi-partitions (S3I9P1) is larger than the improvement of Softmax + Multi-input (S1I9P1) plus the improvement of MoS (S3I1P1) in BERT and GPT2. For example, in BERT base, the perplexity improvement of Softmax + Multi-input, MoS (3), and MFS – Multi-partitions are 0.018, 0.016, and 0.047, respectively.\n• Our multi-mode analyses in subsection B.3 indicate that our enhancements, especially using multiple partitions, capture the multi-mode distribution better. We expect that the overall perplexity improvement would be larger if the corpus contains more ambiguous contexts. We\nalso conduct a preliminary experiment to confirm the claim. We add more ambiguous contexts into Wikipedia 2016 by mapping all the uppercased words into the [UNK] token. That is, we add another mode corresponding to the [UNK] token in many context positions. Then, we train and test the uncased BERT in this synthesized dataset. We found that the improvement of MFS – Multi-partition in this case can do significantly better than simply increasing the model size.\n• Our enhancements only require some extra linear layers, which are usually more efficient than increasing the model size (e.g., by adding another transformer layer).\n• Unlike increasing the model size, keep increasing the number of input hidden states or the number of partitions would lead to a smaller improvement. This suggests that MFS cannot keep storing more and more knowledge into its extra linear layers as in the architecture using a larger hidden state size or a deeper transformer encoder."
+    }, {
+      "heading" : "C.7 More Visualization",
+      "text" : "In Table 3, we compare the prediction of MFS and Softmax on GPT-2 Small. In the first two columns of Table 7, we present the examples from the models built on GPT-2 Medium in OpenWebText and Wikipedia 2021. We can see a similar pattern. The embedding of the correct answer is different from the embeddings of other possibilities, so Softmax assigns lower probabilities to the correct answer, while MFS does much better. This suggests that a larger model such as GPT-2 Medium suffers from the softmax bottleneck in a similar way.\nIn the last column of Table 7, we visualize an example in another synthetic experiment described in subsection B.4. We can see that although there may not be any words between the appropriate candidates, the prediction of Softmax may still be biased toward one option much more than the other, while the prediction of MFS is much closer to the equally likely bimodal distribution we created in the training data."
+    }, {
+      "heading" : "D Proof of Theorems",
+      "text" : "To prove Theorem 1, we first introduce a lemma. Assuming in the word embedding of GPT-2, woman + king = queen + man, we want to show that the GPT-2 cannot output woman and king as\nthe top two words in this lemma. This means we cannot find a hidden state h and a threshold τ such that hTwoman≥ τ and hT king≥ τ but hT queen< τ and hTman< τ . This example could be generalized into the following Lemma and Theorems. We can generalize the example as follows:\nLemma 1. Let the output word embeddings in the set W = {wlj 6= 0|j = 1...L} ∪ {wrj 6= 0|j = 1...R} satisfy −al1wl1 − ... − alLwlL = ar1wr1 + ... + arRwrR , where their coefficient −al1 , ...,−alL , ar1 , ..., arR are all positive constants and −al1 − ... − alL ≥ ar1 + ... + arR . Then, there is no hidden state h and a threshold τ that make min\nwg∈G hTwg ≥ τ and max ws∈S hTws < τ ,\nwhere G = {wlj |j = 1...L} and S = {wrj |j = 1...R}.\nProof. To prove by contradiction, we assume there is a h such that ∀wlj ∈ G,hTwlj ≥ τ and ∀wrj ∈ S,hTwrj < τ . Thus, we can get −al1hTwl1 − ... − alLhTwlL ≥ −al1τ − ... − alLτ ≥ (ar1 + ...+arR)τ > ar1h Twr1 + ...+arRh TwrR , which contradicts to −al1wl1 − ...− alLwlL = ar1wr1 + ...+ arRwrR .\nWe can rephrase the condition and the conclusion to have our Theorem 1.\nTheorem 1. If the nonzero output embeddings of N words are linearly dependent and on one side of a plane through the origin, the output softmax layer cannot rank the N words with an arbitrary order according to their probabilities.\nProof. Let the set W = {wi 6= 0|i = 1...N} contain the embeddings of the N words. Based on the premise, we can write 0 = a1w1 + ... + aNwN and minwi∈W h T 0 wi > 0, where h0 is a normal vector of the plane. At least one of the ai is negative. Otherwise, we will get the contradiction 0 = hT0 0 = a1h T 0 w1 + ... + aNh T 0 wN ≥ (a1 + ...+ aN )minwi∈W h T 0 wi > 0. Similarly, at least one of ai is positive. We can move all the terms in 0 = a1w1+...+aNwN with negative ai to the left as−al1wl1−...−alLwlL = ar1wr1+...+arRwrR . If −al1 − ... − alL ≥ ar1 + ... + arR , we choose G = {wlj |j = 1...L}. Otherwise, we choose G = {wrj |j = 1...R}\nBased on Lemma 1, we know that there is a partition P = {G,S} such that we cannot have the logits of the words in G be always larger than the logits of the other words in S, so all the words in\nG cannot have the probabilities larger than every probability of the words in S.\nNext, we would like to generalize our Theorem 1 by using a more practical condition where the word embeddings are almost linearly dependent. Notice that the theorem needs to assume the magnitude of the hidden state is limited. Otherwise, the margin could be arbitrarily magnified. In practice, the magnitude is not arbitrarily large in GPT-2 and BERT because a too large magnitude of hidden state could magnify the gradients too much to have a stable training process.\nTheorem 2. Let the output word embeddings in the set W = {wi 6= 0|i = 1...N} satisfy w1 = a2w2 + ... + aNwN + ε, where the constant a2, ..., aN are neither all zero nor all negative and ||ε|| < . Then, there must be a nontrivial partition P = {G,S} of W such that there is no hidden state ||h|| ≤ r and a threshold τ ≥ r that make minwg∈G hTwg ≥ (1+ δ)τ and maxws∈S h\nTws < τ , where δ = 21+∑i=2...N |ai| . Proof. We can first move all the terms with negative ai to the left as w1− al1wl1 − ...− alLwlL = ar1wr1 + ...+ arRwrR + ε. We perform proof by contradiction, so we assume the logits of the words in G can always be larger than (1 + δ)τ and the logits of the words in S can always be smaller than τ .\nCase 1: 1− al1 − ...− alL ≥ ar1 + ...+ arR , so 1 − al1 − ... − alL ≥ 1+ ∑ i=2...N |ai| 2 . We choose G = {w1,wl1 , ...,wlL} and S = {wr1 , ...,wrR}. Thus, we can get hTε ≤ ||h||||ε|| ≤ r ≤ τ and\nhTw1 − al1hTwl1 − ...− alLh TwlL (5) ≥(1− al1 − ...− alL)(1 + δ)τ (6) =(1− al1 − ...− alL)(1 + 2 1 + ∑ i=2...N |ai| )τ\n(7)\n≥(1− al1 − ...− alL)(1 + 1\n1− al1 − ...− alL )τ\n(8)\n=(1− al1 − ...− alL + 1)τ (9) ≥(ar1 + ...+ arR + 1)τ (10) >ar1h Twr1 + ...+ arRh TwrR + h Tε, (11)\nwhich contradict with w1−al1wl1−...−alLwlL = ar1wr1 + ...+ arRwrR + ε.\nCase 2: 1 − al1 − ... − alL < ar1 + ... + arR . We choose G = {wr1 , ...,wrR} and S =\n{w1,wl1 , ...,wlL}. Therefore,\nar1h Twr1 + ...+ arRh TwrR (12)\n≥(ar1 + ...+ arR)(1 + 2 1 + ∑ i=2...N |ai| )τ\n(13)\n>(ar1 + ...+ arR)(1 + 1\nar1 + ...+ arR )τ (14)\n=(ar1 + ...+ arR + 1)τ (15) >(1− al1 − ...− alL + 1)τ (16) >hTw1 − al1hTwl1 − ...− alLh\nTwlL − h Tε. (17)"
+    }, {
+      "heading" : "E Method Details",
+      "text" : "When replacing the softmax layer in the pretrained LMs, we found that the initialization of the extra linear layers should make the initial prediction of LMs close to the prediction using a softmax layer, which is the architecture used in the pretraining. The initialization is especially important for BERT. To achieve the goal, we initialize the weights of linear layer such that different facets are almost identical at the beginning and let the LMs gradually learn to output diverse facets during the training. Specifically, we can write the linear layer on the new hidden state Lfk(qct) as\nfct,k = L f k(qct)\n= LIkh M ct + L B kGELU ( Lh(⊕i,mhM−mct−i ) ) + b.\n(18)\nWe initialize LIk as an identity matrix, b← 0, and LBk ← U(− , ), where U is the uniform distribution and = 0.00005 if k 6= K. Otherwise, = 0. Consequently, all the facets fct,k are initially close to the last hidden state of the origianl GPT-2 hMct . Our baselines (e.g., Softmax, MoS, and DOC) also adopt the same way to initialize their weights.\nWhen partitioning the vocabulary, we simply let the jth facet handle the word with index J × n+ j (e.g., the first partition includes the words with indexes 0, 4, 8, ... when the number of partitions J = 4). The partition way is easy to be implemented in PyTorch and it won’t significantly increase computational time because PyTorch supports the dilated variable access without needing to copy the whole output word embedding matrix.\nWe implement our models based on huggingface5 (Wolf et al., 2020) and we will release our code to provide more details in our methods."
+    }, {
+      "heading" : "E.1 Architecture Differences in BERT",
+      "text" : "The architecture of MFS for BERT is mostly the same as the one for GPT-2 and the differences are described in this subsection.\nIn GPT-2 the block of input hidden state is rightaligned with the last word to prevent seeing the ground truth. On the other hand, the block in BERT is centered at the masked word.\nThe softmax layer of BERT is slightly different from that of GPT-2. For example, BERT adds a bias term after the dot product between the hidden state and the output word embedding. We keep the bias term in our experiments. Besides, the pretrained BERT has a language modeling head including a linear layer, a GELU (Gaussian Error Linear Unit) layer (Hendrycks and Gimpel, 2016), and a layernorm layer (Ba et al., 2016), so instead of adding an extra linear layer as in GPT-2, we just use different language modeling heads to create different facets in BERT. All the heads are initialized using the weights in the pretrained BERT except that the linear layer is initialized as in Equation 18 when the multiple input hidden states are used and the corresponding linear weights LBk ← U(− , ), where = 0.05 if k 6= K. Otherwise, = 0."
+    }, {
+      "heading" : "F Experimental Details",
+      "text" : "In this section, we describe some details of our experimental setup. We will release our codes to reproduce our results once the paper is accepted."
+    }, {
+      "heading" : "F.1 Baselines",
+      "text" : "The MoS (Yang et al., 2018) and DOC (Takase et al., 2018) are originally designed for RNNbased LM. To improve their methods on pretrained Transformer-based LM and make their results more comparable to MFS, we change some of their implementation details.\nMoS originally has a tanh layer before the softmax layers. However, we found that adding tanh hurts the performances of all methods we tested, especially the Softmax and MoS baselines. For example, after adding tanh and training GPT-2 Small for 0.4 epoch on Wikipedia, the validation perplexity degradation of Softmax is from 25.70 to 26.15, the degradation of MoS is from 25.42 to 25.83, and\n5https://huggingface.co/\nthe degeneration of MFS is from 25.06 to 25.12. We suspect this is because GPT-2 is pretrained without the tanh layer and the tanh removes the magnitude of facets, which could be viewed as the inverse of the temperature in the softmax layer. Therefore, we remove the tanh layer in all of our experiments. From the theoretical perspective, adding tanh does not invalidate our motivation because tanh is invertible. It would just make the global transformation nonlinear. Therefore, our motivation of making the facets move freely by inputting multiple hidden states still holds even after adding tanh.\nIn DOC, we use the hidden states of the last three transformer layers to compute the three facets and we set λβ = 0. Each facet is only determined by one layer of hidden state, so the first two facets cannot access the last hidden state. We found that the model quickly learns to only use the last facet because only the last hidden state is trained to perform the LM task in the pretrained models. This prevents the first two facets from getting any gradients and causes a starvation problem.\nWe tried an aggressive dropout trick to solve the starvation problem in DOC. If one of the softmaxes does not assign the highest probability to any of the correct next words in a batch, we consider that the corresponding facet starves, so we drop the other facets with some probability to ensure this starved facet receives some gradients and gradually gets back on track. However, our preliminary experiment suggests that the dropout trick cannot improve the perplexity of DOC. The dropout probability is either too low to solve the starvation problem or too high to preserve the knowledge learnt from pretraining. Thus, we do not adopt this trick in our final experiment."
+    }, {
+      "heading" : "F.2 Language Modeling",
+      "text" : "We download Wikipedia using http: //medialab.di.unipi.it/wiki/ Wikipedia_Extractor and OpenWebText using https://github.com/jcpeterson/ openwebtext. For Wikipedia, we preprocess the text using https://github.com/ attardi/wikiextractor. For OpenWebText, we download the pre-filtered URLs in 2017 and 2018 and scrape the text on April 2021. When splitting the corpus into training, validation, and testing sets, we do not shuffle the data. Instead, we use the text near the end of the corpus as the validation and test set to reduce the information\nleakage. To ensure every model is trained on the same data and accelerate the training in our machines, we split the training data into 20 consecutive partitions and load only one partition at a time during training. For BERT, we perform the sentence segmentation using SpaCy6 and input one sentence into BERT at a time.\nWe set our hyperparameters (e.g., W × H = 3 × 3 when using multiple input hidden states) based on the validation performance in Wikipedia 2016, the resulting model size, and the memory constraint in GPUs. We use AdamW (Loshchilov and Hutter, 2019) optimizer and set the learning rate as 1e-5 and do not use the warm-up because the training starts from the pretrained models. The sequence length (i.e., bptt) is set as 200 for GPT-2 and 256 for BERT. The batch size are set as 4 for GPT-2 Small, 16 for GPT-2 Large, 120 for BERT base, and 128 for BERT large.\nThe analyses in Table 2 and Table 8 use the first 4000 sequences in the validation dataset and all the methods are based on GPT-2 Small. We use PYCLD27 to distinguish between English and nonEnglish text.\nWe use NVIDIA GeForce RTX 2080 for training GPT-2 Small and BERT base, GeForce RTX 8000 for training GPT-2 Medium, Tesla M40 for training BERT large. Since we start from the pretrained LM, we can finish training each LM within 2 weeks using 1 GPU for GPT-2 Small, BERT base, and GPT-2 Medium, and using 4 GPUs for training BERT large.\nWhen testing the inference time in Table 1, we average the time of running NVIDIA TITAN X on 10,000 batches, where each batch contains 4 sequences with length 200.\nWhen visualizing the prediction in Table 3, we exclude the non-ASCII symbol prediction from the top word list of all models."
+    }, {
+      "heading" : "F.3 Ambiguous Templates Analysis",
+      "text" : "Among the semantic relations in Google analogy dataset, we choose three different relations between locations: capital-common-countries, capital-world, city-in-state, and one relation between people: family. We exclude the currency category because their instance often does not form a parallelogram in the word embedding space (Ethayarajh et al., 2019). The templates we use are listed\n6https://spacy.io/ 7https://github.com/aboSamoor/pycld2)\nin Table 12. For the family category, our templates assume the words are not pronouns, so we exclude the set of four words that include he or she.\nFor each of the four words in an analogy instance (e.g., queen : king = woman : man), we would create 32 training or testing sequences8 based on the diagonal words such as king or woman. Similarly, we would create 64 sequences in the edge datasets. Some words contain multiple word pieces and we average the losses of all word pieces during training and testing.\nWe split the synthesized sequences based on their word pair overlapping. First, we randomly sample half of the word pairs (e.g., king and queen) in each category as our training pairs. If both of the word pairs in an analogy instance are training pairs, the instance is put into our training set. If only one of the word pairs is a training pair, the instance would belong to our validation set. The rest of the instances form our testing set. During the fine-tuning, we evaluate a model using the validation set after each epoch and select the model based on its best validation perplexity."
+    }, {
+      "heading" : "F.4 ProtoQA Evaluation",
+      "text" : "In our experiments, we use the scraped development set as our validation set and the crowdsourced development set as our test set. We do not test our methods on the test set of ProtoQA because the result of every submission would show up in their leaderboard and we do not want to overwhelm the leaderboard with our 15 trials.\n82 (diagonal words) × 4 (templates) × 2 (word orders in the template) × 2 (possible next words)\nDue to our limited GPU resources, we compare the methods built on GPT-2 medium rather than GPT-2 large. To maximize the perplexity of the GPT-2 medium model using Softmax on the scraped development set, we fine-tune our models using learning rate 3e-5 and warmup step 500.\nThe original paper (Boratko et al., 2020) does not consider the frequency of the answer during the fine-tuning (i.e., the most possible answer and the least possible answer of each question appear in the training data with the same chance). In terms of the performance of the scraped development set, we find that weighting each answer based on the square root of its frequency is better than weighting each answer uniformly as in the original paper or weighting each answer based on its frequency, so we use the square root weighting to finetuning all our models.\nDuring testing time, each model generates the answers using Nucleus Sampling (Holtzman et al., 2020) with p = 0.9 and temperature = 1. Then, we collect all the words before the first period as an answer and drop the generated sentences without a period."
+    }, {
+      "heading" : "G Future Work",
+      "text" : "Capturing the next word distribution well given an ambiguous context could be important in some downstream applications. A next step could be investigating whether multiple facets lead to a better language generation model for the applications. For example, we would like to know whether breaking the softmax bottleneck could reduce the hallucination of LMs (e.g., outputting queen when the reasonable next words should be king or woman)\nand increase the coherence of the generated text. We also want to more systematically investigate whether modeling multi-mode distribution could help LMs to reduce the undesired bias and to better distinguish similar words (Zagoury et al., 2021) as in subsection B.4.\nNarang et al. (2021); Anonymous (2021) find that MoS can significantly improve the BERT-like LMs on natural language understanding (NLU) tasks when the LMs are trained from scratch. Although we find that the perplexity improvement of multi-embedding BERT is not as large as multiembedding GPT-2, pretraining using multiple embeddings does not decrease the inference speed of the BERT encoder on NLU tasks. This motivates the future studies of seeing if MFS also provides a larger improvement than MoS in NLU tasks.\nTable 2 suggests that multiple embeddings improve more in a non-English context. We wonder whether multiple embeddings are more beneficial to the LMs that are trained on a non-English dominating corpus. Chung et al. (2021) discover that using a larger output embedding dimension improves the multilingual BERT. An interesting research question is whether the improvement comes from alleviating the softmax bottleneck and whether MFS could also lead to similar improvements in multilingual benchmarks.\nThe hidden state size of GPT-3 175B (Brown et al., 2020) is huge (12,288). An interesting question is whether some sets of output word embeddings in GPT-3 are still in a low-dimensional subspace and whether the softmax bottleneck is still a prominent problem on the road of pursuing general intelligence when such a large hidden state dimension is used. We also would like to know if models using multiple facets could reach a similar performance by a smaller hidden state size.\nRecently, Gao et al. (2019); Rajaee and Pilehvar (2021); Cai et al. (2021) point out the structure in the contextual embedding space prevents it from having an isotropic property. Our study and Demeter et al. (2020) show that the structure in the word embedding space only models the global similarity between words and prevents the LM from outputting arbitrary context-dependent word distributions. We would like to know if we can discover a new LM architecture with a better contextual/word embedding space that could better model contextdependent word similarities and balance it with the global word similarities.\nMixtape (Yang et al., 2019) is another efficient solution to the softmax bottleneck, whose hidden state for each word is the weighted average of the facets where the weights are dynamically predicted. If only using one softmax (i.e., K = 1), our multiple partition method could be viewed as a special case of Mixtape that uses a global and binarized weight to prevent complications of predicting weights of each word. Our results indicate that multiple partitions need to be combined with multiple softmax layers in order to gain consistent performance improvement. A potential future direction is to compare MFS and Mixtape on the transformerbased LMs or combine the ideas from MFS and Mixtape to gain further improvements.\nThe results in Kong et al. (2020) suggest that predicting n-gram could be better than predicting individual words in BERT in some applications. The total number of possible n-gram is several orders of magnitude higher than the number of individual tokens in the vocabulary. In addition, the linear dependency among n-gram might be common. For example, the embedding of the brown color + a dog may be similar to the embedding of the brown dog. The problem would be more serious as the length of the prediction sequence (n) increases, so predicting the next sentence using a single embedding might suffer from the softmax bottleneck even more. Therefore, our solutions to softmax bottleneck may lead to a better phrase representation or sentence representation in this type of self-supervised pretraining.\nFinally, language modeling is only an example of extreme classification. The nearly ubiquitous usage of single embedding representation in the classification, self-supervised models (e.g., contrastive learning models), or recommendation problems provides many research opportunities. We believe that our theoretical results could guide researchers to identify the potential applications where the softmax bottleneck is serious and multi-embedding representation is accordingly helpful."
+    } ],
+    "references" : [ {
+      "title" : "Scaling laws vs model architectures: How does inductive bias influence scaling? an extensive empirical study on language tasks",
+      "author" : [ "Anonymous." ],
+      "venue" : "ACL ARR Blind Submission.",
+      "citeRegEx" : "Anonymous.,? 2021",
+      "shortCiteRegEx" : "Anonymous.",
+      "year" : 2021
+    }, {
+      "title" : "Layer normalization",
+      "author" : [ "Jimmy Lei Ba", "Jamie Ryan Kiros", "Geoffrey E Hinton." ],
+      "venue" : "arXiv preprint arXiv:1607.06450.",
+      "citeRegEx" : "Ba et al\\.,? 2016",
+      "shortCiteRegEx" : "Ba et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "ProtoQA: A question answering dataset for prototypical common-sense reasoning",
+      "author" : [ "Michael Boratko", "Xiang Li", "Tim O’Gorman", "Rajarshi Das", "Dan Le", "Andrew McCallum" ],
+      "venue" : "In Proceedings of the 2020 Conference on Empirical Methods in Natural",
+      "citeRegEx" : "Boratko et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Boratko et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language models are few-shot learners",
+      "author" : [ "Amodei." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual.",
+      "citeRegEx" : "Amodei.,? 2020",
+      "shortCiteRegEx" : "Amodei.",
+      "year" : 2020
+    }, {
+      "title" : "Isotropy in the contextual embedding space: Clusters and manifolds",
+      "author" : [ "Xingyu Cai", "Jiaji Huang", "Yuchen Bian", "Kenneth Church." ],
+      "venue" : "9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021.",
+      "citeRegEx" : "Cai et al\\.,? 2021",
+      "shortCiteRegEx" : "Cai et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Rethinking embedding coupling in pre-trained language models",
+      "author" : [ "Hyung Won Chung", "Thibault Févry", "Henry Tsai", "Melvin Johnson", "Sebastian Ruder." ],
+      "venue" : "International Conference on Learning Representations, ICLR 2021.",
+      "citeRegEx" : "Chung et al\\.,? 2021",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Stolen probability: A structural weakness of neural language models",
+      "author" : [ "David Demeter", "Gregory Kimmel", "Doug Downey." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 2191–2197, Online. As-",
+      "citeRegEx" : "Demeter et al\\.,? 2020",
+      "shortCiteRegEx" : "Demeter et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards understanding linear word analogies",
+      "author" : [ "Kawin Ethayarajh", "David Duvenaud", "Graeme Hirst." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 3253–3262, Florence, Italy. Association for",
+      "citeRegEx" : "Ethayarajh et al\\.,? 2019",
+      "shortCiteRegEx" : "Ethayarajh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Addressing some limitations of transformers with feedback memory",
+      "author" : [ "Angela Fan", "Thibaut Lavril", "Edouard Grave", "Armand Joulin", "Sainbayar Sukhbaatar." ],
+      "venue" : "arXiv preprint arXiv:2002.09402.",
+      "citeRegEx" : "Fan et al\\.,? 2020",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity",
+      "author" : [ "William Fedus", "Barret Zoph", "Noam Shazeer." ],
+      "venue" : "arXiv preprint arXiv:2101.03961.",
+      "citeRegEx" : "Fedus et al\\.,? 2021",
+      "shortCiteRegEx" : "Fedus et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Breaking the softmax bottleneck via learnable monotonic pointwise nonlinearities",
+      "author" : [ "Octavian Ganea", "Sylvain Gelly", "Gary Bécigneul", "Aliaksei Severyn." ],
+      "venue" : "Proceedings of the 36th International Conference on Machine Learning, ICML 2019, 9-",
+      "citeRegEx" : "Ganea et al\\.,? 2019",
+      "shortCiteRegEx" : "Ganea et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Representation degeneration problem in training natural language generation models",
+      "author" : [ "Jun Gao", "Di He", "Xu Tan", "Tao Qin", "Liwei Wang", "TieYan Liu." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May",
+      "citeRegEx" : "Gao et al\\.,? 2019",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Gaussian error linear units (gelus)",
+      "author" : [ "Dan Hendrycks", "Kevin Gimpel." ],
+      "venue" : "arXiv preprint arXiv:1606.08415.",
+      "citeRegEx" : "Hendrycks and Gimpel.,? 2016",
+      "shortCiteRegEx" : "Hendrycks and Gimpel.",
+      "year" : 2016
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural computation, 9(8):1735–1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "The curious case of neural text degeneration",
+      "author" : [ "Ari Holtzman", "Jan Buys", "Li Du", "Maxwell Forbes", "Yejin Choi." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net.",
+      "citeRegEx" : "Holtzman et al\\.,? 2020",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sigsoftmax: Reanalysis of the softmax bottleneck",
+      "author" : [ "Sekitoshi Kanai", "Yasuhiro Fujiwara", "Yuki Yamanaka", "Shuichi Adachi." ],
+      "venue" : "Advances in Neural Information Processing Systems 31: Annual Conference on Neural Information Processing Systems",
+      "citeRegEx" : "Kanai et al\\.,? 2018",
+      "shortCiteRegEx" : "Kanai et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Scaling laws for neural language models",
+      "author" : [ "Jared Kaplan", "Sam McCandlish", "Tom Henighan", "Tom B Brown", "Benjamin Chess", "Rewon Child", "Scott Gray", "Alec Radford", "Jeffrey Wu", "Dario Amodei." ],
+      "venue" : "arXiv preprint arXiv:2001.08361.",
+      "citeRegEx" : "Kaplan et al\\.,? 2020",
+      "shortCiteRegEx" : "Kaplan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A mutual information maximization perspective of language representation learning",
+      "author" : [ "Lingpeng Kong", "Cyprien de Masson d’Autume", "Lei Yu", "Wang Ling", "Zihang Dai", "Dani Yogatama" ],
+      "venue" : "In 8th International Conference on Learning Representa-",
+      "citeRegEx" : "Kong et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Kong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On the sentence embeddings from pre-trained language models",
+      "author" : [ "Bohan Li", "Hao Zhou", "Junxian He", "Mingxuan Wang", "Yiming Yang", "Lei Li." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Decoupled weight decay regularization",
+      "author" : [ "Ilya Loshchilov", "Frank Hutter." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net.",
+      "citeRegEx" : "Loshchilov and Hutter.,? 2019",
+      "shortCiteRegEx" : "Loshchilov and Hutter.",
+      "year" : 2019
+    }, {
+      "title" : "Kernelized bayesian softmax for text generation",
+      "author" : [ "Ning Miao", "Hao Zhou", "Chengqi Zhao", "Wenxian Shi", "Lei Li." ],
+      "venue" : "Advances in Neural Information Processing Systems 32: Annual Conference on Neural Information Processing Systems 2019,",
+      "citeRegEx" : "Miao et al\\.,? 2019",
+      "shortCiteRegEx" : "Miao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Distributed representations of words and phrases and their compositionality",
+      "author" : [ "Tomás Mikolov", "Ilya Sutskever", "Kai Chen", "Gregory S. Corrado", "Jeffrey Dean." ],
+      "venue" : "Advances in Neural Information Processing Systems 26: 27th Annual Conference on",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Wordnet: a lexical database",
+      "author" : [ "George A Miller" ],
+      "venue" : null,
+      "citeRegEx" : "3119",
+      "shortCiteRegEx" : "3119",
+      "year" : 1995
+    }, {
+      "title" : "Do transformer modifications",
+      "author" : [ "Lan" ],
+      "venue" : null,
+      "citeRegEx" : "Lan,? \\Q2021\\E",
+      "shortCiteRegEx" : "Lan",
+      "year" : 2021
+    }, {
+      "title" : "Beyond accuracy: Be",
+      "author" : [ "Sameer Singh" ],
+      "venue" : null,
+      "citeRegEx" : "Singh.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Singh.",
+      "year" : 2020
+    }, {
+      "title" : "Outrageously large neural net",
+      "author" : [ "Jeff Dean" ],
+      "venue" : null,
+      "citeRegEx" : "Dean.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Dean.",
+      "year" : 2017
+    }, {
+      "title" : "Global organization of the wordnet lexicon",
+      "author" : [ "Mariano Sigman", "Guillermo A Cecchi." ],
+      "venue" : "Proceedings of the National Academy of Sciences, 99(3):1742–1747.",
+      "citeRegEx" : "Sigman and Cecchi.,? 2002",
+      "shortCiteRegEx" : "Sigman and Cecchi.",
+      "year" : 2002
+    }, {
+      "title" : "Direct output connection for a high-rank language model",
+      "author" : [ "Sho Takase", "Jun Suzuki", "Masaaki Nagata." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 4599–4609, Brussels, Belgium. Association",
+      "citeRegEx" : "Takase et al\\.,? 2018",
+      "shortCiteRegEx" : "Takase et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Omninet: Omnidirectional representations from transformers",
+      "author" : [ "Yi Tay", "Mostafa Dehghani", "Vamsi Aribandi", "Jai Gupta", "Philip Pham", "Zhen Qin", "Dara Bahri", "Da-Cheng Juan", "Donald Metzler." ],
+      "venue" : "arXiv preprint arXiv:2103.01075.",
+      "citeRegEx" : "Tay et al\\.,? 2021",
+      "shortCiteRegEx" : "Tay et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "What do you learn from context? probing for sentence structure",
+      "author" : [ "Ian Tenney", "Patrick Xia", "Berlin Chen", "Alex Wang", "Adam Poliak", "R. Thomas McCoy", "Najoung Kim", "Benjamin Van Durme", "Samuel R. Bowman", "Dipanjan Das", "Ellie Pavlick" ],
+      "venue" : null,
+      "citeRegEx" : "Tenney et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Tenney et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "How can bert help lexical semantics tasks? arXiv preprint arXiv:1911.02929",
+      "author" : [ "Yile Wang", "Leyang Cui", "Yue Zhang" ],
+      "venue" : null,
+      "citeRegEx" : "Wang et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander Rush." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing:",
+      "citeRegEx" : "Scao et al\\.,? 2020",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Breaking the softmax bottleneck: A high-rank RNN language model",
+      "author" : [ "Zhilin Yang", "Zihang Dai", "Ruslan Salakhutdinov", "William W. Cohen." ],
+      "venue" : "6th International Conference on Learning Representations, ICLR 2018, Vancouver, BC, Canada, April 30",
+      "citeRegEx" : "Yang et al\\.,? 2018",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Mixtape: Breaking the softmax bottleneck efficiently",
+      "author" : [ "Zhilin Yang", "Thang Luong", "Ruslan Salakhutdinov", "Quoc V. Le." ],
+      "venue" : "Advances in Neural Information Processing Systems 32: Annual Conference on Neural Information Processing Systems",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "What’s the best place for an AI conference, vancouver or _______: Why completing comparative questions is difficult",
+      "author" : [ "Avishai Zagoury", "Einat Minkov", "Idan Szpektor", "William W. Cohen." ],
+      "venue" : "In",
+      "citeRegEx" : "Zagoury et al\\.,? 2021",
+      "shortCiteRegEx" : "Zagoury et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "2019) optimizer and set the learning rate as 1e-5 and do not use the warm-up because the training starts from the pretrained models. The sequence length (i.e., bptt) is set as 200 for GPT-2 and 256 for BERT",
+      "author" : [ "Hutter" ],
+      "venue" : null,
+      "citeRegEx" : "Hutter,? \\Q2019\\E",
+      "shortCiteRegEx" : "Hutter",
+      "year" : 2019
+    }, {
+      "title" : "Anonymous (2021) find that MoS can significantly improve the BERT-like LMs on natural language understanding (NLU) tasks when the LMs are trained from scratch",
+      "author" : [ "Narang" ],
+      "venue" : null,
+      "citeRegEx" : "Narang,? \\Q2021\\E",
+      "shortCiteRegEx" : "Narang",
+      "year" : 2021
+    }, {
+      "title" : "2021) point out the structure in the contextual embedding space prevents it from having an isotropic property",
+      "author" : [ "Recently", "Gao" ],
+      "venue" : "Our study and Demeter et al",
+      "citeRegEx" : "Recently and Gao,? \\Q2020\\E",
+      "shortCiteRegEx" : "Recently and Gao",
+      "year" : 2020
+    }, {
+      "title" : "2020) suggest that predicting n-gram could be better than predicting individual words in BERT in some applications. The total number of possible n-gram is several orders of magnitude higher than the number",
+      "author" : [ "Kong" ],
+      "venue" : null,
+      "citeRegEx" : "Kong,? \\Q2020\\E",
+      "shortCiteRegEx" : "Kong",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 16,
+      "context" : "Recently, researchers have found that transformerbased language models (LMs), such as GPT-2, can learn to generate better as their sizes grow (Radford et al., 2019; Brown et al., 2020; Kaplan et al., 2020).",
+      "startOffset" : 142,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 21,
+      "context" : "However, the words queen, king, woman, and man tend to form a parallelogram in the embedding space (Mikolov et al., 2013; Ethayarajh et al., 2019; Wang et al., 2019), which means the man and queen also have a similar average.",
+      "startOffset" : 99,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 7,
+      "context" : "However, the words queen, king, woman, and man tend to form a parallelogram in the embedding space (Mikolov et al., 2013; Ethayarajh et al., 2019; Wang et al., 2019), which means the man and queen also have a similar average.",
+      "startOffset" : 99,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 30,
+      "context" : "However, the words queen, king, woman, and man tend to form a parallelogram in the embedding space (Mikolov et al., 2013; Ethayarajh et al., 2019; Wang et al., 2019), which means the man and queen also have a similar average.",
+      "startOffset" : 99,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 0,
+      "context" : "2018) regains attention as one of the few effective architecture modifications for transformer LM (Narang et al., 2021; Anonymous, 2021).",
+      "startOffset" : 98,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 32,
+      "context" : "(2021) show that the softmax bottleneck (Yang et al., 2018) theory is not",
+      "startOffset" : 40,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 2,
+      "context" : "Finally, we also show that MFS could improve the performance of GPT-2 on ProtoQA (Boratko et al., 2020), a commonsense question answering dataset where each question has multiple acceptable answers.",
+      "startOffset" : 81,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 32,
+      "context" : "• Method: Addressing two weaknesses in MoS (Yang et al., 2018), we propose multi-facet softmax (MFS), a new alternative to the output softmax layer.",
+      "startOffset" : 43,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 21,
+      "context" : "This objective is similar to the objective function of Word2Vec (Mikolov et al., 2013) except that the context embeddings are contextualized (Kong et al.",
+      "startOffset" : 64,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2013) except that the context embeddings are contextualized (Kong et al., 2020; Li et al., 2020).",
+      "startOffset" : 62,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2013) except that the context embeddings are contextualized (Kong et al., 2020; Li et al., 2020).",
+      "startOffset" : 62,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 7,
+      "context" : "This is the main reason that makes queen - king = woman - man in the Word2Vec space (Ethayarajh et al., 2019).",
+      "startOffset" : 84,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 30,
+      "context" : "Therefore, the same linear relations tend to hold in the output word embedding space of GPT-2 as well (Wang et al., 2019).",
+      "startOffset" : 102,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 32,
+      "context" : "Inspired by our geometric analysis on the limitation of the single embedding, we improve the state-of-the-art multiple embedding solution, mixture of softmax (MoS) (Yang et al., 2018) by two enhancements: multiple input hidden states and multiple partitions on the vocabulary.",
+      "startOffset" : 164,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 13,
+      "context" : "(2018) propose mixture of softmax (MoS) to allow a LSTM-based (Hochreiter and Schmidhuber, 1997) LM to produce more linearly independent log probability distributions of the output words given different contexts.",
+      "startOffset" : 62,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 12,
+      "context" : "We make its dimension the same as the original hidden state hct using a linear layer L h plus a GELU activation function (Hendrycks and Gimpel, 2016).",
+      "startOffset" : 121,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 15,
+      "context" : "SigSoftmax (Kanai et al., 2018): The same as Softmax except when predicting the next word, Kanai et al.",
+      "startOffset" : 11,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 32,
+      "context" : "MoS (Yang et al., 2018): MoS (3) is the mixture of softmax with 3 facets/softmaxes, whose probability comes from Equation 2.",
+      "startOffset" : 4,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 27,
+      "context" : "DOC (Takase et al., 2018): Similar to our enhancement using multiple input hidden states, direct output connection (DOC) makes each of their facets coming from a different input hidden state.",
+      "startOffset" : 4,
+      "endOffset" : 25
+    }, {
+      "referenceID" : 21,
+      "context" : "First, we collect the four words with semantic analogy relations in Google analogy dataset (Mikolov et al., 2013).",
+      "startOffset" : 91,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 26,
+      "context" : "The setting is realistic because any related words could become the next word in some ambiguous contexts and all the words are related in a certain way (Sigman and Cecchi, 2002).",
+      "startOffset" : 152,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 2,
+      "context" : "ProtoQA (Boratko et al., 2020) is a question answering dataset built for evaluating the commonsense reasoning ability of language models.",
+      "startOffset" : 8,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 20,
+      "context" : "An alternative to model the multi-mode distribution is to use multiple embeddings to represent each output word (Miao et al., 2019).",
+      "startOffset" : 112,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 9,
+      "context" : "Another type of related model (Shazeer et al., 2017; Fedus et al., 2021) dynamically routes the signals to different experts (i.",
+      "startOffset" : 30,
+      "endOffset" : 72
+    } ],
+    "year" : 0,
+    "abstractText" : "Neural language models (LMs) such as GPT2 estimate the probability distribution over the next word by a softmax over the vocabulary. The softmax layer produces the distribution based on the dot products of a single hidden state and the embeddings of words in the vocabulary. However, we discover that this single hidden state cannot produce all probability distributions regardless of the LM size or training data size because the single hidden state embedding cannot be close to the embeddings of all the possible next words simultaneously when there are other interfering word embeddings between them. In this work, we demonstrate the importance of this limitation both theoretically and practically. Our work not only deepens our understanding of softmax bottleneck and mixture of softmax (MoS) but also inspires us to propose multi-facet softmax (MFS) to address the limitations of MoS. Extensive empirical analyses confirm our findings and show that against MoS, the proposed MFS achieves two-fold improvements in the perplexity of GPT-2 and BERT. “The greater the ambiguity, the greater the pleasure.” — Milan Kundera",
+    "creator" : null
+  }
+}

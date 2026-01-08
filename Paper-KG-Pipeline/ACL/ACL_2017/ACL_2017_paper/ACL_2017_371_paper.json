@@ -1,0 +1,658 @@
+{
+  "name" : "ACL_2017_371_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "There are latent nest structures beyond sequential surface words in natural language (Chomsky, 1957). In the last two decades, researchers incorporated more and more rich structural information into conventional language model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005) and\nmore recently on neural network-based language modeling (Dyer et al., 2016). Among the effort, one direction is to explore sub-word structures(Costa-Jussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters, mostly to handle out-of-vocabulary word problem. A somewhat opposite direction is to explore hyper-word structure. For example, (Eriguchi et al., 2016) adopts parsing tree in encoder phase in machine translation, (Stahlberg et al., 2016) proposes to use hierarchical phrase-based (HPB) model to guide the search in decoding. Both models, however, rely heavily on human labeled data on the language structures, which is extremely expensive and limited in scale.\nIn this paper, we propose phrasal recurrent neural networks (pRNNs; §2), a general framework of RNNs (Elman, 1990) that explicitly models task-specific nested phrases from plain text. Here we use “phrase” as its definition in phrase-based statistical machine translation (PBSMT(Zens et al., 2002; Koehn et al., 2003)), which indicates any continues sequences of words. What different here are pRNNs permit phrases with arbitrary lengths instead of limiting them for the computational issue. The phrases in pRNNs are composed and selected in a way that is jointly learned in the language modeling, therefore requiring no human-labeled data or external model such as word alignment. In previous RNN-based language modeling, the hidden state of RNN before the word to predict summarizes the history of all previous words. Similarly, in pRNNs, we use the all state of all parallel RNNs (with the same parameters) to capture the history of all subsequence of words that precede the word to predict, with the starting word shifting from the first word the one right before the word to predict.\nThis set of RNNs applied parallelly to different choices of word sequences are called RNN pyra-\nmid. While most of those RNNs’ status deal with incorrect word sequences: they could either start in the middle of a chunk, or in a place too early or too late for the prediction tasks, we left it to an attention mechanism to select and combine, therefore eliminate the need for external knowledge on chunking and composition. This mechanism will be trained jointly with the composition models in pRNNs in optimizing a designed objective function, e.g, perplexity or likelihood. With proper composition function in pRNNs, the RNN pyramid provides a “phrase forest”, which could potentially contain a fairly deep nested structure in some of its members.\nOur pRNN models have two merits:\n• They represent all phrases in the same vector space in an explicit and unsupervised way. Which shows the potential to discover and utilize hidden structures of surface word sequences.\n• They explore the possibility of network construction in another dimension: Parallel. Instead of stacking deeper and deeper layers of RNNs.\nExperiments show that pRNNs are effective for language modeling (§4). Our model obtains significant better perplexities than state-of-the-art sequential Long-Short Term (LSTM) model on language modeling task, both on PTB and FBIS English data set. We also apply pRNNs to encode the source sentence of machine translation besides a conventional bi-direction encoder, which improves over the Moses (phrase-based statistical model) and a strong sequence-to-sequence baseline in the Chinese-English machine translation task."
+    }, {
+      "heading" : "2 Phrasal RNNs",
+      "text" : "We assume that, in the task of language model and machine translation, selecting the appropriate hidden structures for one sentence is highly related to the performance of the task.\nFormally, a typical pRNN consist of three subnetworks: phrasal part P , attention part A and sequential part S. Each sub-network plays its own role and collaborates with others. P (§2.1) constructs the neural structures (realvalued vectors) which corresponding to natural linguistic structures (phrases). It takes embed-\ndings (x?) of all words in a candidate phrase, as input, then output one fix-length real-valued vector p as the distributed representation (Hinton et al., 1986) of the phrase;\np = P (xji ) (1)\nWhere xji = [xi, · · · , xj ] (2)\nA (§2.2) compares the candidate phrase regards to the current situation, give a probabilistic distribution over them, then provides the weighted sum of their representations. It takes previous calculated candidate set {p} as input, then output a weighted sum of {p} as p̂ with the help of current hidden state (ht) at time step t given by (S).\np̂ = A(h, pk, · · · , pl) (3)\nS (§2.2) combine the weighted sum of candidate phrases into original RNN, forces RNN taking the structural history information into consideration. It is similar to original RNN except for one point: when predict next hidden state ht+1, besides ht and xt, it takes p̂ as input too.\nht = S(ht−1, xt, p̂t) (4)"
+    }, {
+      "heading" : "2.1 Represent Phrases",
+      "text" : "There are many types of neural networks which can transfer phrase into distributed representation. However, when we need to handle arbitrary length phrases, another way of saying, the entire history\nof words, the choices are very limited to a few RNNs’ variants.\nEven when we choose RNNs to construct structure vectors, we are still facing a big problem. Because the hidden state ht are considered to encode the entire history information from the beginning of the sentence xt1, they can be utilized as representations of phrases begin at the sentence head {xj1|1 ≤ j ≤ t}. But they do not provide the representations of phrases which do not begin with the first word of the sentence {xji |1 < i < j ≤ t}.\nTo represent all candidate phrases in a sentence with n words, we build a RNN pyramid (RNNP (Fig. 3)), with n horizontal parallel RNNs {RNNn}Nn=1. RNNn indicates that it begins at the n-th word of the sentence. With all N(N + 1)/2 hidden status generated by RNN pyramid, we obtain distributed representation of all candidate phrases/structures of a sentence.\nTo keep consistent among these parallel RNNs in the pyramid and to limit the number of parameters for keeping the model simple, we let all parallel RNNs share the same network parameters (W,U, b).\nhnt = σ(Wxt + Uh n t−1 + b) (5)\nWhere hnt of the RNNn indicates the hidden state of the t-th word in the sentence.\nThis method is kind of similar to the sharing parameters between filters of convolutional neural network (Cun et al., 1990), except for it working on the time axis, which recognizes the local invariant along each time steps.\nWith RNN pyramid built on a sentence, we can map all potential phrases with varying lengths into real-valued fix-length vectors. These vectors are representations of candidate structures we plan to compare at next stage."
+    }, {
+      "heading" : "2.2 Utilize Phrases",
+      "text" : "With the candidate structures represented by a fixlength vector (Fig. 2), we can easily apply attention mechanism on these vectors, and soft combine them to output a weighted sum as the best structure selected:\nŝt = ∑ t,n αt,nh n t−1 (6)\nWhere the weight of hidden state (structure) αt,n can be represented by the following form:\nαt,n = exp(et,n)∑\nt,n exp(et,n)\n(7)\nIn which we define et,n as:\net,n = a(hk, ht,n) (8)\nHere we combine a(hk, ht,n) with one layer of feedforward neural network, where hk is the k-th word of sequential part S.\nWe adopt the attention mechanism from Bahdanau et. al. (2014). As we showed in Fig 4. We put ŝ into R part of the network, let the network to combine it with h and x to predict next hidden state. We also apply our model on machine translation task within successful EncoderDecoder framework as in Fig 5."
+    }, {
+      "heading" : "3 LM Experiment",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Data",
+      "text" : "To make experiment comparable with other methods, we apply our models on language model task, evaluate it in perplexity on the widely used English Penn Treebank (PTB) (Marcus et al., 1993), which pre-processing and splitting by Mikolov (2010). The data is utilized as following: sections (0-20) with 929k tokens are used for training, sections (21-22) with 73k tokens are held out as validation, and sections (23-24) with 82k tokens are used for testing. There are only top 10,000 highfrequency words are kept in the corpus. All rest low-frequency words are replaced with UNK tag. This version of data is widely used among the language modeling community. It is publicly avail-\nable.1\nBecause the scale of PTB corpus is relatively small, we also train our model on larger FBIS English(LDC2003E14). Accordingly, we only keep top 40,000 high-frequency words in the corpus, replace rest low-frequency word with UNK tag. We use NIST MT06 as the validation set, NIST MT08 as the test set."
+    }, {
+      "heading" : "3.2 Model Configuration",
+      "text" : "Baseline In this paper, we utilize state-of-theart LSTM framework on language model proposed by Zaremba (2014) as the baseline model. Firstly, we stack 2 layers of LSTMs, to explore more abstracted patterns which are not supposed to be discovered by a single layer. Secondly, to increase the model’s capability of noise tolerance and reduce the overfitting to training data, we introduce dropout (Hinton et al., 2012) before and after each recurrent layer. We choose dropout rate as 0.5 without tuning. For training, we used AdaDelta (Zeiler, 2012). To handle nan and inf which occasionally occur in gradient, we normalize the gradient of each batch to 1.0 and drop the parameter updates on such batches. To determine when to stop training, we set patience to 100. We set the dimension of both word embedding and hidden dimensions to 200. We initialized all parameters according to recommendations given in (Zaremba et al., 2014) and blocks(van Merriënboer et al., 2015). For all models, we used word embedding, hidden dimensions of 200 and 2-layer LSTMs. For both models, we choose dropout rate as 0.5. For training, we used AdaDelta and normalize the gradient to 1.0, set patience to 100. We initialized all parameters according to recommendations given in Zaremba et al. (2014).\nPhrasal RNN We configure our model exactly as the baseline model, except adding an extra RNN\n1http://www.fit.vutbr.cz/˜imikolov/ rnnlm/\npyramid layer above baseline’s 2-layer LSTM. We also add dropout between 2nd LSTM layer and RNN pyramid layer. We set dimension of hidden state in RNN pyramid layer as 200 either. We utilize Gated Recurrent Unit (GRU) (Chung et al., 2014) to construct RNN pyramid layer. We also tried a simplified version of GRU to build the pyramid (pRNNv in table 2), which achieves the best result."
+    }, {
+      "heading" : "3.3 Results",
+      "text" : "We report our perplexities result of language model in table (2 and 3). We calculate perplexity over a sequence [w1, . . . , wn] with\nPPL = exp ( − log(Prob(w n 1 ))\nn\n) (9)\n(including the end of sentence (EOS) symbol). pRNN and its variant outperform over 10 points of\nppl over a strong baseline on both PTB and FBIS English data set."
+    }, {
+      "heading" : "4 MT Experiment",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Data",
+      "text" : "We evaluate all three models, PBSMT, RNNsearch, pRNN on the same data set. We utilize 1.25M sentence pairs, which are extracted from LDC corpora as training data. There are 34.5 English words and 27.9M Chinese words in the training data. We select NIST 2002 (MT02) data set as our development set, the NIST 2003 (MT03), NIST 2004 (MT04), NIST 2005 (MT05), NIST 2006 (MT06) and NIST 2008 (MT08) as test sets. When training neural networks, we limit the size of vocabularies of both source and target side to the most frequent 16K words. All rest low-frequency words are replaced with UNK tag. Chinese vocabulary covers approximately 95.8% of the corpora. English vocabulary covers approximately 98.3% of the corpora."
+    }, {
+      "heading" : "4.2 Model Configuration",
+      "text" : "Baseline In this paper, we use an open-source implementation (Meng et al., 2015) of RNNsearch (Bahdanau et al., 2014) as baseline model. To increase the model’s capability of noise tolerance and reduce the overfitting to training data, we introduce dropout (Hinton et al., 2012) before softmax layer, and set the dropout rate equal to 0.5. We choose dropout rate as 0.5 without tuning. For training, we used AdaDelta (Zeiler, 2012) and normalize the gradient to 1.0, . To handle nan and inf which occasionally occur in gradient, we normalize the gradient of each batch to 1.0 and drop the parameter updates on such batches. We set the dimension of both source and target word embedding as 620, and hidden dimensions to 1000. We initialized all parameters according to recommendations given in (Bahdanau et al., 2014). We also introduce the phrase-based model of Moses (Koehn et al., 2007) as a secondary baseline too.\nPhrase-based NMT We configure our model exactly as the baseline model, except adding an extra RNN pyramid as a secondary source encoder. As the limitation on the memory of GPU, we keep only phrases ended at eos into consideration. Thus we name it src-pyr-last in table 4. We set the dimension of hidden dimensions inside pyramid as 1000 too. We utilize Gated Recur-\nrent Unit (GRU) (Chung et al., 2014) to construct RNN pyramid layer.\nFor a fair comparison, we run baseline system (RNNsearch) many times (not epoch) and report only the best one. We only run PBNMT once."
+    }, {
+      "heading" : "4.3 Results",
+      "text" : "We report our BLEU result of three models in table (4). We use the case-insensitive 4-gram NIST BLEU (Papineni et al., 2002) score given by mteval v11.pl pRNNs outperforms both PBSMT and Encoder-Decoder model."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Relation to Previous Attempts on",
+      "text" : "Structural Information\nIn the last two decades, to achieve better performance, researchers incorporated more and more rich structural information into conventional model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005). This trend is more clear in statistical machine translation (SMT) community, from wordbased SMT (Brown et al., 1993) to phrase-based SMT (Koehn et al., 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al., 2006; Liu et al., 2006; Galley et al., 2006; Xie et al., 2011) (forest-based (Mi and Huang, 2008; Mi et al., 2008)). among them, phrase-based SMT (Zens et al., 2002; Koehn et al., 2003) was the most widely adopted translation model. The Same trend can be observed in neural network strand. There were many works which successfully modeled structure in neural network on parsing (Dyer et al., 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Hender-\nson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al., 2016; Chelba and Jelinek, 2000; Emami and Jelinek, 2005; Chelba, 1997).\nIn neural machine translation (NMT) area, the situation is more complex. In recent years, the most popular and success NMT model is EncoderDecoder model (Bahdanau et al., 2014; Sutskever et al., 2014). Which has achieved competitive or better results in many translation tasks(Luong et al., 2015a,b). However, beyond sequential surface words, there are latent nest structures in natural language (Chomsky, 1957). One direction to explore is to introduce sub-word structures(CostaJussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters. The most important reason to dig into sub-word is to handle out-of-vocabulary word problem. This problem is rooted in the limited size of vocabulary, which utilized by NMT mapping symbols to real-valued dense vector.\nAnother direction is to explore hyper-word structure. Authors of (Eriguchi et al., 2016) adopted parsing tree in encoder phase. However, this method depends heavily on human-labeled data, which is always expensive and limited in scale. Authors of (Stahlberg et al., 2016) introduce hierarchical phrase-based (HPB) model as the guider of search space. However, the HPB model and NMT model are trained separately and combined only when decoding. Compare this to the previous method, (Eriguchi et al., 2016) can be categorized into introducing external data, (Stahlberg et al., 2016) can be categorized into introducing external model. In an ideal situation, all external model can be replaced by a neural net-\nwork with equal ability."
+    }, {
+      "heading" : "5.2 Similarity to Deep Memory Network",
+      "text" : "Deep Memory Network is an effective implementation of the neural turing machine. When they use state machine such as GRU or LSTM to read from one memory and write to another, the memory IO addresses are either content-based (via attention mechanism) or location-based (actually sequentially cell-by-cell) (Meng et al., 2015). However, there are much more other methods in the location-based category.\nCell-by-cell vs. Incremental If we consider the hidden of one time step inside pyramid RNN as memory, we can name the operations as incremental read and write. The intuition behind incremental addressing is, when we read little, we know little, we only have the ability to write little. But when we read more, we know more, we are gone to have the ability to write more."
+    }, {
+      "heading" : "6 Discussion",
+      "text" : "Our experiments clearly show that the proposed pRNN model is quite effective in language modeling and machine translation. This is the because of:\n• when model predicting, it is provided with all candidate phrases as structure information rather than just surface sequential words.\n• utilizing attention mechanism to compare and combine to get the weighted sum which best fit for predicting next hidden state.\nThe most significant question that remains is how well the quality of forest generated as a by-product of pRNN, will it get a better result than other supervised parsing model trained on human label data."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "We introduced phrasal recurrent neural network, an RNN model with all potential candidate phrases considered. Our model does not require any human labeled data to construct the structures. It outperforms the state-of-the-art LSTM language models. Our model does not require any external resources such as human labeled data or word align model to construct the phrases. It outperforms both state-of-the-art PBSMT and RNNsearch model.\nWe make two main contributions:\n• Instead of packing all information in distributed representation and internal hidden status, which are computing-friendly, we try to represent natural structure in an explicit way, which are human-friendly.\n• Instead of stacking deeper and deeper layers of RNNs, we explore the possibility of network construction in another dimension: making RNN sequences parallel."
+    } ],
+    "references" : [ {
+      "title" : "Neural Machine Translation by Jointly Learning to Align and Translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "CoRR. volume abs/1409.0. http://arxiv.org/abs/1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "The Mathematics of Statistical Machine Translation : Parameter Estimation",
+      "author" : [ "Peter F Brown", "Stephen A Della Pietra", "Vincent J Della Pietra", "Robert L Mercer." ],
+      "venue" : "Computational Linguistics 10598.",
+      "citeRegEx" : "Brown et al\\.,? 1993",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Generative Incremental Dependency Parsing with Neural Networks",
+      "author" : [ "Jan Buys", "Phil Blunsom." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Con-",
+      "citeRegEx" : "Buys and Blunsom.,? 2015",
+      "shortCiteRegEx" : "Buys and Blunsom.",
+      "year" : 2015
+    }, {
+      "title" : "A Structured Language Model",
+      "author" : [ "Ciprian Chelba." ],
+      "venue" : "Proceedings of the 35th Annual Meeting of the Association for Computational Linguistics. Association for Computational Linguistics, Madrid, Spain, pages 498–500.",
+      "citeRegEx" : "Chelba.,? 1997",
+      "shortCiteRegEx" : "Chelba.",
+      "year" : 1997
+    }, {
+      "title" : "Structured language modeling",
+      "author" : [ "Ciprian Chelba", "Frederick Jelinek" ],
+      "venue" : null,
+      "citeRegEx" : "Chelba and Jelinek.,? \\Q2000\\E",
+      "shortCiteRegEx" : "Chelba and Jelinek.",
+      "year" : 2000
+    }, {
+      "title" : "A Hierarchical PhraseBased Model for Statistical Machine Translation",
+      "author" : [ "David Chiang." ],
+      "venue" : "Proceedings of the 43rd Annual Meeting of the Association for Computational Linguistics (ACL’05). Association for Computational Lin-",
+      "citeRegEx" : "Chiang.,? 2005",
+      "shortCiteRegEx" : "Chiang.",
+      "year" : 2005
+    }, {
+      "title" : "Syntactic structures",
+      "author" : [ "Noam Chomsky." ],
+      "venue" : "LondonThe Hague-Paris.",
+      "citeRegEx" : "Chomsky.,? 1957",
+      "shortCiteRegEx" : "Chomsky.",
+      "year" : 1957
+    }, {
+      "title" : "A Character-level Decoder without Explicit Segmentation for Neural Machine Translation",
+      "author" : [ "Junyoung Chung", "Kyunghyun Cho", "Yoshua Bengio" ],
+      "venue" : null,
+      "citeRegEx" : "Chung et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling",
+      "author" : [ "Junyoung Chung", "Caglar Gulcehre", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv pages 1–9.",
+      "citeRegEx" : "Chung et al\\.,? 2014",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Character-based Neural Machine Translation",
+      "author" : [ "Marta R Costa-Jussà", "José A R Fonollosa." ],
+      "venue" : "CoRR abs/1603.0. http://arxiv.org/abs/1603.00810.",
+      "citeRegEx" : "Costa.Jussà and Fonollosa.,? 2016",
+      "shortCiteRegEx" : "Costa.Jussà and Fonollosa.",
+      "year" : 2016
+    }, {
+      "title" : "Handwritten Digit Recognition with a Back-Propagation Network",
+      "author" : [ "Y Le Cun", "Bernhard E Boser", "John S Denker", "R E Howard", "W Habbard", "L D Jackel", "Dale B Henderson." ],
+      "venue" : "Advances in Neural Information Processing Systems pages 396–404.",
+      "citeRegEx" : "Cun et al\\.,? 1990",
+      "shortCiteRegEx" : "Cun et al\\.",
+      "year" : 1990
+    }, {
+      "title" : "Recurrent Neural Network Grammars",
+      "author" : [ "Chris Dyer", "Adhiguna Kuncoro", "Miguel Ballesteros", "Noah A Smith." ],
+      "venue" : "CoRR abs/1602.0. http://arxiv.org/abs/1602.07776.",
+      "citeRegEx" : "Dyer et al\\.,? 2016",
+      "shortCiteRegEx" : "Dyer et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Finding structure in time",
+      "author" : [ "Jeffrey L. Elman." ],
+      "venue" : "Cognitive Science 14(2):179–211. https://doi.org/10.1016/0364-0213(90)90002-E.",
+      "citeRegEx" : "Elman.,? 1990",
+      "shortCiteRegEx" : "Elman.",
+      "year" : 1990
+    }, {
+      "title" : "A Neural Syntactic Language Model",
+      "author" : [ "Ahmad Emami", "Frederick Jelinek." ],
+      "venue" : "Machine Learning 60(1):195–227. https://doi.org/10.1007/s10994005-0916-y.",
+      "citeRegEx" : "Emami and Jelinek.,? 2005",
+      "shortCiteRegEx" : "Emami and Jelinek.",
+      "year" : 2005
+    }, {
+      "title" : "Tree-to-Sequence Attentional Neural Machine Translation",
+      "author" : [ "Akiko Eriguchi", "Kazuma Hashimoto", "Yoshimasa Tsuruoka." ],
+      "venue" : "CoRR abs/1603.0. http://arxiv.org/abs/1603.06075.",
+      "citeRegEx" : "Eriguchi et al\\.,? 2016",
+      "shortCiteRegEx" : "Eriguchi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Scalable inference and training of context-rich syntactic translation models",
+      "author" : [ "Michel Galley", "Jonathan Graehl", "Kevin Knight", "Daniel Marcu", "Steve DeNeefe", "Wei Wang", "Ignacio Thayer", "New York", "Marina Rey." ],
+      "venue" : "Proceedings of the 21st In-",
+      "citeRegEx" : "Galley et al\\.,? 2006",
+      "shortCiteRegEx" : "Galley et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Discriminative Training of a Neural Network Statistical Parser",
+      "author" : [ "James Henderson." ],
+      "venue" : "Proceedings of the 42nd Meeting of the Association for Computational Linguistics (ACL’04), Main Volume. Barcelona, Spain, pages 95–102.",
+      "citeRegEx" : "Henderson.,? 2004",
+      "shortCiteRegEx" : "Henderson.",
+      "year" : 2004
+    }, {
+      "title" : "Distributed representations",
+      "author" : [ "G E Hinton", "J L McClelland", "D E Rumelhart." ],
+      "venue" : "Parallel Distributed Processing pages 77–109. https://doi.org/10.1146/annurev-psych-120710100344.",
+      "citeRegEx" : "Hinton et al\\.,? 1986",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 1986
+    }, {
+      "title" : "Improving neural networks by preventing co-adaptation of feature detectors",
+      "author" : [ "Geoffrey E. Hinton", "Nitish Srivastava", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan R. Salakhutdinov." ],
+      "venue" : "arXiv: 1207.0580 pages 1–18.",
+      "citeRegEx" : "Hinton et al\\.,? 2012",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Statistical syntax-directed translation with extended domain of locality",
+      "author" : [ "Liang Huang", "Kevin Knight", "Aravind Joshi." ],
+      "venue" : "Proceedings of AMTA. pages 66–73.",
+      "citeRegEx" : "Huang et al\\.,? 2006",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Computation of the Probability of Initial Substring Generation by Stochastic Context-Free Grammars",
+      "author" : [ "Frederick Jelinek", "John D Lafferty." ],
+      "venue" : "Computational Linguistics 17(3):315–324. http://www.aclweb.org/anthology/J91-3004.",
+      "citeRegEx" : "Jelinek and Lafferty.,? 1991",
+      "shortCiteRegEx" : "Jelinek and Lafferty.",
+      "year" : 1991
+    }, {
+      "title" : "Statistical phrase-based translation",
+      "author" : [ "Philipp Koehn", "Franz Josef Och", "Daniel Marcu." ],
+      "venue" : "Proceedings of the 2003 Conference of the North American Chapter of the Association for Computational Linguistics on Human Language Technology",
+      "citeRegEx" : "Koehn et al\\.,? 2003",
+      "shortCiteRegEx" : "Koehn et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Treeto-String Alignment Template for Statistical Machine Translation",
+      "author" : [ "Yang Liu", "Qun Liu", "Shouxun Lin." ],
+      "venue" : "Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of the Association for",
+      "citeRegEx" : "Liu et al\\.,? 2006",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Achieving Open Vocabulary Neural Machine Translation with Hybrid Word-Character Models",
+      "author" : [ "Minh-Thang Luong", "Christopher D Manning." ],
+      "venue" : "CoRR abs/1604.0. http://arxiv.org/abs/1604.00788.",
+      "citeRegEx" : "Luong and Manning.,? 2016",
+      "shortCiteRegEx" : "Luong and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "Effective Approaches to Attentionbased Neural Machine Translation",
+      "author" : [ "Thang Luong", "Hieu Pham", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing. Association for",
+      "citeRegEx" : "Luong et al\\.,? 2015a",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Addressing the Rare Word Problem in Neural Machine Translation",
+      "author" : [ "Thang Luong", "Ilya Sutskever", "Quoc Le", "Oriol Vinyals", "Wojciech Zaremba." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Luong et al\\.,? 2015b",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Building a large annotated corpus of English : the Penn Treebank",
+      "author" : [ "Mitchell Marcus", "Beatrice Santorini", "Mary Marcinkiewicz." ],
+      "venue" : "Computational Linguistics 19(2):313–330. http://dblp.unitrier.de/db/journals/coling/coling19.html#MarcusSM94.",
+      "citeRegEx" : "Marcus et al\\.,? 1993",
+      "shortCiteRegEx" : "Marcus et al\\.",
+      "year" : 1993
+    }, {
+      "title" : "Neural Transformation Machine: {A} New Architecture for Sequence-to-Sequence Learning",
+      "author" : [ "Fandong Meng", "Zhengdong Lu", "Zhaopeng Tu", "Hang Li", "Qun Liu." ],
+      "venue" : "CoRR abs/1506.0. http://arxiv.org/abs/1506.06442.",
+      "citeRegEx" : "Meng et al\\.,? 2015",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Forest-based Translation Rule Extraction",
+      "author" : [ "Haitao Mi", "Liang Huang." ],
+      "venue" : "Proceedings of the 2008 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, Honolulu, Hawaii, pages 206–",
+      "citeRegEx" : "Mi and Huang.,? 2008",
+      "shortCiteRegEx" : "Mi and Huang.",
+      "year" : 2008
+    }, {
+      "title" : "Forest-Based Translation",
+      "author" : [ "Haitao Mi", "Liang Huang", "Qun Liu." ],
+      "venue" : "Proceedings of ACL-08: HLT . Association for Computational Linguistics, Columbus, Ohio, pages 192–199. http://www.aclweb.org/anthology/P/P08/P08-1023.",
+      "citeRegEx" : "Mi et al\\.,? 2008",
+      "shortCiteRegEx" : "Mi et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Recurrent neural network based language model",
+      "author" : [ "Tomas Mikolov", "Martin Karafiát", "Lukas Burget", "Jan Cernock\\‘y", "Sanjeev Khudanpur" ],
+      "venue" : "In INTERSPEECH",
+      "citeRegEx" : "Mikolov et al\\.,? \\Q2010\\E",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "BLEU : a Method for Automatic Evaluation of Machine Translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Weijing Zhu." ],
+      "venue" : "Computational Linguistics (July):311–318.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Neural Machine Translation of Rare Words with Subword Units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "CoRR abs/1508.0. http://arxiv.org/abs/1508.07909.",
+      "citeRegEx" : "Sennrich et al\\.,? 2015",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Syntactically Guided Neural Machine Translation",
+      "author" : [ "Felix Stahlberg", "Eva Hasler", "Aurelien Waite", "Bill Byrne." ],
+      "venue" : "CoRR abs/1605.0. http://arxiv.org/abs/1605.04569.",
+      "citeRegEx" : "Stahlberg et al\\.,? 2016",
+      "shortCiteRegEx" : "Stahlberg et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Sequence to Sequence Learning with Neural Networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V Le." ],
+      "venue" : "CoRR abs/1409.3. http://arxiv.org/abs/1409.3215.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "A Latent Variable Model for Generative Dependency Parsing",
+      "author" : [ "Ivan Titov", "James Henderson." ],
+      "venue" : "Proceedings of the Tenth International Conference on Parsing Technologies. Association for Computational Linguis-",
+      "citeRegEx" : "Titov and Henderson.,? 2007",
+      "shortCiteRegEx" : "Titov and Henderson.",
+      "year" : 2007
+    }, {
+      "title" : "Blocks and Fuel: Frameworks for deep learning",
+      "author" : [ "Bart van Merriënboer", "Dzmitry Bahdanau", "Vincent Dumoulin", "Dmitriy Serdyuk", "David Warde-Farley", "Jan Chorowski", "Yoshua Bengio." ],
+      "venue" : "CoRR abs/1506.0. http://arxiv.org/abs/1506.00619.",
+      "citeRegEx" : "Merriënboer et al\\.,? 2015",
+      "shortCiteRegEx" : "Merriënboer et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A Novel Dependency-to-String Model for Statistical Machine Translation",
+      "author" : [ "Jun Xie", "Haitao Mi", "Qun Liu." ],
+      "venue" : "Proceedings of the 2011 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguis-",
+      "citeRegEx" : "Xie et al\\.,? 2011",
+      "shortCiteRegEx" : "Xie et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Recurrent Neural Network Regularization",
+      "author" : [ "Wojciech Zaremba", "Ilya Sutskever", "Oriol Vinyals." ],
+      "venue" : "CoRR abs/1409.2. http://arxiv.org/abs/1409.2329.",
+      "citeRegEx" : "Zaremba et al\\.,? 2014",
+      "shortCiteRegEx" : "Zaremba et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "ADADELTA: An Adaptive Learning Rate Method",
+      "author" : [ "Matthew D. Zeiler." ],
+      "venue" : "arXiv abs/1212.5:6. http://arxiv.org/abs/1212.5701.",
+      "citeRegEx" : "Zeiler.,? 2012",
+      "shortCiteRegEx" : "Zeiler.",
+      "year" : 2012
+    }, {
+      "title" : "Phrase-Based Statistical Machine Translation",
+      "author" : [ "Richard Zens", "Franz Josef Och", "Hermann Ney." ],
+      "venue" : "pages 18–32.",
+      "citeRegEx" : "Zens et al\\.,? 2002",
+      "shortCiteRegEx" : "Zens et al\\.",
+      "year" : 2002
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 6,
+      "context" : "There are latent nest structures beyond sequential surface words in natural language (Chomsky, 1957).",
+      "startOffset" : 85,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 20,
+      "context" : "In the last two decades, researchers incorporated more and more rich structural information into conventional language model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005) and more recently on neural network-based language modeling (Dyer et al.",
+      "startOffset" : 125,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 3,
+      "context" : "In the last two decades, researchers incorporated more and more rich structural information into conventional language model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005) and more recently on neural network-based language modeling (Dyer et al.",
+      "startOffset" : 125,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 4,
+      "context" : "In the last two decades, researchers incorporated more and more rich structural information into conventional language model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005) and more recently on neural network-based language modeling (Dyer et al.",
+      "startOffset" : 125,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 13,
+      "context" : "In the last two decades, researchers incorporated more and more rich structural information into conventional language model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005) and more recently on neural network-based language modeling (Dyer et al.",
+      "startOffset" : 125,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 11,
+      "context" : "In the last two decades, researchers incorporated more and more rich structural information into conventional language model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005) and more recently on neural network-based language modeling (Dyer et al., 2016).",
+      "startOffset" : 279,
+      "endOffset" : 298
+    }, {
+      "referenceID" : 9,
+      "context" : "Among the effort, one direction is to explore sub-word structures(Costa-Jussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters, mostly to handle out-of-vocabulary word problem.",
+      "startOffset" : 65,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 7,
+      "context" : "Among the effort, one direction is to explore sub-word structures(Costa-Jussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters, mostly to handle out-of-vocabulary word problem.",
+      "startOffset" : 65,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 23,
+      "context" : "Among the effort, one direction is to explore sub-word structures(Costa-Jussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters, mostly to handle out-of-vocabulary word problem.",
+      "startOffset" : 65,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 32,
+      "context" : "Among the effort, one direction is to explore sub-word structures(Costa-Jussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters, mostly to handle out-of-vocabulary word problem.",
+      "startOffset" : 65,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 14,
+      "context" : "For example, (Eriguchi et al., 2016) adopts parsing tree in encoder phase in machine translation, (Stahlberg et al.",
+      "startOffset" : 13,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2016) adopts parsing tree in encoder phase in machine translation, (Stahlberg et al., 2016) proposes to use hierarchical phrase-based (HPB) model to guide the search in decoding.",
+      "startOffset" : 69,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 12,
+      "context" : "In this paper, we propose phrasal recurrent neural networks (pRNNs; §2), a general framework of RNNs (Elman, 1990) that explicitly models task-specific nested phrases from plain text.",
+      "startOffset" : 101,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 40,
+      "context" : "Here we use “phrase” as its definition in phrase-based statistical machine translation (PBSMT(Zens et al., 2002; Koehn et al., 2003)), which indicates any continues sequences of words.",
+      "startOffset" : 93,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 21,
+      "context" : "Here we use “phrase” as its definition in phrase-based statistical machine translation (PBSMT(Zens et al., 2002; Koehn et al., 2003)), which indicates any continues sequences of words.",
+      "startOffset" : 93,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 17,
+      "context" : "dings (x?) of all words in a candidate phrase, as input, then output one fix-length real-valued vector p as the distributed representation (Hinton et al., 1986) of the phrase;",
+      "startOffset" : 139,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 10,
+      "context" : "This method is kind of similar to the sharing parameters between filters of convolutional neural network (Cun et al., 1990), except for it working on the time axis, which recognizes the local invariant along each time steps.",
+      "startOffset" : 105,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 26,
+      "context" : "To make experiment comparable with other methods, we apply our models on language model task, evaluate it in perplexity on the widely used English Penn Treebank (PTB) (Marcus et al., 1993), which pre-processing and splitting by Mikolov (2010).",
+      "startOffset" : 167,
+      "endOffset" : 188
+    }, {
+      "referenceID" : 18,
+      "context" : "Secondly, to increase the model’s capability of noise tolerance and reduce the overfitting to training data, we introduce dropout (Hinton et al., 2012) before and after each recurrent layer.",
+      "startOffset" : 130,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 38,
+      "context" : "We initialized all parameters according to recommendations given in (Zaremba et al., 2014) and blocks(van Merriënboer et al.",
+      "startOffset" : 68,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 8,
+      "context" : "We utilize Gated Recurrent Unit (GRU) (Chung et al., 2014) to construct RNN pyramid layer.",
+      "startOffset" : 38,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 27,
+      "context" : "Baseline In this paper, we use an open-source implementation (Meng et al., 2015) of RNNsearch (Bahdanau et al.",
+      "startOffset" : 61,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2015) of RNNsearch (Bahdanau et al., 2014) as baseline model.",
+      "startOffset" : 21,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 18,
+      "context" : "To increase the model’s capability of noise tolerance and reduce the overfitting to training data, we introduce dropout (Hinton et al., 2012) before softmax layer, and set the dropout rate equal to 0.",
+      "startOffset" : 120,
+      "endOffset" : 141
+    }, {
+      "referenceID" : 39,
+      "context" : "For training, we used AdaDelta (Zeiler, 2012) and normalize the gradient to 1.",
+      "startOffset" : 31,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 0,
+      "context" : "We initialized all parameters according to recommendations given in (Bahdanau et al., 2014).",
+      "startOffset" : 68,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 8,
+      "context" : "rent Unit (GRU) (Chung et al., 2014) to construct RNN pyramid layer.",
+      "startOffset" : 16,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 31,
+      "context" : "We use the case-insensitive 4-gram NIST BLEU (Papineni et al., 2002) score given by mteval v11.",
+      "startOffset" : 45,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 20,
+      "context" : "In the last two decades, to achieve better performance, researchers incorporated more and more rich structural information into conventional model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005).",
+      "startOffset" : 147,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 3,
+      "context" : "In the last two decades, to achieve better performance, researchers incorporated more and more rich structural information into conventional model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005).",
+      "startOffset" : 147,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 4,
+      "context" : "In the last two decades, to achieve better performance, researchers incorporated more and more rich structural information into conventional model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005).",
+      "startOffset" : 147,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 13,
+      "context" : "In the last two decades, to achieve better performance, researchers incorporated more and more rich structural information into conventional model (Jelinek and Lafferty, 1991; Chelba, 1997; Chelba and Jelinek, 2000; Emami and Jelinek, 2005).",
+      "startOffset" : 147,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 1,
+      "context" : "This trend is more clear in statistical machine translation (SMT) community, from wordbased SMT (Brown et al., 1993) to phrase-based SMT (Koehn et al.",
+      "startOffset" : 96,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 21,
+      "context" : ", 1993) to phrase-based SMT (Koehn et al., 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al.",
+      "startOffset" : 28,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al.",
+      "startOffset" : 38,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al., 2006; Liu et al., 2006; Galley et al., 2006; Xie et al., 2011) (forest-based (Mi and Huang, 2008; Mi et al.",
+      "startOffset" : 74,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al., 2006; Liu et al., 2006; Galley et al., 2006; Xie et al., 2011) (forest-based (Mi and Huang, 2008; Mi et al.",
+      "startOffset" : 74,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al., 2006; Liu et al., 2006; Galley et al., 2006; Xie et al., 2011) (forest-based (Mi and Huang, 2008; Mi et al.",
+      "startOffset" : 74,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2003), hierarchical phrasebased SMT (Chiang, 2005) and syntax-based SMT (Huang et al., 2006; Liu et al., 2006; Galley et al., 2006; Xie et al., 2011) (forest-based (Mi and Huang, 2008; Mi et al.",
+      "startOffset" : 74,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 40,
+      "context" : "among them, phrase-based SMT (Zens et al., 2002; Koehn et al., 2003) was the most widely adopted translation model.",
+      "startOffset" : 29,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 21,
+      "context" : "among them, phrase-based SMT (Zens et al., 2002; Koehn et al., 2003) was the most widely adopted translation model.",
+      "startOffset" : 29,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 11,
+      "context" : "There were many works which successfully modeled structure in neural network on parsing (Dyer et al., 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al.",
+      "startOffset" : 88,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 13,
+      "context" : "There were many works which successfully modeled structure in neural network on parsing (Dyer et al., 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al.",
+      "startOffset" : 88,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 16,
+      "context" : "There were many works which successfully modeled structure in neural network on parsing (Dyer et al., 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al.",
+      "startOffset" : 88,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 35,
+      "context" : "There were many works which successfully modeled structure in neural network on parsing (Dyer et al., 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al.",
+      "startOffset" : 88,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 2,
+      "context" : "There were many works which successfully modeled structure in neural network on parsing (Dyer et al., 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al.",
+      "startOffset" : 88,
+      "endOffset" : 200
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al., 2016; Chelba and Jelinek, 2000; Emami and Jelinek, 2005; Chelba, 1997).",
+      "startOffset" : 128,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al., 2016; Chelba and Jelinek, 2000; Emami and Jelinek, 2005; Chelba, 1997).",
+      "startOffset" : 128,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al., 2016; Chelba and Jelinek, 2000; Emami and Jelinek, 2005; Chelba, 1997).",
+      "startOffset" : 128,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2016; Emami and Jelinek, 2005; Henderson, 2004; Titov and Henderson, 2007; Buys and Blunsom, 2015) or language modeling tasks (Dyer et al., 2016; Chelba and Jelinek, 2000; Emami and Jelinek, 2005; Chelba, 1997).",
+      "startOffset" : 128,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 0,
+      "context" : "In recent years, the most popular and success NMT model is EncoderDecoder model (Bahdanau et al., 2014; Sutskever et al., 2014).",
+      "startOffset" : 80,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 34,
+      "context" : "In recent years, the most popular and success NMT model is EncoderDecoder model (Bahdanau et al., 2014; Sutskever et al., 2014).",
+      "startOffset" : 80,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 6,
+      "context" : "However, beyond sequential surface words, there are latent nest structures in natural language (Chomsky, 1957).",
+      "startOffset" : 95,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 7,
+      "context" : "One direction to explore is to introduce sub-word structures(CostaJussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters.",
+      "startOffset" : 60,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 23,
+      "context" : "One direction to explore is to introduce sub-word structures(CostaJussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters.",
+      "startOffset" : 60,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 32,
+      "context" : "One direction to explore is to introduce sub-word structures(CostaJussà and Fonollosa, 2016; Chung et al., 2016; Luong and Manning, 2016; Sennrich et al., 2015), such as characters.",
+      "startOffset" : 60,
+      "endOffset" : 160
+    }, {
+      "referenceID" : 14,
+      "context" : "Authors of (Eriguchi et al., 2016) adopted parsing tree in encoder phase.",
+      "startOffset" : 11,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 33,
+      "context" : "Authors of (Stahlberg et al., 2016) introduce hierarchical phrase-based (HPB) model as the guider of search space.",
+      "startOffset" : 11,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 14,
+      "context" : "Compare this to the previous method, (Eriguchi et al., 2016) can be categorized into introducing external data, (Stahlberg et al.",
+      "startOffset" : 37,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2016) can be categorized into introducing external data, (Stahlberg et al., 2016) can be categorized into introducing external model.",
+      "startOffset" : 59,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 27,
+      "context" : "When they use state machine such as GRU or LSTM to read from one memory and write to another, the memory IO addresses are either content-based (via attention mechanism) or location-based (actually sequentially cell-by-cell) (Meng et al., 2015).",
+      "startOffset" : 224,
+      "endOffset" : 243
+    } ],
+    "year" : 0,
+    "abstractText" : "We propose a new, simple, yet effective framework, phrasal recurrent neural networks (pRNN), for language modeling and machine translation. Different from previous RNN-based language models, pRNNs store the sentential history as a set of candidate phrases with different lengths that precede the word to predict. To represent phrases as fix-length realvalued vectors, we build the RNN pyramid, which is composed of shifted parallel RNN sequences. When predicting the next word, pRNNs employ a soft attention mechanism to selective and combine the suggestions of candidate phrases. We test our model on language model and machine translation tasks. Our model leads to an improvement of over 10 points in perplexity both on standard Penn Treebank and FBIS English data set over a state-of-the-art LSTM language modeling baseline. We also apply pRNNs to encode the source sentence of machine translation besides a conventional bi-direction encoder, which improves over the Moses (phrase-based statistical model) and a strong sequence-to-sequence baseline in the Chinese-English machine translation task.",
+    "creator" : null
+  }
+}

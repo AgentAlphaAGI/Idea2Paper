@@ -1,0 +1,445 @@
+{
+  "name" : "ACL_2017_579_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "MinIE: Minimizing Facts in Open Information Extraction",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "The goal of open information extraction (OIE) is to extract surface relations and their arguments from natural-language text in an unsupervised, domain-independent manner (Banko et al., 2007). In contrast to traditional IE systems, OIE systems do not require an upfront specification of the target schema (e.g., target relations) but instead represent extractions in the form of surface subject-relationobject triples, which are convenient for representing facts in a structured, machine-readable manner (Suchanek et al., 2007; Auer et al., 2007; Bizer et al., 2009). The extractions of OIE systems are useful for tasks such as information retrieval (Löser et al., 2012), question answering (Fader et al., 2014), knowledge-base extension (Dong et al., 2014; Riedel et al., 2013; Petroni\net al., 2015) as well as text comprehension, word similarity, word analogy (Stanovsky et al., 2015).\nConsider for example the sentence “Superman was born on Krypton.” An OIE system aims to extract the triple (Superman, was born on, Krypton); in fact, most of the available systems will correctly produce this extraction. A key challenge in OIE is to avoid overly-specific extractions— while simultaneously producing informative and accurate results—when sentences get more complex. To see this, consider the more involved sentence “Pinocchio believes that the hero Superman was not actually born on beautiful Krypton.” Table 1 shows the corresponding extractions of various OIE systems.1 Many of the extractions are overly-specific in that the constituents contain specific modifiers or even form complete clauses. In this paper, we explore techniques to minimize OIE extractions and propose a new OIE system called MinIE. Table 1 also shows the output of (two variants of) MinIE for the example sentence.\nAt its heart, MinIE rewrites OIE extractions by (1) identifying and removing parts that are considered overly specific and (2) removing information about polarity, modality, attribution, and quantities. To retain the original meaning to the extent possible, MinIE provides suitable annotations for each extraction. The idea of using annotations has already been explored by OLLIE (Schmitz et al., 2012), which uses annotations for attribution and clausal modifiers. MinIE follows OLLIE, but uses additional and more expressive annotations. For example, MinIE detects negations in the relation, removes them from the extraction, and adds a “negative polarity” (-) annotation. In fact, MinIE considers the relations was born on and was not born on equivalent up to polarity. To the best of our knowledge, MinIE is the first OIE system to\n1Suprisingly to us, this particular sentence is problematic for many prior systems. In practice, these systems generally perform better than indicated in this example.\nproduce such negative-polarity extractions. The absence of negative evidence is a major concern for reasoning with OIE extractions—e.g., (Dong et al., 2014) proposes to use a “local closed world assumption” and (Riedel et al., 2013; Petroni et al., 2015) use “negative sampling” methods—, and MinIE’s annotations help to alleviate this problem.\nApart from polarity annotations, MinIE also provides annotations for modality, attribution, quantities, and for other rewrites that have been performed. Generally, minimizing OIE extractions is inherently limited in scope due to the absence of domain knowledge. Thus MinIE does not and cannot fully minimize its extractions in all cases. Instead, MinIE supports multiple minimization modes, which differ in their aggressiveness. Table 1 shows the output of MinIE’s safe mode (which is least aggressive) and its collocation mode (which is more aggressive). We conducted an experimental study with several realworld datasets and found that the various modes of MinIE produced much shorter extractions than prior systems, while simultaneously achieving competitive or higher precision. MinIE sometimes fell behind prior systems in terms of the total number of extractions. We found that those prior system can output a large number of redundant extractions; if redundant extractions were discounted, MinIE was competitive."
+    }, {
+      "heading" : "2 Related work",
+      "text" : "The concept of OIE was introduced by (Banko et al., 2007). Since then, many different OIE systems have been proposed in the literature. Early systems (Fader et al., 2011) relied on basic NLP techniques—such as POS tagging and chunking—, whereas all recent systems make use\nof dependency parsing (Gamallo et al., 2012; Wu and Weld, 2010). Most systems represent their extractions in the form of triples, although some systems also produce n-ary extractions (Akbik and Löser, 2012; Del Corro and Gemulla, 2013) or use nested representations (Bast and Haussmann, 2013; Bhutani et al., 2016). Some systems focus on noun-mediated extractions (Yahya et al., 2014).\nA general challenge in OIE is to avoid both uninformative and overly specific extractions. ReVerb (Fader et al., 2011) proposed to avoid overlyspecific relations by making use of lexical constraints: relations that occur infrequently in a large corpus were considered overly specific. MinIE’s frequency mode makes use of a similar constraint, but also applies it to subjects and arguments. CSDIE (Bast and Haussmann, 2013) introduced the notion of nested facts (termed minimal in their paper) and produce extractions with “pointers” to other extractions. NestIE (Bhutani et al., 2016) takes up this idea. MinIE currently does not handle nested extractions.\nPerhaps the closest system in spirit to MinIE is Stanford OIE (Angeli et al., 2015), which also uses aggressive minimization. Stanford OIE deletes all subconstituents connected by certain typed dependencies (e.g., amod). For some typed dependencies (e.g., prep or dobj), the system makes use of a frequency constraint along the lines of ReVerb. MinIE differs from Stanford OIE in that it (1) separates out polarity, modality, attribution, and quantities; (2) uses different, more principled (and more precise) modes of minimization.\nThe concept of annotated OIE extractions was introduced by OLLIE (Schmitz et al., 2012). OLLIE uses two types of annotations: an attribution – describing the the supplier of the triple, and a\nclause modifier – describing clauses that modify the extraction. MinIE picks up the attribution annotation, and uses additional techniques to provide the attribution’s polarity and modality. The clause modifier is an alternative approach to CSD-IE’s notion of nested facts and not present in MinIE. MinIE’s factuality and quantity annotations have not been provided by existing OIE systems."
+    }, {
+      "heading" : "3 Overview",
+      "text" : "The goal of MinIE is to provide minimized, annotated OIE extractions. While the techniques employed by MinIE can in principle be integrated into any OIE system, we built MinIE on top of ClausIE (Del Corro and Gemulla, 2013). We chose ClausIE because (1) it separates the identification of the constituents of the extractions from the generation of propositions, (2) it detects clause types, which are also useful for MinIE, and (3) it is a state-of-the-art OIE system.\nAs ClausIE, MinIE focuses on extractions obtained from individual clauses (with the exception of attribution; see Sec. 5.3). Each clause is broken up into its constituents: one subject (S), one verb (V) and optionally an indirect object (O), a direct object (O), a complement (C) and one or more adverbials (A). ClausIE then identifies the clause type, which indicates which of the constituents are obligatory and which optional from a syntactic point of view. (Quirk et al., 1985) identified the seven clause types SV, SVA, SVC, SVO, SVOO, SVOA, and SVOC; here letters refer to obligatory constituents and each clause can be accompanied by additional optional adverbials.\nThe general architecture of MinIE is outlined in Fig. 1. Each input sentence is run through ClausIE and a separate extractor for implicit facts (Sec. 4.2). ClausIE’s relations are enriched with information from other constituents (Sec. 4.1) in order to make them more informative. We refer to the resulting extractions as input extractions. MinIE then rewrites each input extraction to a basic extraction by detecting and eliminating information about polarity (Sec. 5.1), modality (Sec. 5.2), attribution (Sec. 5.3), and quantities (Sec. 5.4). To further minimize basic extractions, MinIE can be run in various modes (Sec. 6) with increasing levels of aggressiveness: MinIE-S(afe), MinIE-F(requency), MinIEC(ollocations), and MinIE-A(ggressive). The modes differ in the amount of minimizations being applied and which additional resources are being used. The result of this phase is a minimized\nextraction. Finally, MinIE outputs each minimized extraction along with annotations that provide information about the minimization process. Some annotations (such as polarity) are crucial to correctly represent the extraction, others (such as original relation) give additional information about which parts have been removed during minimization."
+    }, {
+      "heading" : "4 Input Extractions",
+      "text" : "Before we discuss how we minimize extractions, we summarize how MinIE obtains its input extractions."
+    }, {
+      "heading" : "4.1 Enriching Relations",
+      "text" : "As mentioned before, MinIE uses ClausIE as its underlying OIE system. The relations extracted by ClausIE consist of only verbs and negation particles (cf. Tab. 1). (Fader et al., 2011) argues that such an approach can lead to uninformative relations. For example, from the sentence “Faust made a deal with the Devil”, ClausIE extracts triple (Faust, made, a deal with the Devil), whereas (Fader et al., 2011) argue that the extraction (Faust, made a deal with, the Devil) has a more informative relation. Indeed, the relation made is highly polysemous (49 synsets in WordNet), whereas made a deal with is not.\nIn MinIE, we follow (Fader et al., 2011) and try to produce more informative relations. To do so, we aim to decide which constituents of the input sentence should be pushed into the relation. Our approach is inspired by the syntactic patterns of (Fader et al., 2011), but additionally makes use of the clause type to obtain meaningful relations in a principled way. This allows us, for example, to handle cases with multiple adverbials or with adverbials that do not start with a preposition. Note that the relations produced in this step may sometimes be considered overly specific; they will be minimized further in subsequent steps.\nSVA. If the adverbial starts with a preposition, we push the preposition into the relation. For example, we rewrite (Superman, lives, in Metropolis) to (Superman, lives in, Metropolis). This allows us to distinguish live in from relations such as live during, live until, live through, and so on.\nSVOO, SVOC. We generally push the indirect object (SVOO) or direct object (SVOC) into the relation. In both cases, the verb requires two additional constituents: we use the first one to enrich the relation and the second one as an argument. For example, we rewrite (Superman, declared, the city safe) to (Superman, declared the city, safe). As this example indicates, this rewrite is somewhat unsatisfying; further exploration is an interesting direction for future work.\nSVOA. If the adverbial consists of a single adverb, we push it to the relation and use the object as an argument. Otherwise, we proceed as in SVOC, but additionally push the starting preposition (if present) of the adverbial to the relation. For example, (Ana, turned, the light off) becomes (Ana, turned off, the light), and (The doorman, leads, visitors to their destination) becomes (The doorman, leads visitors to, their destination).\nOptional adverbials. If the clause contains optional adverbials, ClausIE creates one extraction per optional adverbial and one without any optional adverbial. We process the former extractions as if the adverbial were obligatory. For example, the extraction (Faust, made, a deal with the Devil) becomes (Faust, made a deal with, the Devil). Here the actual clause type is SVO, but we process it as if it were SVOA.\nInfinitive forms. If the argument starts with a to-infinitive verb, we move it to the relation. For example, (Superman, needs, to defeat Lex) becomes (Superman, needs to defeat, Lex)."
+    }, {
+      "heading" : "4.2 Implicit Extractions",
+      "text" : "ClausIE produces non-verb-mediated extractions from appositions and possesives. We refer to these extractions as implicit extractions. In MinIE, we use implicit extractions as a signal for the minimization of non-implicit ones (see Sec. 6.1). To make the minimization more effective, we include additional patterns identified in prior work. We use the explicit patterns of FINET (Del Corro et al., 2015) to detect explicit type mentions. For example, if the sentence contains president Barack Obama, we obtain (Barack Obama, is, president). We also include certain patterns involving named entities: pattern ORG IN LOC for extraction (ORG, is IN, LOC); pattern “Mr.” PER for\n(PER, is, male) (similarly, Ms. or Mrs.); and pattern ORG POS? NP PER for (PER, is NP of, ORG) from RelNoun (Pal and Mausam, 2016)."
+    }, {
+      "heading" : "5 Basic Minimization",
+      "text" : "The basic minimization step of MinIE detects and eliminates information about polarity (Sec. 5.1), modality (Sec. 5.2), attribution (Sec. 5.3), and quantities (Sec. 5.4). Our focus is on methods that are both domain-independent and (considered) safe to use."
+    }, {
+      "heading" : "5.1 Polarity",
+      "text" : "MinIE annotates each extraction with information about its factuality. Following (Saurı́ and Pustejovsky, 2012), we represent the factuality of an extraction with two pieces of information: polarity (+ or -) and modality (CT or PS; for certainty or possibility, resp.). Tab. 2 lists some examples.\nThe polarity indicates whether or not a triple occured in negated form. In order to assign a polarity value to a triple, we aim to detect whether the relation indicates a negative polarity. If so, we assign negative polarity to the whole triple. We detect negations using a small lexicon of negation words (consisting of the words no, not, never, none). Whenever a word from the lexicon is detected, it is dropped from the relation and the triple is annotated with negative polarity (-) and the negation word. In Tab. 2, the extractions from sentences 2 and 4 are annotated as negative.\nWe found that this simple approach successfully spots many negations present in the input relations. Note that whenever a negation is missed, MinIE still produces correct results because such negations are retained in the triple. For example, if a negations occurs in the subject or argument of the extraction, MinIE misses it. E.g., from sentence “No people were hurt in the fire”, MinIE extracts (Q1 people, were hurt in; fire) with quantity Q1 = no (see Sec. 5.4). This extraction is correct, but can be further minimized to (people; were hurt in; fire) with a negative polarity annotation. We consider such advanced minimizations too danger-\nous to use in the absence of domain knowledge. Generally, negation detection is a hard problem and involves questions such as negation scope resolution, focus detection, and double negation (Blanco and Moldovan, 2011). MinIE does not address these problems, but restricts attention to the easy cases."
+    }, {
+      "heading" : "5.2 Modality",
+      "text" : "The modality of a triple indicates whether the triple is considered a certainty (CT) or a possibility (PS) in the clause in which it occurs. We proceed similarly to the detection of negations and consider a triple certain unless we find evidence indicating possibility.\nTo find such evidence, MinIE searches the relation for (1) modal verbs such as may or can, (2) possibility-indicating words, and (3) certain infinitive verb phrases. For (2) and (3), we make use of a small domain-indepependent lexicon. Our lexicon is based on the lexicon of (Saurı́ and Pustejovsky, 2012) and the words in the corresponding WordNet synsets. It mainly contains adverbs such as probably, possibly, maybe, likely and infinitive verb phrases such as is going to, is planning to, or intends to. Whenever words indicating possibility are detected, we remove these words from the triple and annotate the triple as possible (PS) along with the words just removed. For example, sentences 3 and 4 in Tab. 2 are annotated PS with the possibility-indicating word probably.\nAs with negation detection, MinIE’s approach focuses on the easy cases and uses only the CT and PS levels. A more advanced approach is taken by (Saurı́ and Pustejovsky, 2012)."
+    }, {
+      "heading" : "5.3 Attribution",
+      "text" : "The attribution of a triple is the supplier of information given in the input sentence, if any. We adapt our attribution annotation from the notion of source in (Saurı́ and Pustejovsky, 2012), i.e., the attribution consists of a supplier of information along with a factuality (polarity and modality). The factuality is independent from the factuality of the extracted triple; it indicates whether the supplier expresses a negation or a possibility. Tab. 1 shows some examples.\nWe extract attributions from subordinate clauses as well as from an “according to” pattern. For the former, MinIE searches for extractions that contain entire clauses as arguments. We then compare the relation against a domain-independent dictionary of relations indicating attributions (e.g., say\nor believe). If we find a match, we create an attribution annotation and use the subject of the extraction as the supplier of information. Each entry in the attribution dictionary is annotated with a modality. For example, relations such as know, say, or write express certainty, whereas relations such as believe or doubt express possibility. If the relation is modified by a negation word (see Sec. 5.1), we mark the attribution with negative polarity (e.g., never said that). After the attribution has been established, we run ClausIE on the main clause and add the attribution to each extracted triple. The second source of attributions is obtained via “according to” adverbial phrases. To detect those, we search for adverbials that start with according to and take whatever follows as the supplier with factuality (+,CT). The remaining part of the clause is processed as before."
+    }, {
+      "heading" : "5.4 Quantities",
+      "text" : "A quantity is a phrase that expresses an amount of something. It either modifies a noun phrase (e.g. 9 cats) or is an independent complement (e.g. I have 3). Quantities include cardinals (9), determiners (all) or whole phrases (almost 10). Whenever we detect a quantity, we replace it by a placeholder Q and add an annotation with the original quantity. The goal of this step is to unify extractions that only differ in quantities. For example, the arguments 9 cats, ten cats, all the cats and almost about 100 cats are all rewritten to Q cats, only the quantity annotation differs.\nWe detect quantities by looking for numbers (NER types such as NUMBER or PERCENT) or words expressing quantities (such as all, some, many). We then extend these words via relevant typed dependencies, such as quantity modifiers (quantmod) and or adverbial modifiers (advmod)."
+    }, {
+      "heading" : "6 Minimization Modes",
+      "text" : "Once basic minimization has been performed, MinIE further minimizes extractions by dropping additional words. Since such minimization is risky, MinIE employs various minimization modes with different levels of aggressiveness. We discuss these modes in turn, from the safest mode to the most aggressive one.\nMinIE represents each constituent of a basic extraction by its words, its dependency structure, its part-of-speech tags, and its named entities (detected by a named-entity recognizer). In general, each mode defines a set of stable subconstituents, which will always be fully retained, and subse-\nquently searches for candidate words to drop outside of the stable subconstituents. Whenever a word is dropped from a constituent, we add an annotation with the original, unmodified constituent. In all of MinIE’s modes, named entites are considered stable subconstituents."
+    }, {
+      "heading" : "6.1 Safe Mode (MinIE-S)",
+      "text" : "MinIE’s safe mode only drops word which we consider universally safe to drop. We first drop all constituents that are covered by the implicit extractions discussed in Sec. 4.2; e.g., types of named entities, locations of organizations, and the words “Mr.”, “Ms.”, and “Mrs.” before persons. We then drop all determiners, all possessive pronouns, all adverbs modifying the verb in the relation, and all adjectives and adverbials modifying persons. An exception to these rules is given by named entities, which we consider as stable subconstituents.\nNote that this procedure cannot be considered safe when used on input extractions. We consider it safe, however, when applied to basic extractions. In particular, all determiners, pronouns, and adverbs indicating negation, modality, or quantities are already processed during basic minimization and are consequently retained in annotations. Moreover, due to the way we construct input extractions, each relation has at most one adverb modifying its verb. The safe mode thus only performs simple rewrites such as the great city to great city, his presidency to presidency, had also to had, and the eloquent president Mr. Barack Obama to Barack Obama."
+    }, {
+      "heading" : "6.2 Frequency Mode (MinIE-F) and Collocations Mode (MinIE-C)",
+      "text" : "The frequency and collocations modes make use of a dictionary D of stable constituents. The two modes differ only in the choice of D. We first discuss how the dictionary is being used, and subsequently how we can construct it.\nBoth modes first perform all the minimizations of the safe mode and then search for maximal noun phrases of the form P ≡ [adverbial|adjective]+ [noun+|ner]. For each instance of P , we drop a certain subset of its words. For example, a suitable minimization for very infamous cold war symbol (i.e., the Berlin wall) is cold war symbol, i.e., we consider cold as essential to the meaning of the constituent and very infamous as overly specific. The decision of what is considered essential and what overly specific is informed by dictionary D. Note that in order to minimize mistakes, we con-\nsider for dropping only words in instances of pattern P . In particular, we do not touch subconstituents that contain prepositions because these are notoriously difficult to handle (e.g., we do not want to minimize Bill of Rights to Bill).\nOur main goal is to retain phrases that occur in D, even if they occur in different order or with additional modifiers. To achieve this goal, we proceed as follows for each instance I of P . We first mark all nouns (or the named entity) as stable. Afterwards, we create a set of potentially stable subconstituents (PSS). Each PSS is queried against dictionary D. If it occurs in D, all of its words are marked as stable. Once all PSS have been processed, we drop all words from I that are not marked stable. In our example, if D = {cold war}, we obtain the minimization cold war symbol as desired.\nTo generate the set of PSS, we enumerate all subconstituents of I that are syntactically valid. For example, infamous symbol or cold infamous war are syntactically valid, whereas very symbol or very cold war are not. Conceptually,2 we enumerate all subsequences of I and check whether (1) at least one noun (or the named entity) is retained, and (2) whenever an adverbial or adjective has been dropped, so are all of its modifiers. For each such subsequence, we generate all permutations of adverbial and adjective modifiers originating from the same node in the dependency structure. This step ensures that the order of modifiers in I does influence whether or not a word is marked stable. The set of PSS for very infamous cold war symbol contains 22 entries.\nIt remains to discuss the construction of dictionary D. In MinIE’s collocations mode, D is provided externally and contains a set of collocations. In our experimental study, we included all multi-word expressions from WordNet and Wiktionary, which we consider domain-independent. In practice, applications can extend the dictionary using suitable collocations, either from domaindependent dictionaries or by using methods to automatically extract colloctions from a text corpus (Gries, 2013). In MinIE’s frequency mode, we process the entire corpus using the safe mode and additionally include all frequent (e.g., frequency ≥ 10) subjects, relations, and arguments into D. This lexical constraint is inspired by (Fader et al., 2011); the rationale is that everything sufficiently frequent is not considered overly specific.\n2In our implementation, we generate both instances of P as well as the set of PSS directly from the dependency structure of the constituent."
+    }, {
+      "heading" : "6.3 Aggressive Mode (MinIE-A)",
+      "text" : "The modes discussed so far aimed to be conservative. MinIE-A proceeds the other way around: all words for which we are not sure that they need to be retained are dropped. We mainly include this mode as a baseline and to study how effective such an approach is empirically.\nFor every word in a constituent of a basic extraction, we drop all adverbial, adjective, possessive, and temporal modifiers (recursively along with their modifiers). We also drop prepositional attachments (e.g., man with apples becomes man), quantifiers modifying nouns, auxiliary modifiers to the main verb (e.g., have escalated becomes escalated), and all compound nouns that have a different named-entity type than their head word (e.g., European Union offical becomes offical). In most cases, after applying these steps, only a single word, named entity, or a sequence of nouns remains for subject and argument constituents."
+    }, {
+      "heading" : "7 Experimental Study",
+      "text" : "The goal of our experimental study was to investigate the differences in the various modes of MinIE w.r.t. precision, recall, and extraction length as well as to compare it to popular prior methods."
+    }, {
+      "heading" : "7.1 Experimental Setup",
+      "text" : "All source code, datasets, extractions, labels, and labelling guidelines will be made publically available. We also submitted them to SoftConf.\nDatasets. We used as datasets (1) a random sample of 10,000 sentences from the New York Times Annotated Corpus (NYT-10k), (2) a random sample of 200 sentences from the same corpus (NYT), and (3) a random sample of 200 sentences from Wikipedia (Wiki). Datasets NYT and Wiki were used in the evaluation of ClausIE and NestIE.\nMethods. We used ClausIE, OLLIE, and Stanford OIE as baseline systems. We adapted the publically available version of ClausIE to Stanford CoreNLP 3.5.1 (Manning et al., 2014) and implemented MinIE on top. For MinIE-F, we built the dictionary using the entire NYT corpus.\nLabeling. We labeled every extraction of NYT and Wiki with two labels: one for the triple and one for the attribution. A triple is labeled as correct if it is entailed by its corresponding clause; here factuality annotations are taken into account. For example, all triples except #3 of Tab. 1 are considered correct. The attribution is labeled incorrect if there is an attribution which is neither\npresent in the triple nor in the attribution annotation. In Tab. 1, the attribution is incorrect for extractions 2, 3, 5, and 6. We only label attribution when the fact triple is labeled correct.3 Further details can be found in the labelling guidelines.\nMeasures. For each system, we measured the total number of extractions (termed recall), the fraction of correct triples (factual precision), and the fraction of correct triples with correct attributions (attribution precision). We also determined the mean word count per extraction (µ) and its standard deviation (σ); we use these numbers as a proxy for minimality. Finally, we observed that some systems produced a large number of redundant extractions. To obtain insight into the amount of redundancy, we also report the number of nonredundant extractions. For simplicity, we consider a triple t1 redundant if it appears as subsequence in some other triple t2 produced by the same extractor from the same sentence (e.g., extraction 5 in Tab. 1 is redundant given extraction 6)."
+    }, {
+      "heading" : "7.2 Extraction Statistics",
+      "text" : "In our first experiment, we used the larger NYT10k dataset (which we did not label). Tab. 3 summarizes statistics of the extraction produced by each system. For MinIE, we show the fraction of negative polarity and possibility annotations for triples only (i.e., we exclude the attribution annotation).\nIn terms of recall, MinIE and Stanford OIE were roughly on par; OLLIE fell behind and ClausIE went ahead. The reason why ClausIE has more extractions than MinIE is that different (partly redundant) extractions from ClausIE may lead to the same minimized extraction. This is also also the reason why recall drops in the more aggressive modes of MinIE. We also determined the number of non-redundant extractions produced by each system and found that most system’s only produce a moderate number of redundant extractions. A notable exception is Stanford OIE, which produces many extraction variants by dropping different subsets of words.\nWe observed that all modes of MinIE achieved significantly smaller extractions than ClausIE (its underlying OIE system), and that the average extraction length indeed dropped as we used more aggressive modes. Only MinIE-A produced shorter extractions than Stanford OIE. The main reason for the short extraction length of Stanford\n3In fact, it’s meaningless to attribute incorrect extractions to suppliers.\nOIE is its aggressive creation of (shorter) redundant extractions.\nOnly OLLIE and MinIE make use of annotations. The fraction of extracted attribution annotations was significantly smaller for OLLIE than for MinIE, mainly because OLLIE’s attribution detection is limited to the ccomp dependency relation. The statistics also indicate that the basic minimizations of MinIE fire quite frequently, with the notable exception of negations."
+    }, {
+      "heading" : "7.3 Precision",
+      "text" : "In our second experiment, we compared the precision of the various systems on the smaller NYT and Wiki datasets. We did not run MinIE-F on Wiki because it was trained on the full NYT corpus. Our results are summarized in Tab. 4, where we give recall in the form of #correct/#total.\nWe found that Stanford OIE had the lowest factual precision throughout, producing many incorrect and many redundant extractions (e.g., Stanford OIE produced 400 extractions from five sentences on NYT). For MinIE, the factual precision dropped as expected when we use more aggressive modes. Interestingly, the drop in precision between MinIE-S, MinIE-F, and MinIE-C was quite low, even though extractions get shorter. The aggressive minimization of MinIE-A led to a more severe drop in precision. Surprisingly to us, even MinIE’s aggressive mode achieved higher precision than Stanford OIE. ClausIE and OLLIE had similar factual precision. Note that MinIE-S had higher precision than ClausIE. Reasons include that MinIE-S produces additional high-precision implicit extractions, breaks up very long and thus\nerror-prone extractions, and uses a different version of Stanford CoreNLP.\nAs for attribution precision, most of the sentences in our samples did not contain attributions; these numbers should thus be taken with a grain of salt. OLLIE and MinIE achieved similar results, even though MinIE additionally annotated attributions with factuality information."
+    }, {
+      "heading" : "7.4 MinIE’s Errors",
+      "text" : "For all modes, errors in dependency parsing transfer over to errors in MinIE, which we believe is the main source of errors in MinIE-S. For MinIE-C and MinIE-F, we sometimes drop adjectives which in fact form collocations (e.g., “assistant director”) with the noun they are modifying, but the collocation is not present in the dictionary and thus broken up. This problem can be addressed by using richer collocation dictionaries. Another source of error stems from the named-entity recognizer (e.g., the first word of the named entity Personal Ensign was not recognized so that MinIE incorrectly extracts (”Ensign”, ”is”, ”Personal”))."
+    }, {
+      "heading" : "8 Conclusions",
+      "text" : "We presented MinIE, a system that minimizes and annotates OIE extractions. We believe that the use of minimized extractions with suitable annotations are a promising direction for OIE. The techniques presented here can be seen as a step towards this goal. Future directions include additional annotation types (e.g. temporal/spatial), improved techniques for basic minimizations, better handling of collocations, and use of nested representations."
+    } ],
+    "references" : [ {
+      "title" : "Kraken: Nary facts in open information extraction",
+      "author" : [ "Alan Akbik", "Alexander Löser." ],
+      "venue" : "Proceedings of the Joint Workshop on Automatic Knowledge Base Construction and Web-scale Knowledge Extraction. Association for Computational Linguis-",
+      "citeRegEx" : "Akbik and Löser.,? 2012",
+      "shortCiteRegEx" : "Akbik and Löser.",
+      "year" : 2012
+    }, {
+      "title" : "Leveraging linguistic structure for open domain information extraction",
+      "author" : [ "Gabor Angeli", "Melvin Johnson Premkumar", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics. Associ-",
+      "citeRegEx" : "Angeli et al\\.,? 2015",
+      "shortCiteRegEx" : "Angeli et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Dbpedia: A nucleus for a web of open data",
+      "author" : [ "Sören Auer", "Christian Bizer", "Georgi Kobilarov", "Jens Lehmann", "Richard Cyganiak", "Zachary Ives." ],
+      "venue" : "The semantic web, Springer, pages 722–735.",
+      "citeRegEx" : "Auer et al\\.,? 2007",
+      "shortCiteRegEx" : "Auer et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Open information extraction from the web",
+      "author" : [ "Michele Banko", "Michael J Cafarella", "Stephen Soderland", "Matthew Broadhead", "Oren Etzioni." ],
+      "venue" : "International Joint Conference on Artificial Intelligence. volume 7, pages 2670–2676.",
+      "citeRegEx" : "Banko et al\\.,? 2007",
+      "shortCiteRegEx" : "Banko et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Open information extraction via contextual sentence decomposition",
+      "author" : [ "Hannah Bast", "Elmar Haussmann." ],
+      "venue" : "International Conference on Semantic Computing. IEEE, pages 154–159.",
+      "citeRegEx" : "Bast and Haussmann.,? 2013",
+      "shortCiteRegEx" : "Bast and Haussmann.",
+      "year" : 2013
+    }, {
+      "title" : "Nested propositions in open information extraction",
+      "author" : [ "Nikita Bhutani", "H V Jagadish", "Dragomir Radev." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing. pages 55–64.",
+      "citeRegEx" : "Bhutani et al\\.,? 2016",
+      "shortCiteRegEx" : "Bhutani et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Linked data-the story so far",
+      "author" : [ "Christian Bizer", "Tom Heath", "Tim Berners-Lee." ],
+      "venue" : "Semantic services, interoperability and web applications: emerging concepts pages 205–227.",
+      "citeRegEx" : "Bizer et al\\.,? 2009",
+      "shortCiteRegEx" : "Bizer et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Some issues on detecting negation from text",
+      "author" : [ "Eduardo Blanco", "Dan I Moldovan." ],
+      "venue" : "Proceedings of the Twenty-Fourth International Florida Artificial Intelligence Research Society Conference. pages 228–233.",
+      "citeRegEx" : "Blanco and Moldovan.,? 2011",
+      "shortCiteRegEx" : "Blanco and Moldovan.",
+      "year" : 2011
+    }, {
+      "title" : "Finet: Context-aware fine-grained named entity typing",
+      "author" : [ "Luciano Del Corro", "Abdalghani Abujabal", "Rainer Gemulla", "Gerhard Weikum." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing. Association for Computational",
+      "citeRegEx" : "Corro et al\\.,? 2015",
+      "shortCiteRegEx" : "Corro et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Clausie: clause-based open information extraction",
+      "author" : [ "Luciano Del Corro", "Rainer Gemulla." ],
+      "venue" : "Proceedings of the 22nd international conference on World Wide Web. Association for Computing Machinery, pages 355–366.",
+      "citeRegEx" : "Corro and Gemulla.,? 2013",
+      "shortCiteRegEx" : "Corro and Gemulla.",
+      "year" : 2013
+    }, {
+      "title" : "Identifying relations for open information extraction",
+      "author" : [ "Anthony Fader", "Stephen Soderland", "Oren Etzioni." ],
+      "venue" : "Proceedings of the Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, pages",
+      "citeRegEx" : "Fader et al\\.,? 2011",
+      "shortCiteRegEx" : "Fader et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Open question answering over curated and extracted knowledge bases",
+      "author" : [ "Anthony Fader", "Luke Zettlemoyer", "Oren Etzioni." ],
+      "venue" : "Proceedings of the 20th ACM SIGKDD international conference on Knowledge discovery and data mining. Association",
+      "citeRegEx" : "Fader et al\\.,? 2014",
+      "shortCiteRegEx" : "Fader et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Dependency-based open information extraction",
+      "author" : [ "Pablo Gamallo", "Marcos Garcia", "Santiago Fernández-Lanza." ],
+      "venue" : "Proceedings of the Joint Workshop on Unsupervised and Semi-Supervised Learning in NLP. Association for Computational",
+      "citeRegEx" : "Gamallo et al\\.,? 2012",
+      "shortCiteRegEx" : "Gamallo et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "50-something years of work on collocations: what is or should be next",
+      "author" : [ "Stefan Th Gries." ],
+      "venue" : "International Journal of Corpus Linguistics 18(1):137–166.",
+      "citeRegEx" : "Gries.,? 2013",
+      "shortCiteRegEx" : "Gries.",
+      "year" : 2013
+    }, {
+      "title" : "The goolap fact retrieval framework",
+      "author" : [ "Alexander Löser", "Sebastian Arnold", "Tillmann Fiehn." ],
+      "venue" : "Business Intelligence, Springer, pages 84–97.",
+      "citeRegEx" : "Löser et al\\.,? 2012",
+      "shortCiteRegEx" : "Löser et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "The Stanford CoreNLP natural language processing toolkit",
+      "author" : [ "Christopher D. Manning", "Mihai Surdeanu", "John Bauer", "Jenny Finkel", "Steven J. Bethard", "David McClosky." ],
+      "venue" : "Association for Computational Linguistics (ACL) System Demonstrations.",
+      "citeRegEx" : "Manning et al\\.,? 2014",
+      "shortCiteRegEx" : "Manning et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Demonyms and compound relational nouns in nominal open ie",
+      "author" : [ "Harinder Pal", "Mausam." ],
+      "venue" : "Proceedings of Workshop on Automated Knowledge Base Construction. pages 35–39.",
+      "citeRegEx" : "Pal and Mausam.,? 2016",
+      "shortCiteRegEx" : "Pal and Mausam.",
+      "year" : 2016
+    }, {
+      "title" : "Core: Context-aware open relation extraction with factorization machines",
+      "author" : [ "Fabio Petroni", "Luciano del Corro", "Rainer Gemulla." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing. Association for Compu-",
+      "citeRegEx" : "Petroni et al\\.,? 2015",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A comprehensive grammar of the English language, volume 397",
+      "author" : [ "Randolph Quirk", "Sidney Greenbaum", "Geoffrey Leech", "Jan Svartvik", "David Crystal." ],
+      "venue" : "Cambridge Univ Press.",
+      "citeRegEx" : "Quirk et al\\.,? 1985",
+      "shortCiteRegEx" : "Quirk et al\\.",
+      "year" : 1985
+    }, {
+      "title" : "Relation extraction with matrix factorization and universal schemas",
+      "author" : [ "Sebastian Riedel", "Limin Yao", "Andrew McCallum", "Benjamin M Marlin." ],
+      "venue" : "Joint Human Language Technology Conference/Annual Meeting of the North American Chapter of the As-",
+      "citeRegEx" : "Riedel et al\\.,? 2013",
+      "shortCiteRegEx" : "Riedel et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Are you sure that this happened? assessing the factuality degree of events in text. Computational Linguistics 38(2):261–299",
+      "author" : [ "Roser Saurı", "James Pustejovsky" ],
+      "venue" : null,
+      "citeRegEx" : "Saurı́ and Pustejovsky.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Saurı́ and Pustejovsky.",
+      "year" : 2012
+    }, {
+      "title" : "Open language learning for information extraction",
+      "author" : [ "Michael Schmitz", "Robert Bart", "Stephen Soderland", "Oren Etzioni" ],
+      "venue" : "In Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational",
+      "citeRegEx" : "Schmitz et al\\.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Schmitz et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Open ie as an intermediate structure for semantic tasks",
+      "author" : [ "Gabriel Stanovsky", "Mausam", "Ido Dagan." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics. Association for Computational Linguistics, pages 303–",
+      "citeRegEx" : "Stanovsky et al\\.,? 2015",
+      "shortCiteRegEx" : "Stanovsky et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Yago: a core of semantic knowledge",
+      "author" : [ "Fabian M Suchanek", "Gjergji Kasneci", "Gerhard Weikum." ],
+      "venue" : "Proceedings of the 16th international conference on World Wide Web. Association for Computing Machinery, pages 697–706.",
+      "citeRegEx" : "Suchanek et al\\.,? 2007",
+      "shortCiteRegEx" : "Suchanek et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Open information extraction using wikipedia",
+      "author" : [ "Fei Wu", "Daniel S Weld." ],
+      "venue" : "Proceedings of the 48th Annual Meeting of the Association for Computational Linguistics. Association for Computational Linguistics, pages 118–127.",
+      "citeRegEx" : "Wu and Weld.,? 2010",
+      "shortCiteRegEx" : "Wu and Weld.",
+      "year" : 2010
+    }, {
+      "title" : "Renoun: Fact extraction for nominal attributes",
+      "author" : [ "Mohamed Yahya", "Steven Whang", "Rahul Gupta", "Alon Y Halevy." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguis-",
+      "citeRegEx" : "Yahya et al\\.,? 2014",
+      "shortCiteRegEx" : "Yahya et al\\.",
+      "year" : 2014
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 3,
+      "context" : "The goal of open information extraction (OIE) is to extract surface relations and their arguments from natural-language text in an unsupervised, domain-independent manner (Banko et al., 2007).",
+      "startOffset" : 171,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 23,
+      "context" : "extractions in the form of surface subject-relationobject triples, which are convenient for representing facts in a structured, machine-readable manner (Suchanek et al., 2007; Auer et al., 2007; Bizer et al., 2009).",
+      "startOffset" : 152,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 2,
+      "context" : "extractions in the form of surface subject-relationobject triples, which are convenient for representing facts in a structured, machine-readable manner (Suchanek et al., 2007; Auer et al., 2007; Bizer et al., 2009).",
+      "startOffset" : 152,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 6,
+      "context" : "extractions in the form of surface subject-relationobject triples, which are convenient for representing facts in a structured, machine-readable manner (Suchanek et al., 2007; Auer et al., 2007; Bizer et al., 2009).",
+      "startOffset" : 152,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 14,
+      "context" : "The extractions of OIE systems are useful for tasks such as information retrieval (Löser et al., 2012), question answering (Fader et al.",
+      "startOffset" : 82,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2012), question answering (Fader et al., 2014), knowledge-base extension (Dong et al.",
+      "startOffset" : 28,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2014), knowledge-base extension (Dong et al., 2014; Riedel et al., 2013; Petroni et al., 2015) as well as text comprehension, word similarity, word analogy (Stanovsky et al.",
+      "startOffset" : 34,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2014), knowledge-base extension (Dong et al., 2014; Riedel et al., 2013; Petroni et al., 2015) as well as text comprehension, word similarity, word analogy (Stanovsky et al.",
+      "startOffset" : 34,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2015) as well as text comprehension, word similarity, word analogy (Stanovsky et al., 2015).",
+      "startOffset" : 69,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 21,
+      "context" : "The idea of using annotations has already been explored by OLLIE (Schmitz et al., 2012), which uses annotations for attribution",
+      "startOffset" : 65,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2014) proposes to use a “local closed world assumption” and (Riedel et al., 2013; Petroni et al., 2015) use “negative sampling” methods—, and MinIE’s annotations help to alleviate this problem.",
+      "startOffset" : 62,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2014) proposes to use a “local closed world assumption” and (Riedel et al., 2013; Petroni et al., 2015) use “negative sampling” methods—, and MinIE’s annotations help to alleviate this problem.",
+      "startOffset" : 62,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 3,
+      "context" : "The concept of OIE was introduced by (Banko et al., 2007).",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 10,
+      "context" : "Early systems (Fader et al., 2011) relied on basic NLP techniques—such as POS tagging and chunking—, whereas all recent systems make use of dependency parsing (Gamallo et al.",
+      "startOffset" : 14,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2011) relied on basic NLP techniques—such as POS tagging and chunking—, whereas all recent systems make use of dependency parsing (Gamallo et al., 2012; Wu and Weld, 2010).",
+      "startOffset" : 132,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2011) relied on basic NLP techniques—such as POS tagging and chunking—, whereas all recent systems make use of dependency parsing (Gamallo et al., 2012; Wu and Weld, 2010).",
+      "startOffset" : 132,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 0,
+      "context" : "Most systems represent their extractions in the form of triples, although some systems also produce n-ary extractions (Akbik and Löser, 2012; Del Corro and Gemulla, 2013) or use nested representations (Bast and Haussmann, 2013; Bhutani et al.",
+      "startOffset" : 118,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 4,
+      "context" : "Most systems represent their extractions in the form of triples, although some systems also produce n-ary extractions (Akbik and Löser, 2012; Del Corro and Gemulla, 2013) or use nested representations (Bast and Haussmann, 2013; Bhutani et al., 2016).",
+      "startOffset" : 201,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 5,
+      "context" : "Most systems represent their extractions in the form of triples, although some systems also produce n-ary extractions (Akbik and Löser, 2012; Del Corro and Gemulla, 2013) or use nested representations (Bast and Haussmann, 2013; Bhutani et al., 2016).",
+      "startOffset" : 201,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 25,
+      "context" : "Some systems focus on noun-mediated extractions (Yahya et al., 2014).",
+      "startOffset" : 48,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 10,
+      "context" : "ReVerb (Fader et al., 2011) proposed to avoid overlyspecific relations by making use of lexical constraints: relations that occur infrequently in a large corpus were considered overly specific.",
+      "startOffset" : 7,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 4,
+      "context" : "CSDIE (Bast and Haussmann, 2013) introduced the notion of nested facts (termed minimal in their paper) and produce extractions with “pointers” to other extractions.",
+      "startOffset" : 6,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 1,
+      "context" : "Stanford OIE (Angeli et al., 2015), which also uses aggressive minimization.",
+      "startOffset" : 13,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 21,
+      "context" : "The concept of annotated OIE extractions was introduced by OLLIE (Schmitz et al., 2012).",
+      "startOffset" : 65,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 18,
+      "context" : "(Quirk et al., 1985) identified the seven clause types SV, SVA, SVC, SVO, SVOO, SVOA, and SVOC; here letters refer to obligatory constituents and each clause can be accompanied by additional optional adverbials.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 10,
+      "context" : "(Fader et al., 2011) argues that such an approach can lead to uninformative relations.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 10,
+      "context" : "For example, from the sentence “Faust made a deal with the Devil”, ClausIE extracts triple (Faust, made, a deal with the Devil), whereas (Fader et al., 2011) argue that the extraction (Faust, made a deal with, the Devil) has a more informative relation.",
+      "startOffset" : 137,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 10,
+      "context" : "In MinIE, we follow (Fader et al., 2011) and try to produce more informative relations.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 10,
+      "context" : "Our approach is inspired by the syntactic patterns of (Fader et al., 2011), but additionally makes use of the clause type to obtain meaningful relations in a principled way.",
+      "startOffset" : 54,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 16,
+      "context" : "); and pattern ORG POS? NP PER for (PER, is NP of, ORG) from RelNoun (Pal and Mausam, 2016).",
+      "startOffset" : 69,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 20,
+      "context" : "Following (Saurı́ and Pustejovsky, 2012), we represent the factuality of an extraction with two pieces of information: polarity (+ or -) and modality (CT or PS; for certainty or possibility, resp.",
+      "startOffset" : 10,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 7,
+      "context" : "Generally, negation detection is a hard problem and involves questions such as negation scope resolution, focus detection, and double negation (Blanco and Moldovan, 2011).",
+      "startOffset" : 143,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 20,
+      "context" : "Our lexicon is based on the lexicon of (Saurı́ and Pustejovsky, 2012) and the words in the corresponding WordNet synsets.",
+      "startOffset" : 39,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 20,
+      "context" : "A more advanced approach is taken by (Saurı́ and Pustejovsky, 2012).",
+      "startOffset" : 37,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 20,
+      "context" : "We adapt our attribution annotation from the notion of source in (Saurı́ and Pustejovsky, 2012), i.",
+      "startOffset" : 65,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 13,
+      "context" : "In practice, applications can extend the dictionary using suitable collocations, either from domaindependent dictionaries or by using methods to automatically extract colloctions from a text corpus (Gries, 2013).",
+      "startOffset" : 198,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 10,
+      "context" : "This lexical constraint is inspired by (Fader et al., 2011); the rationale is that everything sufficiently frequent is not considered overly specific.",
+      "startOffset" : 39,
+      "endOffset" : 59
+    } ],
+    "year" : 0,
+    "abstractText" : "The goal of open information extraction (OIE) is to extract surface relations and their arguments from naturallanguage text in an unsupervised, domainindependent manner. In this paper, we explore how overly-specific extractions can be reduced in OIE systems without producing uninformative or inaccurate results. We propose MinIE, an OIE system that produces minimized, annotated extractions. At its heart, MinIE rewrites OIE extractions by (1) identifying and removing parts that are considered overly specific; (2) representing information about polarity, modality, attribution, and quantities with suitable annotations instead of in the actual extraction. We conducted an experimental study with several real-world datasets and found that MinIE achieves competitive or higher precision and recall than most prior systems, while at the same time producing much shorter extractions.",
+    "creator" : null
+  }
+}

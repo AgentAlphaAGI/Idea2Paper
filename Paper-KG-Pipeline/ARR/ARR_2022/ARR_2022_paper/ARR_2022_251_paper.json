@@ -1,0 +1,553 @@
+{
+  "name" : "ARR_2022_251_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Subgraph Retrieval Enhanced Model for Multi-hop Knowledge Base Question Answering",
+    "authors" : [ ],
+    "emails" : [ "Hits@1", "(Hits@1)" ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Knowledge Base Question Answering (KBQA) aims to seek answers of factoid questions from structured KBs such as Freebase, Wikidata, and DBPedia. KBQA has attracted a lot of attention, as the logically organized entities and their relations are beneficial for inferring the answer. Semantic parsing-based (SP-based) methods (Das et al., 2021; Lan and Jiang, 2020; Sun et al., 2020) and embedding-based methods (He et al., 2021; Sun et al., 2018, 2019) are two mainstream methods for addressing KBQA. The former ones heavily rely on the expensive annotation of the intermediate logic form such as SPARQL. Instead of parsing the questions, the later ones directly represent and rank entities based on their relevance to input questions. Among them, the models which first retrieve\n1https://github.com/lambdaDove/Graph_Retriever\na question-relevant subgraph and then perform reasoning on it (He et al., 2021; Sun et al., 2018, 2019) reduce the reasoning space, showing superiority compared with reasoning on the whole KB (Chen et al., 2019; Saxena et al., 2020; Xu et al., 2019) (Cf. Table 2 for empirical proof).\nSubgraph retrieval is crucial to the overall QA performance, as a small subgraph is highly likely to exclude the answer but a large one might introduce noises that affect the QA performance. Figure 1(a) presents the answer coverage rates of the subgraphs with different sizes on two widely-used KBQA datasets, WebQSP (Yih et al.) and CWQ (Talmor and Berant, 2018). We extract the full multi-hop topic-centric-subgraph and control the graph size by the personalized pagerank (PPR) (Haveliwala, 2003) scores of entities. We also present the QA performance (Hits@1) of NSM (He et al., 2021), a state-of-the-art embedding-based model, under the same sizes of the subgraphs in Figure 1(b). It is observed that although larger subgraphs are more likely to cover the answer, the QA performance drops dramatically when the subgraph includes more than 5,000 nodes. Moreover, it is inefficient to extract such a full multi-hop subgraph for online QA. The results show that such heuristic retrieval is far from optimal. To improve the retrieval performance, PullNet (Sun et al., 2019) proposes a\ntrainable retriever, but the retrieving and the reasoning processes are intertwined. At each step, a LSTM-based retriever selects new relations relevant to the question, and a GNN-based reasoner determines which tail entities of the new relations should be expanded into the subgraph. As a result, the inference as well as the training of the reasoner needs to be performed on the intermediate partial subgraph. Since the intermediate supervision is usually unobserved, reasoning on partial subgraphs increases the bias which will eventually affect the answer reasoning on the final entire subgraph.\nThis paper proposes a subgraph retrieval enhanced model for KBQA, which devises a trainable subgraph retriever (SR) decoupled from the subsequent reasoner. SR is devised as an efficient dual-encoder which can expand paths to induce the subgraph and can stop the expansion automatically. After that, any subgraph-oriented reasoner such as GRAFT-Net (Sun et al., 2018) or NSM (He et al., 2021) can be used to delicately deduce the answers from the subgraph. Such separable retrieval and reasoning ensure the reasoning only on the final entire instead of the intermediate partial subgraphs, which enables a plug-and-play framework to enhance any subgraph-oriented reasoner.\nWe systematically investigate the advantages of various training strategies for SR, including weakly supervised/unsupervised pre-training and end-toend fine-tuning with the reasoner. Instead of the ground truth paths, we extract the shortest paths from a topic entity in the question to an answer as the weak supervision signals for pre-training. When the QA pairs themselves are also scarce, we construct pseudo (question, answer, path) labels for unsupervised pre-training. To further teach the retriever by the final QA performance, we enable the end-to-end fine-tuning, which injects the likelihood of the answer conditioned on a subgraph as the feedback from the reasoner into the prior distribution of the subgraph to update the retriever.\nWe conduct extensive experiments on WebQSP and CWQ. The results reveal four major advantages: (1) SR, combined with existing subgraph-oriented reasoners, achieves significant gains (+11.3-19.3% Hits@1) over the same reasoner that is performed with other retrieval methods. Moreover, SR together with NSM creates new state-of-the-art results for embedding-based KBQA models. (2) With the same coverage rate of the answers, SR can result in much smaller subgraphs\nthat can deduce more accurate answers. (3) The unsupervised pre-training with only 20% weak supervision signals is comparable to pre-training with the full weak supervision signals. (4) The end-toend fine-tuning can enhance the performance of the retriever as well as the reasoner.\nContributions. (1) We propose a trainable SR decoupled from the subsequent reasoner to enable a plug-and-play framework for enhancing any subgraph-oriented reasoner. (2) We devise SR by a simple but effective dual-encoder, which achieves significantly better retrieval and QA results than the existing retrieval methods. (3) NSM equipped with SR, via weakly supervised pre-training and end-toend fine-tuning, achieves new SOTA performance for embedding-based KBQA methods."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "KBQA solutions can be categorized into SP-based and embedding-based methods. SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB. These methods need to annotate expensive logic forms as supervision or are limited to narrow domains with a few logical predicates. Embeddingbased methods embed entities and rank them based on their relevance to the question, where the entities are extracted from the whole KB (Miller et al., 2016; Saxena et al., 2020) or restricted in a subgraph (Chen et al., 2019; He et al., 2021; Sun et al., 2018; Zhang et al., 2018). They are more faulttolerant but the whole KB or the ad-hoc retrieved subgraph includes many irrelevant entities. Some works such as PullNet (Sun et al., 2019), SRN (Qiu et al., 2020a), and IRN (Zhou et al., 2018) enhance the retrieval by training the retriever, but the retrieving and the reasoning are intertwined, causing the reasoning on partially retrieved subgraphs.\nOpen-domain QA (OpenQA) aims to answer questions based on a large document source. Most of the OpenQA models also consist of a retriever and a reasoner. The retriever is devised as a sparse term-based method such as BM25 (Robertson and Zaragoza, 2009) or a trainable dense passage retrieval method (Karpukhin et al., 2020; Sachan et al., 2021a), and the reasoner deals with each document individually (Guu et al., 2020) or fuses all the documents together (Izacard and Grave, 2021).\nDifferent from the documents in openQA, the subgraphs in KBQA can be only obtained by multi-hop retrieval and the reasoner should deal with the entire subgraph instead of each individual relation to find the answer. Although some openQA research proposes multi-hop document retrieval (Asai et al., 2020), the focus is the matching of the documents rather than the relations to the questions in KBQA. Thus the concrete solution for KBQA should be different from openQA."
+    }, {
+      "heading" : "3 Problem Definition",
+      "text" : "A knowledge base (KB) G organizes the factual information as a set of triples, i.e., G = {(e, r, e′)|e, e′ ∈ E, r ∈ R}, where E and R denote the entity set and the relation set respectively. Given a factoid question q, KBQA is to figure out the answers Aq to the question q from the entity set E of G. The entities mentioned in q are topic entities denoted by Eq = {eq}, which are assumed to be given. This paper considers the complex questions where the answer entities are multi-hops away from the topic entities, called multi-hop KBQA.\nProbabilistic Formalization of KBQA. Given a question q and one of its answers a ∈ Aq, we formalize the KBQA problem as maximizing the probability distribution p(a|G, q). Instead of directly reasoning on G, we retrieve a subgraph G ⊆ G and infer a on G. Since G is unknown, we treat it as a latent variable and rewrite p(a|G, q) as:\np(a|G, q) = ∑\nG pφ(a|q,G)pθ(G|q). (1)\nThe target distribution p(a|G, q) is jointly modeled by a subgraph retriever and an answer reasoner. The subgraph retriever pθ defines a prior distribution over a latent subgraph G conditioned on a question q, while the answer reasoner pφ predicts the likelihood of the answer a given G and q. The goal is to find the optimal parameters θ and φ that can maximize the log-likelihood of training data, i.e.,\nL(θ, φ) = max θ,φ ∑ (q,a,G)∈D log ∑ G pφ(a|q,G)pθ(G|q), (2)\nwhere D is the whole training data. Thanks to this formulation, the retriever can be decoupled from the reasoner by firstly training the retriever pθ and then the reasoner pφ on the sampled subgraphs by\nthe retriever. Via drawing a sample G (Sachan et al., 2021b), we can approximate Eq. (2) as:\nL(θ, φ) = max θ,φ ∑ (q,a,G)∈D log pφ(a|q,G) + log pθ(G|q), (3)\nwhere the first and the second term can be optimized for the reasoner and the retriever respectively. The concrete reasoner can be instantiated by any subgraph-oriented KBQA model such as the GNN-based GRAT-Net (Sun et al., 2018) and NSM (He et al., 2021)."
+    }, {
+      "heading" : "4 Subgraph Retriever (SR)",
+      "text" : "The retriever needs to calculate pθ(G|q) for any G, which is intractable as the latent variable G is combinatorial in nature. To avoid enumerating G, we propose to expand top-K paths relevant to q from the topic entities and then induce the subgraph following these paths."
+    }, {
+      "heading" : "4.1 Expanding Paths",
+      "text" : "Path expanding starts from a topic entity and follows a sequential decision process. Here a path is defined as a sequence of relations (r1, · · · , r|p|), since a question usually implies the intermediate relations excluding the entities. Suppose a partial path p(t) = (r1, · · · , rt) has been retrieved at time t, a tree can be induced from p(t) by filling in the intermediate entities along the path, i.e., T (t) = (eq, r1, E1, · · · , rt−1, Et−1). Then we select the next relation from the union of the neighboring relations of Et−1. The relevance of each relation r to the question q is measured by the dot product between their embeddings, i.e.,\ns(q, r) = f(q)>h(r), (4)\nwhere both f and h are instantiated by RoBERTa (Liu et al., 2019). Specifically, we input the question or the name of r into RoBERTa and take its [CLS] token as the output embedding. According to the assumption (He et al., 2021; Qiu et al., 2020a; Zhou et al., 2018) that expanding relations at different time steps should attend to specific parts of a query, we update the embedding of the question by simply concatenating the original question with the historical expanded relations in p(t) as the input of RoBERTa, i.e.,\nf(q(t)) = RoBERTa([q; r1; · · · ; rt]), (5) Thus s(q, r) is changed to s(q(t), r) = f(q(t))>h(r). Then the probability of a relation r being expanded can be formalized as:\np(r|q(t)) = 1 1 + exp (s(q(t), r)− s(q(t),END)) , (6)\nwhere END is a virtual relation named as “END”. The score s(q(t),END) represents the threshold of the relevance score. p(r|q(t)) is larger than 0.5 if s(q(t), r) > s(q(t),END) and is no larger than 0.5 otherwise. We select the top-1 relation with p(r|q(t)) > 0.5. The expansion is stopped if none of the probabilities of the relations is larger than 0.5. Finally, the probability of a path given the question can be computed as the joint distribution of all the relations in the path, i.e.,\npθ(p|q) = |p|∏\nt=0\np(rt|q(t)). (7)\nwhere |p| denotes the number of relations in p, t = 0 indicates the selection at the topic entity and t = |p| denotes the stop selection when the path expansion is finished. Since the top-1 relevant path cannot be guaranteed to be right, we perform a topK beam search at each time to get K paths. From each topic entity, we obtain K paths which result in nK paths in total by n topic entities. nK paths correspond to nK instantiated trees."
+    }, {
+      "heading" : "4.2 Inducing Subgraph",
+      "text" : "We take the union of top-K trees from one topic entity into a single subgraph, and then merge the same entities from different subgraphs to induce the final subgraph. This can reduce the subgraph size, i.e., the answer reasoning space, as the subgraphs from different topic entities can be viewed as the constraints of each other. Specifically, from the n subgraphs of the n topic entities, we find the same entities and merge them. From these merged entities, we trace back in each subgraph to the root (i.e., a topic entity) and trace forward to the leaves. Then we only keep the entities and relations along the tracing paths of all the trees to form the final subgraph. For example in Figure 2, given a\nquestion “Where did Canadian citizens with Turing Award graduate?” with two topic entities “Turing Award” and “Canada”2, we can explain it by the two expanded paths (Win, Graduate) and (Citizen, Graduate) and merge the trees induced by them to form a unified subgraph. Only the top-1 path is presented in the figure for a clear illustration."
+    }, {
+      "heading" : "5 Training Strategies",
+      "text" : "In this section, we discuss the pre-training and the end-to-end fine-tuning strategies to train the retriever. Figure 3 illustrates the whole framework and the training procedure."
+    }, {
+      "heading" : "5.1 Weakly Supervised Pre-Training",
+      "text" : "Since the ground truth subgraphs are not easy to be obtained, we resort to the weak supervision signals constructed from the (q, a) pairs. Specifically, from each topic entity of a question, we retrieve all the shortest paths to each answer as the supervision signals, as paths are easier to be obtained than graphs. Since maximizing the loglikelihood of a path equals to ∑|p| t=0 log p(rt|q(t)), we can maximize the probabilities of all the intermediate relations in a path. To achieve the goal, we decompose a path p = (r1, · · · , r|p|,END) into |p| + 1 (question, relation) instances from time 0 to |p|, including ([q], r1), ([q; r1], r2), ..., and ([q; r1; r2; ·; r|p|],END), and optimize the probability of each instance."
+    }, {
+      "heading" : "5.2 Unsupervised Pre-Training",
+      "text" : "When the (q, a) pairs are also scarce, we train the retriever in an unsupervised manner independent from the (q, a) pairs. We leverage the NYT dataset, a distant supervision dataset for relation extraction (Riedel et al., 2010) to construct the pseudo (q, a, p) labels. In this dataset, each instance is denoted as\n2Some work views “Canada” as a constraint, which is not easy to be distinguished with the topic entity “Turing Award”. Thus this paper treats both of them as topic entities.\na tuple (s, (e1, r, e2)), where s is a sentence that refers to the relation r between two entities e1 and e2 mentioned in the sentence s. For two instances (s1, (e1, r1, e2)) and (s2, (e2, r2, e3)), we treat e1 as the topic entity and e3 as the answer. Then we concatenate s1 and s2 as the question, and concatenate r1 and r2 as the corresponding path to train the retriever. The training objective is the same as the weakly supervised pre-training."
+    }, {
+      "heading" : "5.3 End-to-End Fine-tuning",
+      "text" : "End-to-end training is an alternative to fine-tune the separately trained retriever and the reasoner jointly. The main idea is to leverage the feedback from the reasoner to guide the path expansion of the retriever. To enable this, we optimize the posterior pθ,φ(G|q, a) instead of the prior pθ(G|q), since the former one contains the additional likelihood pφ(a|q, pk) which exactly reflects the feedback from the reasoner. We do not directly optimize the posterior pθ,φ(G|q, a), because G is induced from nK paths, making it unknown which path should receive the feedback from the likelihood computed on the whole G. Instead, we approximate p(G|q, a) by the sum of the probabilities of the nK paths and rewrite the posterior of each path by Bayes’ rule (Sachan et al., 2021b), i.e.,\npθ,φ(G|q, a) ≈ nK∑\nk=1\npθ,φ(pk|q, a), (8)\n∝ nK∑\nk=1\npφ(a|q, pk)pθ(pk|q),\nwhere pθ(pk|q) is the prior distribution of the kth path that can be estimated by Eq. (7), and pφ(a|q, pk) is the likelihood of the answer a given the k-th path. Essentially, pφ(a|q, pk) estimates the\nanswer a on the single tree induced by the k-th path instead of the fused subgraph by nK paths. As a result, the reasoning likelihood on each tree can be reflected to the corresponding path that induces the tree. The reasoner for estimating pφ(a|q, pk) is the same as that for calculating pφ(a|q,G).\nIn summary, the whole objective function for each training instance (q, a,G) is formalized as:\nL = max φ log pφ(a|q,G) ︸ ︷︷ ︸\nReasoner\n(9)\n+ max θ\nlog nK∑\nk=1 SG(pφ(a|q, pk))pθ(pk|q) ︸ ︷︷ ︸\nRetriever\n,\nwhere the stop-gradient operation SG is to stop updating the parameters φ. The reasoner is updated the same as the two-stage training by computing the likelihood pφ(a|q,G) on G sampled by the retriever (without using information from the answer a). As a result, there is no mismatch between the training and evaluation when computing pφ(a|q,G), as G relies only on the prior at both.\nIntuitively, we train the reasoner to extract the correct answer given the subgraph induced from nK highest scoring paths. And we train the retriever to select nK paths which collectively have a high score to deduce the answer when taking the feedback from the reasoner into account. Although the two components are jointly trained, the reasoning is still performed on the retrieved entire subgraph at each epoch. We present the training process in Appendix."
+    }, {
+      "heading" : "6 Experiments",
+      "text" : "In this section, we conduct extensive experiments to evaluate the subgraph retrieval (SR) enhanced\nmodel. We design the experiments to mainly answer the four questions: (1) Does SR take effect in improving the QA performance? (2) Can SR obtain smaller but higher-quality subgraphs? (3) How does the weakly supervised and unsupervised pre-training affect SR’s performance? (4) Can endto-end fine-tuning enhance the performance of the retriever as well as the reasoner?"
+    }, {
+      "heading" : "6.1 Experimental Settings",
+      "text" : "Datasets. We adopt two benchmarks, WebQuestionSP (WebQSP) (Yih et al.) and Complex WebQuestion 1.1 (CWQ) (Talmor and Berant, 2018), for evaluating the proposed KBQA model. Table 1 shows the statistics.\nEvaluation Metrics. We evaluate the retriever by the answer coverage rate, which is the proportion of questions for which the topic-nK retrieved paths contain at least one answer. This metric reflects the upper bound of the QA performance and is denoted as Hits@K. For QA performance, We use Hits@1 to evaluate whether the top-1 predicted answer is correct. Since some questions have multiple answers, we also predict the answers by the optimal threshold searched on the validation set and evaluate their F1 score.\nBaseline Models. We compare with embeddingbased KBQA models, in which EmbedKGQA (Saxena et al., 2020) directly optimizes the triplet of (topic entity, question, answer) based on their direct embeddings. KV-Mem (Miller et al., 2016) BAMNet (Chen et al., 2019) store triplets in a keyvalue structured memory for reasoning. GRAFTNet (Sun et al., 2018), BAMNet (Chen et al., 2019), NSM (He et al., 2021), and PullNet (Sun et al., 2019) are subgraph-oriented embedding models. We also compare with the SP-based models, in which QGG (Lan and Jiang, 2020) generates the query graph for a question by adding the constraints and extending the relation paths simultaneously, SPARQA (Sun et al., 2020) proposes a novel skeleton grammar to represent a question, and CBR-\nKBQA (Das et al., 2021) leverages BigBird (Zaheer et al., 2020), a pre-trained seq2seq model to directly parse a question into a SPARQL statement.SR is defaultly trained by weakly supervised pre-training and the default path number is set to 10."
+    }, {
+      "heading" : "6.2 Overall QA Evaluation",
+      "text" : "We compare with state-of-the-art KBQA models and present the Hits@1 and F1 scores in Table 2.\nSP-based Models. The SP-based model CBRKBQA achieves the best performance on CWQ. This is expected, as CBR-KBQA leverages a pretrained seq-to-seq model to parse the input question into a SPARQL statement. However, the model depends on the annotated SPARQL statements, which are expensive to be annotated in practice.\nEmbedding-based Models. Among these models, KV-Mem and EmbedKGQA retrieve the answers from the global key-value memory built on the KB or the original whole KB, which enjoys high recall but suffers from much noisy entities. Compared with these global retrieval, BAMNet builds the keyvalue memory on a subgraph, but it is a full multihop topic-entity-centric subgraph, which is also noisy. GRAFT-Net and NSM calculate PPR scores to control the subgraph size, but the ad-hoc retrieval method is still far from optimal. PullNet reinforces the retrieval by learning a retriever, but the retriever\nTable 3: The answer coverage rate of SR on WebQSP and CWQ (%).\nModel WebQSP CWQ\nHits@1 Hits@5 Hits@10 Hits@20 Hits@1 Hits@5 Hits@10 Hits@20\nSR w SuperT 68.8 84.7 89.9 91.4 59.9 75.4 84.8 86.7 SR 63.9 84.2 90.4 92.3 50.4 75.3 84.9 87.1 SR w/o QU 60.7 64.5 66.4 68.1 40.2 60.1 62.6 63.7 SR w/o PE 61.2 66.5 70.1 73.2 41.9 62.9 65.3 63.3 SR+NSM w E2E 64.3 84.1 91.2 93.7 51.6 77.1 85.3 87.1 SR+GN w E2E 64.6 83.4 90.7 93.2 52.0 76.8 85.1 87.3\n1K 2K 3K 4K Subgraph size\n70\n80\n85\n90\nA ns\nw er\nc ov\ner ag\ne ra\nte (%\n)\nPPR PullNet* SR\n(a) WebQSP\n0K 2.5K 5K 7.5K 10K Subgraph size\n50\n60\n70\n80\nA ns\nw er\nc ov\ner ag\ne ra\nte (%\n)\nPPR PullNet* SR\n(b) CWQ\n70 80 85 90 Answer coverage rate (%)\n60\n65\n70\n75\nH its\n@ 1\nof Q\nA (% ) PPR+NSM PullNet* SR+NSM\n(c) WebQSP\n50 60 70 80 Answer coverage rate (%)\n30\n40\n50\nH its\n@ 1\nof Q\nA (% ) PPR+NSM PullNet* SR+NSM\n(d) CWQ\nFigure 4: Comparison of the answer coverage rate under various subgraph sizes (Top row) and the QA performance (Hits@1) under various answer coverage rates (Bottom row).\nand the reasoner are intertwined, causing the partial reasoning on part of a subgraph, which increases the reasoning bias.\nOur Models. Compared with the above embedding-based models, an obvious performance improvement on both the datasets can be observed, e.g., NSM injected by SR (SR+NSM) improves 14.2% Hits@1 on WebQSP and 11.3% on CWQ compared with the original NSM. We also show that SR can be adapted to different subgraphoriented reasoners. Beyond NSM, when injecting SR to GRAFT-NET, it also significantly improves 13.9-19.3% Hits@1. We do not inject SR into BAMNet as the model needs entity types in the subgraph, which is temporarily ignored by SR .\nSummary. The overall evaluation shows that SR takes effect in improving the QA performance when injecting it before a subgraph-oriented reasoner, and SR equipped with NSM creates new state-of-the-art for embedding-based KBQA."
+    }, {
+      "heading" : "6.3 Retriever Evaluation",
+      "text" : "Quality of the Retrieved Subgraph. We evaluate whether the proposed SR can obtain smaller but higher-quality subgraphs, which are measured by not only the direct subgraph size and answer coverage rate, but also the final QA performance. For a fair comparison, we fix the reasoner as NSM, and vary the retriever as SR, the PPR-based heuristic retrieval (Sun et al., 2018; He et al., 2021), and PullNet*—a variant PullNet (Sun et al., 2019). PullNet* upgrades PullNet by adopting the same SR as the retriever and NSM as the reasoner but trains them differently from the proposed two-stage strategy. Since PullNet selects a relation by the retriever and expands the entities by NSM interactively, the reasoner needs to be trained on the partial subgraph at each step beyond the entire subgraph.\nWe report the comparison results in Figure 4. The top row presents the answer coverage rates of the subgraphs with various sizes. It is shown that when retrieving the subgraphs of the same size, the answer coverage rate of SR is higher than PullNet*, and is significantly higher than PPR. The bottom row presents the QA performance (Hits@1) on the subgraphs with various answer coverage rate. It is shown that by performing the same NSM on the subgraphs with the same coverage rate, the subgraphs retrieved by SR can result in higher QA performance than PPR and PullNet*. Summary. The above results show that SR can obtain smaller but higher-quality subgraphs.\nEffect of Question Update, Path Ending, and Subgraph Merge. We investigate the effects of the strategies used in SR, including the question updating strategy (QU) which concatenates the original question with the partially expanded path at each time step, the path ending strategy (PE) which learns when to stop expanding the path, and the subgraph merging strategy (GM) which induces a\nsubgraph from the top-nK paths. Table 3 indicates that based on SR, Hits@1 drops 3.2-10.2% when removing QU (SR w/o QU) and Hits@1 drops 2.7-8.5% when changing PE to the fixed path length T (SR w/o PE), where the optimal T is set to 3 on both WebQSP and CWQ.\nTable 4 shows that based on SR+NSM, the average subgraph size increases from 44.8 to 241.5, and Hits@1 of QA drops 1.4% when removing the subgraph merging strategy (SR+NSM w/o GM) but directly taking the union of all the subgraphs from different topic entities to induce the subgraph. We only present the results on CWQ as most of the questions in WebQSP only contain one topic entity, which do not need the merge operation.\nSummary. The above results verify the effectiveness of the devised QU, PE, and GM in SR."
+    }, {
+      "heading" : "6.4 Training Strategy Evaluation",
+      "text" : "Effect of Pre-training. We investigate the effects of the weakly supervised and the unsupervised pretraining on the SR. Table 3 shows the performance of the supervised training (SR w SuperT) and the weakly supervised pre-training (SR), which indicates that SR is comparable with or even better than SR w SuperT when retrieving more than 10 paths. Because a single ground truth path between a topic entity and an answer is provided by WebQSP and CWQ, which might omit the situation when multiple ground truth paths can be found. In view of this, the weakly supervised way that retrieves multiple shortest paths as the ground truth can provide\nricher supervision signals. We further vary the proportion of the weakly supervised data in {0%, 20%, 50%, 100%}, and present the corresponding answer coverage rate of the subgraph induced by top-10 paths (i.e. Hits@10) in Figure 5. Note 0% means the RoBERTa used in SR don’t have any fine-tuning. The performance shows a consistent growth with the weakly generated dataset, which demonstrates its positive effect.\nBefore the weakly supervised pre-training, we create 100,000 pseudo instances for unsupervised pre-training (Cf. Section 5 for details). The results presented by the orange bars show that unsupervised pre-training can significantly improve the original SR (0% weakly supervised data) by more than 20% Hits@1. Adding only 20% weakly supervised data after unsupervised pre-training can achieve comparable performance with 100% weakly supervised data. Summary. The above results show the effectiveness of the weakly supervised pre-training. Meanwhile, the unsupervised strategy can be an alternative choice when the QA pairs are scarce.\nEffect of End-to-End Fine-tuning. Table 3 shows both SR+NSM w E2E and SR+GN w E2E improves 0.3-1.6% Hits@10 of retrieval based on SR. Table 2 shows SR+NSM w E2E improves 0.5-1.6% Hits@1 of QA based on SR+NSM, and SR+GRAFT-Net w E2E improves 0.5-1.6% Hits@1 of QA based on SR+GRAFT-Net. Summary. The above results indicate that the answer likelihood estimated by the reasoner provides positive feedback for fine-tuning the retriever. With the improvement of the retriever, the reasoner can be also enhanced by the updated subgraphs."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "We propose a subgraph retriever (SR) decoupled from the subsequent reasoner for KBQA. SR is devised as an efficient dual-encoder which can update the question when expanding the path as well as determining the stop of the expansion. The experimental results on two well-studied benchmarks show SR takes effect in improving the QA performance if injecting it before a subgraph-oriented reasoner. SR equipped with NSM creates new SOTA results for embedding-based KBQA methods if learning SR by weakly supervised pre-training as well as end-to-end fine-tuning."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Interpretability of Retrieved Paths. We present the top-nK paths learned by the proposed SR for several questions in Table 5 on WebQSP and CWQ. Each path is denoted by its topic\nentity before the colon. A path denoted by * means it is the new path discovered by SR beyond the ground-truth path provided by WebQSP and CWQ. The paths can explain why an answer is inferred for a question.\nA.2 Training Algorithm.\nWe present the whole training process in Algorithm 1.\nAlgorithm 1: Training Algorithm Input: G, {(q, a)} Output: Learned parameters θ and φ.\n1 Pre-train the retriever by weakly supervised or unsupervised signals plus 20% weakly supervised signals; 2 Train the reasoner on the retrieved subgraphs; /* End-to-End training: */ 3 while not converge do 4 For each (q, a) pair, sample a subgraph G by current retriever; 5 Update φ by optimizing the first term of Eq. (9) on all the (q, a, G) instances; 6 Update θ by optimizing the second term of Eq. (9) on all the (q, a, G) instances; 7 end\nA.3 Experimental Implementation.\nWe provide the training and inference details of all the experiments as below.\nGeneral Setting. We use RoBERTa-base in our paper (Liu et al., 2019). The base configuration of RoBERTa consists of 12 layers, 768-d hidden size, and 12 attention heads, totally contains 110M parameters. On WebQSP and CWQ, the batchsize for training both the retriever and the reasoner is set as 16 and 8 respectively.\nSupervised Training. WebQSP and CWQ provide a SPARQL statement corresponding to each (question, answer) pair. For each SPARQL statement, we extract a relation path from each topic entity to the answer variable as the ground truth path. In this way, we obtain 3,110/41,182 (question, path) instances which can be decomposed into 6,531/67,204 (question, relation) instances in total for supervised training. The learning rate for supervised training is set as 5e-5. An epoch\ntakes about 15/30 minutes and the loss function converges within 10 epochs on WebQSP/CWQ.\nWeakly supervised Pre-training. For weakly supervised pre-training, the SPARQL statements are unavailable. To create the pseudo paths, for each (question, answer) pair, we extract all the shortest paths between each topic entity and an answer. We obtain 6,801/53,536 (question, path) instances which can be decomposed into 11,561/91,011 (question, relation) instances in total for weakly supervised pre-training. The learning rate for Weakly supervised training is set as 5e-5. An epoch takes about 15/30 minutes and the loss function converges within 10 epochs.\nUnsupervised Pre-training. From the NYT dataset (Riedel et al., 2010), we create 100,000 (sentence, path) pseudo instances. The learning rate for unsupervised training is set as 5e-5. An epoch takes about 90 minutes and the loss func-\ntion converges within 10 epochs. The unsupervised pre-training is performed once and then SR can be adapted to various KBQA datasets.\nEnd-to-End Training. Before end-to-end training, the retriever needs to be warmed up by weakly supervised pre-training or unsupervised pre-training. The reasoner also needs to be warmed up by supervised training on the supervised (question, answer) pairs. For training the NSM reasoner (He et al., 2021), an epoch with batchsize 20/40 takes 55/135 seconds and the loss function converges within 70/80 epochs on WebQSP/CWQ. The learning rate for warming up the reasoner is set as 1e-4. For end-to-end training, the learning rate is set as 1e-5. An epoch takes about 40/70 minutes, and the loss function converges within 10 epochs.\nA.4 Inference We retrieve top 10 relevant relations at each step which results in 10 paths for each topic entity. The number 10 is determined at the pre-training stage by checking the inflection point of the answer coverage rate on the validation set.\nA.5 Reproducibility Checklist."
+    }, {
+      "heading" : "A clear description of the mathematical setting,",
+      "text" : "algorithm, and/or model: This is provided in the main paper in Section 4 and Section 5."
+    }, {
+      "heading" : "A link to a downloadable source code, with specification of all dependencies, including external libraries (recommended for camera ready,",
+      "text" : "though welcome for initial submission): Our code is clearly organized and is available at https: //github.com/lambdaDove/Graph_Retriever."
+    }, {
+      "heading" : "A description of computing infrastructure used:",
+      "text" : "We run experiments with one RTX 3090(24G) GPU on the server with 256G physical memory and 8T disk size.\nThe exact number of training and evaluation runs: We report the runtime of different training methods in Appendix A.3.\nThe number of parameters in each model: We provide the number of parameters in Appendix A.3.\nThe bounds for each hyperparameters: We mainly tune the learning rate ∈ [1e−4, 1e−5]. Details of train/validation/test splits, data statistics and download link: The training /validation/test splits are shown in Table 1. WebQSP is available at: https://www.microsoft.com/ en-us/download/details.aspx?id=52763 and CWQ is available at: https://www.tau-nlp.org/compwebq."
+    } ],
+    "references" : [ {
+      "title" : "Learning to retrieve reasoning paths over wikipedia graph for question answering",
+      "author" : [ "Akari Asai", "Kazuma Hashimoto", "Hannaneh Hajishirzi", "Richard Socher", "Caiming Xiong." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Asai et al\\.,? 2020",
+      "shortCiteRegEx" : "Asai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Constraint-based question answering with knowledge graph",
+      "author" : [ "Junwei Bao", "Nan Duan", "Zhao Yan", "Ming Zhou", "Tiejun Zhao." ],
+      "venue" : "Proceedings of the 26th International Conference on Computational Linguistics: Technical Papers, pages 2503–2514.",
+      "citeRegEx" : "Bao et al\\.,? 2016",
+      "shortCiteRegEx" : "Bao et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic parsing via paraphrasing",
+      "author" : [ "Jonathan Berant", "Percy Liang." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics, pages 1415–1425.",
+      "citeRegEx" : "Berant and Liang.,? 2014",
+      "shortCiteRegEx" : "Berant and Liang.",
+      "year" : 2014
+    }, {
+      "title" : "Bidirectional attentive memory networks for question answering over knowledge bases",
+      "author" : [ "Yu Chen", "Lingfei Wu", "Mohammed J Zaki." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 2913–2923.",
+      "citeRegEx" : "Chen et al\\.,? 2019",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Case-based reasoning for natural language queries over knowledge bases",
+      "author" : [ "Rajarshi Das", "Manzil Zaheer", "Dung Thai", "Ameya Godbole", "Ethan Perez", "Jay Yoon Lee", "Lizhen Tan", "Lazaros Polymenakos", "Andrew McCallum." ],
+      "venue" : "Proceedings of the",
+      "citeRegEx" : "Das et al\\.,? 2021",
+      "shortCiteRegEx" : "Das et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Retrieval augmented language model pre-training",
+      "author" : [ "Kelvin Guu", "Kenton Lee", "Zora Tung", "Panupong Pasupat", "Mingwei Chang." ],
+      "venue" : "International Conference on Machine Learning, pages 3929–3938.",
+      "citeRegEx" : "Guu et al\\.,? 2020",
+      "shortCiteRegEx" : "Guu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Topic-sensitive pagerank: A context-sensitive ranking algorithm for web search",
+      "author" : [ "Taher H Haveliwala." ],
+      "venue" : "IEEE transactions on knowledge and data engineering, 15(4):784–796.",
+      "citeRegEx" : "Haveliwala.,? 2003",
+      "shortCiteRegEx" : "Haveliwala.",
+      "year" : 2003
+    }, {
+      "title" : "Improving multi-hop knowledge base question answering by learning intermediate supervision signals",
+      "author" : [ "Gaole He", "Yunshi Lan", "Jing Jiang", "Wayne Xin Zhao", "Ji-Rong Wen." ],
+      "venue" : "Proceedings of the 14th ACM International Conference on Web Search",
+      "citeRegEx" : "He et al\\.,? 2021",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Leveraging passage retrieval with generative models for open domain question answering",
+      "author" : [ "Gautier Izacard", "Edouard Grave" ],
+      "venue" : null,
+      "citeRegEx" : "Izacard and Grave.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Izacard and Grave.",
+      "year" : 2021
+    }, {
+      "title" : "Dense passage retrieval for open-domain question answering",
+      "author" : [ "Vladimir Karpukhin", "Barlas Oguz", "Sewon Min", "Patrick Lewis", "Ledell Wu", "Sergey Edunov", "Danqi Chen", "Wen-tau Yih." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Karpukhin et al\\.,? 2020",
+      "shortCiteRegEx" : "Karpukhin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Query graph generation for answering multi-hop complex questions from knowledge bases",
+      "author" : [ "Yunshi Lan", "Jing Jiang." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 969–974.",
+      "citeRegEx" : "Lan and Jiang.,? 2020",
+      "shortCiteRegEx" : "Lan and Jiang.",
+      "year" : 2020
+    }, {
+      "title" : "Neural symbolic machines: Learning semantic parsers on Freebase with weak supervision",
+      "author" : [ "Chen Liang", "Jonathan Berant", "Quoc Le", "Kenneth D. Forbus", "Ni Lao." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Liang et al\\.,? 2017",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "CoRR, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Key-value memory networks for directly reading documents",
+      "author" : [ "Alexander Miller", "Adam Fisch", "Jesse Dodge", "AmirHossein Karimi", "Antoine Bordes", "Jason Weston." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Miller et al\\.,? 2016",
+      "shortCiteRegEx" : "Miller et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Stepwise reasoning for multi-relation question answering over knowledge graph with weak supervision",
+      "author" : [ "Yunqi Qiu", "Yuanzhuo Wang", "Xiaolong Jin", "Kun Zhang." ],
+      "venue" : "Proceedings of the 13th International Conference on Web Search and Data Min-",
+      "citeRegEx" : "Qiu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Qiu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hierarchical query graph generation for complex question answering over knowledge graph",
+      "author" : [ "Yunqi Qiu", "Kun Zhang", "Yuanzhuo Wang", "Xiaolong Jin", "Long Bai", "Saiping Guan", "Xueqi Cheng." ],
+      "venue" : "Proceedings of the 29th ACM International Con-",
+      "citeRegEx" : "Qiu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Qiu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Modeling relations and their mentions without labeled text",
+      "author" : [ "Sebastian Riedel", "Limin Yao", "Andrew McCallum." ],
+      "venue" : "Joint European Conference on Machine Learning and Knowledge Discovery in Databases, pages 148–163.",
+      "citeRegEx" : "Riedel et al\\.,? 2010",
+      "shortCiteRegEx" : "Riedel et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "The probabilistic relevance framework: BM25 and beyond",
+      "author" : [ "Stephen Robertson", "Hugo Zaragoza" ],
+      "venue" : null,
+      "citeRegEx" : "Robertson and Zaragoza.,? \\Q2009\\E",
+      "shortCiteRegEx" : "Robertson and Zaragoza.",
+      "year" : 2009
+    }, {
+      "title" : "End-to-end training of neural retrievers for open-domain question answering",
+      "author" : [ "Devendra Sachan", "Mostofa Patwary", "Mohammad Shoeybi", "Neel Kant", "Wei Ping", "William L. Hamilton", "Bryan Catanzaro." ],
+      "venue" : "Proceedings of the 59th Annual Meet-",
+      "citeRegEx" : "Sachan et al\\.,? 2021a",
+      "shortCiteRegEx" : "Sachan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "End-to-end training of neural retrievers for open-domain question answering",
+      "author" : [ "Devendra Singh Sachan", "Mostofa Patwary", "Mohammad Shoeybi", "Neel Kant", "Wei Ping", "William L Hamilton", "Bryan Catanzaro" ],
+      "venue" : null,
+      "citeRegEx" : "Sachan et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Sachan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving multi-hop question answering over knowledge graphs using knowledge base embeddings",
+      "author" : [ "Apoorv Saxena", "Aditay Tripathi", "Partha Talukdar." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Saxena et al\\.,? 2020",
+      "shortCiteRegEx" : "Saxena et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Open domain question answering using early fusion of knowledge bases and text",
+      "author" : [ "Haitian Sun", "Bhuwan Dhingra", "Manzil Zaheer", "Kathryn Mazaitis", "Ruslan Salakhutdinov", "William Cohen." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods",
+      "citeRegEx" : "Sun et al\\.,? 2018",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Pullnet: Open domain question answering with iterative retrieval on knowledge bases and text",
+      "author" : [ "Haitian Sun", "Tania Bedrax Weiss", "William W. Cohen." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Sun et al\\.,? 2019",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Sparqa: skeleton-based semantic parsing for complex questions over knowledge bases",
+      "author" : [ "Yawei Sun", "Lingling Zhang", "Gong Cheng", "Yuzhong Qu." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, pages 8952–8959.",
+      "citeRegEx" : "Sun et al\\.,? 2020",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The web as a knowledge-base for answering complex questions",
+      "author" : [ "Alon Talmor", "Jonathan Berant." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,",
+      "citeRegEx" : "Talmor and Berant.,? 2018",
+      "shortCiteRegEx" : "Talmor and Berant.",
+      "year" : 2018
+    }, {
+      "title" : "Enhancing key-value memory neural networks for knowledge based question answering",
+      "author" : [ "Kun Xu", "Yuxuan Lai", "Yansong Feng", "Zhiguo Wang." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computa-",
+      "citeRegEx" : "Xu et al\\.,? 2019",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Big bird: Transformers for longer sequences. In NeurIPS",
+      "author" : [ "Manzil Zaheer", "Guru Guruganesh", "Kumar Avinava Dubey", "Joshua Ainslie", "Chris Alberti", "Santiago Ontanon", "Philip Pham", "Anirudh Ravula", "Qifan Wang", "Li Yang" ],
+      "venue" : null,
+      "citeRegEx" : "Zaheer et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Zaheer et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Variational reasoning for question answering with knowledge graph",
+      "author" : [ "Yuyu Zhang", "Hanjun Dai", "Zornitsa Kozareva", "Alexander J. Smola", "Le Song." ],
+      "venue" : "Proceedings of the Thirty-Second Conference on Artificial Intelligence, pages 6069–6076.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "An interpretable reasoning network for multirelation question answering",
+      "author" : [ "Mantong Zhou", "Minlie Huang", "Xiaoyan Zhu." ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics, pages 2010–2022.",
+      "citeRegEx" : "Zhou et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 7,
+      "context" : "Via weakly supervised pre-training as well as the end-to-end fine-tuning, SR achieves new state-of-the-art performance when combined with NSM (He et al., 2021), a subgraph-oriented reasoner, for embedding-based KBQA methods.",
+      "startOffset" : 142,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 4,
+      "context" : "Semantic parsing-based (SP-based) methods (Das et al., 2021; Lan and Jiang, 2020; Sun et al., 2020) and embedding-based methods (He et al.",
+      "startOffset" : 42,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 10,
+      "context" : "Semantic parsing-based (SP-based) methods (Das et al., 2021; Lan and Jiang, 2020; Sun et al., 2020) and embedding-based methods (He et al.",
+      "startOffset" : 42,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 23,
+      "context" : "Semantic parsing-based (SP-based) methods (Das et al., 2021; Lan and Jiang, 2020; Sun et al., 2020) and embedding-based methods (He et al.",
+      "startOffset" : 42,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020) and embedding-based methods (He et al., 2021; Sun et al., 2018, 2019) are two mainstream methods for addressing KBQA.",
+      "startOffset" : 36,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 7,
+      "context" : "Figure 1: The impact of subgraph size on (a) answer coverage rate and (b) QA performance (Hits@1) of NSM (He et al., 2021) on WebQSP (Yih et al.",
+      "startOffset" : 105,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 7,
+      "context" : "a question-relevant subgraph and then perform reasoning on it (He et al., 2021; Sun et al., 2018, 2019) reduce the reasoning space, showing superiority compared with reasoning on the whole KB (Chen et al.",
+      "startOffset" : 62,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2018, 2019) reduce the reasoning space, showing superiority compared with reasoning on the whole KB (Chen et al., 2019; Saxena et al., 2020; Xu et al., 2019) (Cf.",
+      "startOffset" : 102,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2018, 2019) reduce the reasoning space, showing superiority compared with reasoning on the whole KB (Chen et al., 2019; Saxena et al., 2020; Xu et al., 2019) (Cf.",
+      "startOffset" : 102,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2018, 2019) reduce the reasoning space, showing superiority compared with reasoning on the whole KB (Chen et al., 2019; Saxena et al., 2020; Xu et al., 2019) (Cf.",
+      "startOffset" : 102,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 6,
+      "context" : "We extract the full multi-hop topic-centric-subgraph and control the graph size by the personalized pagerank (PPR) (Haveliwala, 2003) scores of entities.",
+      "startOffset" : 115,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 7,
+      "context" : "We also present the QA performance (Hits@1) of NSM (He et al., 2021), a state-of-the-art embedding-based model, under the same sizes of the subgraphs in Figure 1(b).",
+      "startOffset" : 51,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 22,
+      "context" : "To improve the retrieval performance, PullNet (Sun et al., 2019) proposes a",
+      "startOffset" : 46,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 21,
+      "context" : "After that, any subgraph-oriented reasoner such as GRAFT-Net (Sun et al., 2018) or NSM (He et al.",
+      "startOffset" : 61,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2018) or NSM (He et al., 2021) can be used to delicately deduce the answers from the subgraph.",
+      "startOffset" : 15,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 1,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 2,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 4,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 10,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 11,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 15,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 23,
+      "context" : "SP-based methods (Bao et al., 2016; Berant and Liang, 2014; Das et al., 2021; Lan and Jiang, 2020; Liang et al., 2017; Qiu et al., 2020b; Sun et al., 2020) parse a question into a logic form that can be executed against the KB.",
+      "startOffset" : 17,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 13,
+      "context" : "Embeddingbased methods embed entities and rank them based on their relevance to the question, where the entities are extracted from the whole KB (Miller et al., 2016; Saxena et al., 2020) or restricted in a subgraph (Chen et al.",
+      "startOffset" : 145,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 20,
+      "context" : "Embeddingbased methods embed entities and rank them based on their relevance to the question, where the entities are extracted from the whole KB (Miller et al., 2016; Saxena et al., 2020) or restricted in a subgraph (Chen et al.",
+      "startOffset" : 145,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2020) or restricted in a subgraph (Chen et al., 2019; He et al., 2021; Sun et al., 2018; Zhang et al., 2018).",
+      "startOffset" : 36,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020) or restricted in a subgraph (Chen et al., 2019; He et al., 2021; Sun et al., 2018; Zhang et al., 2018).",
+      "startOffset" : 36,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2020) or restricted in a subgraph (Chen et al., 2019; He et al., 2021; Sun et al., 2018; Zhang et al., 2018).",
+      "startOffset" : 36,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2020) or restricted in a subgraph (Chen et al., 2019; He et al., 2021; Sun et al., 2018; Zhang et al., 2018).",
+      "startOffset" : 36,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 22,
+      "context" : "Some works such as PullNet (Sun et al., 2019), SRN (Qiu et al.",
+      "startOffset" : 27,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2019), SRN (Qiu et al., 2020a), and IRN (Zhou et al.",
+      "startOffset" : 13,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2020a), and IRN (Zhou et al., 2018) enhance the retrieval by training the retriever, but the retrieving and the reasoning are intertwined, causing the reasoning on partially retrieved subgraphs.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 17,
+      "context" : "The retriever is devised as a sparse term-based method such as BM25 (Robertson and Zaragoza, 2009) or a trainable dense passage retrieval method (Karpukhin et al.",
+      "startOffset" : 68,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 9,
+      "context" : "The retriever is devised as a sparse term-based method such as BM25 (Robertson and Zaragoza, 2009) or a trainable dense passage retrieval method (Karpukhin et al., 2020; Sachan et al., 2021a), and the reasoner deals with each document individually (Guu et al.",
+      "startOffset" : 145,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 18,
+      "context" : "The retriever is devised as a sparse term-based method such as BM25 (Robertson and Zaragoza, 2009) or a trainable dense passage retrieval method (Karpukhin et al., 2020; Sachan et al., 2021a), and the reasoner deals with each document individually (Guu et al.",
+      "startOffset" : 145,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2021a), and the reasoner deals with each document individually (Guu et al., 2020) or fuses all the documents together (Izacard and Grave, 2021).",
+      "startOffset" : 65,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2020) or fuses all the documents together (Izacard and Grave, 2021).",
+      "startOffset" : 44,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 0,
+      "context" : "Although some openQA research proposes multi-hop document retrieval (Asai et al., 2020), the focus is the matching of the documents rather than the relations to the questions in KBQA.",
+      "startOffset" : 68,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 21,
+      "context" : "The concrete reasoner can be instantiated by any subgraph-oriented KBQA model such as the GNN-based GRAT-Net (Sun et al., 2018) and NSM (He et al.",
+      "startOffset" : 109,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 12,
+      "context" : "where both f and h are instantiated by RoBERTa (Liu et al., 2019).",
+      "startOffset" : 47,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 7,
+      "context" : "According to the assumption (He et al., 2021; Qiu et al., 2020a; Zhou et al., 2018) that expanding relations at different time steps should attend to specific parts of a query, we update the embedding of the question by simply concatenating the original question with the historical expanded relations in p(t) as the input of RoBERTa, i.",
+      "startOffset" : 28,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 14,
+      "context" : "According to the assumption (He et al., 2021; Qiu et al., 2020a; Zhou et al., 2018) that expanding relations at different time steps should attend to specific parts of a query, we update the embedding of the question by simply concatenating the original question with the historical expanded relations in p(t) as the input of RoBERTa, i.",
+      "startOffset" : 28,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 28,
+      "context" : "According to the assumption (He et al., 2021; Qiu et al., 2020a; Zhou et al., 2018) that expanding relations at different time steps should attend to specific parts of a query, we update the embedding of the question by simply concatenating the original question with the historical expanded relations in p(t) as the input of RoBERTa, i.",
+      "startOffset" : 28,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 16,
+      "context" : "We leverage the NYT dataset, a distant supervision dataset for relation extraction (Riedel et al., 2010) to construct the pseudo (q, a, p) labels.",
+      "startOffset" : 83,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 24,
+      "context" : "1 (CWQ) (Talmor and Berant, 2018), for evaluating the proposed KBQA model.",
+      "startOffset" : 8,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 20,
+      "context" : "We compare with embeddingbased KBQA models, in which EmbedKGQA (Saxena et al., 2020) directly optimizes the triplet of (topic entity, question, answer) based on their direct embeddings.",
+      "startOffset" : 63,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2016) BAMNet (Chen et al., 2019) store triplets in a keyvalue structured memory for reasoning.",
+      "startOffset" : 15,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2019), NSM (He et al., 2021), and PullNet (Sun et al.",
+      "startOffset" : 13,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2021), and PullNet (Sun et al., 2019) are subgraph-oriented embedding models.",
+      "startOffset" : 21,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 10,
+      "context" : "We also compare with the SP-based models, in which QGG (Lan and Jiang, 2020) generates the query graph for a question by adding the constraints and extending the relation paths simultaneously, SPARQA (Sun et al.",
+      "startOffset" : 55,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 23,
+      "context" : "We also compare with the SP-based models, in which QGG (Lan and Jiang, 2020) generates the query graph for a question by adding the constraints and extending the relation paths simultaneously, SPARQA (Sun et al., 2020) proposes a novel skeleton grammar to represent a question, and CBRTable 2: QA performance on WebQSP and CWQ (%).",
+      "startOffset" : 200,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 4,
+      "context" : "KBQA (Das et al., 2021) leverages BigBird (Zaheer et al.",
+      "startOffset" : 5,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2021) leverages BigBird (Zaheer et al., 2020), a pre-trained seq2seq model to directly parse a question into a SPARQL statement.",
+      "startOffset" : 26,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 21,
+      "context" : "For a fair comparison, we fix the reasoner as NSM, and vary the retriever as SR, the PPR-based heuristic retrieval (Sun et al., 2018; He et al., 2021), and PullNet*—a variant PullNet (Sun et al.",
+      "startOffset" : 115,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 7,
+      "context" : "For a fair comparison, we fix the reasoner as NSM, and vary the retriever as SR, the PPR-based heuristic retrieval (Sun et al., 2018; He et al., 2021), and PullNet*—a variant PullNet (Sun et al.",
+      "startOffset" : 115,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2021), and PullNet*—a variant PullNet (Sun et al., 2019).",
+      "startOffset" : 40,
+      "endOffset" : 58
+    } ],
+    "year" : 0,
+    "abstractText" : "Recent works on knowledge base question answering (KBQA) retrieve subgraphs for easier reasoning. A desired subgraph is crucial as a small one may exclude the answer but a large one might introduce more noises. However, the existing retrieval is either heuristic or interwoven with the reasoning, causing reasoning on the partial subgraphs, which increases the reasoning bias when the intermediate supervision is missing. This paper proposes a trainable subgraph retriever (SR) decoupled from the subsequent reasoning process, which enables a plug-and-play framework to enhance any subgraph-oriented KBQA model. Extensive experiments demonstrate SR achieves significantly better retrieval and QA performance than existing retrieval methods. Via weakly supervised pre-training as well as the end-to-end fine-tuning, SR achieves new state-of-the-art performance when combined with NSM (He et al., 2021), a subgraph-oriented reasoner, for embedding-based KBQA methods. Codes and datasets are available online1.",
+    "creator" : null
+  }
+}

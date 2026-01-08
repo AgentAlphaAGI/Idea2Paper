@@ -1,0 +1,939 @@
+{
+  "name" : "COLING_2020_24_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Specializing Unsupervised Pretraining Models for Word-Level Semantic Similarity",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Unsupervised pretraining models, such as GPT and GPT-2 (Radford et al., 2018; Radford et al., 2019), ELMo (Peters et al., 2018), and BERT (Devlin et al., 2019) yield state-of-the-art performance on a wide range of natural language processing tasks. All these models rely on language modeling (LM) objectives that exploit the knowledge encoded in large text corpora. BERT (Devlin et al., 2019), as one of the current state-of-the-art models, is pretrained on a joint objective consisting of two parts: (1) masked language modeling (MLM), and (2) next sentence prediction (NSP). Through both of these objectives, BERT still consumes only the distributional knowledge encoded by word co-occurrences.\nWhile several concurrent research threads are focused on making BERT optimization more robust (Liu et al., 2019) or on imprinting external world knowledge on its representations (Sun et al., 2019a; Zhang et al., 2019; Sun et al., 2019b; Liu et al., 2020; Peters et al., 2019; Wang et al., 2020, inter alia), no study yet has been dedicated to mitigating a severe limitation that contextualized representations and unsupervised pretraining inherited from static word embeddings: every model that relies on distributional patterns has a tendency to conflate together pure lexical semantic similarity with broad topic relatedness (Schwartz et al., 2015; Mrkšić et al., 2017).\nIn the past, a plethora of models have been proposed for injecting linguistic constraints (i.e., lexical knowledge) from external resources to static word embeddings (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2017; Ponti et al., 2018, inter alia) in order to emphasize a particular lexical relation in a specialized embedding space. For instance, lexically informed word vectors specialized for pure semantic similarity result in substantial gains in a number of downstream tasks where such similarity plays an important role, e.g., in dialog state tracking (Mrkšić et al., 2017; Ren et al., 2018) or for lexical simplification (Glavaš and Vulić, 2018; Ponti et al., 2019). Existing specialization methods are, however, not directly applicable to unsupervised pretraining models because they are either (1) tied to a particular training objective of a static word embedding model, or (2) predicated on the existence of an embedding space in which pairwise distances can be modified.\nIn this work, we hypothesize that supplementing unsupervised LM-based pretraining with clean lexical information from structured external resources may also lead to improved performance in language understanding tasks, especially in tasks where distinguishing between pure semantic similarity and conceptual relatedness is paramount. We propose a novel method to inject linguistic constraints, available from lexico-semantic resources like WordNet (Miller, 1995) and BabelNet (Navigli and Ponzetto, 2012), into unsupervised pretraining models, and steer them towards capturing word-level semantic similarity. To train Lexically Informed BERT (LIBERT), we (1) feed semantic similarity constraints to BERT as additional training instances and (2) predict lexico-semantic relations from the constraint embeddings produced by BERT’s encoder (Vaswani et al., 2017). In other words, LIBERT adds lexical relation classification (LRC) as the third pretraining task to BERT’s multi-task learning framework.\nWe compare LIBERT to a lexically blind “vanilla” BERT on the GLUE benchmark (Wang et al., 2018) and report their performance on corresponding development and test portions. LIBERT yields performance gains over BERT on 9/10 GLUE tasks (and is on a par with BERT on the remaining one), with especially wide margins on tasks involving complex or rare linguistic structures such as Diagnostic Natural Language Inference and Linguistic Acceptability. Moreover, we assess the robustness and effectiveness of LIBERT on 3 different datasets for lexical simplification (LS), a task proven to benefit from word-level similarity specialization (Ponti et al., 2019). We report LS improvements of up to 8.2% when using LIBERT in lieu of BERT. For direct comparability, we train both LIBERT and BERT from scratch, and monitor the gains from specialization across iterations. Interestingly, these do not vanish over time, which seems to suggest that our specialization approach is suitable also for models trained on massive amounts of raw text data."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Specialization for Semantic Similarity",
+      "text" : "The conflation of disparate lexico-semantic relations in static word representations is an extensively researched problem. For instance, clearly discerning between true/pure semantic similarity and broader conceptual relatedness in static embeddings benefits a range of natural language understanding tasks such as dialog state tracking (Mrkšić et al., 2017), text simplification (Glavaš and Vulić, 2018), and spoken language understanding (Kim et al., 2016). The most widespread solution relies on the use of specialization algorithms to enrich word embeddings with external lexical knowledge and steer them towards a desired lexical relation.\nJoint specialization models (Yu and Dredze, 2014; Kiela et al., 2015; Liu et al., 2015; Osborne et al., 2016; Nguyen et al., 2017, inter alia) jointly train word embedding models from scratch and enforce the external constraints with an auxiliary objective. On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).\nMore recently, retrofitting models have been extended to specialize not only words found in the external constraints, but rather the entire embedding space. In explicit retrofitting models (Glavaš and Vulić, 2018), a (deep, non-linear) specialization function is directly learned from external constraints. Postspecialization models (Vulić et al., 2018; Ponti et al., 2018; Kamath et al., 2019; Biesialska et al., 2020), instead, propagate lexico-semantic information to unseen words by imitating the transformation undergone by seen words during the initial specialization. This family of models can also transfer specialization across languages (Glavaš and Vulić, 2018; Ponti et al., 2019; Zhang et al., 2020).\nThe goal of this work is to move beyond similarity-based specialization of static word embeddings only. We present a novel methodology for enriching unsupervised pretraining models such as BERT (Devlin et al., 2019) with readily available discrete lexico-semantic knowledge, and measure the benefits of such semantic specialization on similarity-oriented downstream applications."
+    }, {
+      "heading" : "2.2 Injecting Knowledge into Unsupervised Pretraining Models",
+      "text" : "Unsupervised pretraining models do retain some of the limitations of static word embeddings. First, they still conflate separate lexico-semantic relations, as they learn from distributional patterns. Second,\nthey fail to fully capture the world knowledge necessary for human reasoning: masked language models struggle to recover knowledge base triples from raw texts (Petroni et al., 2019). Recent work has, for the most part, focused on mitigating the latter limitation by injecting structured world knowledge into unsupervised pretraining and contextualized representations (Wang et al., 2020).\nIn particular, these techniques fall into the following broad categories: i) masking higher linguistic units of meanings, such as phrases or named entities, rather than individual WordPieces or BPE tokens (Sun et al., 2019a); ii) including an auxiliary task in the objective, such as denoising auto-encoding of entities aligned with text (Zhang et al., 2019), or continuous learning frameworks over a series of unsupervised or weakly supervised tasks (e.g., capitalization prediction or sentence reordering) (Sun et al., 2019b); iii) hybridizing texts and graphs. Liu et al. (2020) proposed a special attention mask and soft position embeddings to preserve their graph structure while preventing unwanted entity-word interactions. Peters et al. (2019) fuse language modeling with an end-to-end entity linker, updating contextual word representations with word-to-entity attention. On a high level, the most similar work to ours is SenseBERT (Levine et al., 2020) which uses WordNet supersenses to inform distributional BERT about word senses. However, our proposed model and SenseBERT substantially differ in the nature of the additional objective (semantic similarity classification versus supersense prediction) and in intended usage and evaluation (simple intrinsic sense-level tasks with SenseBERT).\nAs the main contributions of our work, we incorporate external lexico-semantic knowledge, rather than world or sense knowledge, in order to rectify the first limitation, namely the distortions originating from the distributional signal. In fact, Liu et al. (2020) hybridized texts also with linguistic triples relating words to sememes (minimal semantic components); however, this incurs into the opposite effect of reinforcing the distributional signal based on co-occurrence. On the contrary, we propose a new technique to enable the model to distinguish between purely similar and broadly related words, and show that distinguishing between the two during pretraining matters for similarity-oriented language understanding tasks such as lexical simplification."
+    }, {
+      "heading" : "3 Specializing for Word-Level Similarity",
+      "text" : "LIBERT, illustrated in Figure 1, is a joint specialization model. It augments BERT’s two pretraining tasks – masked language modeling (1. MLM) and next sentence prediction (2. NSP) – with an additional task of identifying (i.e., classifying) valid lexico-semantic relations from an external resource (3. LRC). LIBERT is first pretrained jointly on all three tasks. Similarly to BERT, after pretraining, LIBERT is fine-tuned on training datasets of downstream tasks. For completeness, we first briefly outline the base BERT model and then provide the details of our lexically informed augmentation."
+    }, {
+      "heading" : "3.1 BERT: Transformer-Based Encoder",
+      "text" : "The core of the BERT model is a multi-layer bidirectional Transformer (Vaswani et al., 2017), pretrained using two objectives: (1) masked language modeling (MLM) and (2) next sentence prediction (NSP). MLM is a token-level prediction task, also referred to as Cloze task (Taylor, 1953): among the input data, a certain percentage of tokens is masked out and needs to be recovered. NSP operates on the sentence-level and can, therefore, be seen as a higher-level sequence modeling task that captures information across sentences. NSP predicts if two given sentences are adjacent in text (negative examples are created by randomly pairing sentences)."
+    }, {
+      "heading" : "3.2 LIBERT: Lexically-Informed (Specialized) Pretraining",
+      "text" : "The base BERT model consumes only the distributional information. We aim to steer the model towards capturing true semantic similarity (as opposed to conceptual relatedness) by exposing it to clean external knowledge presented as the set of linguistic constraints C = {(w1,w2)i}Ni=1, i.e., pairs of words that stand in the desired relation (i.e., true semantic similarity) in some external lexico-semantic resource. Following the successful work on semantic specialization of static word embeddings (see §2.1), in this work we select pairs of synonyms (e.g., car and automobile) and direct hyponym-hypernym pairs (e.g., car and vehicle) as our semantic similarity constraints (label 1 for the binary classifier).1\nWe transform the constraints from C into a BERT-compatible input format and feed them as additional training examples for the model. The encoding of a constraint is then forwarded to the relation classifier, which predicts whether the input word pair represents a valid lexical relation.\nFrom Linguistic Constraints to Training Instances. We start from a set of linguistic constraints C = {(w1,w2)i}Ni=1 and an auxiliary static word embedding space Xaux ∈ Rd . The space Xaux can be obtained via any standard static word embedding model such as Skip-Gram (Mikolov et al., 2013) or fastText (Bojanowski et al., 2017) (used in this work). Each constraint c = (w1,w2) corresponds to a true/positive relation of semantic similarity, and thus represents a positive training example for the model (label 1). For each positive example c, we create corresponding negative examples following prior work on specialization of static embeddings (Wieting et al., 2015; Glavaš and Vulić, 2018; Ponti et al., 2019). We first group positive constraints from C into mini-batches Bp of size k. For each positive example c = (w1,w2), we create two negatives ĉ1 = (ŵ1,w2) and ĉ2 = (w1, ŵ2) such that ŵ1 is the word from batch Bp (other than w1) closest to w2 and ŵ2 the word (other than w2) closest to w1, respectively, in terms of the cosine similarity of their vectors in Xaux. This way we create a batch Bn of 2k negative training instances from a batch Bp of k positive training instances.\nNext, we transform each instance (i.e., a pair of words) into a “BERT-compatible” format, i.e., into a sequence of WordPiece (Wu et al., 2016) tokens.2 We split both w1 and w2 into WordPiece tokens, insert the special separator token (with a randomly initialized embedding) before and after the tokens of w2 and prepend the whole sequence with BERT’s sequence start token, as shown in this example for the constraint (mended, regenerated):3\n[CLS] men #ded [SEP] reg #ener #ated [SEP] 0 0 0 0 1 1 1 1\nAs in the original work (Devlin et al., 2019), we sum the WordPiece embedding of each token with the embeddings of the segment and position of the token. We assign the segment ID of 0 to the [CLS] token, all w1 tokens, and the first [SEP] token; segment ID 1 is assigned to all tokens of w2 and the final [SEP] token.\nLexical Relation Classifier. Original BERT feeds Transformer-encoded token representations to two classifiers: MLM classifier (predicting the masked tokens), and the NSP classifier (predicting whether two sentences are adjacent). LIBERT introduces the third pretraining classifier: it is a binary classifier that predicts whether an encoded word pair represents a desired lexico-semantic relation (i.e., a positive example where two words stand in the relation of true semantic similarity – synonyms or hypernymhyponym pairs) or not. Let xCLS ∈ RH be the transformed vector representation of the sequence start token [CLS] that encodes the whole constraint (w1,w2). Our lexical relation predictor (LRC) is a softmax classifier formulated as follows:\nŷ = softmax(xCLSW>LRC +bLRC) , (1) 1As the goal is to inform the BERT model on the relation of true semantic similarity between words (Hill et al., 2015), according to prior work on static word embeddings, the sets of both synonym pairs and direct hyponym-hypernym pairs are useful to boost the model’s ability to capture true semantic similarity, which in turn has a positive effect on downstream language understanding applications. See the work of Hill et al. (2015) and Vulić (2018) for further details regarding the relationship between direct hyponym-hypernym pairs and true semantic similarity.\n2We use the same 30K WordPiece vocabulary as Devlin et al. (2019). Sharing WordPieces helps our word-level task as lexico-semantic relationships are similar for words composed of the same morphemes.\n3The sign # denotes split WordPiece tokens.\nwith WLRC ∈ RH×2 and bLRC ∈ R2 as the classifier’s trainable parameters. Relation classification loss LLRC is then simply the negative log-likelihood over k instances in the training batch:\nLLRC =−∑ k ln ŷk ·yk. (2)\nwhere y ∈ {[0,1], [1,0]} is the true relation label for a word-pair training instance."
+    }, {
+      "heading" : "4 Language Understanding Evaluation",
+      "text" : "To isolate the effects of injecting linguistic knowledge into BERT, we train base BERT and LIBERT in the same setting: the only difference is that we additionally update the parameters of LIBERT’s Transformer encoder based on the gradients of the LRC loss LLRC from Eq. (2). In the first set of experiments, we probe the usefulness of injecting semantic similarity knowledge on the well-known suite of GLUE tasks (Wang et al., 2018), while we also present the results on lexical simplification, another task that has been shown to benefit from semantic similarity specialization (Glavaš and Vulić, 2018), later in §5."
+    }, {
+      "heading" : "4.1 Experimental Setup",
+      "text" : "Pretraining Data. We minimize BERT’s original objective LMLM +LNSP on training examples coming from English Wikipedia.4 We obtain the set of constraints C for the LLRC term from the body of previous work on semantic specialization of static word embeddings (Zhang et al., 2014; Vulić et al., 2018; Ponti et al., 2018). In particular, we collect 1,023,082 synonymy pairs from WordNet (Miller, 1995) and Roget’s Thesaurus (Kipfer, 2009) and 326,187 direct hyponym-hypernym pairs (Vulić and Mrkšić, 2018) from WordNet, and use them as positive instances for the binary classifier (LRC).5\nFine-Tuning (Downstream) Tasks. We evaluate BERT and LIBERT on the the following tasks from the GLUE benchmark (Wang et al., 2018), where sizes of training, development, and test datasets for each task are provided in Table 1:\nCoLA (Warstadt et al., 2019): Binary sentence classification, predicting if sentences from linguistic publications are grammatically acceptable;\nSST-2 (Socher et al., 2013): Binary sentence classification, predicting sentiment (positive or negative) for movie review sentences;\nMRPC (Dolan and Brockett, 2005): Binary sentence-pair classification, predicting whether two sentences are mutual paraphrases;\nSTS-B (Cer et al., 2017): Sentence-pair regression task, predicting the degree of semantic similarity for a pair of sentences;\nQQP (Chen et al., 2018): Binary classification task, recognizing question paraphrases; MNLI (Williams et al., 2018): Ternary natural language inference (NLI) classification of sentence pairs. Two test sets are given: a matched version (MNLI-m) in which the test domains match with training data domains, and a mismatched version (MNLI-mm) with different test domains;\nQNLI: A binary classification version of the Stanford Q&A dataset (Rajpurkar et al., 2016); RTE (Bentivogli et al., 2009): Another NLI dataset, ternary entailment classification for sentence pairs; AX (Wang et al., 2018): A small, manually curated NLI dataset (i.e., a ternary classification task), with examples encompassing different linguistic phenomena relevant for entailment.6\nTraining and Evaluation. We train both BERT and LIBERT from scratch, with the configuration of the BERTBASE model (Devlin et al., 2019): L = 12 transformer layers with the hidden state size of H = 768,\n4We acknowledge that training the models on larger corpora would likely lead to better absolute downstream scores; however, the main goal of this work is not to achieve state-of-the-art downstream performance, but to compare the base model against its lexically informed counterpart.\n5Note again that similar to work of Vulić (2018), both WordNet synonyms and direct hyponym-hypernym pairs are treated exactly the same: as positive examples for the relation of true semantic similarity.\n6Following Devlin et al. (2019), we do not evaluate on the Winograd NLI (WNLI), given its well-documented issues.\nCoLA SST-2 MRPC STS-B QQP MNLI-m MNLI-mm QNLI RTE AX MCC Acc F1/Acc Pears F1/Acc Acc Acc Acc Acc MCC\nand A = 12 self-attention heads. We train in batches of k = 16 instances;7 the input sequence length is 128. The learning rate for both models is 2 ·10−5 with a warm-up over the first 1,000 training steps. Other hyperparameters are set to the values reported by Devlin et al. (2019).\nLIBERT combines BERT’s MLM and NSP objectives with our LRC objective in a multi-task learning setup. We update its parameters in a balanced alternating regime: (1) we first minimize BERT’s LMLM + LNSP objective on one batch of masked sentence pairs and then (2) minimize the LRC objective LLRC on one batch of training instances created from linguistic constraints.\nDuring fine-tuning, for each task, we independently find the optimal hyperparameter configurations of the downstream classifiers for the pretrained BERT and LIBERT: this implies that it is valid to compare their performances on the downstream development sets. Finally, we evaluate fine-tuned BERT and LIBERT on all 10 test sets.\n7Due to hardware restrictions, we train in smaller batches than in the the original work (Devlin et al., 2019) (k = 256). This means that for the same number of update steps, our models will have observed less training data than the original BERT model of Devlin et al. (2019)."
+    }, {
+      "heading" : "4.2 Results and Discussion",
+      "text" : "Main Results. The main results are summarized in Table 2: we report both dev set and test set performance. After 1M MLM+NSP steps, LIBERT outperforms BERT on 8/9 tasks (dev) and 8/10 tasks (test). After 2M MLM+NSP steps, LIBERT is superior in 9/9 tasks (dev) and 9/10 tasks (test). For the test set of the tenth task (QNLI), LIBERT is on a par with BERT. While large gains are reported on CoLA, AX, and visible gains appear on SST-2 and MRPC, it is encouraging to see that slight and consistent gains are observed on almost all other tasks. These results suggest that available external lexical knowledge can be used to supplement unsupervised pretraining models with useful information which cannot be fully captured solely through large text data and their distributional signal. The results indicate that LIBERT, our lexically informed multi-task method, successfully blends such curated linguistic knowledge with distributional learning signals. It also further validates intuitions from relevant work on specializing static word embeddings (Wieting et al., 2015; Mrkšić et al., 2017) that steering distributional models towards capturing true semantic similarity (as also done here) has a positive impact on language understanding applications in general.\nFine-grained Analysis. To better understand how lexical information corroborates the model predictions, we perform a fine-grained analysis on the Diagnostic dataset (Wang et al., 2018), measuring the performance of LIBERT on specific subsets of sentences annotated for the linguistic phenomena they contain. We report the results in Table 3. As expected, Lexical Semantics is the category of phenomena that benefits the most (+43.7% for 1M iterations, +29.7% for 2M), but with significant gains also in phenomena related to Logic (+29.1% for 1M and +29.1% for 2M) and Knowledge & Common Sense (+51.7% for 1M). Interestingly, these results seem to suggest that knowledge about semantic similarity and lexical relations also partially encompasses factual knowledge about the world.\nBy inspecting even finer-grained phenomena related to Lexical Semantics, LIBERT outdistances its baseline by a large margin in: i) Lexical Entailment (+62.9% for 1M, +56.6% for 2M), as expected from the guidance of hypernym-hyponym pairs; ii) Morphological Negation (+75.8% for 1M, +40.4% for 2M). Crucially, the lower performance of BERT cannot be explained by the low frequency of morphologically derived words (prevented by the WordPiece tokenization), but exactly because of the distributional bias. iii) Factivity (+281.7% for 1M, +130.8% for 2M), which is a lexical entailment between a clause and the entire sentence it is embedded in. Since it depends on specific lexical triggers (usually verbs or adverbs), it is clear that lexico-semantic knowledge better characterizes the trigger meanings. The improvement margin for Redundancy and Quantifiers fluctuate across different amounts of iterations, hence no conclusions can be drawn from the current evidence.\nPerformance over Time. Further, an analysis of performance over time (in terms of MLM+NSP training steps for BERT and LIBERT) for one single-sentence task (SST-2) and one sentence-pair classification task (MRPC) is reported in Figures 2a-2b. The scores clearly suggest that the impact of external knowledge\ndoes not vanish over time: the gains with the lexically-informed LIBERT persist at different time steps. This finding again indicates the complementarity of useful signals coded in large text data versus lexical resources (Faruqui, 2016; Mrkšić et al., 2017), which should be investigated more in future work."
+    }, {
+      "heading" : "5 Similarity-Oriented Downstream Evaluation: Lexical Simplification",
+      "text" : "Task Description. The goal of lexical simplification is to replace a target word w in a context sentence S with simpler alternatives of equivalent meaning. Generally, the task can be divided into two main parts: (1) generation of substitute candidates, and (2) candidate ranking, in which the simplest candidate is selected (Paetzold and Specia, 2017). Unsupervised approaches to candidate generation seem to be predominant lately (Glavaš and Štajner, 2015; Ponti et al., 2019). In this task, discerning between pure semantic similarity and broad topical relatedness (as well as from other lexical relations such as antonymy) is crucial. Consider the example: “Einstein unlocked the door to the atomic age,” where unlocked is the target word. In this context, the model should avoid confusion both with related words (e.g. repaired) and opposite words (e.g. closed) that fit in context but alter the original meaning.\nExperimental Setup. In order to evaluate the simplification capabilities of LIBERT versus BERT, we adopt a standard BERT-based approach to lexical simplification (Qiang et al., 2019), dubbed BERT-LS. It exploits the BERT MLM pretraining task objective for candidate generation. Given the complex word w and a context sentence S, we mask w in a new sequence S′. Next, we concatenate S and S′ as a sentence pair and create the BERT-style input by running WordPiece tokenization on the sentences, adding the [CLS] and [SEP] tokens before, in-between, and after the sequence, and setting segment IDs accordingly. We then feed the input either to BERT or LIBERT, and obtain the probability distribution over the vocabulary outputted by the MLM predictor based on the masked token p(·|S,S′\\{w}). Based on this, we select the candidates as the top k words according to their probabilities, excluding morphological variations of the masked word.\nFor the substitution ranking component, we also follow Qiang et al. (2019). Given the set of candidate tokens C, we compute for each ci in C a set of features: (1) BERT prediction probability, (2) loss of the likelihood of the whole sequence according to the MLM when choosing ci instead of w, (3) semantic similarity between the fastText vectors (Bojanowski et al., 2017) of the original word w and the candidate ci, and (4) word frequency of ci in the top 12 million texts of Wikipedia and in the Children’s Book Test corpus.8 Based on the individual features, we next rank the candidates in C and consequently, obtain a set of ranks for each ci. The best candidate is chosen according to its average rank across all features. In our experiments, we fix the number of candidates k to 6.\nEvaluation Data. We run the evaluation on three standard datasets for lexical simplification: (1) LexMTurk (Horn et al., 2014). The dataset consists of 500 English instances, which are collected from Wikipedia. The complex word and the simpler substitutions were annotated by 50 crowd workers on\n8A detailed description of these features can be found in the original work.\nAmazon Mechanical Turk.\n(2) BenchLS (Paetzold and Specia, 2016) is a merge of LexMTurk and LSeval (De Belder and Moens, 2010) containing 929 sentences. The latter dataset focuses on text simplification for children. The authors of BenchLS applied additional corrections over the instances of the two datasets.\n(3) NNSeval (Paetzold and Specia, 2017) is an English dataset focused on text simplification for non-native speakers and consists in total of 239 instances. Similar to BenchLS, the dataset is based on LexMTurk, but filtered for a) instances that contain a complex target word for non-native speakers, and b) simplification candidates that were found to be non-complex by non-native speakers.\nWe report the scores on all three datasets in terms of Precision, Recall and F1 for the candidate generation sub-task, and in terms of the standard lexical simplification metric of accurracy (A) (Horn et al., 2014; Glavaš and Štajner, 2015) for the full simplification pipeline. This metric computes the number of correct simplifications (i.e., when the replacement made by the system is found in the list of gold standard replacements) divided by the total number of target complex words.\nResults and Discussion. The results for BERT and LIBERT for the simplification candidate generation task and for the full pipeline evaluation are provided in Table 4. We report the performance of both models after 1M and 2M MLM+NSP pretraining steps. We observe that LIBERT consistently outperforms BERT by at least 0.9 percentage points across all evaluation setups, measures, and for all three evaluation sets. Same as in GLUE evaluation, the gains do not vanish as we train both models for a longer period of time (i.e., compare the differences between the two models after 1M vs. 2M training steps). On the contrary, for the candidate generation task, the gains of LIBERT over BERT are even higher after 2M steps. The gains achieved by LIBERT are also visible in the full simplification pipeline: e.g., on LexMTurk, replacing BERT with LIBERT yields a gain of 8.2 percentage points. In sum, these results confirm the importance of similarity specialization for a similarity-oriented downstream task such as lexical simplification."
+    }, {
+      "heading" : "6 Conclusion and Future Work",
+      "text" : "We have presented LIBERT, a lexically informed extension of the state-of-the-art unsupervised pretraining model BERT. Our model is based on a multi-task framework that allows us to steer (i.e., specialize) the purely distributional BERT model to accentuate a lexico-semantic relation of true semantic similarity (as opposed to broader semantic relatedness). The framework combines standard BERT objectives with a third objective formulated as a relation classification task. The gains stemming from such explicit injection of lexical knowledge into pretraining were observed for 9 out of 10 language understanding tasks from the GLUE benchmark, as well as for 3 lexical simplification benchmarks. These results suggest that complementing distributional information with lexical knowledge is beneficial for unsupervised pretraining models.\nIn the future, we will work on more sophisticated specialization methods, and also investigate the use of adapter modules (Houlsby et al., 2019; Pfeiffer et al., 2020) for more efficient fine-tuning. We will also explore methods to encode the knowledge on asymmetric relations such as meronymy and lexical entailment. Finally, we will port this new framework to other languages, other pretrained language models, and to resource-poor scenarios. We will release the code at: [URL-ANONYMOUS]"
+    } ],
+    "references" : [ {
+      "title" : "The Fifth PASCAL recognizing textual entailment challenge",
+      "author" : [ "Luisa Bentivogli", "Peter Clark", "Ido Dagan", "Danilo Giampiccolo." ],
+      "venue" : "Proceedings of TAC.",
+      "citeRegEx" : "Bentivogli et al\\.,? 2009",
+      "shortCiteRegEx" : "Bentivogli et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Enhancing word embeddings with knowledge extracted from lexical resources",
+      "author" : [ "Magdalena Biesialska", "Bardia Rafieian", "Marta R. Costa-jussà." ],
+      "venue" : "Proceedings of ACL: Student Research Workshop, pages 271– 278.",
+      "citeRegEx" : "Biesialska et al\\.,? 2020",
+      "shortCiteRegEx" : "Biesialska et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Enriching word vectors with subword information",
+      "author" : [ "Piotr Bojanowski", "Edouard Grave", "Armand Joulin", "Tomas Mikolov." ],
+      "venue" : "Transactions of the ACL, 5:135–146.",
+      "citeRegEx" : "Bojanowski et al\\.,? 2017",
+      "shortCiteRegEx" : "Bojanowski et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "SemEval-2017 task 1: Semantic textual similarity multilingual and crosslingual focused evaluation",
+      "author" : [ "Daniel Cer", "Mona Diab", "Eneko Agirre", "Inigo Lopez-Gazpio", "Lucia Specia." ],
+      "venue" : "Proceedings of SemEval, pages 1–14, August.",
+      "citeRegEx" : "Cer et al\\.,? 2017",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Quora question pairs",
+      "author" : [ "Zihan Chen", "Hongbo Zhang", "Xiaoji Zhang", "Leqi Zhao." ],
+      "venue" : "Technical report, University of Waterloo.",
+      "citeRegEx" : "Chen et al\\.,? 2018",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Text simplification for children",
+      "author" : [ "Jan De Belder", "Marie-Francine Moens." ],
+      "venue" : "Proceedings of the SIGIR workshop on accessible search systems, pages 19–26.",
+      "citeRegEx" : "Belder and Moens.,? 2010",
+      "shortCiteRegEx" : "Belder and Moens.",
+      "year" : 2010
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 4171–4186.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatically constructing a corpus of sentential paraphrases",
+      "author" : [ "William B. Dolan", "Chris Brockett." ],
+      "venue" : "Proceedings of the Third International Workshop on Paraphrasing (IWP2005).",
+      "citeRegEx" : "Dolan and Brockett.,? 2005",
+      "shortCiteRegEx" : "Dolan and Brockett.",
+      "year" : 2005
+    }, {
+      "title" : "Retrofitting word vectors to semantic lexicons",
+      "author" : [ "Manaal Faruqui", "Jesse Dodge", "Sujay Kumar Jauhar", "Chris Dyer", "Eduard Hovy", "Noah A. Smith." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 1606–1615.",
+      "citeRegEx" : "Faruqui et al\\.,? 2015",
+      "shortCiteRegEx" : "Faruqui et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Diverse Context for Learning Word Representations",
+      "author" : [ "Manaal Faruqui." ],
+      "venue" : "Ph.D. thesis, Carnegie Mellon University.",
+      "citeRegEx" : "Faruqui.,? 2016",
+      "shortCiteRegEx" : "Faruqui.",
+      "year" : 2016
+    }, {
+      "title" : "Simplifying lexical simplification: Do we need simplified corpora",
+      "author" : [ "Goran Glavaš", "Sanja Štajner" ],
+      "venue" : "In Proceedings of ACL-IJCNLP,",
+      "citeRegEx" : "Glavaš and Štajner.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Glavaš and Štajner.",
+      "year" : 2015
+    }, {
+      "title" : "Explicit retrofitting of distributional word vectors",
+      "author" : [ "Goran Glavaš", "Ivan Vulić." ],
+      "venue" : "Proceedings of ACL, pages 34–45.",
+      "citeRegEx" : "Glavaš and Vulić.,? 2018",
+      "shortCiteRegEx" : "Glavaš and Vulić.",
+      "year" : 2018
+    }, {
+      "title" : "Simlex-999: Evaluating semantic models with (genuine) similarity estimation",
+      "author" : [ "Felix Hill", "Roi Reichart", "Anna Korhonen." ],
+      "venue" : "Computational Linguistics, 41(4):665–695.",
+      "citeRegEx" : "Hill et al\\.,? 2015",
+      "shortCiteRegEx" : "Hill et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Learning a lexical simplifier using Wikipedia",
+      "author" : [ "Colby Horn", "Cathryn Manduca", "David Kauchak." ],
+      "venue" : "Proceedings of ACL, pages 458–463.",
+      "citeRegEx" : "Horn et al\\.,? 2014",
+      "shortCiteRegEx" : "Horn et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Parameter-efficient transfer learning for NLP",
+      "author" : [ "Neil Houlsby", "Andrei Giurgiu", "Stanislaw Jastrzkebski", "Bruna Morrone", "Quentin de Laroussilhe", "Andrea Gesmundo", "Mona Attariyan", "Sylvain Gelly." ],
+      "venue" : "Proceedings of ICML, pages 2790–2799.",
+      "citeRegEx" : "Houlsby et al\\.,? 2019",
+      "shortCiteRegEx" : "Houlsby et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Extrofitting: Enriching word representation and its vector space with semantic lexicons",
+      "author" : [ "Hwiyeol Jo", "Stanley Jungkyu Choi." ],
+      "venue" : "CoRR, abs/1804.07946.",
+      "citeRegEx" : "Jo and Choi.,? 2018",
+      "shortCiteRegEx" : "Jo and Choi.",
+      "year" : 2018
+    }, {
+      "title" : "Specializing distributional vectors of all words for lexical entailment",
+      "author" : [ "Aishwarya Kamath", "Jonas Pfeiffer", "Edoardo Maria Ponti", "Goran Glavaš", "Ivan Vulić." ],
+      "venue" : "Proceedings of the 4th Workshop on Representation Learning for NLP, pages 72–83.",
+      "citeRegEx" : "Kamath et al\\.,? 2019",
+      "shortCiteRegEx" : "Kamath et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Specializing word embeddings for similarity or relatedness",
+      "author" : [ "Douwe Kiela", "Felix Hill", "Stephen Clark." ],
+      "venue" : "Proceedings of EMNLP, pages 2044–2048.",
+      "citeRegEx" : "Kiela et al\\.,? 2015",
+      "shortCiteRegEx" : "Kiela et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Intent detection using semantically enriched word embeddings",
+      "author" : [ "Joo-Kyung Kim", "Gokhan Tur", "Asli Celikyilmaz", "Bin Cao", "Ye-Yi Wang." ],
+      "venue" : "Proceedings of SLT.",
+      "citeRegEx" : "Kim et al\\.,? 2016",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Roget’s 21st Century Thesaurus (3rd Edition)",
+      "author" : [ "Barbara Ann Kipfer." ],
+      "venue" : "Philip Lief Group.",
+      "citeRegEx" : "Kipfer.,? 2009",
+      "shortCiteRegEx" : "Kipfer.",
+      "year" : 2009
+    }, {
+      "title" : "Retrofitting distributional embeddings to knowledge graphs with functional relations",
+      "author" : [ "Benjamin J. Lengerich", "Andrew L. Maas", "Christopher Potts." ],
+      "venue" : "Proceedings of COLING, pages 2423–2436.",
+      "citeRegEx" : "Lengerich et al\\.,? 2018",
+      "shortCiteRegEx" : "Lengerich et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "SenseBERT: Driving some sense into BERT",
+      "author" : [ "Yoav Levine", "Barak Lenz", "Or Dagan", "Ori Ram", "Dan Padnos", "Or Sharir", "Shai Shalev-Shwartz", "Amnon Shashua", "Yoav Shoham." ],
+      "venue" : "Proceedings of ACL, pages 4656–4667.",
+      "citeRegEx" : "Levine et al\\.,? 2020",
+      "shortCiteRegEx" : "Levine et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning semantic word embeddings based on ordinal knowledge constraints",
+      "author" : [ "Quan Liu", "Hui Jiang", "Si Wei", "Zhen-Hua Ling", "Yu Hu." ],
+      "venue" : "Proceedings of ACL, pages 1501–1511.",
+      "citeRegEx" : "Liu et al\\.,? 2015",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "RoBERTa: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "K-BERT: Enabling language representation with knowledge graph",
+      "author" : [ "Weijie Liu", "Peng Zhou", "Zhe Zhao", "Zhiruo Wang", "Qi Ju", "Haotang Deng", "Ping Wang." ],
+      "venue" : "Proceedings of AAAI, pages 2901–2908.",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Distributed representations of words and phrases and their compositionality",
+      "author" : [ "Tomas Mikolov", "Ilya Sutskever", "Kai Chen", "Gregory S Corrado", "Jeffrey Dean." ],
+      "venue" : "Proceedings of NeurIPS, pages 3111–3119.",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "WordNet: A lexical database for English",
+      "author" : [ "George A. Miller." ],
+      "venue" : "Commun. ACM, 38(11):39–41, November.",
+      "citeRegEx" : "Miller.,? 1995",
+      "shortCiteRegEx" : "Miller.",
+      "year" : 1995
+    }, {
+      "title" : "Counter-fitting word vectors to linguistic constraints",
+      "author" : [ "Nikola Mrkšić", "Diarmuid Ó Séaghdha", "Blaise Thomson", "Milica Gašić", "Lina Maria Rojas-Barahona", "Pei-Hao Su", "David Vandyke", "Tsung-Hsien Wen", "Steve Young." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 142–148.",
+      "citeRegEx" : "Mrkšić et al\\.,? 2016",
+      "shortCiteRegEx" : "Mrkšić et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Semantic specialisation of distributional word vector spaces using monolingual and crosslingual constraints",
+      "author" : [ "Nikola Mrkšić", "Ivan Vulić", "Diarmuid Ó Séaghdha", "Ira Leviant", "Roi Reichart", "Milica Gašić", "Anna Korhonen", "Steve Young." ],
+      "venue" : "Transactions of the ACL, 5:309–324.",
+      "citeRegEx" : "Mrkšić et al\\.,? 2017",
+      "shortCiteRegEx" : "Mrkšić et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "BabelNet: The automatic construction, evaluation and application of a wide-coverage multilingual semantic network",
+      "author" : [ "Roberto Navigli", "Simone Paolo Ponzetto." ],
+      "venue" : "Artificial Intelligence, 193:217–250.",
+      "citeRegEx" : "Navigli and Ponzetto.,? 2012",
+      "shortCiteRegEx" : "Navigli and Ponzetto.",
+      "year" : 2012
+    }, {
+      "title" : "Hierarchical embeddings for hypernymy detection and directionality",
+      "author" : [ "Kim Anh Nguyen", "Maximilian Köper", "Sabine Schulte im Walde", "Ngoc Thang Vu." ],
+      "venue" : "Proceedings of EMNLP, pages 233–243.",
+      "citeRegEx" : "Nguyen et al\\.,? 2017",
+      "shortCiteRegEx" : "Nguyen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Encoding prior knowledge with eigenword embeddings",
+      "author" : [ "Dominique Osborne", "Shashi Narayan", "Shay Cohen." ],
+      "venue" : "Transactions of the ACL, 4:417–430.",
+      "citeRegEx" : "Osborne et al\\.,? 2016",
+      "shortCiteRegEx" : "Osborne et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Benchmarking lexical simplification systems",
+      "author" : [ "Gustavo Paetzold", "Lucia Specia." ],
+      "venue" : "Proceedings of LREC, pages 3074–3080, Portorož, Slovenia, May.",
+      "citeRegEx" : "Paetzold and Specia.,? 2016",
+      "shortCiteRegEx" : "Paetzold and Specia.",
+      "year" : 2016
+    }, {
+      "title" : "A survey on lexical simplification",
+      "author" : [ "Gustavo H Paetzold", "Lucia Specia." ],
+      "venue" : "Journal of Artificial Intelligence Research, 60:549–593.",
+      "citeRegEx" : "Paetzold and Specia.,? 2017",
+      "shortCiteRegEx" : "Paetzold and Specia.",
+      "year" : 2017
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 2227–2237, June.",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Knowledge enhanced contextual word representations",
+      "author" : [ "Matthew E. Peters", "Mark Neumann", "Robert Logan", "Roy Schwartz", "Vidur Joshi", "Sameer Singh", "Noah A Smith." ],
+      "venue" : "Proceedings of the EMNLP-IJCNLP, pages 43–54.",
+      "citeRegEx" : "Peters et al\\.,? 2019",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "In Proceedings of EMNLP-IJCNLP,",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "MAD-X: An Adapter-based Framework for Multi-task Cross-lingual Transfer",
+      "author" : [ "Jonas Pfeiffer", "Ivan Vulić", "Iryna Gurevych", "Sebastian Ruder." ],
+      "venue" : "arXiv preprint.",
+      "citeRegEx" : "Pfeiffer et al\\.,? 2020",
+      "shortCiteRegEx" : "Pfeiffer et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adversarial propagation and zero-shot cross-lingual transfer of word vector specialization",
+      "author" : [ "Edoardo Maria Ponti", "Ivan Vulić", "Goran Glavaš", "Nikola Mrkšić", "Anna Korhonen." ],
+      "venue" : "Proceedings of EMNLP, pages 282–293.",
+      "citeRegEx" : "Ponti et al\\.,? 2018",
+      "shortCiteRegEx" : "Ponti et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Cross-lingual semantic specialization via lexical relation induction",
+      "author" : [ "Edoardo Maria Ponti", "Ivan Vulić", "Goran Glavaš", "Roi Reichart", "Anna Korhonen." ],
+      "venue" : "Proceedings of the EMNLP-IJCNLP, pages 2206–2217.",
+      "citeRegEx" : "Ponti et al\\.,? 2019",
+      "shortCiteRegEx" : "Ponti et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A simple BERT-based approach for lexical simplification",
+      "author" : [ "Jipeng Qiang", "Yun Li", "Zhu Yi", "Yunhao Yuan", "Xindong Wu." ],
+      "venue" : "arXiv preprint arXiv:1907.06226.",
+      "citeRegEx" : "Qiang et al\\.,? 2019",
+      "shortCiteRegEx" : "Qiang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Improving language understanding by generative pre-training",
+      "author" : [ "Alec Radford", "Karthik Narasimhan", "Tim Salimans", "Ilya Sutskever." ],
+      "venue" : "OpenAI Technical Report.",
+      "citeRegEx" : "Radford et al\\.,? 2018",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever." ],
+      "venue" : "OpenAI Blog, 1:8.",
+      "citeRegEx" : "Radford et al\\.,? 2019",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SQuAD: 100,000+ questions for machine comprehension of text",
+      "author" : [ "Pranav Rajpurkar", "Jian Zhang", "Konstantin Lopyrev", "Percy Liang." ],
+      "venue" : "Proceedings of EMNLP, pages 2383–2392, November.",
+      "citeRegEx" : "Rajpurkar et al\\.,? 2016",
+      "shortCiteRegEx" : "Rajpurkar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Towards universal dialogue state tracking",
+      "author" : [ "Liliang Ren", "Kaige Xie", "Lu Chen", "Kai Yu." ],
+      "venue" : "Proceedings of EMNLP, pages 2780–2786.",
+      "citeRegEx" : "Ren et al\\.,? 2018",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Symmetric pattern based word embeddings for improved word similarity prediction",
+      "author" : [ "Roy Schwartz", "Roi Reichart", "Ari Rappoport." ],
+      "venue" : "Proceedings of CoNLL, pages 258–267.",
+      "citeRegEx" : "Schwartz et al\\.,? 2015",
+      "shortCiteRegEx" : "Schwartz et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D Manning", "Andrew Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of EMNLP, pages 1631–1642.",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "ERNIE: Enhanced representation through knowledge integration",
+      "author" : [ "Yu Sun", "Shuohuan Wang", "Yu-Kun Li", "Shikun Feng", "Xuyi Chen", "Han Zhang", "Xin Tian", "Danxiang Zhu", "Hao Tian", "Hua Wu." ],
+      "venue" : "CoRR, abs/1904.09223.",
+      "citeRegEx" : "Sun et al\\.,? 2019a",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "2019b. ERNIE 2.0: A continual pre-training framework for language understanding",
+      "author" : [ "Yu Sun", "Shuohuan Wang", "Yukun Li", "Shikun Feng", "Hao Tian", "Hua Wu", "Haifeng Wang" ],
+      "venue" : "arXiv preprint arXiv:1907.12412",
+      "citeRegEx" : "Sun et al\\.,? \\Q1907\\E",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 1907
+    }, {
+      "title" : "Cloze procedure”: A new tool for measuring readability",
+      "author" : [ "Wilson L. Taylor." ],
+      "venue" : "Journalism Bulletin, 30(4):415– 433.",
+      "citeRegEx" : "Taylor.,? 1953",
+      "shortCiteRegEx" : "Taylor.",
+      "year" : 1953
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Proceedings of NeurIPS, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Specialising word vectors for lexical entailment",
+      "author" : [ "Ivan Vulić", "Nikola Mrkšić." ],
+      "venue" : "Proceedings of NAACLHLT, pages 1134–1145.",
+      "citeRegEx" : "Vulić and Mrkšić.,? 2018",
+      "shortCiteRegEx" : "Vulić and Mrkšić.",
+      "year" : 2018
+    }, {
+      "title" : "Post-specialisation: Retrofitting vectors of words unseen in lexical resources",
+      "author" : [ "Ivan Vulić", "Goran Glavaš", "Nikola Mrkšić", "Anna Korhonen." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 516–527.",
+      "citeRegEx" : "Vulić et al\\.,? 2018",
+      "shortCiteRegEx" : "Vulić et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Injecting lexical contrast into word vectors by guiding vector space specialisation",
+      "author" : [ "Ivan Vulić." ],
+      "venue" : "Proceedings of the 3rd Workshop on Representation Learning for NLP, pages 137–143.",
+      "citeRegEx" : "Vulić.,? 2018",
+      "shortCiteRegEx" : "Vulić.",
+      "year" : 2018
+    }, {
+      "title" : "GLUE: A multi-task benchmark and analysis platform for natural language understanding",
+      "author" : [ "Alex Wang", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel Bowman." ],
+      "venue" : "Proceedings of the Blacbox NLP Workshop, pages 353–355.",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "K-Adapter: Infusing knowledge into pre-trained models with adapters",
+      "author" : [ "Ruize Wang", "Duyu Tang", "Nan Duan", "Zhongyu Wei", "Xuanjing Huang", "Jianshu Ji", "Guihong Cao", "Daxin Jiang", "Ming Zhou." ],
+      "venue" : "CoRR, abs/2002.01808.",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural network acceptability judgments",
+      "author" : [ "Alex Warstadt", "Amanpreet Singh", "Samuel R Bowman." ],
+      "venue" : "Transactions of the ACL, 7:625–641.",
+      "citeRegEx" : "Warstadt et al\\.,? 2019",
+      "shortCiteRegEx" : "Warstadt et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "From paraphrase database to compositional paraphrase model and back",
+      "author" : [ "John Wieting", "Mohit Bansal", "Kevin Gimpel", "Karen Livescu." ],
+      "venue" : "Transactions of the ACL, 3:345–358.",
+      "citeRegEx" : "Wieting et al\\.,? 2015",
+      "shortCiteRegEx" : "Wieting et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A broad-coverage challenge corpus for sentence understanding through inference",
+      "author" : [ "Adina Williams", "Nikita Nangia", "Samuel Bowman." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 1112–1122.",
+      "citeRegEx" : "Williams et al\\.,? 2018",
+      "shortCiteRegEx" : "Williams et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "2016. Google’s neural machine translation system: Bridging the gap between human and machine translation",
+      "author" : [ "Yonghui Wu", "Mike Schuster", "Zhifeng Chen", "Quoc V Le", "Mohammad Norouzi", "Wolfgang Macherey", "Maxim Krikun", "Yuan Cao", "Qin Gao", "Klaus Macherey" ],
+      "venue" : "arXiv preprint arXiv:1609.08144",
+      "citeRegEx" : "Wu et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Improving lexical embeddings with semantic knowledge",
+      "author" : [ "Mo Yu", "Mark Dredze." ],
+      "venue" : "Proceedings of ACL, pages 545–550.",
+      "citeRegEx" : "Yu and Dredze.,? 2014",
+      "shortCiteRegEx" : "Yu and Dredze.",
+      "year" : 2014
+    }, {
+      "title" : "Word semantic representations using Bayesian probabilistic tensor factorization",
+      "author" : [ "Jingwei Zhang", "Jeremy Salwen", "Michael Glass", "Alfio Gliozzo." ],
+      "venue" : "Proceedings of EMNLP, pages 1522–1531.",
+      "citeRegEx" : "Zhang et al\\.,? 2014",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "ERNIE: Enhanced language representation with informative entities",
+      "author" : [ "Zhengyan Zhang", "Xu Han", "Zhiyuan Liu", "Xin Jiang", "Maosong Sun", "Qun Liu." ],
+      "venue" : "arXiv preprint arXiv:1905.07129.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Why overfitting isn’t always bad: Retrofitting cross-lingual word embeddings to dictionaries",
+      "author" : [ "Mozhi Zhang", "Yoshinari Fujinuma", "Michael J. Paul", "Jordan Boyd-Graber." ],
+      "venue" : "Proceedings of ACL, pages 2214–2220.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 41,
+      "context" : "Unsupervised pretraining models, such as GPT and GPT-2 (Radford et al., 2018; Radford et al., 2019), ELMo (Peters et al.",
+      "startOffset" : 55,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 42,
+      "context" : "Unsupervised pretraining models, such as GPT and GPT-2 (Radford et al., 2018; Radford et al., 2019), ELMo (Peters et al.",
+      "startOffset" : 55,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2019), ELMo (Peters et al., 2018), and BERT (Devlin et al.",
+      "startOffset" : 14,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2018), and BERT (Devlin et al., 2019) yield state-of-the-art performance on a wide range of natural language processing tasks.",
+      "startOffset" : 18,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 6,
+      "context" : "BERT (Devlin et al., 2019), as one of the current state-of-the-art models, is pretrained on a joint objective consisting of two parts: (1) masked language modeling (MLM), and (2) next sentence prediction (NSP).",
+      "startOffset" : 5,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 23,
+      "context" : "While several concurrent research threads are focused on making BERT optimization more robust (Liu et al., 2019) or on imprinting external world knowledge on its representations (Sun et al.",
+      "startOffset" : 94,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 45,
+      "context" : ", 2020, inter alia), no study yet has been dedicated to mitigating a severe limitation that contextualized representations and unsupervised pretraining inherited from static word embeddings: every model that relies on distributional patterns has a tendency to conflate together pure lexical semantic similarity with broad topic relatedness (Schwartz et al., 2015; Mrkšić et al., 2017).",
+      "startOffset" : 340,
+      "endOffset" : 384
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2020, inter alia), no study yet has been dedicated to mitigating a severe limitation that contextualized representations and unsupervised pretraining inherited from static word embeddings: every model that relies on distributional patterns has a tendency to conflate together pure lexical semantic similarity with broad topic relatedness (Schwartz et al., 2015; Mrkšić et al., 2017).",
+      "startOffset" : 340,
+      "endOffset" : 384
+    }, {
+      "referenceID" : 28,
+      "context" : ", in dialog state tracking (Mrkšić et al., 2017; Ren et al., 2018) or for lexical simplification (Glavaš and Vulić, 2018; Ponti et al.",
+      "startOffset" : 27,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 44,
+      "context" : ", in dialog state tracking (Mrkšić et al., 2017; Ren et al., 2018) or for lexical simplification (Glavaš and Vulić, 2018; Ponti et al.",
+      "startOffset" : 27,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2018) or for lexical simplification (Glavaš and Vulić, 2018; Ponti et al., 2019).",
+      "startOffset" : 38,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2018) or for lexical simplification (Glavaš and Vulić, 2018; Ponti et al., 2019).",
+      "startOffset" : 38,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 26,
+      "context" : "We propose a novel method to inject linguistic constraints, available from lexico-semantic resources like WordNet (Miller, 1995) and BabelNet (Navigli and Ponzetto, 2012), into unsupervised pretraining models, and steer them towards capturing word-level semantic similarity.",
+      "startOffset" : 114,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 29,
+      "context" : "We propose a novel method to inject linguistic constraints, available from lexico-semantic resources like WordNet (Miller, 1995) and BabelNet (Navigli and Ponzetto, 2012), into unsupervised pretraining models, and steer them towards capturing word-level semantic similarity.",
+      "startOffset" : 142,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 50,
+      "context" : "To train Lexically Informed BERT (LIBERT), we (1) feed semantic similarity constraints to BERT as additional training instances and (2) predict lexico-semantic relations from the constraint embeddings produced by BERT’s encoder (Vaswani et al., 2017).",
+      "startOffset" : 228,
+      "endOffset" : 250
+    }, {
+      "referenceID" : 54,
+      "context" : "We compare LIBERT to a lexically blind “vanilla” BERT on the GLUE benchmark (Wang et al., 2018) and report their performance on corresponding development and test portions.",
+      "startOffset" : 76,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 39,
+      "context" : "Moreover, we assess the robustness and effectiveness of LIBERT on 3 different datasets for lexical simplification (LS), a task proven to benefit from word-level similarity specialization (Ponti et al., 2019).",
+      "startOffset" : 187,
+      "endOffset" : 207
+    }, {
+      "referenceID" : 28,
+      "context" : "For instance, clearly discerning between true/pure semantic similarity and broader conceptual relatedness in static embeddings benefits a range of natural language understanding tasks such as dialog state tracking (Mrkšić et al., 2017), text simplification (Glavaš and Vulić, 2018), and spoken language understanding (Kim et al.",
+      "startOffset" : 214,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2017), text simplification (Glavaš and Vulić, 2018), and spoken language understanding (Kim et al.",
+      "startOffset" : 29,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2017), text simplification (Glavaš and Vulić, 2018), and spoken language understanding (Kim et al., 2016).",
+      "startOffset" : 89,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 8,
+      "context" : "On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).",
+      "startOffset" : 168,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 57,
+      "context" : "On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).",
+      "startOffset" : 168,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 27,
+      "context" : "On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).",
+      "startOffset" : 168,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 28,
+      "context" : "On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).",
+      "startOffset" : 168,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 15,
+      "context" : "On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).",
+      "startOffset" : 168,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 20,
+      "context" : "On the other hand, retrofitting models are postprocessors that fine-tune pretrained word embeddings by gauging pairwise distances according to the external constraints (Faruqui et al., 2015; Wieting et al., 2015; Mrkšić et al., 2016; Mrkšić et al., 2017; Jo and Choi, 2018; Lengerich et al., 2018).",
+      "startOffset" : 168,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 11,
+      "context" : "In explicit retrofitting models (Glavaš and Vulić, 2018), a (deep, non-linear) specialization function is directly learned from external constraints.",
+      "startOffset" : 32,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 52,
+      "context" : "Postspecialization models (Vulić et al., 2018; Ponti et al., 2018; Kamath et al., 2019; Biesialska et al., 2020), instead, propagate lexico-semantic information to unseen words by imitating the transformation undergone by seen words during the initial specialization.",
+      "startOffset" : 26,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 38,
+      "context" : "Postspecialization models (Vulić et al., 2018; Ponti et al., 2018; Kamath et al., 2019; Biesialska et al., 2020), instead, propagate lexico-semantic information to unseen words by imitating the transformation undergone by seen words during the initial specialization.",
+      "startOffset" : 26,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 16,
+      "context" : "Postspecialization models (Vulić et al., 2018; Ponti et al., 2018; Kamath et al., 2019; Biesialska et al., 2020), instead, propagate lexico-semantic information to unseen words by imitating the transformation undergone by seen words during the initial specialization.",
+      "startOffset" : 26,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 1,
+      "context" : "Postspecialization models (Vulić et al., 2018; Ponti et al., 2018; Kamath et al., 2019; Biesialska et al., 2020), instead, propagate lexico-semantic information to unseen words by imitating the transformation undergone by seen words during the initial specialization.",
+      "startOffset" : 26,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 11,
+      "context" : "This family of models can also transfer specialization across languages (Glavaš and Vulić, 2018; Ponti et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 72,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 39,
+      "context" : "This family of models can also transfer specialization across languages (Glavaš and Vulić, 2018; Ponti et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 72,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 63,
+      "context" : "This family of models can also transfer specialization across languages (Glavaš and Vulić, 2018; Ponti et al., 2019; Zhang et al., 2020).",
+      "startOffset" : 72,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 6,
+      "context" : "We present a novel methodology for enriching unsupervised pretraining models such as BERT (Devlin et al., 2019) with readily available discrete lexico-semantic knowledge, and measure the benefits of such semantic specialization on similarity-oriented downstream applications.",
+      "startOffset" : 90,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 36,
+      "context" : "they fail to fully capture the world knowledge necessary for human reasoning: masked language models struggle to recover knowledge base triples from raw texts (Petroni et al., 2019).",
+      "startOffset" : 159,
+      "endOffset" : 181
+    }, {
+      "referenceID" : 55,
+      "context" : "Recent work has, for the most part, focused on mitigating the latter limitation by injecting structured world knowledge into unsupervised pretraining and contextualized representations (Wang et al., 2020).",
+      "startOffset" : 185,
+      "endOffset" : 204
+    }, {
+      "referenceID" : 47,
+      "context" : "In particular, these techniques fall into the following broad categories: i) masking higher linguistic units of meanings, such as phrases or named entities, rather than individual WordPieces or BPE tokens (Sun et al., 2019a); ii) including an auxiliary task in the objective, such as denoising auto-encoding of entities aligned with text (Zhang et al.",
+      "startOffset" : 205,
+      "endOffset" : 224
+    }, {
+      "referenceID" : 62,
+      "context" : ", 2019a); ii) including an auxiliary task in the objective, such as denoising auto-encoding of entities aligned with text (Zhang et al., 2019), or continuous learning frameworks over a series of unsupervised or weakly supervised tasks (e.",
+      "startOffset" : 122,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 21,
+      "context" : "On a high level, the most similar work to ours is SenseBERT (Levine et al., 2020) which uses WordNet supersenses to inform distributional BERT about word senses.",
+      "startOffset" : 60,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 50,
+      "context" : "The core of the BERT model is a multi-layer bidirectional Transformer (Vaswani et al., 2017), pretrained using two objectives: (1) masked language modeling (MLM) and (2) next sentence prediction (NSP).",
+      "startOffset" : 70,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 49,
+      "context" : "MLM is a token-level prediction task, also referred to as Cloze task (Taylor, 1953): among the input data, a certain percentage of tokens is masked out and needs to be recovered.",
+      "startOffset" : 69,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 25,
+      "context" : "The space Xaux can be obtained via any standard static word embedding model such as Skip-Gram (Mikolov et al., 2013) or fastText (Bojanowski et al.",
+      "startOffset" : 94,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2013) or fastText (Bojanowski et al., 2017) (used in this work).",
+      "startOffset" : 20,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 57,
+      "context" : "For each positive example c, we create corresponding negative examples following prior work on specialization of static embeddings (Wieting et al., 2015; Glavaš and Vulić, 2018; Ponti et al., 2019).",
+      "startOffset" : 131,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 11,
+      "context" : "For each positive example c, we create corresponding negative examples following prior work on specialization of static embeddings (Wieting et al., 2015; Glavaš and Vulić, 2018; Ponti et al., 2019).",
+      "startOffset" : 131,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 39,
+      "context" : "For each positive example c, we create corresponding negative examples following prior work on specialization of static embeddings (Wieting et al., 2015; Glavaš and Vulić, 2018; Ponti et al., 2019).",
+      "startOffset" : 131,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 59,
+      "context" : ", into a sequence of WordPiece (Wu et al., 2016) tokens.",
+      "startOffset" : 31,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 6,
+      "context" : "As in the original work (Devlin et al., 2019), we sum the WordPiece embedding of each token with the embeddings of the segment and position of the token.",
+      "startOffset" : 24,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 12,
+      "context" : "1As the goal is to inform the BERT model on the relation of true semantic similarity between words (Hill et al., 2015), according to prior work on static word embeddings, the sets of both synonym pairs and direct hyponym-hypernym pairs are useful to boost the model’s ability to capture true semantic similarity, which in turn has a positive effect on downstream language understanding applications.",
+      "startOffset" : 99,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 54,
+      "context" : "In the first set of experiments, we probe the usefulness of injecting semantic similarity knowledge on the well-known suite of GLUE tasks (Wang et al., 2018), while we also present the results on lexical simplification, another task that has been shown to benefit from semantic similarity specialization (Glavaš and Vulić, 2018), later in §5.",
+      "startOffset" : 138,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2018), while we also present the results on lexical simplification, another task that has been shown to benefit from semantic similarity specialization (Glavaš and Vulić, 2018), later in §5.",
+      "startOffset" : 154,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 61,
+      "context" : "4 We obtain the set of constraints C for the LLRC term from the body of previous work on semantic specialization of static word embeddings (Zhang et al., 2014; Vulić et al., 2018; Ponti et al., 2018).",
+      "startOffset" : 139,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 52,
+      "context" : "4 We obtain the set of constraints C for the LLRC term from the body of previous work on semantic specialization of static word embeddings (Zhang et al., 2014; Vulić et al., 2018; Ponti et al., 2018).",
+      "startOffset" : 139,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 38,
+      "context" : "4 We obtain the set of constraints C for the LLRC term from the body of previous work on semantic specialization of static word embeddings (Zhang et al., 2014; Vulić et al., 2018; Ponti et al., 2018).",
+      "startOffset" : 139,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 26,
+      "context" : "In particular, we collect 1,023,082 synonymy pairs from WordNet (Miller, 1995) and Roget’s Thesaurus (Kipfer, 2009) and 326,187 direct hyponym-hypernym pairs (Vulić and Mrkšić, 2018) from WordNet, and use them as positive instances for the binary classifier (LRC).",
+      "startOffset" : 64,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 19,
+      "context" : "In particular, we collect 1,023,082 synonymy pairs from WordNet (Miller, 1995) and Roget’s Thesaurus (Kipfer, 2009) and 326,187 direct hyponym-hypernym pairs (Vulić and Mrkšić, 2018) from WordNet, and use them as positive instances for the binary classifier (LRC).",
+      "startOffset" : 101,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 51,
+      "context" : "In particular, we collect 1,023,082 synonymy pairs from WordNet (Miller, 1995) and Roget’s Thesaurus (Kipfer, 2009) and 326,187 direct hyponym-hypernym pairs (Vulić and Mrkšić, 2018) from WordNet, and use them as positive instances for the binary classifier (LRC).",
+      "startOffset" : 158,
+      "endOffset" : 182
+    }, {
+      "referenceID" : 54,
+      "context" : "We evaluate BERT and LIBERT on the the following tasks from the GLUE benchmark (Wang et al., 2018), where sizes of training, development, and test datasets for each task are provided in Table 1: CoLA (Warstadt et al.",
+      "startOffset" : 79,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 56,
+      "context" : ", 2018), where sizes of training, development, and test datasets for each task are provided in Table 1: CoLA (Warstadt et al., 2019): Binary sentence classification, predicting if sentences from linguistic publications are grammatically acceptable; SST-2 (Socher et al.",
+      "startOffset" : 109,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2019): Binary sentence classification, predicting if sentences from linguistic publications are grammatically acceptable; SST-2 (Socher et al., 2013): Binary sentence classification, predicting sentiment (positive or negative) for movie review sentences; MRPC (Dolan and Brockett, 2005): Binary sentence-pair classification, predicting whether two sentences are mutual paraphrases; STS-B (Cer et al.",
+      "startOffset" : 130,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2013): Binary sentence classification, predicting sentiment (positive or negative) for movie review sentences; MRPC (Dolan and Brockett, 2005): Binary sentence-pair classification, predicting whether two sentences are mutual paraphrases; STS-B (Cer et al.",
+      "startOffset" : 118,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2013): Binary sentence classification, predicting sentiment (positive or negative) for movie review sentences; MRPC (Dolan and Brockett, 2005): Binary sentence-pair classification, predicting whether two sentences are mutual paraphrases; STS-B (Cer et al., 2017): Sentence-pair regression task, predicting the degree of semantic similarity for a pair of sentences; QQP (Chen et al.",
+      "startOffset" : 246,
+      "endOffset" : 264
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2017): Sentence-pair regression task, predicting the degree of semantic similarity for a pair of sentences; QQP (Chen et al., 2018): Binary classification task, recognizing question paraphrases; MNLI (Williams et al.",
+      "startOffset" : 114,
+      "endOffset" : 133
+    }, {
+      "referenceID" : 58,
+      "context" : ", 2018): Binary classification task, recognizing question paraphrases; MNLI (Williams et al., 2018): Ternary natural language inference (NLI) classification of sentence pairs.",
+      "startOffset" : 76,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 43,
+      "context" : "Two test sets are given: a matched version (MNLI-m) in which the test domains match with training data domains, and a mismatched version (MNLI-mm) with different test domains; QNLI: A binary classification version of the Stanford Q&A dataset (Rajpurkar et al., 2016); RTE (Bentivogli et al.",
+      "startOffset" : 242,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2016); RTE (Bentivogli et al., 2009): Another NLI dataset, ternary entailment classification for sentence pairs; AX (Wang et al.",
+      "startOffset" : 13,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 54,
+      "context" : ", 2009): Another NLI dataset, ternary entailment classification for sentence pairs; AX (Wang et al., 2018): A small, manually curated NLI dataset (i.",
+      "startOffset" : 87,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 6,
+      "context" : "We train both BERT and LIBERT from scratch, with the configuration of the BERTBASE model (Devlin et al., 2019): L = 12 transformer layers with the hidden state size of H = 768, 4We acknowledge that training the models on larger corpora would likely lead to better absolute downstream scores; however, the main goal of this work is not to achieve state-of-the-art downstream performance, but to compare the base model against its lexically informed counterpart.",
+      "startOffset" : 89,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 54,
+      "context" : "Table 1: dataset sizes for tasks in the GLUE benchmark (Wang et al., 2018).",
+      "startOffset" : 55,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 6,
+      "context" : "7Due to hardware restrictions, we train in smaller batches than in the the original work (Devlin et al., 2019) (k = 256).",
+      "startOffset" : 89,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 57,
+      "context" : "It also further validates intuitions from relevant work on specializing static word embeddings (Wieting et al., 2015; Mrkšić et al., 2017) that steering distributional models towards capturing true semantic similarity (as also done here) has a positive impact on language understanding applications in general.",
+      "startOffset" : 95,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 28,
+      "context" : "It also further validates intuitions from relevant work on specializing static word embeddings (Wieting et al., 2015; Mrkšić et al., 2017) that steering distributional models towards capturing true semantic similarity (as also done here) has a positive impact on language understanding applications in general.",
+      "startOffset" : 95,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 54,
+      "context" : "To better understand how lexical information corroborates the model predictions, we perform a fine-grained analysis on the Diagnostic dataset (Wang et al., 2018), measuring the performance of LIBERT on specific subsets of sentences annotated for the linguistic phenomena they contain.",
+      "startOffset" : 142,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 9,
+      "context" : "This finding again indicates the complementarity of useful signals coded in large text data versus lexical resources (Faruqui, 2016; Mrkšić et al., 2017), which should be investigated more in future work.",
+      "startOffset" : 117,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 28,
+      "context" : "This finding again indicates the complementarity of useful signals coded in large text data versus lexical resources (Faruqui, 2016; Mrkšić et al., 2017), which should be investigated more in future work.",
+      "startOffset" : 117,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 33,
+      "context" : "Generally, the task can be divided into two main parts: (1) generation of substitute candidates, and (2) candidate ranking, in which the simplest candidate is selected (Paetzold and Specia, 2017).",
+      "startOffset" : 168,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 10,
+      "context" : "Unsupervised approaches to candidate generation seem to be predominant lately (Glavaš and Štajner, 2015; Ponti et al., 2019).",
+      "startOffset" : 78,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 39,
+      "context" : "Unsupervised approaches to candidate generation seem to be predominant lately (Glavaš and Štajner, 2015; Ponti et al., 2019).",
+      "startOffset" : 78,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 40,
+      "context" : "In order to evaluate the simplification capabilities of LIBERT versus BERT, we adopt a standard BERT-based approach to lexical simplification (Qiang et al., 2019), dubbed BERT-LS.",
+      "startOffset" : 142,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 2,
+      "context" : "Given the set of candidate tokens C, we compute for each ci in C a set of features: (1) BERT prediction probability, (2) loss of the likelihood of the whole sequence according to the MLM when choosing ci instead of w, (3) semantic similarity between the fastText vectors (Bojanowski et al., 2017) of the original word w and the candidate ci, and (4) word frequency of ci in the top 12 million texts of Wikipedia and in the Children’s Book Test corpus.",
+      "startOffset" : 271,
+      "endOffset" : 296
+    }, {
+      "referenceID" : 13,
+      "context" : "We run the evaluation on three standard datasets for lexical simplification: (1) LexMTurk (Horn et al., 2014).",
+      "startOffset" : 90,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 32,
+      "context" : "(2) BenchLS (Paetzold and Specia, 2016) is a merge of LexMTurk and LSeval (De Belder and Moens, 2010) containing 929 sentences.",
+      "startOffset" : 12,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 33,
+      "context" : "(3) NNSeval (Paetzold and Specia, 2017) is an English dataset focused on text simplification for non-native speakers and consists in total of 239 instances.",
+      "startOffset" : 12,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 13,
+      "context" : "We report the scores on all three datasets in terms of Precision, Recall and F1 for the candidate generation sub-task, and in terms of the standard lexical simplification metric of accurracy (A) (Horn et al., 2014; Glavaš and Štajner, 2015) for the full simplification pipeline.",
+      "startOffset" : 195,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 10,
+      "context" : "We report the scores on all three datasets in terms of Precision, Recall and F1 for the candidate generation sub-task, and in terms of the standard lexical simplification metric of accurracy (A) (Horn et al., 2014; Glavaš and Štajner, 2015) for the full simplification pipeline.",
+      "startOffset" : 195,
+      "endOffset" : 240
+    }, {
+      "referenceID" : 14,
+      "context" : "In the future, we will work on more sophisticated specialization methods, and also investigate the use of adapter modules (Houlsby et al., 2019; Pfeiffer et al., 2020) for more efficient fine-tuning.",
+      "startOffset" : 122,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 37,
+      "context" : "In the future, we will work on more sophisticated specialization methods, and also investigate the use of adapter modules (Houlsby et al., 2019; Pfeiffer et al., 2020) for more efficient fine-tuning.",
+      "startOffset" : 122,
+      "endOffset" : 167
+    } ],
+    "year" : 2020,
+    "abstractText" : "Unsupervised pretraining models have been shown to facilitate a wide range of downstream NLP applications. These models, however, retain some of the limitations of traditional static word embeddings. In particular, they encode only the distributional knowledge available in raw text corpora, incorporated through language modeling objectives. In this work, we complement such distributional knowledge with external lexical knowledge, that is, we integrate the discrete knowledge on word-level semantic similarity into pretraining. To this end, we generalize the standard BERT model to a multi-task learning setting where we couple BERT’s masked language modeling and next sentence prediction objectives with an auxiliary task of binary word relation classification. Our experiments suggest that our “Lexically Informed” BERT (LIBERT), specialized for the word-level semantic similarity, yields better performance than the lexically blind “vanilla” BERT on several language understanding tasks. Concretely, LIBERT outperforms BERT in 9 out of 10 tasks of the GLUE benchmark and is on a par with BERT in the remaining one. Moreover, we show consistent gains on 3 benchmarks for lexical simplification, a task where knowledge about word-level semantic similarity is paramount, and large gains on lexical semantic reasoning probes.",
+    "creator" : "TeX"
+  }
+}

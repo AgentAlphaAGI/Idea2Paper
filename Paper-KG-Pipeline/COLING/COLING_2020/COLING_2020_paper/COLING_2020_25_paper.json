@@ -1,0 +1,608 @@
+{
+  "name" : "COLING_2020_25_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Exploring Question-Specific Rewards for Generating Deep Questions",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Question Generation (QG) aims to endow machines with the ability to ask relevant and to-the-point questions about a document. QG has important practical applications, such as generating assessments for course materials in education (Heilman and Smith, 2010; Lindberg et al., 2013), prompting user interaction in dialog systems (Shukla et al., 2019), enabling machines to ask clarification questions such as FAQs (Saeidi et al., 2018; Krishna and Iyyer, 2019), and automatically building large-scale QA datasets for the research community (Du et al., 2017; Zhao et al., 2018).\nRecent approaches to question generation (Du et al., 2017; Zhao et al., 2018; Liu et al., 2019; Pan et al., 2020) have used Seq2Seq models with attention (Bahdanau et al., 2014), which feeds the input document into an RNN-based encoder, and generates a question about the document through a decoder. The training objective is to maximize the log likelihood of the ground-truth question paired with each input document using teacher forcing (Williams and Zipser, 1989). However, as the ground-truth questions are insufficient to account for the many equivalent ways of asking a question, this likelihood-based training suffers from the problem of exposure bias (Ranzato et al., 2016); i.e., the model does not learn how to distribute probability mass over sequences that are valid but different from the ground truth (Hosking and Riedel, 2019). To address this issue, previous QG works proposed to optimize the model directly on question-specific rewards (e.g., fluency, answerability) via Reinforcement Learning (RL). This process decouples the training procedure from the ground truth data, so that the space of possible questions can be better explored. Moreover, it allows the training to target on specific properties we want the question to exhibit, such as relevant to a specific topic or whether the question is answerable from the document’s content. Although various rewards have been employed for QG — such as BLEU (Kumar et al., 2018), the answerability reward (Zhang and Bansal, 2019; Chen et al., 2020), and the word movers distance (Chen et al., 2020) — optimizing the reward scores does not always lead to higher question quality in practice, as observed by Hosking and Riedel (2019). How to define robust and effective QG-specific rewards still requires further investigation.\nWe aim to analyze the effectiveness of question-specific rewards in QG. Instead of using general NLG metrics such as BLEU, we target three QG-related metrics that are commonly cited in human evaluations\nof question quality: (1) Fluency indicates whether the question follows the grammar and accords with the correct logic; (2) Relevance indicates whether the question is relevant to the document; and (3) Answerability indicates whether the question is answerable given the document. We design a specific RL reward for each metric: a language model based reward for fluency, a discriminator-based reward for relevance, and an QA-based reward for answerability. After optimizing each reward via RL, we conduct comprehensive analysis, including automatic and human evaluation, to arrive at the following conclusions: (1) both individual and joint optimization of these rewards can lead to performance gain in automated metrics such as BLEU, but this does not guarantee an improvement in the real question quality; (2) the reward for relevance substantially helps to improve the question quality, while the reward for answerability reduces the quality due to the bottleneck brought by the innate capability of the QA model; and (3) whether a reward can improve the real question quality strongly depends on whether the reward score correlates well with human judgement."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Early QG studies focused on using manually-designed rules or templates to transform a piece of given text to questions (Heilman, 2011; Chali and Hasan, 2012), with low generalizability and scalability. To address this, recent neural-based question generation (NQG) take advantage of the sequence-to-sequence (Seq2Seq) framework with attention (Bahdanau et al., 2014). These models are trained in an end-toend manner, requiring far less labor and enabling better language flexibility. Many improvements have been made to the first Seq2Seq-based NQG model (Du et al., 2017), such as encoding answer information (Zhou et al., 2017; Sun et al., 2018) and incorporating linguistic features (Liu et al., 2019).\nAmong these attempts, utilizing RL to optimize QG-specific rewards has been adopted by recent works to address the exposure bias problem. To find a good proxy for question quality, various rewards have been proposed. One common type of reward is the similarity between the generated question and the reference question written by human. Kumar et al. (2018) adopted BLEU, ROUGE, and METEOR as rewards. Followup works replaced these n-gram based similarities with more semantic-relevant metrics, such as the word movers distance (Chen et al., 2020; Yu et al., 2020) and the paraphrasing probability (Zhang and Bansal, 2019). To generate more passage-relevant questions, Kumar et al. (2018) designed a reward to measure the relevance between the input passage and the generated question based on their degree of overlapping. The answerability reward measures whether the generated question can be answered by the input passage. It is designed as either the confidence score that a pre-trained QA model can correctly answer the generated question (Zhang and Bansal, 2019), or the overlapping degree between the target answer and the answer predicted by the QA model (Kumar et al., 2018; Yu et al., 2020). Other types of rewards include Yao et al. (2018), which train a discriminator to measure the naturalness of the generated question, i.e., it is generated by human or synthesized by machines.\nMost question-specific rewards are empirically successful since they achieve performance gain in automatic evaluation metrics after RL training. However, this brings several followup questions that existing works have failed to answer: (1) does optimizing RL rewards really improve the question quality from the human standard, (2) which reward is more effective in improving the question quality, and (3) how the rewards interfere with each other when jointly optimized. This paper aims to bridge this gap through human evaluation and analytic experiments, aiming to provide a better understanding of how different rewards affect the question generation process."
+    }, {
+      "heading" : "3 Methodology",
+      "text" : "Given a document D as input, the objective is to generate a relevant question Ŷ which can be answered by the document D. This is formulated as maximizing the conditional probability p(Y|D):\nŶ = argmax Y P (Y|D) = argmax Y T∏ t=1 P (yt|D,Y<t) (1)\nwhere yt is the t-th token of the generated question Y , and Y<t represents the previous decoded tokens, i.e., y1, · · · , yt−1. The general framework of our model is shown in Figure 1, consisting of two parts: the\nQuestion Generator and the QG-specific Rewards. The Question Generator uses the Seq2Seq framework with attention (Bahdanau et al., 2014), copying (Gu et al., 2016; See et al., 2017), and coverage mechanisms (Tu et al., 2016), following most existing NQG works. The model is trained by maximizing the likelihood of the ground-truth question. As discussed in the introduction, this basic question generator suffers from the exposure bias problem. Therefore, we design three QG-Specific Rewards aiming at evaluating the fluency, relevance, and answerablity of the question generated by the basic model. We then fine-tune the model by optimizing these rewards following the RL framework, and using the self-critical sequence training (SCST) algorithm (Rennie et al., 2017). In the following, we describe the design of the three QG-specific rewards in detail."
+    }, {
+      "heading" : "3.1 LM-based Reward for Fluency",
+      "text" : "We first introduce a Language Model (LM) based reward to improve the fluency of the generated question. The perplexity of a sentence under a well-trained LM usually serves as a good indicator of its fluency, since a less smooth sentence tends to have high perplexity when evaluated by the language model (Yang et al., 2018b). Therefore, we first pre-train a language model PLM and then define the fluency rewardRflu of a generated question Y as its negative perplexity evaluated by the language model PLM , which can be formulated as:\nRflu(Y) = − exp(− 1\nT T∑ t=1 logPLM (yt|Y<t)) (2)\nTo optimize the fluency reward in training, we define the following loss function Lflu.\nLflu = −(Rflu(Ŷ)− αflu) 1\nT T∑ t=1 logPQG(ŷt|D, Ŷ<t) (3)\nwhere ŷt is the t-th token in the predicted question Ŷ , which is sampled from the vocabulary distribution PQG(yt|D, Y<t) specified by the RNN decoder of the question generator. αflu is a pre-defined negative perplexity, which is used as the baseline reward in the SCST algorithm to stabilize the training process. To minimize the loss Lflu, the model is required to generate a fluent question Ŷ so that it can obtain a high rewardRflu(Ŷ) from the language model."
+    }, {
+      "heading" : "3.2 Discriminator-Based Reward for Relevance",
+      "text" : "We then design a classifier-based discriminator to judge whether the generated question is relevant to the input document. As shown in Figure 1, the discriminator is a binary classifier based on the pre-trained BERT (Devlin et al., 2019), which takes both the input document D and the generated question Y as inputs, and outputs the probability that Y is relevant to the D. To train the relevance discriminator, we use the human-written ground-truth question YG for each document as the positive training data. For a document-question pair (D,YG), we create the negative sample YN for D in the following three ways.\n• Question Replacement: We randomly select a ground-truth question for another document D′ as the negative sample for the document D.\n• Entity Replacement: We create the negative sample YN by replacing the entity present in the ground-truth question YG with another entity of the same type but does not occur in the document D. This helps the discriminator to learn whether the question involves external knowledge not mentioned in the document.\n• Entity Order Swap: We also replace the entity in the ground-truth question with a different entity of the same type that also occurs in the document. This often creates logical errors in the question, e.g., William Shakespeare is written by the book, which is more challenging to differentiate by the discriminator.\nWith the above process, we create three negative samples for each ground-truth question. To address this unbalance between positive and negative training data, we adopt the α-balanced focal loss (Lin et al., 2017) to train the relevance discriminator, described in Equation 4.\nLF (Pt) = −αt(1− Pt)λ logPt (4)\nwhere Pt is the predicted probability for class t. (1−Pt)λ is a modulating factor with a tunable focusing parameter λ ≥ 0 that smoothly adjusts the rate at which easy examples are down-weighted.\nAfter training the relevance discriminator, we use it to obtain the relevance reward and then fine-tune the question generator by maximizing the relevance reward in SCST training. Given a document D and a question Y , the relevance reward Rrel(D,Y) is defined as a scaling of the relevance probability Prel(D,Y) output by the relevance discriminator as:\nRrel(D,Y) = − log (1− Prel(D,Y) + ) (5)\nwhere is a positive factor close to zero to avoid calculating log 0. We scale the relevance probability in this way to augment the reward value for positive samples, i.e., those samples whose rewards are greater than the baseline, because the QG model generally samples more negative samples during training. To optimize the relevance reward in SCST training, we define the loss function Lrel in a similar way with that in Section 3.1.\nLrel = −(Rrel(D, Ŷ)− αrel) 1\nT T∑ t=1 logPQG(ŷt|D, Ŷ<t) (6)"
+    }, {
+      "heading" : "3.3 QA-Based Reward for Answerability",
+      "text" : "Answerability indicates whether the question is answerable by the document without the need of external information. We design the answerability reward based on the SpanBERT (Joshi et al., 2020), a stateof-the-art QA model on the HotpotQA dataset. Given a document D and a question Y as inputs, SpanBERT predicts the start and end spans of the potential answer in the document D. Formally, it outputs two probability distributions over the tokens in the document: P sans and P e ans, where P s ans(i)/P e ans(i) is the probability that the i-th token is the start/end span of the answer. Based on the pre-trained SpanBERT model, we first fine-tune it with the HotpotQA dataset and then use it to obtain the answerability reward for the generated question Y . Intuitively, when the question is answerable, the model should be quite\nconfident about the start/end span of the answer, so the distribution should be peak for both P sans and P eans, i.e., the value of maxi P s ans(i) and maxj P e ans(j) both tend to be large. Therefore, we use the geometric average of these two values to indicate the answerability, as shown in Equation 7.\nRans(D,Y) = − log (1− max 1≤i≤j≤T, j−i≤l\n√ P sans(i|D,Y) · P eans(j|D,Y) + ) (7)\nwhere l represents the maximum allowed length of the answer. Similar to Equation 5, we also scale the probability to balance positive and negative samples during training. Similar to previous sections, to optimize the answerability reward in SCST training, we define a loss function Lans:\nLans = −(Rans(D, Ŷ)− αans) 1\nT T∑ t=1 logPQG(ŷt|D, Ŷ<t) (8)"
+    }, {
+      "heading" : "3.4 Model Training",
+      "text" : "We train the whole model following the pre-training and fine-tuning paradigm, as adopted by most works that apply RL in language generation (Hosking and Riedel, 2019). We first pre-train the question generation model with using regular cross-entropy loss together with the copying loss and the coverage loss, which can be written together as Lbase:\nLbase = 1\nT T∑ t=1 (− logPQG(ŷt|D,Y<t) + γcov ∑ i min(ati, c t i)) (9)\nwhere the copy mechanism is involved in the question generator PQG, and ati is the i th element of the attention score vector over the document at time stamp t. We then fine-tune the basic QG model trained with Lbase to maximize the previously defined QG-specific rewards. This is achieved by linearly combining Lbase with the RL-based losses Lflu,Lrel,Lans, as follows.\nL = Lbase + γfluLflu + γrelLrel + γansLans (10)\nwhere the hyper-parameters γflu, γrel and γans specify the trade-off between different kinds of rewards."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Experimental Settings",
+      "text" : "We conduct experiments on HotpotQA (Yang et al., 2018a), containing∼100K crowd-sourced questions paired with Wikipedia articles. Generating a fluent, relevant, and answerable question in HotpotQA is a non-trivial task as it requires reasoning over different pieces of information in the input document. We follow the data split of Pan et al. (2020) to preprocess the data, resulting in 90,440 / 6,072 examples for training and evaluation, respectively.\nThe basic question generator is a Seq2Seq framework with the copying (Gu et al., 2016), coverage (See et al., 2017), and attention (Hou et al., 2019) mechanisms. We employ an 1-layer bi-directional GRU as the encoder and an 1-layer GRU as the decoder. We use the cased WordPiece tokenizer for the question generator following Joshi et al. (2020). To train the language model used for evaluating the fluency reward, we fine-tune the pre-trained BERT model (Devlin et al., 2019) on our target dataset, resulting in an LM with a perplexity of 8.85 on the dev set. Our relevance discriminator achieves a 91.16 F1 score and the fine-tuned QA-based discriminator obtains a 53.77 Exact Match (EM) score and a 70.29 F1 score on the dev set. In SCST training, we empirically set the baseline rewards αflu, αrel and αans as −10, log(2), and log(2) based on the general quality of the sampled questions. When jointly training all the rewards, the trade-off parameters γcov, γflu, γrel and γans are set as 0.25, 0.2, 1, 1, respectively. Other settings for training follow the standard best practice1.\n1All models are trained using Adam (Kingma and Ba, 2015) with mini-batch size 64. The learning rate is initially set to 10−3, and adaptive learning rate decay applied. We also adopt early stopping and use gradient clipping (Pascanu et al., 2013) with clip norm of 5."
+    }, {
+      "heading" : "4.2 Automatic Evaluation",
+      "text" : "To evaluate the effect of different QG-specific rewards, we first report the performance of automatic evaluation metrics when optimizing different rewards. The metrics include: (1) Perplexity (PPL); (2) BLEU 1 and 4 (Papineni et al., 2002), METEOR (Lavie and Agarwal, 2007), and ROUGE-L (Lin, 2004), which are based on the n-gram similarity between the generated questions and the ground truth; and (3) the gain on reward scores achieved on the test set, i.e., the fluency, relevance, answerability rewards, after RL-based training. Table 1 summarizes the performance, where B1 is the basic question generator without RL training, and where the other models are fine-tuned based on B1 by optimizing either a single reward (S1–S3) or multiple rewards together (E1–E4). F, R, and A represents the fluency reward, the relevance reward, and the answerability reward, respectively. We make four major observations:\n1. Optimizing a single reward alone (F, R, A) can lead to an improvement on the BLEU score and also its corresponding reward score (F→R-FLU, R→R-REL, and A→R-ANS). When optimizing one reward, the scores for the other two also increase slightly, showing that the three rewards are correlated. This is in line with our intuition, e.g., a question answerable by the passage is also likely to be fluent.\n2. Jointly training multiple rewards in general leads to better performance. For example, the best improvement of R-REL, R-FLU and R-ANS are achieved by E2 and E3. This shows that different rewards can mutually enhance each other in joint training, which provides a prospective future direction on RL reward integration. Figure 2 further shows how rewards influence each other in training over time.\n3. In general, the increase in rewards do not correlate well with improvement on automatic metrics. For example, E3 has the largest reward gain in fluency and answerability, but achieves the worst result of 12.77 in BLEU4. This shows that the RL rewards focus on different parts of the question quality other than the n-gram based similarity with the ground truth. We further investigate how each reward affects the question quality later in Section 4.4.\n4. We find that our B1 baseline tends to generate longer questions (the average question length is 1.44 times that of the ground-truth), which the RL rewards then encourage shortening to lengths which are close to the ground-truth. This explains why the improvements brought by RL rewards are different with respect to BLEU, METEOR, and ROUGE-L, since these metrics have different levels of sensitivity to the generated length."
+    }, {
+      "heading" : "4.3 Comparison with Baselines",
+      "text" : "We then compare our best-performed model (E4. F + R + A) against several strong baselines in QG. The technologies employed by each model as well as the performance results are summarized in Table 2. Without using the answer information and any external linguistic knowledge, our model achieves a comparative BLEU4 with the state-of-the-art QG model (B7) in HotpotQA. This demonstrates the effectiveness of optimizing QG-specific rewards via RL. Surprisingly, the CGC-QG (B6) model exhibits an unusual pattern, achieving the best METEOR and ROUGE-L but worst BLEU1 among all baselines. Our analysis finds that CGC-QG tends to generate irrelevant word during word-level content selection, leading to lengthy questions that are unanswerable or which contain semantic errors (Pan et al., 2020)."
+    }, {
+      "heading" : "4.4 Human Evaluation",
+      "text" : "To further investigate whether optimizing QG-specific rewards leads to real improvement in question quality, we conduct a human evaluation on the generated questions for 200 randomly-sampled testing documents. We ask 6 workers to rate the questions generated by 5 different models: the basic question generator (B1), the models fine-tuned with a single reward (S1, S2, S3), and the model with all three rewards (E4). For each question, we ask three workers to give ratings on four criteria: Fluency (on a scale of 1–5), Relevance (scaled 1–3), Answerability (0 for unanswerable and 1 for answerable), and Complexity (scaled 1–3). We designed the scale differently for each metric to ease human ratings. Raters were blinded from the identity of the models. We average the scores from raters on each question, reporting the performance in Table 3. For an unbiased evaluation, we exclude the samples that are labeled as totally unreadable when calculating the average scores for relevance, answerability and complexity. The proportion of the unreadable questions generated by B1, S2, S2, S3 and E4 are 7.9%, 6.7%, 3.9%, 6.8% and 5.0%, respectively. We find four major areas for discussion:\n1. Human ratings do not correlate well with automatic evaluation metrics (BLEU4, Meteor, ROUGEL), showing that the n-gram based metric is not a good reflection of actual question quality. Similar observations also exist in other language generation tasks (Callison-Burch et al., 2006; Liu et al., 2016) for fluency, adequacy and coherence, validating our findings.\n2. Optimizing the relevance reward (S2) alone leads to a substantial improvement of the human ratings for fluency, relevance, and answerability. Further analysis in Section 4.6 will show that optimizing the relevance reward reduces ghost entity errors, a major source of error in previous QG models. 3. In contrast, optimizing for answerability (S3) has a negative effect: reducing scores against all three human ratings, compared against the baseline (B1). We believe this is due to the immature of the current QA model in answering deep questions; i.e., when using as a discriminator, the QA model cannot accurately predict whether a question is answerable or not, especially when the question involves reasoning (the case in HotpotQA). We analyse this in more depth in Section 4.5.\n4. The average length of the generated questions are 1.44, 1.14, 1.25, 1.28, and 1.01 times compared\nwith the ground-truth questions for B1, S1, S2, S3 and E4, respectively. This strongly correlates with the human ratings for complexity (1.57, 1.49, 1.55, 1.50, and 1.47 for B1, S1, S2, S3 and E4, respectively). Longer questions tend to get higher complexity scores, which we feel validates intuition."
+    }, {
+      "heading" : "4.5 Consistency between Rewards and Human Judgement",
+      "text" : "To figure out why certain rewards improve the real question quality while others do not, we plot violins to show the distribution of reward scores on each level of human rating, shown in Figure 4. We observe that the relevance reward has the highest consistency with human judgement; i.e., the median reward score also improves when the human rating gets higher. This provides an explanation of why optimizing the relevance reward leads to the best question quality.\nThe answerability reward predicted by the QA model, however, exhibits a poor correlation with the true answerability judged by human. The median answerability reward is low for both answerable and unanswerable questions labeled by humans. This lends evidence for our claim in Section 4.4 that the innate capability of the QA model is the bottleneck for this reward. We expect the answerability reward to become more effective as deep QA improves, and could become a key component in future work.\nThe correlation between the fluency reward and the human rating is in the middle: better than the answerability but worse than the relevance reward. This makes the performance of S1 similar to the baseline model in Table 3; i.e., the effect of optimizing the fluency reward is not obvious. Based on the above observations, we conclude that the rewards that correlate well with human judgements tend to achieve real improvement in question quality. Therefore, to design an effective QG-specific reward, testing its performance on n-gram based metrics such as BLEU may not faithfully reflect its effectiveness. Instead, running an initial test of how well the reward score correlates with the human judgement may prove to be a better way."
+    }, {
+      "heading" : "4.6 Meso Analysis of Generated Questions",
+      "text" : "To further understand why the fluency and the answerability reward fail to produce a consistent judgement with humans, we conduct a meso analysis on our E4 model by comparing the generated questions receiving high rewards with those with low rewards. We narrate our observations for each reward type, guided by the results in Figure 5. • Fluency. From Figure 5 Row F., we observe that sometimes the fluency reward is consistent with the human judgement about fluency, e.g., the incomplete question [FL-1] receives a low reward. However, there is often a deviation between the fluency judged by the language model and human-judged fluency. For example, [FH-2] which has a repetition error is assigned a high reward, while [FL-2] with a similar repetition error receives a low reward. This is caused by the statistical bias of the language model, i.e., the LM tends to assign low rewards to the questions with rare or unseen entity (e.g., Kenji Mizoguchi). The lack of commonsense knowledge is another problem of the LM: e.g., in [FH-1], the model fails to find out that the word born should be replaced with founded to make the question logically correct.\npatterns: red : grammatical and logical error, blue: repetition, green: corresponding parts between documents and questions, purple: ghost entity and unmentioned part, pink: pattern asking about year.\n• Relevance. Figure 5 Row R. shows that the relevance discriminator judges the document–question relevance largely based on two aspects: (1) whether the question contains an entity that does not appear in the passage (ghost entity), e.g., Granly in [RL-1], and (2) whether the question has a logical inconsistency with the document, e.g., [RL-2]. These two targets are quite consistent with the human judgement on relevance, which explains its good correlation curve in Figure 4. However, when the question is asking about an unmentioned aspect of an entity in the document, it is not easy for the model to assign an appropriate relevance score; as in [RH-1]. A potential solution is to factor in the judgement of a good answerability discriminator (a challenge itself). • Answerability. We observe in the Row A. that the answerability reward has a quite different criteria for answerability compared with human. First, most of the questions with high rewards are asking about the year (the text highlighted in pink). This may be caused by the incorrect bias learned by the QA model, i.e., it tends to regard a year in the document as an answer, which in turn causes questions asking about years to receive high answerability rewards. Second, when the question becomes complex, i.e. requiring the QA model to conduct reasoning such as comparison (QuestionS [AL-1] and [AL-2]) and to utilize world knowledge (e.g. United States is a country), the QA model tends to give a low answerability reward. This can be explained by the insufficient ability of current QA model in answering deep questions. To improve the answerability via an QA-based reward, we believe it is crucial to address the QA model’s bias in prediction and improve its reasoning ability. Otherwise, optimizing an immature QA-based reward may introduce incorrect bias which in turn harms the question quality."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "In this paper, we optimize three question-specific rewards via reinforcement learning on a Seq2Seq based question generator, aiming to improve the fluency, relevance and answerability of the generated question. Through comprehensive analytic experiments, including automatic and human evaluation, consistency validation, and meso analysis, we show that the effectiveness of a reward can hardly be reflected by automatic evaluation metrics such as BLEU. Instead, we find a reward that correlates well with the human judgement generally has better effects on improving the question quality. In future works, we believe these observations can help to guide the design of other QG-specific rewards that target on unexplored aspects of question generation, such as the informativeness and the utility of questions."
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "CoRR, abs/1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Re-evaluation the role of bleu in machine translation research",
+      "author" : [ "Chris Callison-Burch", "Miles Osborne", "Philipp Koehn." ],
+      "venue" : "Conference of the European Chapter of the Association for Computational Linguistics (EACL).",
+      "citeRegEx" : "Callison.Burch et al\\.,? 2006",
+      "shortCiteRegEx" : "Callison.Burch et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Towards automatic topical question generation",
+      "author" : [ "Yllias Chali", "Sadid A. Hasan." ],
+      "venue" : "International Conference on Computational Linguistics (COLING), pages 475–492.",
+      "citeRegEx" : "Chali and Hasan.,? 2012",
+      "shortCiteRegEx" : "Chali and Hasan.",
+      "year" : 2012
+    }, {
+      "title" : "Reinforcement learning based graph-to-sequence model for natural question generation",
+      "author" : [ "Yu Chen", "Lingfei Wu", "Mohammed J. Zaki." ],
+      "venue" : "International Conference on Learning Representations (ICLR).",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BERT: pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Annual Conference of the North American Chapter of the Association for Computational Linguistics (NAACL-HLT), pages 4171–4186.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning to ask: Neural question generation for reading comprehension",
+      "author" : [ "Xinya Du", "Junru Shao", "Claire Cardie." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL), pages 1342–1352.",
+      "citeRegEx" : "Du et al\\.,? 2017",
+      "shortCiteRegEx" : "Du et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Incorporating copying mechanism in sequence-tosequence learning",
+      "author" : [ "Jiatao Gu", "Zhengdong Lu", "Hang Li", "Victor O.K. Li." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Gu et al\\.,? 2016",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Good question! statistical ranking for question generation",
+      "author" : [ "Michael Heilman", "Noah A. Smith." ],
+      "venue" : "Annual Conference of the North American Chapter of the Association for Computational Linguistics (NAACL-HLT), pages 609–617.",
+      "citeRegEx" : "Heilman and Smith.,? 2010",
+      "shortCiteRegEx" : "Heilman and Smith.",
+      "year" : 2010
+    }, {
+      "title" : "Automatic factual question generation from text",
+      "author" : [ "Michael Heilman." ],
+      "venue" : "Language Technologies Institute School of Computer Science Carnegie Mellon University, 195.",
+      "citeRegEx" : "Heilman.,? 2011",
+      "shortCiteRegEx" : "Heilman.",
+      "year" : 2011
+    }, {
+      "title" : "Evaluating rewards for question generation models",
+      "author" : [ "Tom Hosking", "Sebastian Riedel." ],
+      "venue" : "Annual Conference of the North American Chapter of the Association for Computational Linguistics (NAACL-HLT).",
+      "citeRegEx" : "Hosking and Riedel.,? 2019",
+      "shortCiteRegEx" : "Hosking and Riedel.",
+      "year" : 2019
+    }, {
+      "title" : "Cross attention network for few-shot classification",
+      "author" : [ "Ruibing Hou", "Hong Chang", "Bingpeng Ma", "Shiguang Shan", "Xilin Chen." ],
+      "venue" : "Annual Conference on Neural Information Processing Systems (NeurIPS).",
+      "citeRegEx" : "Hou et al\\.,? 2019",
+      "shortCiteRegEx" : "Hou et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Spanbert: Improving pre-training by representing and predicting spans",
+      "author" : [ "Mandar Joshi", "Danqi Chen", "Yinhan Liu", "Daniel S. Weld", "Luke Zettlemoyer", "Omer Levy." ],
+      "venue" : "Transactions of the Association for Computational Linguistics (TACL), 8:64–77.",
+      "citeRegEx" : "Joshi et al\\.,? 2020",
+      "shortCiteRegEx" : "Joshi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "Yoshua Bengio and Yann LeCun, editors, 3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Generating question-answer hierarchies",
+      "author" : [ "Kalpesh Krishna", "Mohit Iyyer." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL), pages 2321–2334.",
+      "citeRegEx" : "Krishna and Iyyer.,? 2019",
+      "shortCiteRegEx" : "Krishna and Iyyer.",
+      "year" : 2019
+    }, {
+      "title" : "Putting the horse before the cart: A generator-evaluator framework for question generation from text",
+      "author" : [ "Vishwajeet Kumar", "Ganesh Ramakrishnan", "Yuan-Fang Li." ],
+      "venue" : "CoNLL.",
+      "citeRegEx" : "Kumar et al\\.,? 2018",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "METEOR: an automatic metric for MT evaluation with high levels of correlation with human judgments",
+      "author" : [ "Alon Lavie", "Abhaya Agarwal." ],
+      "venue" : "Proceedings of the Second Workshop on Statistical Machine Translation (WMT@ACL), pages 228–231.",
+      "citeRegEx" : "Lavie and Agarwal.,? 2007",
+      "shortCiteRegEx" : "Lavie and Agarwal.",
+      "year" : 2007
+    }, {
+      "title" : "Focal loss for dense object detection",
+      "author" : [ "Tsung-Yi Lin", "Priya Goyal", "Ross B. Girshick", "Kaiming He", "Piotr Dollár." ],
+      "venue" : "IEEE International Conference on Computer Vision (ICCV), pages 2999–3007.",
+      "citeRegEx" : "Lin et al\\.,? 2017",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81, Barcelona, Spain, jul. Association for Computational Linguistics.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Generating natural language questions to support learning on-line",
+      "author" : [ "David Lindberg", "Fred Popowich", "John C. Nesbit", "Philip H. Winne." ],
+      "venue" : "European Workshop on Natural Language Generation (ENLG), pages 105–114.",
+      "citeRegEx" : "Lindberg et al\\.,? 2013",
+      "shortCiteRegEx" : "Lindberg et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "How NOT to evaluate your dialogue system: An empirical study of unsupervised evaluation metrics for dialogue response generation",
+      "author" : [ "Chia-Wei Liu", "Ryan Lowe", "Iulian Serban", "Michael Noseworthy", "Laurent Charlin", "Joelle Pineau." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 2122–2132.",
+      "citeRegEx" : "Liu et al\\.,? 2016",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Learning to generate questions by learning what not to generate",
+      "author" : [ "Bang Liu", "Mingjun Zhao", "Di Niu", "Kunfeng Lai", "Yancheng He", "Haojie Wei", "Yu Xu." ],
+      "venue" : "International World Wide Web Conference (WWW), pages 1106– 1118.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Semantic graphs for generating deep questions",
+      "author" : [ "Liangming Pan", "Yuxi Xie", "Yansong Feng", "Tat-Seng Chua", "Min-Yen Kan." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL), pages 1463–1475.",
+      "citeRegEx" : "Pan et al\\.,? 2020",
+      "shortCiteRegEx" : "Pan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL), pages 311– 318.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "On the difficulty of training recurrent neural networks",
+      "author" : [ "Razvan Pascanu", "Tomas Mikolov", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the 30th International Conference on Machine Learning, ICML 2013, Atlanta, GA, USA, 16-21 June 2013, volume 28 of JMLR Workshop and Conference Proceedings, pages 1310–1318. JMLR.org.",
+      "citeRegEx" : "Pascanu et al\\.,? 2013",
+      "shortCiteRegEx" : "Pascanu et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Sequence level training with recurrent neural networks",
+      "author" : [ "Marc’Aurelio Ranzato", "Sumit Chopra", "Michael Auli", "Wojciech Zaremba" ],
+      "venue" : "In International Conference on Learning Representations (ICLR)",
+      "citeRegEx" : "Ranzato et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Ranzato et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Self-critical sequence training for image captioning",
+      "author" : [ "Steven J. Rennie", "Etienne Marcheret", "Youssef Mroueh", "Jerret Ross", "Vaibhava Goel." ],
+      "venue" : "IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pages 1179–1195.",
+      "citeRegEx" : "Rennie et al\\.,? 2017",
+      "shortCiteRegEx" : "Rennie et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Interpretation of natural language rules in conversational machine reading",
+      "author" : [ "Marzieh Saeidi", "Max Bartolo", "Patrick S.H. Lewis", "Sameer Singh", "Tim Rocktäschel", "Mike Sheldon", "Guillaume Bouchard", "Sebastian Riedel." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 2087–2097.",
+      "citeRegEx" : "Saeidi et al\\.,? 2018",
+      "shortCiteRegEx" : "Saeidi et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Get to the point: Summarization with pointergenerator networks",
+      "author" : [ "Abigail See", "Peter J. Liu", "Christopher D. Manning." ],
+      "venue" : "Regina Barzilay and Min-Yen Kan, editors, Annual Meeting of the Association for Computational Linguistics (ACL), pages 1073–1083.",
+      "citeRegEx" : "See et al\\.,? 2017",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "What should I ask? using conversationally informative rewards for goal-oriented visual dialog",
+      "author" : [ "Pushkar Shukla", "Carlos E.L. Elmadjian", "Richika Sharan", "Vivek Kulkarni", "Matthew Turk", "William Yang Wang." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL), pages 6442–6451.",
+      "citeRegEx" : "Shukla et al\\.,? 2019",
+      "shortCiteRegEx" : "Shukla et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Answer-focused and position-aware neural question generation",
+      "author" : [ "Xingwu Sun", "Jing Liu", "Yajuan Lyu", "Wei He", "Yanjun Ma", "Shi Wang." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 3930–3939.",
+      "citeRegEx" : "Sun et al\\.,? 2018",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Modeling coverage for neural machine translation",
+      "author" : [ "Zhaopeng Tu", "Zhengdong Lu", "Yang Liu", "Xiaohua Liu", "Hang Li." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Tu et al\\.,? 2016",
+      "shortCiteRegEx" : "Tu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A learning algorithm for continually running fully recurrent neural networks",
+      "author" : [ "Ronald J. Williams", "David Zipser." ],
+      "venue" : "Neural Computation, 1(2):270–280.",
+      "citeRegEx" : "Williams and Zipser.,? 1989",
+      "shortCiteRegEx" : "Williams and Zipser.",
+      "year" : 1989
+    }, {
+      "title" : "Hotpotqa: A dataset for diverse, explainable multi-hop question answering",
+      "author" : [ "Zhilin Yang", "Peng Qi", "Saizheng Zhang", "Yoshua Bengio", "William W. Cohen", "Ruslan Salakhutdinov", "Christopher D. Manning." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 2369–2380.",
+      "citeRegEx" : "Yang et al\\.,? 2018a",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Unsupervised text style transfer using language models as discriminators",
+      "author" : [ "Zichao Yang", "Zhiting Hu", "Chris Dyer", "Eric P. Xing", "Taylor Berg-Kirkpatrick." ],
+      "venue" : "Annual Conference on Neural Information Processing Systems (NeurIPS), pages 7298–7309.",
+      "citeRegEx" : "Yang et al\\.,? 2018b",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Teaching machines to ask questions",
+      "author" : [ "Kaichun Yao", "Libo Zhang", "Tiejian Luo", "Lili Tao", "Yanjun Wu." ],
+      "venue" : "International Joint Conference on Artificial Intelligence (IJCAI).",
+      "citeRegEx" : "Yao et al\\.,? 2018",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Low-resource generation of multi-hop reasoning questions",
+      "author" : [ "Jianxing Yu", "Wei Liu", "Shuang Qiu", "Qinliang Su", "Kai Wang", "Xiaojun Quan", "Jian Yin." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL), pages 6729–6739.",
+      "citeRegEx" : "Yu et al\\.,? 2020",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Addressing semantic drift in question generation for semi-supervised question answering",
+      "author" : [ "Shiyue Zhang", "Mohit Bansal." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Zhang and Bansal.,? 2019",
+      "shortCiteRegEx" : "Zhang and Bansal.",
+      "year" : 2019
+    }, {
+      "title" : "Paragraph-level neural question generation with maxout pointer and gated self-attention networks",
+      "author" : [ "Yao Zhao", "Xiaochuan Ni", "Yuanyuan Ding", "Qifa Ke." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 3901–3910.",
+      "citeRegEx" : "Zhao et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Neural question generation from text: A preliminary study",
+      "author" : [ "Qingyu Zhou", "Nan Yang", "Furu Wei", "Chuanqi Tan", "Hangbo Bao", "Ming Zhou." ],
+      "venue" : "CCF International Conference of Natural Language Processing and Chinese Computing (NLPCC), pages 662–671.",
+      "citeRegEx" : "Zhou et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 7,
+      "context" : "QG has important practical applications, such as generating assessments for course materials in education (Heilman and Smith, 2010; Lindberg et al., 2013), prompting user interaction in dialog systems (Shukla et al.",
+      "startOffset" : 106,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 18,
+      "context" : "QG has important practical applications, such as generating assessments for course materials in education (Heilman and Smith, 2010; Lindberg et al., 2013), prompting user interaction in dialog systems (Shukla et al.",
+      "startOffset" : 106,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2013), prompting user interaction in dialog systems (Shukla et al., 2019), enabling machines to ask clarification questions such as FAQs (Saeidi et al.",
+      "startOffset" : 54,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2019), enabling machines to ask clarification questions such as FAQs (Saeidi et al., 2018; Krishna and Iyyer, 2019), and automatically building large-scale QA datasets for the research community (Du et al.",
+      "startOffset" : 71,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2019), enabling machines to ask clarification questions such as FAQs (Saeidi et al., 2018; Krishna and Iyyer, 2019), and automatically building large-scale QA datasets for the research community (Du et al.",
+      "startOffset" : 71,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2018; Krishna and Iyyer, 2019), and automatically building large-scale QA datasets for the research community (Du et al., 2017; Zhao et al., 2018).",
+      "startOffset" : 112,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2018; Krishna and Iyyer, 2019), and automatically building large-scale QA datasets for the research community (Du et al., 2017; Zhao et al., 2018).",
+      "startOffset" : 112,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 5,
+      "context" : "Recent approaches to question generation (Du et al., 2017; Zhao et al., 2018; Liu et al., 2019; Pan et al., 2020) have used Seq2Seq models with attention (Bahdanau et al.",
+      "startOffset" : 41,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 37,
+      "context" : "Recent approaches to question generation (Du et al., 2017; Zhao et al., 2018; Liu et al., 2019; Pan et al., 2020) have used Seq2Seq models with attention (Bahdanau et al.",
+      "startOffset" : 41,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 20,
+      "context" : "Recent approaches to question generation (Du et al., 2017; Zhao et al., 2018; Liu et al., 2019; Pan et al., 2020) have used Seq2Seq models with attention (Bahdanau et al.",
+      "startOffset" : 41,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 21,
+      "context" : "Recent approaches to question generation (Du et al., 2017; Zhao et al., 2018; Liu et al., 2019; Pan et al., 2020) have used Seq2Seq models with attention (Bahdanau et al.",
+      "startOffset" : 41,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2020) have used Seq2Seq models with attention (Bahdanau et al., 2014), which feeds the input document into an RNN-based encoder, and generates a question about the document through a decoder.",
+      "startOffset" : 48,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 31,
+      "context" : "The training objective is to maximize the log likelihood of the ground-truth question paired with each input document using teacher forcing (Williams and Zipser, 1989).",
+      "startOffset" : 140,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 24,
+      "context" : "However, as the ground-truth questions are insufficient to account for the many equivalent ways of asking a question, this likelihood-based training suffers from the problem of exposure bias (Ranzato et al., 2016); i.",
+      "startOffset" : 191,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 9,
+      "context" : ", the model does not learn how to distribute probability mass over sequences that are valid but different from the ground truth (Hosking and Riedel, 2019).",
+      "startOffset" : 128,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 14,
+      "context" : "Although various rewards have been employed for QG — such as BLEU (Kumar et al., 2018), the answerability reward (Zhang and Bansal, 2019; Chen et al.",
+      "startOffset" : 66,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2018), the answerability reward (Zhang and Bansal, 2019; Chen et al., 2020), and the word movers distance (Chen et al.",
+      "startOffset" : 34,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2018), the answerability reward (Zhang and Bansal, 2019; Chen et al., 2020), and the word movers distance (Chen et al.",
+      "startOffset" : 34,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2020), and the word movers distance (Chen et al., 2020) — optimizing the reward scores does not always lead to higher question quality in practice, as observed by Hosking and Riedel (2019).",
+      "startOffset" : 38,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 8,
+      "context" : "Early QG studies focused on using manually-designed rules or templates to transform a piece of given text to questions (Heilman, 2011; Chali and Hasan, 2012), with low generalizability and scalability.",
+      "startOffset" : 119,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 2,
+      "context" : "Early QG studies focused on using manually-designed rules or templates to transform a piece of given text to questions (Heilman, 2011; Chali and Hasan, 2012), with low generalizability and scalability.",
+      "startOffset" : 119,
+      "endOffset" : 157
+    }, {
+      "referenceID" : 0,
+      "context" : "To address this, recent neural-based question generation (NQG) take advantage of the sequence-to-sequence (Seq2Seq) framework with attention (Bahdanau et al., 2014).",
+      "startOffset" : 141,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 5,
+      "context" : "Many improvements have been made to the first Seq2Seq-based NQG model (Du et al., 2017), such as encoding answer information (Zhou et al.",
+      "startOffset" : 70,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2017), such as encoding answer information (Zhou et al., 2017; Sun et al., 2018) and incorporating linguistic features (Liu et al.",
+      "startOffset" : 45,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2017), such as encoding answer information (Zhou et al., 2017; Sun et al., 2018) and incorporating linguistic features (Liu et al.",
+      "startOffset" : 45,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2018) and incorporating linguistic features (Liu et al., 2019).",
+      "startOffset" : 46,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 3,
+      "context" : "Followup works replaced these n-gram based similarities with more semantic-relevant metrics, such as the word movers distance (Chen et al., 2020; Yu et al., 2020) and the paraphrasing probability (Zhang and Bansal, 2019).",
+      "startOffset" : 126,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 35,
+      "context" : "Followup works replaced these n-gram based similarities with more semantic-relevant metrics, such as the word movers distance (Chen et al., 2020; Yu et al., 2020) and the paraphrasing probability (Zhang and Bansal, 2019).",
+      "startOffset" : 126,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2020) and the paraphrasing probability (Zhang and Bansal, 2019).",
+      "startOffset" : 41,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 36,
+      "context" : "It is designed as either the confidence score that a pre-trained QA model can correctly answer the generated question (Zhang and Bansal, 2019), or the overlapping degree between the target answer and the answer predicted by the QA model (Kumar et al.",
+      "startOffset" : 118,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 14,
+      "context" : "It is designed as either the confidence score that a pre-trained QA model can correctly answer the generated question (Zhang and Bansal, 2019), or the overlapping degree between the target answer and the answer predicted by the QA model (Kumar et al., 2018; Yu et al., 2020).",
+      "startOffset" : 237,
+      "endOffset" : 274
+    }, {
+      "referenceID" : 35,
+      "context" : "It is designed as either the confidence score that a pre-trained QA model can correctly answer the generated question (Zhang and Bansal, 2019), or the overlapping degree between the target answer and the answer predicted by the QA model (Kumar et al., 2018; Yu et al., 2020).",
+      "startOffset" : 237,
+      "endOffset" : 274
+    }, {
+      "referenceID" : 0,
+      "context" : "The Question Generator uses the Seq2Seq framework with attention (Bahdanau et al., 2014), copying (Gu et al.",
+      "startOffset" : 65,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2014), copying (Gu et al., 2016; See et al., 2017), and coverage mechanisms (Tu et al.",
+      "startOffset" : 17,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2014), copying (Gu et al., 2016; See et al., 2017), and coverage mechanisms (Tu et al.",
+      "startOffset" : 17,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2017), and coverage mechanisms (Tu et al., 2016), following most existing NQG works.",
+      "startOffset" : 33,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 25,
+      "context" : "We then fine-tune the model by optimizing these rewards following the RL framework, and using the self-critical sequence training (SCST) algorithm (Rennie et al., 2017).",
+      "startOffset" : 147,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 33,
+      "context" : "The perplexity of a sentence under a well-trained LM usually serves as a good indicator of its fluency, since a less smooth sentence tends to have high perplexity when evaluated by the language model (Yang et al., 2018b).",
+      "startOffset" : 200,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 4,
+      "context" : "As shown in Figure 1, the discriminator is a binary classifier based on the pre-trained BERT (Devlin et al., 2019), which takes both the input document D and the generated question Y as inputs, and outputs the probability that Y is relevant to the D.",
+      "startOffset" : 93,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 16,
+      "context" : "To address this unbalance between positive and negative training data, we adopt the α-balanced focal loss (Lin et al., 2017) to train the relevance discriminator, described in Equation 4.",
+      "startOffset" : 106,
+      "endOffset" : 124
+    }, {
+      "referenceID" : 11,
+      "context" : "We design the answerability reward based on the SpanBERT (Joshi et al., 2020), a stateof-the-art QA model on the HotpotQA dataset.",
+      "startOffset" : 57,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 9,
+      "context" : "4 Model Training We train the whole model following the pre-training and fine-tuning paradigm, as adopted by most works that apply RL in language generation (Hosking and Riedel, 2019).",
+      "startOffset" : 157,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 32,
+      "context" : "1 Experimental Settings We conduct experiments on HotpotQA (Yang et al., 2018a), containing∼100K crowd-sourced questions paired with Wikipedia articles.",
+      "startOffset" : 59,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 6,
+      "context" : "The basic question generator is a Seq2Seq framework with the copying (Gu et al., 2016), coverage (See et al.",
+      "startOffset" : 69,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2016), coverage (See et al., 2017), and attention (Hou et al.",
+      "startOffset" : 18,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2017), and attention (Hou et al., 2019) mechanisms.",
+      "startOffset" : 23,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 4,
+      "context" : "To train the language model used for evaluating the fluency reward, we fine-tune the pre-trained BERT model (Devlin et al., 2019) on our target dataset, resulting in an LM with a perplexity of 8.",
+      "startOffset" : 108,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 12,
+      "context" : "(1)All models are trained using Adam (Kingma and Ba, 2015) with mini-batch size 64.",
+      "startOffset" : 37,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 23,
+      "context" : "We also adopt early stopping and use gradient clipping (Pascanu et al., 2013) with clip norm of 5.",
+      "startOffset" : 55,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 22,
+      "context" : "The metrics include: (1) Perplexity (PPL); (2) BLEU 1 and 4 (Papineni et al., 2002), METEOR (Lavie and Agarwal, 2007), and ROUGE-L (Lin, 2004), which are based on the n-gram similarity between the generated questions and the ground truth; and (3) the gain on reward scores achieved on the test set, i.",
+      "startOffset" : 60,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2002), METEOR (Lavie and Agarwal, 2007), and ROUGE-L (Lin, 2004), which are based on the n-gram similarity between the generated questions and the ground truth; and (3) the gain on reward scores achieved on the test set, i.",
+      "startOffset" : 16,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2002), METEOR (Lavie and Agarwal, 2007), and ROUGE-L (Lin, 2004), which are based on the n-gram similarity between the generated questions and the ground truth; and (3) the gain on reward scores achieved on the test set, i.",
+      "startOffset" : 55,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 21,
+      "context" : "Our analysis finds that CGC-QG tends to generate irrelevant word during word-level content selection, leading to lengthy questions that are unanswerable or which contain semantic errors (Pan et al., 2020).",
+      "startOffset" : 186,
+      "endOffset" : 204
+    }, {
+      "referenceID" : 1,
+      "context" : "Similar observations also exist in other language generation tasks (Callison-Burch et al., 2006; Liu et al., 2016) for fluency, adequacy and coherence, validating our findings.",
+      "startOffset" : 67,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 19,
+      "context" : "Similar observations also exist in other language generation tasks (Callison-Burch et al., 2006; Liu et al., 2016) for fluency, adequacy and coherence, validating our findings.",
+      "startOffset" : 67,
+      "endOffset" : 114
+    } ],
+    "year" : 2020,
+    "abstractText" : "Recent question generation (QG) approaches often utilize the sequence-to-sequence framework (Seq2Seq) to optimize the log likelihood of ground-truth questions using teacher forcing. However, this training objective is inconsistent with actual question quality, which is often reflected by certain global properties such as whether the question can be answered by the document. We propose to optimize directly for QG-specific objectives via reinforcement learning (RL) to improve question quality. We design three different rewards that target to improve the fluency, relevance, and answerability of generated questions. We conduct both automatic and human evaluations in addition to thorough analysis to explore the effect of each QG-specific reward. We find that optimizing on question-specific rewards generally leads to better performance in automatic evaluation metrics. However, only the rewards that correlate well with human judgement (e.g., relevance) lead to real improvement in question quality. Optimizing for the others, especially answerability, introduces incorrect bias to the model, resulting in poorer question quality.",
+    "creator" : "TeX"
+  }
+}

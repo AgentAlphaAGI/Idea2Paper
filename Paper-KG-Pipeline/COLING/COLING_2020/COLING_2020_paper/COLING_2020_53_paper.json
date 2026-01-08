@@ -1,0 +1,603 @@
+{
+  "name" : "COLING_2020_53_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Retrieving Inductive Bias of Attribute as Reference for Review Generation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "The ultimate goal of opinion mining and sentiment analysis (Pang and Lee, 2008) is to automatically digest opinions of users towards a certain product to accommodate decision making. While some of these opinions are explicitly articulated in product reviews that users write, most of them are unknown since users have not bought most of the products. Alternative solutions such as aspect-based sentiment analysis (Mukherjee and Liu, 2012; Pontiki et al., 2016) and recommendation systems (Resnick and Varian, 1997; Bobadilla et al., 2013) exist, however these only offer superficial outputs that are not as expressive as textual reviews. Thus, the task of automatically generating reviews given their attributes such as user and product, or review generation (Dong et al., 2017), is necessary to achieve this goal.\nMuch of the previous work (Dong et al., 2017; Sharma et al., 2018) has framed review generation as A2T (Attribute-to-Text problem), where the given input is a non-linguistic data (i.e., attribute identifiers for user, product, and rating) and the output is the review text. In this problem setup, the key challenge is to learn rich representations of the attributes, which are then used to produce the text using either template-based surface realization methods (Kukich, 1983; McKeown, 1992) or neural-based decoders (Mei et al., 2016; Wiseman et al., 2017), as shown in the red box in Figure 1. However, it is difficult for the model to learn these representations merely from the given attribute identifiers since they do not convey any semantics regarding the attributes.\nOur key contribution is AT2T (Attribute-matched-Text-to-Text), of augmenting inductive biases of attributes with their matching reference reviews, as illustrated as the blue box in Figure 1. For example, as shown in Figure 1, multiple references together contain inductive biases missing in attribute encodings, such as frequently reviewed aspects of the product (e.g., talking about plot and character aspects) or habitual user phrases (e.g., “looking forward to the next book”). These references greatly help text generation since not only do they reinforce the representations learned from the attributes, they also allow the use of techniques used in sequence-to-sequence learning such as attention (Bahdanau et al., 2015) and copy (See et al., 2017) mechanisms. In related problem domains of generating abstractive summaries\nor dialogue utterances, such bias is introduced by a T2T (Text-to-Text) approach, of generating extractive summary first (Gehrmann et al., 2018) or retrieving informative prior turns (Cai et al., 2018), then generate using these as references documents. Central to the framework is reference retrieval, as relevant references provide valuable context for generation, but, in contrast, noisy references rather hinder generation.\nFor reference retrieval in T2T, lexical features, e.g., TF-IDF, have been used, assigning relevance based on the degree of word overlap between two texts. In AT2T, however, lexical features are not directly applicable or effective. First, unlike T2T where input and output are both texts, our input is a list of identifiers, i.e., (user ID, product ID, rating). As a result, we cannot expedite the process of finding a matching reference, as in T2T solutions using lexical features for a fast retrieval, e.g., using inverted index. Second, lexical similarity cannot fully capture rating, as sentimental lexicons appear in a small portion of text (Li et al., 2018). For example, flipping a single lexicon (from ‘good’ to ‘bad’) from lexically identical sentences can completely invert the rating. One alternative solution, complementing lexical similarity, is to assign additional credits to references labeled with the input rating. However, references – labeled with a different rating, but having useful rating-related context – are forced to be penalized. For example, in Figure 1, no additional credits are assigned to ref#2 labeled with the nearly opposite rating, although it contains useful context for the given rating, e.g., “enjoyed”. We later empirically show that not lexical similarity or rating accuracy of references guarantee rating semantics of generated reviews.\nTo address these limitations, we propose two approaches: pseudo-supervised and reinforcement learning framework, denoted as SL and RL respectively. First, we expedite matching in SL using identifiers. For efficient retrieval without lexical features, we propose a parametric coarse-filtering approach using attribute identifiers, having constant time complexity for each instance in a candidate pool. Second, to generate reviews which are compatible with input rating, we retrieve references which maximize the rating accuracy of generated reviews - rather than references labeled with the input rating. RL enables such retrieval: a retrieval model is trained to maximize rewards including rating accuracy as well as lexical similarity of generated reviews.\nTo validate the effectiveness of AT2T, we perform experiments on a dataset consisting of product reviews from Amazon Books, aligned with their corresponding attributes: user, product and rating (Dong et al., 2017). Our extensive experiments using automatic evaluation methods show that utilizing relevant references hugely helps generation model in terms of content similarity, and rating accuracy. Moreover, our human evaluations show that our model generates more informative and grammatical texts compared to previous models."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Data-to-Text Generation Our task is generally related to a suite of tasks on data-to-text (D2T) generation, where database tables (Wiseman et al., 2017), RDF graphs (Belz et al., 2011), and knowledge base relations (Perez-Beltrachini et al., 2016) are explored as inputs. A variety of neural-based models have been used on these tasks, including vanilla sequence-to-sequence models (Mei et al., 2016), extended by explicitly incorporating context selection and planning (Puduppully et al., 2019a), by employing graph-based neural networks (Marcheggiani and Perez-Beltrachini, 2018), and by modeling entities (Puduppully et al., 2019b). While review generation is essentially a subtask of D2T, it is relatively understudied than other D2T tasks. Previous models include an encoder-decoder model with attention (Dong et al., 2017), improved by including an objective function for rating accuracy (Sharma et al., 2018) and by introducing a hierarchical decoder (Zang and Wan, 2017). In this paper, we make performance improvements by proposing a concept of leveraging references, and extensions proposed in the literature are orthogonal and thus applicable to improve our models further.\nAugmenting context using references While data-hungry neural models for some task may afford sufficient training resources, some other tasks such as sentence-level classification (Kim, 2014) and summarization (Rush et al., 2015) suffer from limited context, given a single sentence as context. Review generation can be viewed as an extreme case of limited context, totally lacking textual context and thus depending solely on a small set of attribute identifiers as input.\nFor text classification tasks, solutions have been to increase the context, by adding inherent and induced metadata such as topics (Zhao and Mao, 2017) and translations (Amplayo et al., 2018). Meanwhile references have been used as additional source to augment context in text-to-text generation task such as summarization (Cao et al., 2018; Peng et al., 2019), machine translation (Gu et al., 2018), or dialogue system (Song et al., 2018; Pandey et al., 2018; Weston et al., 2018; Zhu et al., 2019). References can be seen as a new and effective additional context that introduces inductive biases of attributes which can only be found in texts. However, retrieval task is much harder in our task than in previous tasks, as we have inputs of attribute identifiers having little information for retrieval.\n3 AT2T\nThis work studies the task of review generation, where we are given review-specific attributes such as user, product, and rating, i.e., A = {u, p, r} as input and the corresponding review Y = {yi}Li=1 as output.\nWe reformulate the problem setting by introducing references, as discussed in the previous section. In the review domain, references are reviews from the training dataset that are either written by user u or written for product p. That is, references can be reviews from another user but from the same product, i.e., (u′, p) where u′ 6= u, and vice versa1. This introduces an additional input to our text generation model: a set of N references X = {xj}Nj=1, where xj = {wi} Lj i=1 is the jth reference with Lj tokens\n2. Through this reformulation (AT2T), we can now pose the task as text-to-text generation, where we generate an output given X and A as inputs.\nThe new problem setting introduces a major challenge since there can be a large number of references for each instance. As most of references are irrelevant and noisy, efficiently and effectively selecting the optimal K references X∗ = {x∗1, ..., x∗K} ⊆ X is one of the essential sub-tasks to AT2T. To this end, in AT2T, models consist of (1) reference selection module (REFLECT) where we select relevant references X∗ to given attributes A and (2) a generation module (GEN) of utilizing references as inductive biases of the attributes.\nWhile, in T2T tasks, lexical features has been used for retrieval, it cannot be directly applied for AT2T, having inputs of identifiers without text contents. To overcome such difficulty, we propose two approaches on retrieval stage with different learning schemes which are pseudo-supervised learning (SL) and reinforcement learning (RL). We first introduce a SL method to construct trainable REFLECT without text contents as inputs. Then, we propose to train REFLECT using RL where we enable the model to effectively preserve rating semantics. We show an overview of our approach in Figure 2."
+    }, {
+      "heading" : "4 SL-REFLECT",
+      "text" : "Given the attributes A and the set of N reference candidates X, REFLECT selects the top K references X∗ = {x∗1, ..., x∗K} from X. In T2T tasks having text contents as inputs, text-based, non-parametric matching has been used for retrieval, e.g., TF-IDF. However, since we have only identifiers as inputs, we cannot utilize such matching. In this section, we explore a pseudo-supervised learning approach to train parametric retrieval models.\nRelevance Pseudo-Supervision In contrast to T2T tasks, references should contain relevant contexts to an input rating, to guide GEN to generate a compatible review to the input rating. Although references largely comprising of words presented in target review are useful for providing overall contents, lexical similarity does not guarantee semantic relevance especially for rating, e.g., two identical sentences with one word difference “good” or “bad” has a significant rating difference.\nTo consider rating information, we propose to generate pseudo-label z on reference candidates {xj}Nj=1, we use rating accuracy as well as lexical similarity which are linearly combined by λ:\nzxj = (1− λ) ∗ LEXSIM(xj ,Y) + λ ∗ I(r = rj), (1)\nwhere LEXSIM denotes lexical similarity between each reference candidate xj and a ground-truth review Y, I(r = rj) is an indicator variable for rating accuracy (1 for the same rating, 0 otherwise), and λ is balancing factor between lexical similarity and rating accuracy. Average of uni-/bi-/quad-gram BLEU (Papineni et al., 2002) was adopted as LEXSIM which was effective in our experiments. We train SL-REFLECT models using binary cross entropy as objective and zxj as supervision.\nCoarse-Grained REFLECT To maximize computational efficiency, previous approaches in T2T coarsely retrieve the small number of promising references, X+ = {x+1 , ..., x + M} ⊆ X, using efficient matching such as TF-IDF or inverted index, then rerank using more effective but expensive matching to select best K references, X∗ ⊆ X+ where K < M N .\n1Though sharing the same rating can also be a criteria for reference candidates, we empirically found this would increase the candidate size too much, while we can apply rating bias by including rating accuracy in relevance supervision instead.\n2For simplicity, we use the same notation for the attributes and word token identifiers and their corresponding embeddings, i.e.u/p/r and wi, respectively. In addition, we denote concatenation of attribute vectors, i.e., [u; p; r] by a, and embedding vectors of input query attributes, A, by aq ∈ R3×dc with different superscripts indicating different embedding vectors with the same identifiers.\nInstead of text-based matching which is not available in our task, we propose to use attributebased parametric matching, which has O(N) time complexity and is fully parallelizable. More formally, we match input attributes A with attributes of candidates AX = {Ax1 , ...,AxN }, where Axj = {uxj , pxj , rxj}. We encode attribute features using embedding matrices followed by a fully connect layer, and calculate relevance score using inner product between them.\nαxj = tanh(Hxaxj ) ∈ Rdc (2) αq = tanh(Hqaq) ∈ Rdc (3) s(xj) = σ(α > xjαq) ∈ (0, 1) (4)\nwhere σ denotes sigmoid function.\nFine-Grained REFLECT Now that we narrowed down to M N reference candidates, can afford to use expensive textual input features. Fine-Grained REFLECT accepts the references X+ as input and outputs a score that is used to select the final K references.\nTo get the document-level encoding d+j for each candidate x + j , we use a bidirectional LSTM (Hochreiter and Schmidhuber, 1997) with an attention pooling (Bahdanau et al., 2015) and input attributes A as attention query.\nh+j = BiLSTM({w + jk} L+j k=1) ∈ R L+j ×df (5) d+j = softmaxk(v > 1 tanh(Ha[h + jk;a 1 q ])h + j (6)\nwhere v1,w+jk,h + jk,d + j ∈ Rdf .\nWe also add a self-attention module (Vaswani et al., 2017) to further contextualize reference {d+j }Mj=1.\n[q;k;v]j = [Wq;Wk;Wv]d + j ∈ R df (7)\nd̃+j = fFF\n( softmax ( q>k√ df ) v ) (8)\nwhere d̃+j ∈ RM×df and fFF is a residual feed-forward layer. Cross-reference contextualization further clarifies the meaning of each reference by considering latent dependency over references (Liu and Lapata, 2019).\nThen, we estimate relevance score using inner product between d̃+j and α + q , i.e., s(x + j ) = σ(d̃ + j >α+q )."
+    }, {
+      "heading" : "5 RL-REFLECT",
+      "text" : "Pseudo-labels evaluate the lexical and rating similarity of the entire reference document, and encourage to select ref#3 in Figure 1. However, in a hypothetical scenario without ref#3, ref#1 and ref#2 can be “composed”, with the former contributing to aspects to be discussed (e.g., “character” and “plot”) and the latter to rating (e.g., “enjoyed”), while pseudo-labels may underestimate the importance of both. Especially with respect to the goal of attaining rating semantics, pseudo-labels discourage REFLECT to retrieve ref#2, with nearly opposite rating to the ground truth, though other aspects can guide the generation strongly.\nInstead, to compute the aggregated effect of partial contributions of two documents, we employ Reinforcement Learning (RL): we first sample a set of references, generate an output text using the references, and then estimate partial relevance of sampled references by how it is reflected in the generation. As illustrated with the above example, RL is better than SL, especially in scenarios where multiple references collaboratively contribute to the generation, while SL is comparable if some document is dominant in all aspects.\nSpecifically, training retrieval models using RL involves (1) sampling a set of references X∗ from a candidate pool; (2) generating a review Y′ using GEN with X∗; (3) calculating a reward for X∗ based on\nY and Y′; and (4) adapting the sampling towards the direction to maximize the reward. We set reward function by replacing xj with Y′ in the previously defined formula on relevance score (Equation 1). To obtain rating accuracy of Y′, we first train a standard sentiment classifier comprising of a bidirectional LSTM layer followed by an attention pooling layer, and then predict rating of Y′ using the classifier. For efficient RL training, we use filtered references by Coarse-Grained REFLECT, i.e., X+, as candidates.\nA challenging part is adapting the sampling X∗ (the 4th step described above) during training, since sampling is a discrete operation which breaks continuity of a function and thus violates differentiability assumption in standard backpropagation algorithm. Likelihood-ratio trick, proposed in (Williams, 1992), enables the backpropagation of gradients regardless of discrete sampling.\n∇J =Eτ [∇ log p(X+)zY′ ] (9)\n≈ 1 B B∑ b=1 ∇ log p(X+b )z b Y′ (10)\nwhere p(X+) is probability distribution of selecting {x+j }Mj=1 which is computed by normalizing relevance score, i.e., p(x+j ) = s(x + j )/ ∑M m=1 s(x + m) and B is the number of sampling trials for approximation.\nStabilizing Training of RL Despite the above-mentioned strength of adapting to a heuristic scoring function for generation, RL training is notoriously unstable and converges slowly (Ranzato et al., 2015). Our key contribution is to make RL training practical. Note, we keep the weights of pretrained GEN fixed to keep RL training cost low.\nFirst, we use BLEU-1 as a proxy of look-ahead exploration. Compared to random exploration for all references increasing variance too much, we prioritize exploration to those with high lexical similarity (or BLEU-1 no less than 0.2). We empirically found this prioritization reduces the variance without compromising the reference quality much.\nSecond, as greedily maximizing forR induces high variance, we maximizeR− R̃ instead ofR, where R̃ is a sub-optimal reward obtained by a baseline, specifically, p(X+) (Dong et al., 2018). Introducing a baseline performance is known to decrease the variance (Weaver and Tao, 2001), and our experience was consistent."
+    }, {
+      "heading" : "6 GEN",
+      "text" : "GEN follows an encoder-decoder framework equipped with copying mechanism. First, we encode each reference x∗j with L ∗ j words using BiLSTM with attention pooling.\nh∗j = BiLSTM(x ∗ j ) ∈ R L∗j×deg (11)\nd∗tj = softmaxk(v > gw tanh(Hgw [h ∗ jk;a gw q ;ot])h ∗ j , (12)\nwhere vgw ,h ∗ jk,d ∗ tj ∈ Rd e g and ot ∈ Rd h g is hidden vector of decoder at t-th generation.\nAs in Fine-Grained REFLECT (Equation 7, 8), we further contextualize reference encodings, d∗tj , using a single-head self-attention layer (Vaswani et al., 2017), yielding d̃∗tj . Then, we aggregate d̃ ∗ tj using an another attention layer such that,\noreft = softmax(v > gx tanh(Hgx [d̃ ∗ tj ;a gx q ;ot])d̃ ∗ t (13)\nwhere vgx ,o ref t ∈ Rd e g and d̃∗t ∈ RK×d e g . Similar with encoding references, we attend over embedding vectors of query attributes, aembq ∈ R3×d a g , yielding oembt ∈ Rd a g .\nFor decoder, we use a two-layer LSTM, and to obtain initial hidden state of LSTM, we use a multilayer perceptron following (Dong et al., 2017) taking attribute vectors as input.\nh0 = tanh(Waembq ) ∈ Rd h g (14)\nAt each generation step, decoder utilizes encoded features of references as well as embedded vectors of query attributes.\not = 2-layer-LSTM(ot−1,yt) ∈ Rd h g (15)\nst = tanh(Wo[oreft ;o emb t ;ht]) ∈ Rd h g (16) gt = softmax(Hsst) (17)\nwhere yt is generated word at step t. As habitual words/phrases of users/products can be reused for generation, we allow GEN to copy symbols in references.\nzt = σ(Wz[yt;ht;o emb t ;o ref t ]) ∈ (0, 1) (18) pt = zt × gt + (1− zt)× attt (19)\nwhere attt is attention score distribution for words in references at Equation 12. For inference, we greedily generate words by argmax-ing pt.\nTraining GEN We pretrain GEN using top-K BLEU-1 score references as inputs and cross-entropy with ground-truth reviews as loss function. When we train GEN using retrieved references by REFLECT, performance drops significantly. We suspect this is because even small amount of irrelevant references misguide training of GEN."
+    }, {
+      "heading" : "7 Experiments",
+      "text" : "We used the same dataset used in (Dong et al., 2017) (Amazon book review data) to evaluate models. Each instance in dataset consists of query attributes which are user and product identity and rating ranging from 1 to 5 and a corresponding review. Statistics of the number of references for each attribute is as follows: (1) minimum number of references are 6, 2, 13K for user, product, rating respectively, (2) maximum number of references are 1265, 351, 405K, and (3) average number of references are 33.34, 8.17, 131K."
+    }, {
+      "heading" : "7.1 Training Details",
+      "text" : "We set dimension of parameters, dc, df , deg, d h g , d a g to be 64, 256, 128, 512, 64 respectively. In addition, we set dimension of word vectors in GEN to be 512 and we pretrain word embedding matrices for FineGrained REFLECT and GEN using fastText pretraining (Bojanowski et al., 2017). For the number of references, we set M , K to be 50, 10 respectively.\nFor training of GEN, we used same setting with (Dong et al., 2017) such as batch size, optimizer, learning rate scheduling, initialization of parameters, dropout ratio, and gradient clipping. We excluded references which of BLEU-1 score to ground-truth review is less than 0.2. If all reference candidates have BLEU-1 score less than 0.2 (i.e., there is no reference for input), we set oreft zero vector. For training of SL-REFLECT, we set batch size to be 50,000 and 150 for Coarse- and Fine-Grained REFLECT respectively, and use Adam (Kingma and Ba, 2015) optimizer with learning rate 0.001 for both models. For training of RL-REFLECT, we set both the number of samples B and batch size to be 50, and λ to be 0.04. We searched the optimal λ among [0.0, 0.02, 0.04, 0.06, 0.08, 0.1]. We used Adam optimizer with learning rate 0.0001. Our experiments were done on a GTX-2080Ti GPU."
+    }, {
+      "heading" : "7.2 Evaluation Results",
+      "text" : "Models As baselines, we report performance of Attr2Seq (Dong et al., 2017) and Cyclegen (Sharma et al., 2018) which use embedding vectors to encode given attributes. For our models, we report performance of GEN using retrieved references by Coarse- and Fine-Grained REFLECT trained using RL, denoted by GEN-C-F (RL) , and performance of RETRIEVE-C-F, which is essentially the top-1 retrieved reference.\nMetrics We validate models based on two criteria and corresponding metrics as follows: (1) Content similarity between generated reviews and ground-truth reviews can be measured by widely adapted metric, BLEU (Papineni et al., 2002). (2) We measure rating accuracy via classification accuracy of generated reviews using pretrained rating classifier3.\nAutomatic Evaluation This section compares our model with existing baselines based on content similarity and rating accuracy. Results are presented in Table 1.\nRETRIEVE-C-F show worse performance compared to generation approaches including baselines, except for rating accuracy. This is because aspects or opinions to be discussed can be flexible depending on input attributes, but retrieval approaches are limited to predicting existing reviews. On the other hand, GEN-C-F (RL) utilizing existing reviews as references significantly outperform all baselines. This validates our hypothesis that inductive biases improve generation performance, and our REFLECT models can retrieve helpful references.\nHuman Evaluation We also conducted human evaluations to measure the human perceived quality of generated texts. We used Amazon Mechanical Turk system to evaluate texts where we randomly sampled 150 instances.\nWe compared three generation models including Attr2Seq†, RETRIEVE-C-F, GEN-C-F (SL), and GEN-C-F (RL). Specifically, after we retrieve candidates using Coarse-Grained REFLECT, the top scored reference estimated by Fine-Grained REFLECT (SL) is selected as output text of the retrieval model.\n3We use a BiLSTM with an attention layer for the rating classifier, which is trained using Amazon review dataset and optimized using cross entropy as objective function\nFor each attribute pair, participants were asked to blindly compare outputs of the four models and annotate the best and worst. Specifically, three participants were shown each paired four outputs as well as corresponding groundtruth text and were asked to decide which is the best and the worst according to three criteria such as Informativeness (Does the review con-\nvey all information found in the gold standard review?), Correctness (Is the information in the review factually accurate based on the information in the gold standard review?), and Compactness (Is the review written in a complete yet concise manner?).\nWe can then observe whether any model is significantly better in terms of Best-Worst Scaling (Louviere and Woodworth, 1991) where the percentage of times it was selected as best subtracted by the percentage of times it was selected as worst. The results are shown in Table 3. We observe that GEN-C-F (RL) significantly outperforms Attr2Seq† as well as RETRIEVE-C-F) at p < 0.05 using t-test.\nQualitative Example Table 2 shows example generated outputs from different models given the attributes: Attr2Seq†, RETRIEVE-C-F, GEN-C-F (RL), and GEN-C-F (SL). We also show the top ten frequently used words of the user and product, which are gathered by ranking words using TF-IDF.\nAs can be seen in the examples, Attr2Seq† tends to generate generic reviews, where the generated words do not coincide with the attribute-specific-frequent words. RETRIEVE-C-F is able to generate attribute-specific-frequent words such as characters and story, however it also outputs inconsistent information where rating semantic does not match to given rating. Utilizing references as inputs, GEN-C-F (SL) and -F (RL) are also able to generate attribute-specific terms. For rating information, while GENC-F (SL) generates words that are inconsistent with the rating input, such as great, GEN-C-F (RL), optimized to increase rating accuracy of generated reviews, is able to preserve rating accuracy.\nAnalysis on Rating Consistency We analyze contribution of rating accuracy for relevance of references in Equation 1 on overall quality and rating consistency of generated reviews, where BLEU-1/4 and rating accuracy are adopted as evaluation metrics. We show results on Table 4.\nIntroducing rating information for relevance, in addition to lexical similarity, increased rating accuracy of generated reviews, and even BLEU-1 and BLEU-4. Without including rating accuracy, i.e., λ = 0 in Equation 1, both GEN-C-F (SL) and GEN-C-F (RL) produced lower rating accuracy of generated reviews than that of Attr2Seq†. This shows that lexical similarity may fail to capture rating semantics. Meanwhile, GEN-C-F (RL) significantly outperformed GEN-C-F (SL) on rating accuracy with little sacrifice of BLEU-4, which indicates that relevance of references regarding rating semantics should be determined based on generated reviews rather than on references."
+    }, {
+      "heading" : "8 Conclusion",
+      "text" : "In this work, we study the problem of review generation guided by reference documents. Attributespecific reference reviews provide useful inductive biases of given attributes, and such biases can be explicitly delivered to generated reviews using copying mechanism. Inspired by promising results, as future work, we will investigate alternative means of guidance, such as keywords or topic distribution of attributes."
+    } ],
+    "references" : [ {
+      "title" : "Translations as additional contexts for sentence classification",
+      "author" : [ "References Reinald Kim Amplayo", "Kyungjae Lee", "Jinyoung Yeo", "Seung-won Hwang." ],
+      "venue" : "IJCAI, pages 3955–3961.",
+      "citeRegEx" : "Amplayo et al\\.,? 2018",
+      "shortCiteRegEx" : "Amplayo et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2015",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "The first surface realisation shared task: Overview and evaluation results",
+      "author" : [ "Anja Belz", "Mike White", "Dominic Espinosa", "Eric Kow", "Deirdre Hogan", "Amanda Stent." ],
+      "venue" : "ENLG, pages 217–226.",
+      "citeRegEx" : "Belz et al\\.,? 2011",
+      "shortCiteRegEx" : "Belz et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Recommender systems survey",
+      "author" : [ "Jesús Bobadilla", "Fernando Ortega", "Antonio Hernando", "Abraham Gutiérrez." ],
+      "venue" : "Knowledge-based systems, 46:109–132.",
+      "citeRegEx" : "Bobadilla et al\\.,? 2013",
+      "shortCiteRegEx" : "Bobadilla et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Enriching word vectors with subword information",
+      "author" : [ "Piotr Bojanowski", "Edouard Grave", "Armand Joulin", "Tomas Mikolov." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 5:135–146.",
+      "citeRegEx" : "Bojanowski et al\\.,? 2017",
+      "shortCiteRegEx" : "Bojanowski et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Skeleton-toresponse: Dialogue generation guided by retrieval memory",
+      "author" : [ "Deng Cai", "Yan Wang", "Victoria Bi", "Zhaopeng Tu", "Xiaojiang Liu", "Wai Lam", "Shuming Shi." ],
+      "venue" : "arXiv preprint arXiv:1809.05296.",
+      "citeRegEx" : "Cai et al\\.,? 2018",
+      "shortCiteRegEx" : "Cai et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Retrieve, rerank and rewrite: Soft template based neural summarization",
+      "author" : [ "Ziqiang Cao", "Wenjie Li", "Sujian Li", "Furu Wei." ],
+      "venue" : "ACL, pages 152–161.",
+      "citeRegEx" : "Cao et al\\.,? 2018",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Learning to generate product reviews from attributes",
+      "author" : [ "Li Dong", "Shaohan Huang", "Furu Wei", "Mirella Lapata", "Ming Zhou", "Ke Xu." ],
+      "venue" : "EACL, pages 623–632.",
+      "citeRegEx" : "Dong et al\\.,? 2017",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Banditsum: Extractive summarization as a contextual bandit",
+      "author" : [ "Yue Dong", "Yikang Shen", "Eric Crawford", "Herke van Hoof", "Jackie Chi Kit Cheung." ],
+      "venue" : "EMNLP, pages 3739–3748.",
+      "citeRegEx" : "Dong et al\\.,? 2018",
+      "shortCiteRegEx" : "Dong et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Bottom-up abstractive summarization",
+      "author" : [ "Sebastian Gehrmann", "Yuntian Deng", "Alexander M Rush." ],
+      "venue" : "arXiv preprint arXiv:1808.10792.",
+      "citeRegEx" : "Gehrmann et al\\.,? 2018",
+      "shortCiteRegEx" : "Gehrmann et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Search engine guided neural machine translation",
+      "author" : [ "Jiatao Gu", "Yong Wang", "Kyunghyun Cho", "Victor OK Li." ],
+      "venue" : "Thirty-Second AAAI Conference on Artificial Intelligence.",
+      "citeRegEx" : "Gu et al\\.,? 2018",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural Computation, 9(8):1735– 1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Convolutional neural networks for sentence classification",
+      "author" : [ "Yoon Kim." ],
+      "venue" : "EMNLP, pages 1746–1751.",
+      "citeRegEx" : "Kim.,? 2014",
+      "shortCiteRegEx" : "Kim.",
+      "year" : 2014
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "ICLR.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Design of a knowledge-based report generator",
+      "author" : [ "Karen Kukich." ],
+      "venue" : "ACL, pages 145–150.",
+      "citeRegEx" : "Kukich.,? 1983",
+      "shortCiteRegEx" : "Kukich.",
+      "year" : 1983
+    }, {
+      "title" : "Delete, retrieve, generate: a simple approach to sentiment and style transfer",
+      "author" : [ "Juncen Li", "Robin Jia", "He He", "Percy Liang." ],
+      "venue" : "NAACL-HLT, pages 1865–1874.",
+      "citeRegEx" : "Li et al\\.,? 2018",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Hierarchical transformers for multi-document summarization",
+      "author" : [ "Yang Liu", "Mirella Lapata." ],
+      "venue" : "ACL, pages 5070–5081.",
+      "citeRegEx" : "Liu and Lapata.,? 2019",
+      "shortCiteRegEx" : "Liu and Lapata.",
+      "year" : 2019
+    }, {
+      "title" : "Best-worst scaling: A model for the largest difference judgments",
+      "author" : [ "Jordan J Louviere", "George G Woodworth." ],
+      "venue" : "University of Alberta: Working Paper.",
+      "citeRegEx" : "Louviere and Woodworth.,? 1991",
+      "shortCiteRegEx" : "Louviere and Woodworth.",
+      "year" : 1991
+    }, {
+      "title" : "Deep graph convolutional encoders for structured data to text generation",
+      "author" : [ "Diego Marcheggiani", "Laura Perez-Beltrachini." ],
+      "venue" : "INLG, pages 1–9.",
+      "citeRegEx" : "Marcheggiani and Perez.Beltrachini.,? 2018",
+      "shortCiteRegEx" : "Marcheggiani and Perez.Beltrachini.",
+      "year" : 2018
+    }, {
+      "title" : "Text generation - using discourse strategies and focus constraints to generate natural language text",
+      "author" : [ "Kathleen R. McKeown." ],
+      "venue" : "Studies in natural language processing. Cambridge University Press.",
+      "citeRegEx" : "McKeown.,? 1992",
+      "shortCiteRegEx" : "McKeown.",
+      "year" : 1992
+    }, {
+      "title" : "What to talk about and how? selective generation using lstms with coarse-to-fine alignment",
+      "author" : [ "Hongyuan Mei", "Mohit Bansal", "Matthew R. Walter." ],
+      "venue" : "NAACL-HLT, pages 720–730.",
+      "citeRegEx" : "Mei et al\\.,? 2016",
+      "shortCiteRegEx" : "Mei et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Aspect extraction through semi-supervised modeling",
+      "author" : [ "Arjun Mukherjee", "Bing Liu." ],
+      "venue" : "Proceedings of the 50th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 339–348, Jeju Island, Korea, July. Association for Computational Linguistics.",
+      "citeRegEx" : "Mukherjee and Liu.,? 2012",
+      "shortCiteRegEx" : "Mukherjee and Liu.",
+      "year" : 2012
+    }, {
+      "title" : "Exemplar encoder-decoder for neural conversation generation",
+      "author" : [ "Gaurav Pandey", "Danish Contractor", "Vineet Kumar", "Sachindra Joshi." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1329–1338.",
+      "citeRegEx" : "Pandey et al\\.,? 2018",
+      "shortCiteRegEx" : "Pandey et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Opinion mining and sentiment analysis",
+      "author" : [ "Bo Pang", "Lillian Lee." ],
+      "venue" : "Found. Trends Inf. Retr., 2(1-2):1–135, January.",
+      "citeRegEx" : "Pang and Lee.,? 2008",
+      "shortCiteRegEx" : "Pang and Lee.",
+      "year" : 2008
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "ACL, pages 311–318.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Text generation with exemplar-based adaptive decoding",
+      "author" : [ "Hao Peng", "Ankur P. Parikh", "Manaal Faruqui", "Bhuwan Dhingra", "Dipanjan Das." ],
+      "venue" : "NAACL-HLT, pages 2555–2565.",
+      "citeRegEx" : "Peng et al\\.,? 2019",
+      "shortCiteRegEx" : "Peng et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Building RDF content for data-to-text generation",
+      "author" : [ "Laura Perez-Beltrachini", "Rania Sayed", "Claire Gardent." ],
+      "venue" : "COLING, pages 1493–1502.",
+      "citeRegEx" : "Perez.Beltrachini et al\\.,? 2016",
+      "shortCiteRegEx" : "Perez.Beltrachini et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Data-to-text generation with content selection and planning",
+      "author" : [ "Ratish Puduppully", "Li Dong", "Mirella Lapata." ],
+      "venue" : "AAAI, pages 6908–6915.",
+      "citeRegEx" : "Puduppully et al\\.,? 2019a",
+      "shortCiteRegEx" : "Puduppully et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Data-to-text generation with entity modeling",
+      "author" : [ "Ratish Puduppully", "Li Dong", "Mirella Lapata." ],
+      "venue" : "ACL, pages 2023–2035.",
+      "citeRegEx" : "Puduppully et al\\.,? 2019b",
+      "shortCiteRegEx" : "Puduppully et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Sequence level training with recurrent neural networks. arXiv preprint arXiv:1511.06732",
+      "author" : [ "Marc’Aurelio Ranzato", "Sumit Chopra", "Michael Auli", "Wojciech Zaremba" ],
+      "venue" : null,
+      "citeRegEx" : "Ranzato et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Ranzato et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Recommender systems",
+      "author" : [ "Paul Resnick", "Hal R Varian." ],
+      "venue" : "Communications of the ACM, 40(3):56–58.",
+      "citeRegEx" : "Resnick and Varian.,? 1997",
+      "shortCiteRegEx" : "Resnick and Varian.",
+      "year" : 1997
+    }, {
+      "title" : "A neural attention model for abstractive sentence summarization",
+      "author" : [ "Alexander M. Rush", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "EMNLP, pages 379–389.",
+      "citeRegEx" : "Rush et al\\.,? 2015",
+      "shortCiteRegEx" : "Rush et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Get to the point: Summarization with pointergenerator networks",
+      "author" : [ "Abigail See", "Peter J Liu", "Christopher D Manning." ],
+      "venue" : "arXiv preprint arXiv:1704.04368.",
+      "citeRegEx" : "See et al\\.,? 2017",
+      "shortCiteRegEx" : "See et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Cyclegen: Cyclic consistency based product review generator from attributes",
+      "author" : [ "Vasu Sharma", "Harsh Sharma", "Ankita Bishnu", "Labhesh Patel." ],
+      "venue" : "INLG, pages 426–430.",
+      "citeRegEx" : "Sharma et al\\.,? 2018",
+      "shortCiteRegEx" : "Sharma et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "An ensemble of retrieval-based and generation-based human-computer conversation systems",
+      "author" : [ "Yiping Song", "Cheng-Te Li", "Jian-Yun Nie", "Ming Zhang", "Dongyan Zhao", "Rui Yan." ],
+      "venue" : "Proceedings of the 27th International Joint Conference on Artificial Intelligence, pages 4382–4388.",
+      "citeRegEx" : "Song et al\\.,? 2018",
+      "shortCiteRegEx" : "Song et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "NIPS, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "The optimal reward baseline for gradient-based reinforcement learning",
+      "author" : [ "Lex Weaver", "Nigel Tao." ],
+      "venue" : "Proceedings of the Seventeenth conference on Uncertainty in artificial intelligence, pages 538–545. Morgan Kaufmann Publishers Inc.",
+      "citeRegEx" : "Weaver and Tao.,? 2001",
+      "shortCiteRegEx" : "Weaver and Tao.",
+      "year" : 2001
+    }, {
+      "title" : "Retrieve and refine: Improved sequence generation models for dialogue",
+      "author" : [ "Jason Weston", "Emily Dinan", "Alexander H. Miller." ],
+      "venue" : "Proceedings of the 2nd International Workshop on Search-Oriented Conversational AI, SCAI@EMNLP 2018, Brussels, Belgium, October 31, 2018, pages 87–92.",
+      "citeRegEx" : "Weston et al\\.,? 2018",
+      "shortCiteRegEx" : "Weston et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Simple statistical gradient-following algorithms for connectionist reinforcement learning",
+      "author" : [ "Ronald J. Williams." ],
+      "venue" : "Machine Learning, 8:229–256.",
+      "citeRegEx" : "Williams.,? 1992",
+      "shortCiteRegEx" : "Williams.",
+      "year" : 1992
+    }, {
+      "title" : "Challenges in data-to-document generation",
+      "author" : [ "Sam Wiseman", "Stuart M. Shieber", "Alexander M. Rush." ],
+      "venue" : "EMNLP, pages 2253–2263.",
+      "citeRegEx" : "Wiseman et al\\.,? 2017",
+      "shortCiteRegEx" : "Wiseman et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Towards automatic generation of product reviews from aspect-sentiment scores",
+      "author" : [ "Hongyu Zang", "Xiaojun Wan." ],
+      "venue" : "INLG, pages 168–177.",
+      "citeRegEx" : "Zang and Wan.,? 2017",
+      "shortCiteRegEx" : "Zang and Wan.",
+      "year" : 2017
+    }, {
+      "title" : "Topic-aware deep compositional models for sentence classification",
+      "author" : [ "Rui Zhao", "Kezhi Mao." ],
+      "venue" : "IEEE/ACM Trans. Audio, Speech & Language Processing, 25(2):248–260.",
+      "citeRegEx" : "Zhao and Mao.,? 2017",
+      "shortCiteRegEx" : "Zhao and Mao.",
+      "year" : 2017
+    }, {
+      "title" : "Retrieval-enhanced adversarial training for neural response generation",
+      "author" : [ "Qingfu Zhu", "Lei Cui", "Weinan Zhang", "Furu Wei", "Ting Liu." ],
+      "venue" : "ACL, pages 3763–3773.",
+      "citeRegEx" : "Zhu et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhu et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 23,
+      "context" : "The ultimate goal of opinion mining and sentiment analysis (Pang and Lee, 2008) is to automatically digest opinions of users towards a certain product to accommodate decision making.",
+      "startOffset" : 59,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 21,
+      "context" : "Alternative solutions such as aspect-based sentiment analysis (Mukherjee and Liu, 2012; Pontiki et al., 2016) and recommendation systems (Resnick and Varian, 1997; Bobadilla et al.",
+      "startOffset" : 62,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2016) and recommendation systems (Resnick and Varian, 1997; Bobadilla et al., 2013) exist, however these only offer superficial outputs that are not as expressive as textual reviews.",
+      "startOffset" : 35,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2016) and recommendation systems (Resnick and Varian, 1997; Bobadilla et al., 2013) exist, however these only offer superficial outputs that are not as expressive as textual reviews.",
+      "startOffset" : 35,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 7,
+      "context" : "Thus, the task of automatically generating reviews given their attributes such as user and product, or review generation (Dong et al., 2017), is necessary to achieve this goal.",
+      "startOffset" : 121,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 7,
+      "context" : "Much of the previous work (Dong et al., 2017; Sharma et al., 2018) has framed review generation as A2T (Attribute-to-Text problem), where the given input is a non-linguistic data (i.",
+      "startOffset" : 26,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 33,
+      "context" : "Much of the previous work (Dong et al., 2017; Sharma et al., 2018) has framed review generation as A2T (Attribute-to-Text problem), where the given input is a non-linguistic data (i.",
+      "startOffset" : 26,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 14,
+      "context" : "In this problem setup, the key challenge is to learn rich representations of the attributes, which are then used to produce the text using either template-based surface realization methods (Kukich, 1983; McKeown, 1992) or neural-based decoders (Mei et al.",
+      "startOffset" : 189,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 19,
+      "context" : "In this problem setup, the key challenge is to learn rich representations of the attributes, which are then used to produce the text using either template-based surface realization methods (Kukich, 1983; McKeown, 1992) or neural-based decoders (Mei et al.",
+      "startOffset" : 189,
+      "endOffset" : 218
+    }, {
+      "referenceID" : 20,
+      "context" : "In this problem setup, the key challenge is to learn rich representations of the attributes, which are then used to produce the text using either template-based surface realization methods (Kukich, 1983; McKeown, 1992) or neural-based decoders (Mei et al., 2016; Wiseman et al., 2017), as shown in the red box in Figure 1.",
+      "startOffset" : 244,
+      "endOffset" : 284
+    }, {
+      "referenceID" : 39,
+      "context" : "In this problem setup, the key challenge is to learn rich representations of the attributes, which are then used to produce the text using either template-based surface realization methods (Kukich, 1983; McKeown, 1992) or neural-based decoders (Mei et al., 2016; Wiseman et al., 2017), as shown in the red box in Figure 1.",
+      "startOffset" : 244,
+      "endOffset" : 284
+    }, {
+      "referenceID" : 1,
+      "context" : "These references greatly help text generation since not only do they reinforce the representations learned from the attributes, they also allow the use of techniques used in sequence-to-sequence learning such as attention (Bahdanau et al., 2015) and copy (See et al.",
+      "startOffset" : 222,
+      "endOffset" : 245
+    }, {
+      "referenceID" : 9,
+      "context" : "or dialogue utterances, such bias is introduced by a T2T (Text-to-Text) approach, of generating extractive summary first (Gehrmann et al., 2018) or retrieving informative prior turns (Cai et al.",
+      "startOffset" : 121,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2018) or retrieving informative prior turns (Cai et al., 2018), then generate using these as references documents.",
+      "startOffset" : 46,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 15,
+      "context" : "Second, lexical similarity cannot fully capture rating, as sentimental lexicons appear in a small portion of text (Li et al., 2018).",
+      "startOffset" : 114,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 7,
+      "context" : "To validate the effectiveness of AT2T, we perform experiments on a dataset consisting of product reviews from Amazon Books, aligned with their corresponding attributes: user, product and rating (Dong et al., 2017).",
+      "startOffset" : 194,
+      "endOffset" : 213
+    }, {
+      "referenceID" : 39,
+      "context" : "2 Related Work Data-to-Text Generation Our task is generally related to a suite of tasks on data-to-text (D2T) generation, where database tables (Wiseman et al., 2017), RDF graphs (Belz et al.",
+      "startOffset" : 145,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2017), RDF graphs (Belz et al., 2011), and knowledge base relations (Perez-Beltrachini et al.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2011), and knowledge base relations (Perez-Beltrachini et al., 2016) are explored as inputs.",
+      "startOffset" : 38,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 20,
+      "context" : "A variety of neural-based models have been used on these tasks, including vanilla sequence-to-sequence models (Mei et al., 2016), extended by explicitly incorporating context selection and planning (Puduppully et al.",
+      "startOffset" : 110,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2016), extended by explicitly incorporating context selection and planning (Puduppully et al., 2019a), by employing graph-based neural networks (Marcheggiani and Perez-Beltrachini, 2018), and by modeling entities (Puduppully et al.",
+      "startOffset" : 77,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2019a), by employing graph-based neural networks (Marcheggiani and Perez-Beltrachini, 2018), and by modeling entities (Puduppully et al.",
+      "startOffset" : 51,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2019a), by employing graph-based neural networks (Marcheggiani and Perez-Beltrachini, 2018), and by modeling entities (Puduppully et al., 2019b).",
+      "startOffset" : 120,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 7,
+      "context" : "Previous models include an encoder-decoder model with attention (Dong et al., 2017), improved by including an objective function for rating accuracy (Sharma et al.",
+      "startOffset" : 64,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2017), improved by including an objective function for rating accuracy (Sharma et al., 2018) and by introducing a hierarchical decoder (Zang and Wan, 2017).",
+      "startOffset" : 73,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2018) and by introducing a hierarchical decoder (Zang and Wan, 2017).",
+      "startOffset" : 50,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 12,
+      "context" : "Augmenting context using references While data-hungry neural models for some task may afford sufficient training resources, some other tasks such as sentence-level classification (Kim, 2014) and summarization (Rush et al.",
+      "startOffset" : 179,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 31,
+      "context" : "Augmenting context using references While data-hungry neural models for some task may afford sufficient training resources, some other tasks such as sentence-level classification (Kim, 2014) and summarization (Rush et al., 2015) suffer from limited context, given a single sentence as context.",
+      "startOffset" : 209,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 41,
+      "context" : "For text classification tasks, solutions have been to increase the context, by adding inherent and induced metadata such as topics (Zhao and Mao, 2017) and translations (Amplayo et al.",
+      "startOffset" : 131,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 0,
+      "context" : "For text classification tasks, solutions have been to increase the context, by adding inherent and induced metadata such as topics (Zhao and Mao, 2017) and translations (Amplayo et al., 2018).",
+      "startOffset" : 169,
+      "endOffset" : 191
+    }, {
+      "referenceID" : 6,
+      "context" : "Meanwhile references have been used as additional source to augment context in text-to-text generation task such as summarization (Cao et al., 2018; Peng et al., 2019), machine translation (Gu et al.",
+      "startOffset" : 130,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 25,
+      "context" : "Meanwhile references have been used as additional source to augment context in text-to-text generation task such as summarization (Cao et al., 2018; Peng et al., 2019), machine translation (Gu et al.",
+      "startOffset" : 130,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2019), machine translation (Gu et al., 2018), or dialogue system (Song et al.",
+      "startOffset" : 29,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 24,
+      "context" : "Average of uni-/bi-/quad-gram BLEU (Papineni et al., 2002) was adopted as LEXSIM which was effective in our experiments.",
+      "startOffset" : 35,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 11,
+      "context" : "To get the document-level encoding dj for each candidate x + j , we use a bidirectional LSTM (Hochreiter and Schmidhuber, 1997) with an attention pooling (Bahdanau et al.",
+      "startOffset" : 93,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 1,
+      "context" : "To get the document-level encoding dj for each candidate x + j , we use a bidirectional LSTM (Hochreiter and Schmidhuber, 1997) with an attention pooling (Bahdanau et al., 2015) and input attributes A as attention query.",
+      "startOffset" : 154,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 35,
+      "context" : "We also add a self-attention module (Vaswani et al., 2017) to further contextualize reference {dj }j=1.",
+      "startOffset" : 36,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 16,
+      "context" : "Cross-reference contextualization further clarifies the meaning of each reference by considering latent dependency over references (Liu and Lapata, 2019).",
+      "startOffset" : 131,
+      "endOffset" : 153
+    }, {
+      "referenceID" : 38,
+      "context" : "Likelihood-ratio trick, proposed in (Williams, 1992), enables the backpropagation of gradients regardless of discrete sampling.",
+      "startOffset" : 36,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 29,
+      "context" : "Stabilizing Training of RL Despite the above-mentioned strength of adapting to a heuristic scoring function for generation, RL training is notoriously unstable and converges slowly (Ranzato et al., 2015).",
+      "startOffset" : 181,
+      "endOffset" : 203
+    }, {
+      "referenceID" : 8,
+      "context" : "Second, as greedily maximizing forR induces high variance, we maximizeR− R̃ instead ofR, where R̃ is a sub-optimal reward obtained by a baseline, specifically, p(X+) (Dong et al., 2018).",
+      "startOffset" : 166,
+      "endOffset" : 185
+    }, {
+      "referenceID" : 36,
+      "context" : "Introducing a baseline performance is known to decrease the variance (Weaver and Tao, 2001), and our experience was consistent.",
+      "startOffset" : 69,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 35,
+      "context" : "As in Fine-Grained REFLECT (Equation 7, 8), we further contextualize reference encodings, dtj , using a single-head self-attention layer (Vaswani et al., 2017), yielding d̃tj .",
+      "startOffset" : 137,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 7,
+      "context" : "For decoder, we use a two-layer LSTM, and to obtain initial hidden state of LSTM, we use a multilayer perceptron following (Dong et al., 2017) taking attribute vectors as input.",
+      "startOffset" : 123,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 7,
+      "context" : "We used the same dataset used in (Dong et al., 2017) (Amazon book review data) to evaluate models.",
+      "startOffset" : 33,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 4,
+      "context" : "In addition, we set dimension of word vectors in GEN to be 512 and we pretrain word embedding matrices for FineGrained REFLECT and GEN using fastText pretraining (Bojanowski et al., 2017).",
+      "startOffset" : 162,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 7,
+      "context" : "For training of GEN, we used same setting with (Dong et al., 2017) such as batch size, optimizer, learning rate scheduling, initialization of parameters, dropout ratio, and gradient clipping.",
+      "startOffset" : 47,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 13,
+      "context" : "For training of SL-REFLECT, we set batch size to be 50,000 and 150 for Coarse- and Fine-Grained REFLECT respectively, and use Adam (Kingma and Ba, 2015) optimizer with learning rate 0.",
+      "startOffset" : 131,
+      "endOffset" : 152
+    }, {
+      "referenceID" : 7,
+      "context" : "2 Evaluation Results Models As baselines, we report performance of Attr2Seq (Dong et al., 2017) and Cyclegen (Sharma et al.",
+      "startOffset" : 76,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2017) and Cyclegen (Sharma et al., 2018) which use embedding vectors to encode given attributes.",
+      "startOffset" : 21,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 24,
+      "context" : "Metrics We validate models based on two criteria and corresponding metrics as follows: (1) Content similarity between generated reviews and ground-truth reviews can be measured by widely adapted metric, BLEU (Papineni et al., 2002).",
+      "startOffset" : 208,
+      "endOffset" : 231
+    }, {
+      "referenceID" : 17,
+      "context" : "We can then observe whether any model is significantly better in terms of Best-Worst Scaling (Louviere and Woodworth, 1991) where the percentage of times it was selected as best subtracted by the percentage of times it was selected as worst.",
+      "startOffset" : 93,
+      "endOffset" : 123
+    } ],
+    "year" : 2020,
+    "abstractText" : "In this paper, we study review generation given a set of attribute identifiers which are user ID, product ID and rating. This is a difficult subtask of natural language generation since models are limited to the given identifiers, without any specific descriptive information regarding the inputs, when generating the text. The capacity of these models is thus confined and dependent to how well the models can capture vector representations of attributes. We thus propose to additionally leverage references, which are selected from a large pool of texts labeled with one of the attributes, as textual information that enriches inductive biases of given attributes. With these references, we can now pose the problem as an instance of text-to-text generation, which makes the task easier since texts that are syntactically, semantically similar with the output text are provided as input. Using this framework, we address issues such as selecting references from a large candidate set without textual context and improving the model complexity for generation. Our experiments show that our models improve over previous approaches on both automatic and human evaluation metrics.",
+    "creator" : "TeX"
+  }
+}

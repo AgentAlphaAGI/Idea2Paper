@@ -1,0 +1,503 @@
+{
+  "name" : "COLING_2020_80_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Dual-decoder Transformer for Joint Automatic Speech Recognition and Multilingual Speech Translation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "While cascade automatic speech-to-text translation (ST) systems operate in two steps: source language automatic speech recognition (ASR) and source-to-target text machine translation (MT), recent works have attempted to build end-to-end ST without using source language transcription during decoding (Bérard et al., 2016; Weiss et al., 2017; Bérard et al., 2018). After two years of extensions to these pioneering works, the last results of the IWSLT 2020 shared task on offline speech translation (Ansari et al., 2020) demonstrate that end-to-end models are now on par (if not better) than their cascade counterparts. Such a finding motivates even more strongly the works on multilingual (one-to-many, many-to-many, many-to-one) ST (Gangi et al., 2019; Inaguma et al., 2019; Wang et al., 2020) for which end-to-end models are well adapted by design. Moreover, of these two approaches: cascade proposes a very loose integration of ASR and MT (even if lattices or word confusion networks were used between ASR and MT before end-to-end models appeared) while most end-to-end approaches simply ignore ASR subtask, trying to directly translate from source speech to target text. We believe that these are two edge design choices and that a tighter coupling of ASR and MT is desirable for future end-to-end ST applications.\nThis paper addresses multilingual ST and investigates more closely the interactions between speech transcription (ASR) and speech translation (ST) in a multilingual end-to-end architecture based on Transformer. While those interactions were investigated as a simple multi-task framework in (Anastasopoulos and Chiang, 2018) for a bilingual case, we propose a dual-decoder with an ASR decoder tightly coupled with an ST decoder and evaluate its effectiveness on one-to-many ST. Our model is inspired by (Liu et al., 2020), but the interaction between ASR and ST decoders is much tighter.1 Finally, our experiments show that our model outperforms theirs on the MuST-C benchmark (Di Gangi et al., 2019).\nOur contributions are summarized as follows: (1) a new model architecture for joint ASR and multilingual ST, (2) an integrated beam search decoding strategy which jointly transcribes and translates, and that is extented to a wait-k strategy where the ASR hypothesis is ahead of the AST hypothesis by k tokens and vice-versa, (3) competitive performance on MuST-C dataset in the multilingual setting and improvements on previous joint ASR/ST work.\n1The model of (Liu et al., 2020) does not have interaction between internal hidden states of the decoders (only the decoding results of one decoder are fed into the other decoder)."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Multilingual ST Multilingual translation (Johnson et al., 2016) consists in translating between different language pairs with a single model, thereby improving maintainability and the quality of low resource language pairs. Gangi et al. (2019) adapt this method to one-to-many multilingual speech translation by adding a language embedding to each source feature vector. The authors also observe that using the source language (English) as one of the target languages improves performance. Inaguma et al. (2019) simplify the previous approach by pre-pending a target language token to the decoder and apply it to one-to-many and many-to-many speech translation. They do not investigate many-to-one due to the lack of a large corpus for this. To fill this void, Wang et al. (2020) release the CoVoST corpus for ST from 11 languages into English and demonstrate the effectiveness of many-to-one ST.\nJoint ASR and ST Joint ASR and ST decoding was first proposed by Anastasopoulos and Chiang (2018) through a multi-task learning framework. Chuang et al. (2020) improved multitask ST by utilizing word embedding as an intermediate level instead of text. A two-stage model that performs first ASR and then passes the decoder states as input to a second ST model was also proposed (Sperber et al., 2019). Their architecture is closer to cascaded translation while maintaining end-to-end trainability. Our work is closely related to that of Liu et al. (2020) who propose an interactive attention mechanism which enables ASR and ST to be performed synchronously. Both ASR and ST decoders do not only rely on their previous outputs but also on the outputs predicted in the other task. We highlight three differences between their work and ours: (a) we propose a more general framework in which (Liu et al., 2020) is only a special case; (b) tighter integration of ASR and ST is proposed in our work; and (c) we experiment in a multilingual ST setting while previous works on joint ASR and ST only investigated bilingual ST."
+    }, {
+      "heading" : "3 Dual-decoder Transformer for Joint ASR and Multilingual ST",
+      "text" : "We now present the proposed dual-decoder Transformer for jointly performing ASR and multilingual ST. Our models are based on the Transformer architecture (Vaswani et al., 2017) but consist of two decoders. Each decoder is responsible for one task (ASR or ST). The intuition is that the problem at hand consists in solving two different tasks with different characteristics and different levels of difficulty (multilingual ST is considered more difficult than ASR). Having different decoders specialized in different tasks may thus produce better results. In addition, since these two tasks can be complementary, it is natural to allow the decoders to help each other. Therefore, in our models, we introduce a dual-attention mechanism: in addition to attending to the encoder, the decoders also attend to each other."
+    }, {
+      "heading" : "3.1 Model overview",
+      "text" : "The model takes as input a sequence of speech features x = (x1, x2, . . . , xTx) in a specific source language (e.g. English) and outputs a transcription y = (y0, y1, . . . , yTy) in the same language as well as translations z1, z2, . . . , zM in M different target languages (e.g. French, Spanish, etc.). When M = 1, this corresponds to joint ASR and bilingual ST (Liu et al., 2020). For simplicity, our presentation considers only a single target language with output z = (z0, z1, . . . , zTz). All results, however, apply to the general multilingual case. In the sequel, denote y<t , (y0, y1, . . . , yt 1) and y>t , (yt+1, yt+2, . . . , yTy) (yt is included if “<” and “>” are replaced by “” and “ ” respectively). In addition, assume that yt is ignored if t is outside of the interval [0, Ty]. Notations apply to z as well.\nThe dual-decoder model jointly predicts the transcript and translation in an autoregressive fashion:\np(y, z | x) = max(Ty ,Tz)Y\nt=0\np(yt, zt | y<t, z<t,x). (1)\nA natural model would consist of a single decoder followed by a softmax layer. However, even if the capacity of the decoder were large enough for handling both ASR and ST generation, a single softmax would require a very large joint vocabulary (with size VyVz where Vy, Vz are respectively the vocabulary\nsizes for y and z). Instead, our dual-decoder consists of two sub-decoders that are specialized in producing outputs tailored to the ASR and ST tasks separately. Formally, our model predicts the next output tokens (ŷs, ẑt) (where 1  s  Ty, 1  t  Tz) given a pair of previous outputs (y<s, z<t) as:\nh y s ,h z t = DECODERdual(y<s, z<t, ENCODER(x)) 2 Rdy ⇥ Rdz , (2)\np(ys | y<s, z<t,x) = [softmax(Wyhys + by)]ys , ŷs = argmaxys p(ys | y<s, z<t,x), (3) p(zt | y<s, z<t,x) = [softmax(Wzhzt + bz)]zt , ẑt = argmaxzt p(zt | y<s, z<t,x), (4)\nwhere [v]i denotes the ith element of the vector v. Note that ys and zt are token indices (1  ys  Vy, 1  zt  Vz). In (3) and (4), we detail the intermediate quantities p(ys | ·) and p(zt | ·) as obtained from the probability distributions over the output vocabulary. In the above, we have made an important assumption about the joint probability p(ys, zt | ·) that it can be factorized into p(ys | ·)p(zt | ·). Therefore, the joint distribution (1) encoded by the dual-decoder Transformer can be rewritten as\np(y, z | x) = max(Ty ,Tz)Y\nt=0\np(yt | y<t, z<t,x)p(zt | y<t, z<t,x). (5)\nWe also assumed so far that the decoders start at the same time, which is the most basic configuration. In practice, however, one may allow one sequence to advance k steps compared to the other, known as the wait-k policy (Ma et al., 2019). For example, if ST waits for ASR to produce its first k tokens, then the joint distribution becomes\np(y, z | x) = p(y<k | x)p(y k, z | y<k,x) (6)\n= k 1Y\nt=0\np(yt | y<t,x) max(Ty k,Tz)Y\nt=0\np(yt+k | y<t+k, z<t,x)p(zt | y<t+k, z<t,x). (7)\nIn the next sections, we propose two concrete architectures for the dual-decoder, corresponding to different levels of dependencies between both sub-decoders (ASR and ST). Then, we discuss two degenerate cases of these architectures where the two decoders are either completely independent or chained. We also present some details on the speech encoder, which has some slight differences compared to the (text) encoder in the original Transformer but one should note that our main contribution lies in the decoder."
+    }, {
+      "heading" : "3.2 Parallel and cross dual-decoder Transformers",
+      "text" : "The first architecture is called parallel dual-decoder Transformer, which has the highest level of dependencies: one decoder uses the hidden states of the other to compute its outputs, as illustrated in Figure 1a. The encoder consists of an input embedding layer followed by a positional embedding and a number of self-attention and feed-forward network (FFN) layers whose inputs are normalized (Ba et al., 2016).2 This is almost the same as the encoder of the original Transformer (Vaswani et al., 2017) (we refer to the corresponding paper for further details), except that the embedding layer in our encoder is a small convolutional neural network (CNN) (Fukushima and Miyake, 1982; LeCun et al., 1989) of two layers with ReLU activations and a stride of 2, therefore reducing the input length by 4.\nThe parallel dual-decoder consists of: (a) two decoders that follow closely the common Transformer decoder structure, and (b) four additional multi-head attention layers (called dual-attention layers). Each dual-attention layer is complementary to a corresponding main attention layer. We recall that an attention layer receives as inputs a query Q 2 Rdk , a key K 2 Rdk , a value V 2 Rdv and outputs3\n2All the illustrations in this paper are for the so-called pre-LayerNorm configuration, in which the input of the layer is normalized. Likewise, if the output is normalized instead, the configuration is called post-LayerNorm. Since pre-LayerNorm is known to perform better than post-LayerNorm (Wang et al., 2019; Xu et al., 2019; Nguyen and Salazar, 2019), we only conducted experiments for the former, although our implementation supports both.\n3Following Vaswani et al. (2017), we use multi-head attention, in which the inputs are linearly projected multiple times before feeding to the function, then the outputs are concatenated and projected back to the original dimension.\nAttention(Q,K,V). A dual-attention layer receives Q from the main branch and K,V from the other decoder (at the same level, in other words at the same depth in Transformer architecture) to compute hidden representations that will be merged back into the main branch (one decoder attends to the other in parallel). We present in more detail this merging operation in Section 3.4.\nOur second proposed architecture is called cross dual-decoder Transformer, which is similar to the previous one, except that now the dual-attention layers receive K,V from the previous decoding step outputs of the other decoder, as illustrated in Figure 1c. Thanks to this design, each prediction step can be performed separately on the two decoders. The hidden representations hys ,hzt in (2) produced by the decoders can be decomposed into:4\nh y s = DECODERasr(y<s, z<t, ENCODER(x)) 2 Rdy , (8) h z t = DECODERst(z<t,y<s, ENCODER(x)) 2 Rdz . (9)"
+    }, {
+      "heading" : "3.3 Degenerate cases",
+      "text" : "Independent decoders A degenerate case of our dual-decoder architecture is when there is no dualattention and thus the two decoders become independent. In this case, the prediction joint probability can\n4This decomposition is clearly not possible for the parallel dual-decoder Transformer.\nbe factorized simply as p(ys, zt | y<s, z<t,x) = p(ys | y<s,x)p(zt | z<t,x). Therefore, all prediction steps are separable and thus this model is the most computationally efficient.\nChained decoders Another degenerate case corresponds to the extreme wait-k policy, in which one decoder waits for the other to completely finish before starting its own decoding. For example, if ST waits for ASR, then the prediction joint probability reads p(ys, zt | y<s, z<t,x) = p(ys | y<s,x)p(zt | z<t,y,x). Clearly, this model is the less computationally efficient.5\nTo summarize the different cases, we show below the joint probability distributions encoded by the presented models, in decreasing level of dependencies:\n(single output) p(y, z | x) = TY\nt=0\np(yt, zt | y<t, z<t,x), (10)\n(dual-decoder) p(y, z | x) = TY\nt=0\np(yt | y<t, z<t,x)p(zt | y<t, z<t,x), (11)\n(independent) p(y, z | x) = TY\nt=0\np(yt | y<t,x)p(zt | z<t,x), (12)\n(independent / chained) p(y, z | x) = TY\nt=0\np(yt | y<t,x)p(zt | z<t,y,x), (13)\nwhere T = max(Ty, Tz). Similar formalization for the wait-k policy (7) can be obtained in a straightforward manner. Note that for independent decoders, the distribution is the same as in non-wait-k."
+    }, {
+      "heading" : "3.4 Variants",
+      "text" : "In this section, we introduce different variants used in the experiments of Section 5.\nAsymmetric dual-decoder Instead of using all the dual-attention layers, one may want to allow a one-way attention: either ASR attends ST or the inverse, but not both.\nAt-self or at-source dual-attention In each decoder block, there are two different attention layers, which we respectively call self-attention (bottom) and source-attention (top). For each, there is an associated dual-attention, named respectively dual-attention at self and dual-attention at source. In the experiments, we studied the case where either only the at-self or at-source attention layers are retained.\nMerging operators The Merge layers shown in Figure 1 combine the outputs of the main attention (Hmain) and the dual-attention (Hdual). We experimented dual-attention with two different merging operators: weighted sum or concatenation. We can formally define the merging operators as\nHout = Merge(Hmain,Hdual) ,\n8 ><\n>: Hmain if no dual-attention, Hmain + Hdual, if sum operator, linear ([Hmain;Hdual]) if concat operator.\n(14)\nFor the sum operator, in particular, we performed experiments for learnable or fixed . Remark. The model proposed by Liu et al. (2020) is a special case of our cross dual-decoder Transformer with no dual-attention at source, no layer normalization for the input embeddings (Figure 1c), and sum merging with fixed ."
+    }, {
+      "heading" : "4 Training and Decoding",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Training",
+      "text" : "The objective, L(ŷ, ẑ,y, z) = ↵Lasr(ŷ,y) + (1 ↵)Lst(ẑ, z), is a weighted sum of the cross-entropy ASR and ST losses, where ŷ, ẑ,y, z denote the predictions for ASR, ST and the ground truths for ASR,\n5We call it chained since it has a subtle difference with a cascade model, because of the dependence of x in p(zt | z<t,y,x)\nST respectively. ↵ is set to 0.3 (Liu et al., 2020). We also employ label smoothing (Szegedy et al., 2016) with ✏ = 0.1.\nBatching For each language pair, training data is sorted by the number of frames. Mini-batches are generated from language-specific arrays in a round-robin fashion. Thus, language pairs with less data are upsampled.\nTarget forcing We follow Inaguma et al. (2019) and prepend a language specific token to the target sentence. Preliminary experiments showed that this approach was more effective than adding a target language embedding along the temporal dimension to the speech feature inputs (Di Gangi et al., 2019)."
+    }, {
+      "heading" : "4.2 Decoding",
+      "text" : "We present the beam search strategy used by our model. Since there are two different outputs (ASR and ST), one may naturally think about two different beams (with possibly some interactions). However, we found that a single joint beam works best for our model. In this beam search strategy, each hypothesis includes a tuple of ASR and ST sub-hypotheses. The two sub-hypotheses are expanded together and the score is computed based on the sum of log probabilities of the output token pairs. For a beam size B, the B best hypotheses are retained based on this score. In this setup, both sub-hypotheses evolve jointly, which resembles the training process more than in the case of two different beams. A limitation of this joint-beam strategy is that, in extreme cases, one of the task (ASR or ST) may only have a single hypothesis. At a decoding step t + 1, we take the best B predictions (yt, zt) with respect to the sum of scores s(yt, zt) , log p(yt | y<t, z<t) + log p(zt | y<t, z<t). It can happen that, e.g., some ŷt has a so dominant score that it is selected for all the hypotheses, i.e. the B (different) hypotheses have a single ŷt and B different ẑt. We leave the design of a joint-beam strategy with diversity enforced to future work."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Dataset",
+      "text" : "To build a one-to-many model that can jointly transcribe and translate, we use MuST-C (Di Gangi et al., 2019), which is currently the largest publicly available one-to-many speech translation corpus.6 MuST-C covers language pairs from English to eight different target languages including Dutch, French, German, Italian, Portuguese, Romanian, Russian, and Spanish. Each language direction includes a triplet of source input speech, source transcription, and target translation. Size ranges from 385 hours (Portuguese) to 504 hours (Spanish). We refer to the original paper for more details."
+    }, {
+      "heading" : "5.2 Training and decoding details",
+      "text" : "Our implementation is based on the ESPnet-ST toolkit (Inaguma et al., 2020)7 and will be made publicly available upon publication. In the following, we provide details for reproducing the results.\nModels All experiments use the same encoder architecture with 12 layers. The decoder has 6 layers, except for the independent-decoder model where we also include a 8-layer version to compare the effects of dual-attention against simply increasing the number of model parameters.\nText pre-processing Transcriptions and translations were normalized and tokenized using the Moses tokenizer (Koehn et al., 2007). The transcription was lower-cased and the punctuation was stripped. A joint BPE (Sennrich et al., 2016) with 8000 merge operations was learned on the concatenation of the English transcription and all target languages.\n6Recent works released a number of multilingual speech translation corpora. CoVoST (Wang et al., 2020) is a many-to-one speech translation corpus. Europarl-ST (Iranzo-Sánchez et al., 2020) and MaSS (Boito et al., 2020) are available to feed truly polyglot speech translation models.\n7https://github.com/espnet/espnet\nSpeech features We used Kaldi (Povey et al., 2011) to extract 83-dimensional features (80-channel log Mel filter-bank coefficients with 3-dimensional pitch features) that were normalized by the mean and standard deviation computed on the training set. Utterances having more than 3000 frames or more than 400 characters were removed. We augment the data using speed pertubation (Ko et al., 2015) with three factors of 0.9, 1.0, and 1.1 and SpecAugment (Park et al., 2019) with three types of deterioration including time warping (W ), time masking (T ) and frequency masking (F ) with the following parameters: W = 5, T = 40, F = 30.\nOptimization Following standard practice for training Transformer, we used the Adam optimizer (Kingma and Ba, 2015) with Noam learning rate schedule (Vaswani et al., 2017), in which the learning rate is linearly increased for the first 25K warm-up steps then decreased proportionally to the inverse square root of the step number. We set the initial learning rate to 1e 3 and the Adam parameters to 1 = 0.9, 2 = 0.98, ✏ = 1e 9. We used a batch size of 32 sentences per GPU and gradient accumulation of 2 training steps. All models were trained on a single-machine with 8 32GB GPUs for 250K steps unless otherwise specified. As for model initialization, we train an independent-decoder model with the two decoders having shared8 weights for 150K steps and use its weights to initialize the other models. This resulted in much faster convergence for all models. We also included this shared model in the experiments, and for a fair comparison, we trained it for additional 250K steps. Finally, for decoding, we used a beam size of 10 with length penalty of 0.5.9"
+    }, {
+      "heading" : "5.3 Results",
+      "text" : ""
+    }, {
+      "heading" : "No type side self src merge params de es fr it nl pt ro ru avg WER",
+      "text" : "In this section, we report detokenized case-sensitive BLEU (Papineni et al., 2002) scores on the MuSTC dev set. Results on the test are presented in Section 5.4. The results are presented in Table 1. There are 3 main groups of models, corresponding to independent-decoder, cross dual-decoder (crx), and parallel dual-decoder (par), respectively. In particular, independent++ corresponds to a 8-decoder-layer model\n8For faster training. 9For a hypothesis of length L, a length penalty p means a score of pL will be added to the (log probability) score of that\nhypothesis (Section 4.2). Therefore, longer hypotheses are favored, or equivalently, shorter hypotheses are “penalized”.\nand will serve as our strongest baseline for comparison. In the following, when comparing models, we implicitly mean “on average” (over the 8 languages), except otherwise specified.\nParallel vs. cross Under the same configurations, parallel dual-decoder models outperform their cross counterparts (line 5 vs. line 13, line 6 vs. line 14, and line 7 vs. line 16, showing an improvement of 0.70 on average). In general, parallel dual-decoders perform better than both cross dual-decoders and independent decoders, except for the asymmetric case (line 12). It should be emphasized that most of the dual-decoder models have fewer than or equivalent to independent++. This confirms our intuition that the tight connection between two decoders in the parallel architecture improves the performance of the models. The cross dual-decoders perform relatively well compared to the baseline of two independent decoders with the same number of layers (6), but not so well compared to the stronger baseline with 8 layers.\nSymmetric vs. asymmetric In some of the experiments, we only allow the ST decoder to attend to the ASR decoder. For the cross dual-decoder, this did not yield significant improvements (21.72 at line 4 vs. 21.71 at line 6), while for the parallel dual-decoder, the results are worse (21.93 at line 12 vs. 22.70 at line 16).\nAt-self dual-attention vs. at-source dual-attention For the parallel dual-decoder, the at-source dualattention produced better results than the at-self counterpart (22.54 at line 14 vs. 22.26 at line 15), while the combination of both does not improve the results (22.16 at line 17). For the concat merging, using both seems to yield to best results (22.70 at line 16 vs. 22.32 at line 13).\nSum vs. concat merging The impact of merging operators is not consistent across different models. If we focus on the parallel dual-decoder, sum is better for models with only at-source attention (line 13 vs. line 14) and concat is better for models using both at-self and at-source attention (line 16 vs. line 17).\nInput normalization and learnable sum We also performed some experiments to show the importance of normalizing the input fed to the dual-attention layers (i.e. the LayerNorm layers shown in Figure 1c). The results show that adding normalization significantly improves the performance (22.17 at line 8 vs. 21.34 at line 11). We also observe that it is beneficial to use learnable weights compared to a fixed weight for the sum merging operator (Equation (14)) (21.26 at line 9 vs. 20.39 at line 10). Note that the fixed weight (and non-normalization) configuration correspond to the model of Liu et al. (2020) (line 10 in the table).\nWait-k policy We compare a non-wait-k parallel dual-decoder with its wait-k (k = 3) counterparts in Table 2. At the time of submission, our wait-k experiments have reached only 210K steps, thus for a fair comparison, we chose the best checkpoint (in terms of validation accuracy) up to 210K steps for the corresponding non-wait-k model. We also included the independent++ baseline (at 250K) from Table 1 for reference. From the results, one can observe that letting the ASR be ahead of the ST (bothR3) only slightly improves the performance (22.78 vs. 22.44), while letting the ST be ahead (bothT3) significantly worsen the results (21.52). This confirms our intuition that the ST task is more difficult and should not take the lead in the dual-decoder models. Future work will investigate more this wait-k policy."
+    }, {
+      "heading" : "No type side self src merge params de es fr it nl pt ro ru avg WER",
+      "text" : "ASR results Detailed WER results for each target language are provided in the Appendix. While using a single decoder leads to average 13.3% WER, all other symmetric architectures with two decoders have better and rather stable WERs (from 12.1% to 12.8%)."
+    }, {
+      "heading" : "5.4 Comparison to state-of-the-art",
+      "text" : "To avoid a hyper-parameter search over the test set, we only selected two of our best models, together with the baseline independent++, for evaluation on the test set. Both are symmetric parallel dualdecoders, first one has at-source dual-attention with sum merging, the second one has both at-source and at-self dual-attentions with concat merging (lines 14 and 16 in Table 1, respectively). For the first one, we increased the number of decoder layers to 8 (instead of 6) to match the number of parameters of the second one. These models are denoted independent++, par++, and par in Table 3 and we will use these as model names for our discussion.\nTo further boost the performance, we trained these models for additional 250K steps, resulting in a total of 500K training steps (except for par++ as the training of this model was launched after the others and it has only reached 250K steps at the time of submission). For ease of comparison, we converted these values to the numbers of epochs (i.e. a complete pass throught the entire dataset), corresponding to 11 and 22 epochs, respectively.\nWe compare the results with the previous work (Gangi et al., 2019) in the multilingual setting. In addition, to demonstrate the competitive performance of our methods, we also included the best existing translation performance on MuST-C (Inaguma et al., 2020), although these results were obtained with bilingual 1-to-1 systems and from a sophisticated training recipe. To obtain the translation results for each language pair (e.g. en-de), Inaguma et al. (2020) pre-train an ASR model and an MT model to initialize the weights of the encoder and decoder respectively for ST training. This means that to obtain the results for the 8 language pairs of MuST-C, 24 independent trainings had to be performed in total (3 for each language pair).\nThe results in Table 3 show that our models achieved very competitive performance compared to Inaguma et al. (2020), despite the fewer number of epochs and the simpler training recipe. Our results also surpassed (Gangi et al., 2019) by a large margin."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We introduced a novel dual-decoder Transformer architecture for synchronous speech recognition and multilingual speech translation. Through a dual-attention mechanism, the decoders in this model are at the same time able to specialize in their tasks while being helpful to each other. The proposed model also generalizes previously proposed approaches using two independent (or weekly tight) decoders or chaining ASR and ST. It is also flexible enough to experiment with settings where ASR is ahead of ST which makes it promising for (1-to-many) simultaneous speech translation. Experiments on the MuST-C dataset showed that our model achieved very competitive performance compared to state-of-the-art."
+    } ],
+    "references" : [ {
+      "title" : "Tied multitask learning for neural speech translation",
+      "author" : [ "Antonios Anastasopoulos", "David Chiang." ],
+      "venue" : "Marilyn A. Walker, Heng Ji, and Amanda Stent, editors, Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACLHLT 2018, New Orleans, Louisiana, USA, June 1-6, 2018, Volume 1 (Long Papers), pages 82–91. Association for Computational Linguistics. 1",
+      "citeRegEx" : "Anastasopoulos and Chiang.,? 2018",
+      "shortCiteRegEx" : "Anastasopoulos and Chiang.",
+      "year" : 2018
+    }, {
+      "title" : "FINDINGS OF THE IWSLT 2020 EVALUATION CAMPAIGN",
+      "author" : [ "Ebrahim Ansari", "amittai axelrod", "Nguyen Bach", "Ondřej Bojar", "Roldano Cattoni", "Fahim Dalvi", "Nadir Durrani", "Marcello Federico", "Christian Federmann", "Jiatao Gu", "Fei Huang", "Kevin Knight", "Xutai Ma", "Ajay Nagesh", "Matteo Negri", "Jan Niehues", "Juan Pino", "Elizabeth Salesky", "Xing Shi", "Sebastian Stüker", "Marco Turchi", "Alexander Waibel", "Changhan Wang" ],
+      "venue" : "In Proceedings of the 17th International Conference on Spoken Language Translation,",
+      "citeRegEx" : "Ansari et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Ansari et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Layer normalization",
+      "author" : [ "Jimmy Lei Ba", "Jamie Ryan Kiros", "Geoffrey E Hinton." ],
+      "venue" : "arXiv preprint arXiv:1607.06450. 3",
+      "citeRegEx" : "Ba et al\\.,? 2016",
+      "shortCiteRegEx" : "Ba et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Listen and translate: A proof of concept for end-to-end speech-to-text translation",
+      "author" : [ "Alexandre Bérard", "Olivier Pietquin", "Christophe Servan", "Laurent Besacier." ],
+      "venue" : "NIPS Workshop on End-to-end Learning for Speech and Audio Processing. 1",
+      "citeRegEx" : "Bérard et al\\.,? 2016",
+      "shortCiteRegEx" : "Bérard et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "End-to-end automatic speech translation of audiobooks",
+      "author" : [ "Alexandre Bérard", "Laurent Besacier", "Ali Can Kocabiyikoglu", "Olivier Pietquin." ],
+      "venue" : "CoRR, abs/1802.04200. 1",
+      "citeRegEx" : "Bérard et al\\.,? 2018",
+      "shortCiteRegEx" : "Bérard et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Mass: A large and clean multilingual corpus of sentence-aligned spoken utterances extracted from the bible",
+      "author" : [ "Marcely Zanon Boito", "William Havard", "Mahault Garnerin", "Éric Le Ferrand", "Laurent Besacier." ],
+      "venue" : "Proceedings of The 12th Language Resources and Evaluation Conference, pages 6486–6493. 6",
+      "citeRegEx" : "Boito et al\\.,? 2020",
+      "shortCiteRegEx" : "Boito et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Worse wer, but better bleu? leveraging word embedding as intermediate in multitask end-to-end speech translation",
+      "author" : [ "Shun-Po Chuang", "Tzu-Wei Sung", "Alexander H. Liu", "Hung-yi Lee." ],
+      "venue" : "Dan Jurafsky, Joyce Chai, Natalie Schluter, and Joel R. Tetreault, editors, Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020, Online, July 5-10, 2020, pages 5998–6003. Association for Computational Linguistics.",
+      "citeRegEx" : "Chuang et al\\.,? 2020",
+      "shortCiteRegEx" : "Chuang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Must-c: a multilingual speech translation corpus",
+      "author" : [ "Mattia A Di Gangi", "Roldano Cattoni", "Luisa Bentivogli", "Matteo Negri", "Marco Turchi." ],
+      "venue" : "2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 2012–2017. Association for Computational Linguistics. 1, 6",
+      "citeRegEx" : "Gangi et al\\.,? 2019",
+      "shortCiteRegEx" : "Gangi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neocognitron: A self-organizing neural network model for a mechanism of visual pattern recognition",
+      "author" : [ "Kunihiko Fukushima", "Sei Miyake." ],
+      "venue" : "Competition and cooperation in neural nets, pages 267–285. Springer. 3",
+      "citeRegEx" : "Fukushima and Miyake.,? 1982",
+      "shortCiteRegEx" : "Fukushima and Miyake.",
+      "year" : 1982
+    }, {
+      "title" : "One-to-many multilingual end-to-end speech translation",
+      "author" : [ "Mattia Antonino Di Gangi", "Matteo Negri", "Marco Turchi." ],
+      "venue" : "IEEE Automatic Speech Recognition and Understanding Workshop, ASRU 2019, Singapore, December 14-18, 2019, pages 585–592. IEEE. 1, 9",
+      "citeRegEx" : "Gangi et al\\.,? 2019",
+      "shortCiteRegEx" : "Gangi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual end-to-end speech translation",
+      "author" : [ "Hirofumi Inaguma", "Kevin Duh", "Tatsuya Kawahara", "Shinji Watanabe." ],
+      "venue" : "IEEE Automatic Speech Recognition and Understanding Workshop, ASRU 2019, Singapore, December 14-18, 2019, pages 570–577. IEEE. 1",
+      "citeRegEx" : "Inaguma et al\\.,? 2019",
+      "shortCiteRegEx" : "Inaguma et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Espnet-st: All-in-one speech translation toolkit",
+      "author" : [ "Hirofumi Inaguma", "Shun Kiyono", "Kevin Duh", "Shigeki Karita", "Nelson Enrique Yalta Soplin", "Tomoki Hayashi", "Shinji Watanabe." ],
+      "venue" : "arXiv preprint arXiv:2004.10234. 6, 9",
+      "citeRegEx" : "Inaguma et al\\.,? 2020",
+      "shortCiteRegEx" : "Inaguma et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Europarl-st: A multilingual corpus for speech translation of parliamentary debates",
+      "author" : [ "Javier Iranzo-Sánchez", "Joan Albert Silvestre-Cerdà", "Javier Jorge", "Nahuel Roselló", "Adrià Giménez", "Albert Sanchis", "Jorge Civera", "Alfons Juan." ],
+      "venue" : "ICASSP 2020-2020 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 8229–8233. IEEE. 6",
+      "citeRegEx" : "Iranzo.Sánchez et al\\.,? 2020",
+      "shortCiteRegEx" : "Iranzo.Sánchez et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Google’s multilingual neural machine translation system: Enabling zero-shot translation",
+      "author" : [ "Melvin Johnson", "Mike Schuster", "Quoc V. Le", "Maxim Krikun", "Yonghui Wu", "Zhifeng Chen", "Nikhil Thorat", "Fernanda B. Viégas", "Martin Wattenberg", "Greg Corrado", "Macduff Hughes", "Jeffrey Dean." ],
+      "venue" : "CoRR. 2",
+      "citeRegEx" : "Johnson et al\\.,? 2016",
+      "shortCiteRegEx" : "Johnson et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "Yoshua Bengio and Yann LeCun, editors, 3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings. 7",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Audio augmentation for speech recognition",
+      "author" : [ "Tom Ko", "Vijayaditya Peddinti", "Daniel Povey", "Sanjeev Khudanpur." ],
+      "venue" : "Sixteenth Annual Conference of the International Speech Communication Association. 7",
+      "citeRegEx" : "Ko et al\\.,? 2015",
+      "shortCiteRegEx" : "Ko et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Moses: Open source toolkit for statistical machine translation",
+      "author" : [ "Philipp Koehn", "Hieu Hoang", "Alexandra Birch", "Chris Callison-Burch", "Marcello Federico", "Nicola Bertoldi", "Brooke Cowan", "Wade Shen", "Christine Moran", "Richard Zens" ],
+      "venue" : "In Proceedings of the 45th annual meeting of the ACL on interactive poster and demonstration sessions,",
+      "citeRegEx" : "Koehn et al\\.,? \\Q2007\\E",
+      "shortCiteRegEx" : "Koehn et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Backpropagation applied to handwritten zip code recognition",
+      "author" : [ "Yann LeCun", "Bernhard Boser", "John S Denker", "Donnie Henderson", "Richard E Howard", "Wayne Hubbard", "Lawrence D Jackel." ],
+      "venue" : "Neural computation, 1(4):541–551. 3",
+      "citeRegEx" : "LeCun et al\\.,? 1989",
+      "shortCiteRegEx" : "LeCun et al\\.",
+      "year" : 1989
+    }, {
+      "title" : "Synchronous speech recognition and speech-to-text translation with interactive decoding",
+      "author" : [ "Yuchen Liu", "Jiajun Zhang", "Hao Xiong", "Long Zhou", "Zhongjun He", "Hua Wu", "Haifeng Wang", "Chengqing Zong." ],
+      "venue" : "The ThirtyFourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Conference, IAAI 2020, The Tenth AAAI Symposium on Educational Advances in Artificial Intelligence, EAAI 2020, New York, NY, USA, February 7-12, 2020, pages 8417–8424. AAAI Press. 1, 2, 6, 7",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "STACL: Simultaneous translation with implicit anticipation and controllable latency using prefix-to-prefix framework",
+      "author" : [ "Mingbo Ma", "Liang Huang", "Hao Xiong", "Renjie Zheng", "Kaibo Liu", "Baigong Zheng", "Chuanqiang Zhang", "Zhongjun He", "Hairong Liu", "Xing Li", "Hua Wu", "Haifeng Wang." ],
+      "venue" : "Proc. of ACL. 3",
+      "citeRegEx" : "Ma et al\\.,? 2019",
+      "shortCiteRegEx" : "Ma et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Transformers without tears: Improving the normalization of selfattention",
+      "author" : [ "Toan Q Nguyen", "Julian Salazar." ],
+      "venue" : "arXiv preprint arXiv:1910.05895. 3",
+      "citeRegEx" : "Nguyen and Salazar.,? 2019",
+      "shortCiteRegEx" : "Nguyen and Salazar.",
+      "year" : 2019
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "Wei-Jing Zhu." ],
+      "venue" : "Proceedings of the 40th annual meeting of the Association for Computational Linguistics, pages 311–318. 7",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Specaugment: A simple data augmentation method for automatic speech recognition",
+      "author" : [ "Daniel S. Park", "William Chan", "Yu Zhang", "Chung-Cheng Chiu", "Barret Zoph", "Ekin D. Cubuk", "Quoc V. Le." ],
+      "venue" : "Gernot Kubin and Zdravko Kacic, editors, Interspeech 2019, 20th Annual Conference of the International Speech Communication Association, Graz, Austria, 15-19 September 2019, pages 2613–2617. ISCA. 7",
+      "citeRegEx" : "Park et al\\.,? 2019",
+      "shortCiteRegEx" : "Park et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The kaldi speech recognition toolkit",
+      "author" : [ "Daniel Povey", "Arnab Ghoshal", "Gilles Boulianne", "Lukas Burget", "Ondrej Glembek", "Nagendra Goel", "Mirko Hannemann", "Petr Motlicek", "Yanmin Qian", "Petr Schwarz" ],
+      "venue" : "In IEEE 2011 workshop on automatic speech recognition and understanding. IEEE Signal Processing Society",
+      "citeRegEx" : "Povey et al\\.,? \\Q2011\\E",
+      "shortCiteRegEx" : "Povey et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Germany, Volume 1: Long Papers. The Association for Computer Linguistics. 6",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention-passing models for robust and data-efficient end-to-end speech translation",
+      "author" : [ "Matthias Sperber", "Graham Neubig", "Jan Niehues", "Alex Waibel." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 7:313–325. 2",
+      "citeRegEx" : "Sperber et al\\.,? 2019",
+      "shortCiteRegEx" : "Sperber et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Rethinking the inception architecture for computer vision",
+      "author" : [ "Christian Szegedy", "Vincent Vanhoucke", "Sergey Ioffe", "Jon Shlens", "Zbigniew Wojna." ],
+      "venue" : "Proceedings of the IEEE conference on computer vision and pattern recognition, pages 2818–2826. 6",
+      "citeRegEx" : "Szegedy et al\\.,? 2016",
+      "shortCiteRegEx" : "Szegedy et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008. 1, 2, 3, 7",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Learning deep transformer models for machine translation",
+      "author" : [ "Qiang Wang", "Bei Li", "Tong Xiao", "Jingbo Zhu", "Changliang Li", "Derek F Wong", "Lidia S Chao." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 1810–1822. 3",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Covost: A diverse multilingual speech-to-text translation corpus",
+      "author" : [ "Changhan Wang", "Juan Pino", "Anne Wu", "Jiatao Gu." ],
+      "venue" : "Proceedings of The 12th Language Resources and Evaluation Conference, pages 4197– 4203, Marseille, France, May. European Language Resources Association. 1, 6",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sequence-to-sequence models can directly translate foreign speech",
+      "author" : [ "Ron J. Weiss", "Jan Chorowski", "Navdeep Jaitly", "Yonghui Wu", "Zhifeng Chen." ],
+      "venue" : "Francisco Lacerda, editor, Interspeech 2017, 18th Annual Conference of the International Speech Communication Association, Stockholm, Sweden, August 20-24, 2017, pages 2625–2629. ISCA. 1",
+      "citeRegEx" : "Weiss et al\\.,? 2017",
+      "shortCiteRegEx" : "Weiss et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Why deep transformers are difficult to converge? from computation order to lipschitz restricted parameter initialization",
+      "author" : [ "Hongfei Xu", "Qiuhui Liu", "Josef van Genabith", "Jingyi Zhang." ],
+      "venue" : "arXiv preprint arXiv:1911.03179. 3",
+      "citeRegEx" : "Xu et al\\.,? 2019",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 27,
+      "context" : "Our models are based on the original Transformer architecture (Vaswani et al., 2017) but consist of two decoders, each responsible for one task (ASR or ST).",
+      "startOffset" : 62,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 3,
+      "context" : "While cascade automatic speech-to-text translation (ST) systems operate in two steps: source language automatic speech recognition (ASR) and source-to-target text machine translation (MT), recent works have attempted to build end-to-end ST without using source language transcription during decoding (Bérard et al., 2016; Weiss et al., 2017; Bérard et al., 2018).",
+      "startOffset" : 300,
+      "endOffset" : 362
+    }, {
+      "referenceID" : 30,
+      "context" : "While cascade automatic speech-to-text translation (ST) systems operate in two steps: source language automatic speech recognition (ASR) and source-to-target text machine translation (MT), recent works have attempted to build end-to-end ST without using source language transcription during decoding (Bérard et al., 2016; Weiss et al., 2017; Bérard et al., 2018).",
+      "startOffset" : 300,
+      "endOffset" : 362
+    }, {
+      "referenceID" : 4,
+      "context" : "While cascade automatic speech-to-text translation (ST) systems operate in two steps: source language automatic speech recognition (ASR) and source-to-target text machine translation (MT), recent works have attempted to build end-to-end ST without using source language transcription during decoding (Bérard et al., 2016; Weiss et al., 2017; Bérard et al., 2018).",
+      "startOffset" : 300,
+      "endOffset" : 362
+    }, {
+      "referenceID" : 1,
+      "context" : "After two years of extensions to these pioneering works, the last results of the IWSLT 2020 shared task on offline speech translation (Ansari et al., 2020) demonstrate that end-to-end models are now on par (if not better) than their cascade counterparts.",
+      "startOffset" : 134,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 7,
+      "context" : "Such a finding motivates even more strongly the works on multilingual (one-to-many, many-to-many, many-to-one) ST (Gangi et al., 2019; Inaguma et al., 2019; Wang et al., 2020) for which end-to-end models are well adapted by design.",
+      "startOffset" : 114,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 10,
+      "context" : "Such a finding motivates even more strongly the works on multilingual (one-to-many, many-to-many, many-to-one) ST (Gangi et al., 2019; Inaguma et al., 2019; Wang et al., 2020) for which end-to-end models are well adapted by design.",
+      "startOffset" : 114,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 29,
+      "context" : "Such a finding motivates even more strongly the works on multilingual (one-to-many, many-to-many, many-to-one) ST (Gangi et al., 2019; Inaguma et al., 2019; Wang et al., 2020) for which end-to-end models are well adapted by design.",
+      "startOffset" : 114,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 0,
+      "context" : "While those interactions were investigated as a simple multi-task framework in (Anastasopoulos and Chiang, 2018) for a bilingual case, we propose a dual-decoder with an ASR decoder tightly coupled with an ST decoder and evaluate its effectiveness on one-to-many ST.",
+      "startOffset" : 79,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 18,
+      "context" : "Our model is inspired by (Liu et al., 2020), but the interaction between ASR and ST decoders is much tighter.",
+      "startOffset" : 25,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 18,
+      "context" : "(1)The model of (Liu et al., 2020) does not have interaction between internal hidden states of the decoders (only the decoding results of one decoder are fed into the other decoder).",
+      "startOffset" : 16,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 13,
+      "context" : "Multilingual ST Multilingual translation (Johnson et al., 2016) consists in translating between different language pairs with a single model, thereby improving maintainability and the quality of low resource language pairs.",
+      "startOffset" : 41,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 25,
+      "context" : "A two-stage model that performs first ASR and then passes the decoder states as input to a second ST model was also proposed (Sperber et al., 2019).",
+      "startOffset" : 125,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 18,
+      "context" : "We highlight three differences between their work and ours: (a) we propose a more general framework in which (Liu et al., 2020) is only a special case; (b) tighter integration of ASR and ST is proposed in our work; and (c) we experiment in a multilingual ST setting while previous works on joint ASR and ST only investigated bilingual ST.",
+      "startOffset" : 109,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 27,
+      "context" : "Our models are based on the Transformer architecture (Vaswani et al., 2017) but consist of two decoders.",
+      "startOffset" : 53,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 18,
+      "context" : "When M = 1, this corresponds to joint ASR and bilingual ST (Liu et al., 2020).",
+      "startOffset" : 59,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 19,
+      "context" : "In practice, however, one may allow one sequence to advance k steps compared to the other, known as the wait-k policy (Ma et al., 2019).",
+      "startOffset" : 118,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 2,
+      "context" : "The encoder consists of an input embedding layer followed by a positional embedding and a number of self-attention and feed-forward network (FFN) layers whose inputs are normalized (Ba et al., 2016).",
+      "startOffset" : 181,
+      "endOffset" : 198
+    }, {
+      "referenceID" : 27,
+      "context" : "2 This is almost the same as the encoder of the original Transformer (Vaswani et al., 2017) (we refer to the corresponding paper for further details), except that the embedding layer in our encoder is a small convolutional neural network (CNN) (Fukushima and Miyake, 1982; LeCun et al.",
+      "startOffset" : 69,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2017) (we refer to the corresponding paper for further details), except that the embedding layer in our encoder is a small convolutional neural network (CNN) (Fukushima and Miyake, 1982; LeCun et al., 1989) of two layers with ReLU activations and a stride of 2, therefore reducing the input length by 4.",
+      "startOffset" : 160,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2017) (we refer to the corresponding paper for further details), except that the embedding layer in our encoder is a small convolutional neural network (CNN) (Fukushima and Miyake, 1982; LeCun et al., 1989) of two layers with ReLU activations and a stride of 2, therefore reducing the input length by 4.",
+      "startOffset" : 160,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 28,
+      "context" : "Since pre-LayerNorm is known to perform better than post-LayerNorm (Wang et al., 2019; Xu et al., 2019; Nguyen and Salazar, 2019), we only conducted experiments for the former, although our implementation supports both.",
+      "startOffset" : 67,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 31,
+      "context" : "Since pre-LayerNorm is known to perform better than post-LayerNorm (Wang et al., 2019; Xu et al., 2019; Nguyen and Salazar, 2019), we only conducted experiments for the former, although our implementation supports both.",
+      "startOffset" : 67,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 20,
+      "context" : "Since pre-LayerNorm is known to perform better than post-LayerNorm (Wang et al., 2019; Xu et al., 2019; Nguyen and Salazar, 2019), we only conducted experiments for the former, although our implementation supports both.",
+      "startOffset" : 67,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 26,
+      "context" : "We also employ label smoothing (Szegedy et al., 2016) with ✏ = 0.",
+      "startOffset" : 31,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 11,
+      "context" : "Our implementation is based on the ESPnet-ST toolkit (Inaguma et al., 2020)7 and will be made publicly available upon publication.",
+      "startOffset" : 53,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 16,
+      "context" : "Text pre-processing Transcriptions and translations were normalized and tokenized using the Moses tokenizer (Koehn et al., 2007).",
+      "startOffset" : 108,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 24,
+      "context" : "A joint BPE (Sennrich et al., 2016) with 8000 merge operations was learned on the concatenation of the English transcription and all target languages.",
+      "startOffset" : 12,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 29,
+      "context" : "CoVoST (Wang et al., 2020) is a many-to-one speech translation corpus.",
+      "startOffset" : 7,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 12,
+      "context" : "Europarl-ST (Iranzo-Sánchez et al., 2020) and MaSS (Boito et al.",
+      "startOffset" : 12,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2020) and MaSS (Boito et al., 2020) are available to feed truly polyglot speech translation models.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 23,
+      "context" : "Speech features We used Kaldi (Povey et al., 2011) to extract 83-dimensional features (80-channel log Mel filter-bank coefficients with 3-dimensional pitch features) that were normalized by the mean and standard deviation computed on the training set.",
+      "startOffset" : 30,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 15,
+      "context" : "We augment the data using speed pertubation (Ko et al., 2015) with three factors of 0.",
+      "startOffset" : 44,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 22,
+      "context" : "1 and SpecAugment (Park et al., 2019) with three types of deterioration including time warping (W ), time masking (T ) and frequency masking (F ) with the following parameters: W = 5, T = 40, F = 30.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 14,
+      "context" : "Optimization Following standard practice for training Transformer, we used the Adam optimizer (Kingma and Ba, 2015) with Noam learning rate schedule (Vaswani et al.",
+      "startOffset" : 94,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 27,
+      "context" : "Optimization Following standard practice for training Transformer, we used the Adam optimizer (Kingma and Ba, 2015) with Noam learning rate schedule (Vaswani et al., 2017), in which the learning rate is linearly increased for the first 25K warm-up steps then decreased proportionally to the inverse square root of the step number.",
+      "startOffset" : 149,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 18,
+      "context" : "It should be noted that line 10 corresponds to the model proposed by (Liu et al., 2020).",
+      "startOffset" : 69,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 21,
+      "context" : "In this section, we report detokenized case-sensitive BLEU (Papineni et al., 2002) scores on the MuSTC dev set.",
+      "startOffset" : 59,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 7,
+      "context" : "60 - - 3 Multilingual 1-to-many (Gangi et al., 2019) 16.",
+      "startOffset" : 32,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 7,
+      "context" : "We compare the results with the previous work (Gangi et al., 2019) in the multilingual setting.",
+      "startOffset" : 46,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 11,
+      "context" : "In addition, to demonstrate the competitive performance of our methods, we also included the best existing translation performance on MuST-C (Inaguma et al., 2020), although these results were obtained with bilingual 1-to-1 systems and from a sophisticated training recipe.",
+      "startOffset" : 141,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 7,
+      "context" : "Our results also surpassed (Gangi et al., 2019) by a large margin.",
+      "startOffset" : 27,
+      "endOffset" : 47
+    } ],
+    "year" : 2020,
+    "abstractText" : "We introduce dual-decoder Transformer, a new model architecture to jointly perform automatic speech recognition (ASR) and multilingual speech translation (ST). Our models are based on the original Transformer architecture (Vaswani et al., 2017) but consist of two decoders, each responsible for one task (ASR or ST). Our major contribution lies in how these decoders interact with each other: one decoder can attend to different information sources from the other via a dual-attention mechanism. We propose two variants of these architectures corresponding to two different levels of dependencies between the decoders, called the parallel and cross dual-decoder Transformers, respectively. We conduct extensive experiments on the MuST-C dataset. Results show that our models outperform the previously-reported results on joint ASR/ST decoding and outperform as well highest performance on the same dataset in the multilingual settings. Our code will be made publicly available upon publication.",
+    "creator" : "LaTeX with hyperref"
+  }
+}

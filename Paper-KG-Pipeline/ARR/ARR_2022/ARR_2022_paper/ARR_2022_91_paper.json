@@ -1,0 +1,255 @@
+{
+  "name" : "ARR_2022_91_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "As demonstrated by GPT-3 and T5, transformers grow in capability as parameter spaces become larger and larger. However, for tasks that require a large amount of knowledge, nonparametric memory allows models to grow dramatically with a sub-linear increase in computational cost and GPU memory requirements. Recent models such as RAG and REALM have introduced retrieval into conditional generation. These models incorporate neural initial retrieval from a corpus of passages. We build on this line of research, proposing Re2G, which combines both neural initial retrieval and reranking into a BART-based sequenceto-sequence generation. Our reranking approach also permits merging retrieval results from sources with incomparable scores, enabling an ensemble of BM25 and neural initial retrieval. To train our system end-to-end, we introduce a novel variation of knowledge distillation to train the initial retrieval, reranker and generation using only ground truth on the target sequence output. We find large gains in four diverse tasks: zero-shot slot filling, question answering, fact checking and dialog, with relative gains of 9% to 34% over the previous state-of-the-art on the KILT leaderboard. We make our code available as open source1."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "GPT-3 [Brown et al., 2020] and T5 [Raffel et al., 2020] are arguably the most powerful members in a family of deep learning NLP models called transformers. Such models store surprising amount of world knowledge. They have been shown to produce good performance on a range of demanding tasks, especially in generating human like texts. However, such large transformers’ capability is tied to the increasingly larger parameter spaces on which they are trained.\n1https://github.com/anonymous\nRecently, there has been work towards transformers that make use of non-parametric knowledge. REALM (Retrieval Augmented Language Model) [Guu et al., 2020] and RAG (Retrieval Augmented Generation) [Lewis et al., 2020b] both use an indexed corpus of passages to support conditional generation. By using the corpus as a source of knowledge these models can extend the information available to the model by tens or even hundreds of gigabytes with a sub-linear scaling in computation cost.\nThese recent advancements, in turn, have been inspired by BART (Bidirectional and AutoRegressive Transformer) [Lewis et al., 2020a] that combines a Bidirectional Encoder (e.g. BERT [Devlin et al., 2019]) with an Autoregressive decoder (e.g. GPT [Brown et al., 2020]) into one sequenceto-sequence model.\nWe build on this line of research, pioneered by REALM and RAG, and propose a new approach that we call Re2G (Retrieve, Rerank, Generate), which combines both neural initial retrieval and reranking into a BART-based sequenceto-sequence generation.\nThere are two particular aspects on which our approach is different from the previous works. Firstly, our reranking approach permits merging retrieval results from sources with incomparable scores, e.g. enabling an ensemble of BM25 and neural initial retrieval. Secondly, to train our system end-to-end, we introduce a novel variation of knowledge distillation to train the initial retrieval, reranker and generation using only ground truth on the target sequence output.\nThe KILT benchmark [Petroni et al., 2021] has been recently introduced to evaluate the capabilities of pre-trained language models to address NLP tasks that require access to external knowledge. We evaluate on four diverse tasks from KILT: slot filling, question answering, fact checking and dialog. Figure 1 shows examples of these tasks. Re2G\nmakes significant gains on all four tasks, reaching the top of the KILT leaderboards and establishing a new state-of-the-art.\nThe contributions of this work are as follows:\n• We introduce Re2G, demonstrating the effectiveness of reranking for generative language models that incorporate retrieval.\n• We further extend Re2G by ensembling initial retrieval methods, combining neural and traditional keyword-based approaches.\n• Re2G improves the current state-of-the-art of 9%, 31%, 34%, 22% and 10% relative gains on the headline KILT metrics for T-REx (slot filling), Natural Questions (question answering), TriviaQA (question answering), FEVER (fact checking), and Wizard of Wikipedia (dialog), respectively.\n• We publicly release our code as open source to support continued development."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "The KILT benchmark and public leaderboard2 combines eleven datasets across five tasks. The main advantage of the KILT distribution of these datasets is that the provenance information from each dataset is realigned to reference the same snapshot of Wikipedia. A unified evaluation script and set of metrics is also provided. In this work, we focus on four tasks, such as Slot Filling [Levy et al., 2017, Elsahar et al., 2018], Question Answering [Kwiatkowski et al., 2019, Joshi et al., 2017], Fact Checking [Thorne et al., 2018a,c], and Dialog [Dinan et al., 2019] (see Figure 1).\nA set of baseline methods have been proposed for KILT. GENRE [Cao et al., 2021] is trained on BLINK [Wu et al., 2020] and all KILT tasks jointly using a sequence-to-sequence language model to generate the title of the Wikipedia page where the answer can be found. This method is a strong baseline to evaluate the retrieval performance, but it does not address the downstream tasks. On the other hand, generative models, such as BART [Lewis et al., 2020a] and T5 [Raffel et al., 2020], show interesting performance when finetuned on the downstream tasks relying only on the implicit knowledge stored in the weights of the\n2https://eval.ai/web/challenges/ challenge-page/689/leaderboard\nneural networks, without the use of any explicit retrieval component.\nRAG [Lewis et al., 2020b], an end-to-end retrieval-based generative model, is the best performing baseline in KILT and it incorporates DPR [Karpukhin et al., 2020] to first retrieve relevant passages for the query, then it uses a model initialized from BART [Lewis et al., 2020a] to perform a sequence-to-sequence generation from each evidence passage concatenated with the query in order to generate the answer. Figure 2 shows the architecture of RAG.\nMulti-task DPR [Maillard et al., 2021] exploits multi-task learning by training both DPR passage and query encoder on all KILT tasks. DensePhrases [Lee et al., 2021] addresses the knowledge intensive tasks with a short answer, such as slot filling. It indexes the phrases in the corpus that can be potential answers. The extracted phrases are represented by their start and end token vectors from the final layer of a transformer initialized from SpanBERT [Joshi et al., 2020].\nKnowledge Graph Induction (KGI) [Glass et al., 2021] combines DPR and RAG models, both trained with task and dataset specific training. KGI employs a two phase training procedure: first training the DPR model, i.e. both the query and context encoder, using the KILT provenance ground truth. Then, KGI trains the sequence-to-sequence generation and further trains the query encoder using only the target output as the objective. This results in large improvements in retrieval performance and, as a consequence, in the downstream tasks.\nMulti-stage or cascade approaches to retrieval have received ample attention in Information Retrieval (IR) research. The multi-stage approach begins with the initial retrieval phase, where an initial set of documents or passages form the pool of candidates to be considered for ranking. Then one or more phases of increasingly computationally demanding rerankers are applied. Early approaches in learning to rank [Liu, 2009] used features and linear classifiers. Pre-trained language models, especially BERT [Devlin et al., 2019], have shown state-ofthe-art performance when applied to the task of relevance ranking. Transformers may be applied as classifiers to each query and passage pair independently [Nogueira and Cho, 2019] or as generators to produce labels for passages in a sequence-tosequence model [Nogueira et al., 2020]."
+    }, {
+      "heading" : "3 Methodology",
+      "text" : "The approach of RAG, Multi-DPR, and KGI is to train a neural IR (Information Retrieval) component and further train it end-to-end through its impact in generating the correct output. Figure 2 illustrates the end-to-end RAG system.\nIt has been previously established that results from initial retrieval can be greatly improved through the use of a reranker [Liu, 2009, Wang et al., 2011]. Therefore we hypothesized that natural language generation systems incorporating retrieval can benefit from reranking.\nIn addition to improving the ranking of passages returned from DPR, a reranker can be used after merging the results of multiple retrieval methods with incomparable scores. For example, the scores returned by BM25 [Robertson and Zaragoza, 2009] are not comparable to the inner products from DPR.\nUsing the scores from a reranker, we can find the top-k documents from the union of DPR and BM25 results. Figure 3 illustrates our extension of RAG with a reranker. We call our system Re2G (Retrieve, Rerank, Generate)."
+    }, {
+      "heading" : "3.1 Reranker",
+      "text" : "The reranker we use is based on the sequence-pair classification of Nogueira and Cho [2019]. This\nmodel is shown in Figure 4. The query and passage are input together to a BERT [Devlin et al., 2019] transformer. Cross attention is applied over the tokens of both sequences jointly. This is called an interaction model.\nThis model contrasts with the representation model used for initial retrieval. Figure 5 shows the bi-encoder representation model for DPR. The representation vectors for the query and passage are produced independently. This allows for efficient retrieval by pre-computing vectors for all passages in the corpus and indexing them with an ANN (Approximate Nearest Neighbors) index. By using an interaction model to rerank the top-N passages from the representation model, we can get the advantages of both model types: accuracy and scalability.\nWe initialize the reranker from the BERT model trained on MS MARCO [Nguyen et al., 2016] by NBoost [Thienes and Pertschuk, 2019] and available through Hugging Face3."
+    }, {
+      "heading" : "3.2 Training",
+      "text" : "As Figure 1 illustrates, KILT tasks are provided with two types of ground truth: the target output sequence and the provenance information indicating the passage or passages in the corpus that support the output.\nOur training is carried out in four phases: DPR training, generation training, reranking training, and full end-to-end training. The initial DPR and reranking phases make use of the provenance ground truth. The generation and full end-to-end training make use of only the target output.\nFormally:\n• The original KILT instances are a tuple: ⟨q, t,Prov⟩ where q is the input or prompt, t is the target output, and Prov is the set of provenance passages that support the target output.\n• DPR training is a tuple: ⟨q, p+, p−⟩ where 3https://huggingface.co/nboost/\npt-bert-base-uncased-msmarco\np+ ∈ Prov and p− where p− ∈ BM25(q) ∧ p− /∈ Prov\n• Reranking training begins with the application of DPR and BM25, producing tuples: ⟨q,P,Prov⟩ where P = BM25(q)∪DPR(q)\n• Generation and end-to-end training instances are pairs of query and target: ⟨q, t⟩\nThe first two phases, DPR and generation, are identical to KGI, specifically KGI0. We use the codes from Glass et al. [2021]4.\nDPR Stage 1 training is the same training used by Karpukhin et al. [2020]. The triplets of query, positive passage and “hard negative” passages from BM25 are put into batches of 128 instances. The positives and hard negatives from other instances form the “batch negatives” for each instance. The DPR bi-encoder model gives each query a probability distribution over the positive, hard negative, and batch negatives. The loss is the negative loglikelihood for the positive. After DPR Stage 1 training the passages from the corpus are indexed with a Hierarchical Navigable Small World (HNSW) [Malkov and Yashunin, 2018] using FAISS [Johnson et al., 2017].\nGeneration training extends the training of the query encoder and trains the BARTLARGE sequence-to-sequence model on the target sequence output. This training is the same as that described by Lewis et al. [2020b]."
+    }, {
+      "heading" : "3.3 Reranking Training",
+      "text" : "The next phase, training the reranking in isolation, begins with gathering the initial retrieval results from DPR and BM25 on the training set. These results are merged and used as training data for the reranker.\nIn some datasets there are multiple positive passages. Therefore, we use the negative of the summed log-likelihood for the positive passages as the loss function. The logits given by the reranker are zr and the indices for the correct passages (from the ground truth provenance) are Prov.\nloss = − ∑\ni∈Prov log(softmax(zr)i)\n4https://github.com/IBM/ kgi-slot-filling"
+    }, {
+      "heading" : "3.4 End-to-End Training",
+      "text" : "Training end-to-end poses a special challenge. In RAG, the gradient propagates to the query encoder because the inner product between the query vector and the passage vector is used to weight the influence of each sequence, a process RAG calls marginalization. The inputs to the BART model are sequences (sj = pj [SEP] q) that comprise a query q plus retrieved passage pj . The probability for each sequence is determined from the softmax over the retrieval (or reranker) scores for the passage. The probability for each target token ti given\nthe sequence sj is a softmax over BART’s token prediction logits. The loss therefore is a negative log-likelihood summed over all target tokens and sequences, weighted by each sequence’s probability.\nConsider that in Re2G the score from the reranker, not the initial retrieval, is used to weight the impact of each sequence in generation. This allows the reranker to be trained through the ground truth on target output, but it means the gradient for the query encoder will be zero since the marginalization no longer depends on the inner product from\nthe query and passage representation vectors.\nP (sj) = softmax(zr)j\nP (ti|sj) = softmax(BART(sj)i)ti loss = − ∑ i,j log (P (ti|sj) · P (sj))\nWe consider three possible resolutions to this issue.\n• Combine the DPR and reranker scores\n• Freeze the query encoder\n• Online Knowledge Distillation\nThe first candidate solution is tempting but fatally flawed. By adding the log softmax from DPR and the reranker we can ensure that both systems are trained through impact in generation. However, if the DPR score is added to the reranker score, then the DPR score is being trained to provide a complementary signal to the reranker. Therefore, when DPR is used to gather the candidate passages, it does not give the highest scores to the passages that are most likely to be relevant, but instead gives the highest scores to the passages the reranker is most likely to underrate. We find that this theoretical concern is also a practical concern, as DPR performance (and overall system performance) declines greatly when trained in this way.\nThe simplest solution is to freeze the parameters of the query encoder, training only the reranker and generation components. We find this is indeed the best solution for one of our datasets, Wizard of Wikipedia. Note that DPR has already been trained in two phases, first from the provenance ground truth and then again in generation training in the RAG model.\nThe third solution is our novel application of knowledge distillation [Hinton et al., 2015]. We use the reranker as a teacher model to provide labels to the DPR student model. We distill the knowledge across architectures: from an interaction model to a representation model. Further, this knowledge distillation occurs online, while the reranker is being trained. The loss for the initial retrieval is therefore the KL-divergence between the probability distribution it gives over the retrieved passages and the reranker’s probability distribution over the same passages. A temperature hyperparameter T smooths these distributions to prevent excessive loss and stabilize training.\nloss = DKL\n( softmax (zs T )∥∥∥softmax(zt T )) · T 2\nThe knowledge distillation has the usual advantage of providing signal not only of positive and negative instances, but degrees of negativeness. In addition, since we retrieve n = 12 passages from DPR but only use the top-k (k = 5) for generation, the knowledge distillation loss is providing a (soft) label for more passages."
+    }, {
+      "heading" : "3.5 Inference",
+      "text" : "At inference time the query is encoded using the DPR query encoder and the top-12 passages from the HNSW index are returned. The query is also passed to BM25 search, specifically Anserini5, gathering the top-12 BM25 results. Both sets of passages are passed to the reranker and scored. The top-5 passages are then joined with the query and passed to BARTLARGE to generate the output. The five output sequences are weighted according to the softmax over the reranker scores to produce the final output."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "We test our model on five datasets, over four distinct tasks in the KILT benchmark: slot filling, question answering, fact checking and dialog. Figure 1 shows an example of these four tasks.\nThe slot filling dataset, T-REx [Elsahar et al., 2018], provides as input a head entity and relation, and expects as output the entity or term that fills the slot, also called the tail entity. The T-REx dataset contains 2.3M instances. We use only 370k training instances by downsampling the relations that occur more than 5000 times. This reduces the training time required while keeping state-of-the-art performance. The development and test sets each have 5k instances.\nThe question answering datasets are “open” versions of Natural Questions [Kwiatkowski et al., 2019] and TriviaQA [Joshi et al., 2017]. Unlike the original versions, the relevant Wikipedia page must be found by a retrieval step. The training sets for Natural Questions and TriviaQA contain 87k and 62k questions, with another 3k and 5k for the development and 1.4k and 6.5k for test.\nThe fact checking dataset in KILT is FEVER (Fact Extraction and VERification). It is a combination of the two FEVER versions [Thorne\n5https://github.com/castorini/anserini\net al., 2018b, 2019] omitting the NOTENOUGHINFO class. There are approximately 10k instances in the development and test sets, and 100k for training. FEVER is a classification task, but we cast it as a generation task by training the model to generate either the token “SUPPORTS” or “REFUTES”.\nWizard of Wikipedia [Dinan et al., 2018] is the dialog dataset. The input is a short dialog history ending with the information seeker’s turn. The expected output is a fact presented conversationally or just an utterance or question mentioning content from a relevant Wikipedia page. It is the smallest dataset with approximately 3k instances in development and test and 64k in train.\nFor all tasks, systems are expected to produce the target output as well as justify it with provenance information from the KILT knowledge source. The metrics of R-Precision and Recall@5 measure the correctness of the provenance. R-Precision measures what fraction of the R documents in the ground truth provenance (|Prov| = R) are present in the top-R documents returned by the system. Accuracy and (token-level) F1 measure the correctness of the generated output. For Wizard of Wikipedia, Rouge-L [Lin, 2004] is used instead of accuracy, since systems are very unlikely to generate the exact target output. The metrics of KILTAccuracy, KILT-F1 and, for Wizard of Wikipedia, KILT-Rouge-L are the underlying metric (e.g. Accuracy) for instances where R-Precision is one, otherwise zero. These metrics indicate output correctness when provenance is also correctly supplied.\nTable 1 shows the performance of Re2G on the KILT leaderboard. Except for Wizard of Wikipedia where it is now second best, Re2G is the best on all metrics across all five datasets attempted. We achieve 9%, 31%, 34%, 22% and 10% relative gains over the previous state-of-the-art on the headline KILT metrics for T-REx, Natural Questions, TriviaQA, FEVER, and Wizard of Wikipedia, respectively.\nThe closest competition in retrieval metrics is GENRE. This system, as described in Section 2, uses a Wikipedia-specific approach to retrieval: generating the title of the Wikipedia page as in an entity-linking task. In contrast our system can be applied to any corpus and provides passage-level granularity.\nSince our submission to the KILT leaderboard for the Wizard of Wikipedia, a new system called Hindsight [Paranjape et al., 2021] achieved even\nbetter results on the generation metrics on that particular task."
+    }, {
+      "heading" : "4.1 Ablation Study",
+      "text" : "To understand the impact of different components we ran ablations of Re2G over each of the five datasets. We considered a variant that eliminates the online knowledge distillation, and a variant that removes results from BM25, using 24 DPR results rather than 12 from both DPR and BM25.\nThese variants performed worse in four out of five datasets. Online knowledge distillation failed to improve for Wizard of Wikipedia and ensembling with BM25 failed to improve for Natural Questions. More details are found in the appendix.\nTable 2 examines how the retrieval improves through each step of training. In the first half of the table we consider the initial retrieval alone. DPR Stage 1 is the DPR training described earlier - training only from the provenance ground truth with batch negatives and hard negatives from BM25. KGI0 further trains the query encoder of DPR Stage 1 through its impact in generating the target output. Finally Re2G extends the training of DPR with online knowledge distillation from the reranker. This step is beneficial in two of the three datasets, while the previous steps improve performance across all datasets.\nIn the second half of the table we examine the improvement in reranking. The baseline of KGI0 DPR+BM25 merges the results of KGI0’s DPR and BM25 by scoring each passage by the sum of the inverse rank from each method. For both T-REx and FEVER, even this simple approach to ensembling DPR and BM25 improves Recall@5, although not R-Precision. Following reranker training using the provenance ground truth (Reranker Stage 1), we find improvement over DPR across all five datasets on both retrieval metrics. The reranker’s improvement following end-to-end training is mixed. In FEVER and Wizard of Wikipedia there is substantial gain in R-Precision, approximately 2%. T-REx and Natural Questions are flat. However, there is a sharp decline in the performance of TriviaQA, in retrieval metrics. This is true despite the fact that retrieving these passages greatly improves answer accuracy and F1. This suggests some incompleteness in the provenance ground truth for TriviaQA."
+    }, {
+      "heading" : "4.2 Analysis",
+      "text" : "More details about all the analysis described below can be found in Appendix E."
+    }, {
+      "heading" : "4.2.1 Analysis of gains",
+      "text" : "Since the Re2G model differs from the KGI model only in the retrieval phase, we hypothesized that its gains in output quality are driven by its better retrieval quality. To test this hypothesis we considered all cases where the Re2G model produces better output than the KGI0 model and calculated the fraction of such cases where Re2G’s rank for the first correct passage is lower than KGI0’s.\nWe find that for T-REx, NQ, and FEVER the fractions of output gains that could be attributed to improved retrieval and ranking are 67.73%, 61.08% and 66.86% respectively. While for TriviaQA and Wizard of Wikipedia only 36.86% and 27.74% of output improvements were accompanied by improved ranking for the correct passage. It is important to note that in Wizard of Wikipedia, many of these improved outputs have only a small gain in token-level F1.\nWhile much of the gain in output quality is attributable to improved recall, at least a third is not. This reinforces an observation of Glass et al. [2021], that models trained with better retrieval can produce better output even when the retrieved passages are equivalent at test time."
+    }, {
+      "heading" : "4.2.2 Slot filling error analysis",
+      "text" : "To understand the types of errors Re2G makes we sampled 50 instances of the development set of the T-REx dataset where the Accuracy and token-level F1 score was zero.\nInterestingly, the most common class of error (33/50) was due to the incompleteness of the ground truth. Often the head entity is ambiguous (19/50), or the relation has multiple fillers (16/50). As an example, consider the following where there are two Joe O’Donnell notable for sports in the passages retrieved, and each played for at least two different teams.\nJoe O’Donnell [SEP] member of sports team\nTarget: Buffalo Bills Re2G: Dumbarton F.C.\n• Joe O’Donnell (footballer) / Joe O’Donnell (footballer) Joseph ’Joe’ O’Donnell (born 3 March 1961) was a Scottish footballer who played for Dumbarton and Stranraer.\n• Joe O’Donnell (American football) / ... fullback, guard and tackle for the University of Michigan from 1960 to 1963. He also played professional football as a guard and tackle for eight seasons for the Buffalo Bills...\nWhen Re2G produces genuine errors it is usually because it has selected some entity as a filler related in a different way (6/17) or it has failed to retrieve the necessary passage (9/17)."
+    }, {
+      "heading" : "5 Conclusions",
+      "text" : "Relative to previous work, such as RAG or KGI, Re2G substantially improves both in retrieval and end-to-end performance on slot filling, question answering, fact checking, and dialog. The reranker alone improves performance and enables the inclusion of multiple sources of initial retrieval. This architecture permits us to integrate results from BM25, further improving in accuracy. Our online knowledge distillation is able to improve the performance of DPR in four of the five datasets, despite the loss in end-to-end training not depending on the DPR scores. We have directed our efforts towards improving the retrieval of relevant knowledge. This also enables improvement in end-to-end performance by supplying better passages to the generation component. Further experiments on domain adaptation of Re2G on tasks like question answering or dialog might provide useful insight on the application of this technology to real world use cases. We are releasing our source code as open source (Apache 2.0 license) to enable further research."
+    }, {
+      "heading" : "A Hyperparameters",
+      "text" : "We have not done hyperparameter tuning for DPR Stage 1, Generation, or Reranking training. Instead we used hyperparameters similar to the original works on training DPR, BERT reranking and RAG. Table 3 shows the hyperparameters used in our experiments.\nFor knowledge distillation we used the same hyperparameter settings as Generation. For the additional hyperparameters in online knowledge distillation: temperature and KD learn rate scaling, we experimented with temperatures of 10 and 40 and KD learn rate scaling of 1.0 and 0.1. For our reported results we used a temperature of 10.0 and a learn rate scaling of 1.0.\nWhen training using online knowledge distillation, there is a separate optimizer for the query encoder while training generation. This optimizer uses the same hyperparameter settings.\nTable 5 shows the settings for retrieval and generation used for all datasets.\nAll results are from a single run. The random seed for python, numpy and pytorch was 42."
+    }, {
+      "heading" : "B Software Details",
+      "text" : "We used the following software versions:\n• Ubuntu 18\n• Pytorch 1.7\n• Transformers 4.3.2\n• Anserini 0.4.1 (commit\n3a60106fdc83473d147218d78ae7dca7c3b6d47c)"
+    }, {
+      "heading" : "C Model Details",
+      "text" : "Number of parameters Re2G uses three BERTBASE transformers: query encoder, passage encoder and reranker. Each has 110M parameters. The generation component is a BARTLARGE model with 400M parameters. There are 730M parameters in total.\nComputing infrastructure Using a single NVIDIA V100 GPU DPR training of two epochs takes approximately 24 hours for T-REx and less than 12 hours for FEVER and WoW.\nUsing a two NVIDIA P100 GPUs generation training for 370k T-REx instances takes two days, while FEVER and WoW training completes in half a day.\nThe FAISS index on the KILT knowledge source requires a machine with large memory, we use machines with 128GB of memory."
+    }, {
+      "heading" : "D Ablations",
+      "text" : "Table 6 explores ablations of the Re2G system. The point estimates and 95% confidence intervals are reported. Re2G-KD excludes the online knowledge distillation, instead freezing the query encoder when training the reranker and generator during end-to-end training. Re2G-BM25 excludes BM25 results, fetching 24 passages from DPR rather than 12 from DPR and 12 from BM25. The passages are still reranked. KGI0 is the baseline system, without a reranker and therefore also without BM25 results or online knowledge distillation during training.\nThe FEVER dataset shows the simplest pattern where each component: reranking, including BM25 results, and online knowledge distillation all produce gains, although these gains do not reach significance for online knowledge distillation. In TREx and Wizard of Wikipedia the impact of reranking and including BM25 results is still clear, but the online knowledge distillation has mixed and non-significant impact on the metrics. For FEVER and Wizard of Wikipedia most of the gain comes from including the reranker on DPR results. However, for T-REx, incorporating BM25 produces the largest gain."
+    }, {
+      "heading" : "E Generation Analysis",
+      "text" : "We examined 20 instances coupled with 3 output texts: the baseline KGI0, Re2G, and the target text in the ground-truth. The three output texts were presented unlabeled and in random order to\navoid bias. For each instance, we read the conversation history and then mark each text either GOOD, OK or INCONSISTENT generation. To our surprise, 5/20 ground-truth target texts are INCONSISTENT which indicates the WoW benchmark might have limitations in annotation quality. Both the systems have similar results (GOOD/OK/INCONSISTENT - Re2G: 8/2/10; KGI0: 9/2/9).\nSecond, we checked a set of 20 WoW instances where Re2G’s F1 score was in the bottom quintile. The conversation history was presented along with Re2G generated text and the passages retrieved. Manual examination showed 8/20 as INCONSISTENT and in 4/8 cases supporting groundtruth passages were not retrieved. Below is one of the 12/20 cases where Re2G generated text was found CONSISTENT with respect to the conversation\nhistory, although it has low F1 and Rouge-L scores.\nConversation History:\n• My favorite color is red. • Red is at the end of the spectrum of light,\nits with orange and opposite of violet. • I didn’t know that. What else do you know\nabout red?\nTarget: It’s actually a primary color for the RGB and CMYK color model. Re2G: It has a dominant wavelength of approximately 625-740 nanometres.\nE.1 Generation Quality\nTable 7 shows couple of examples that were part of the set of randomly selected instances from WoW dataset and used for manual inspection. We choose these two particular instances to show when we thought the ground truth (i.e. target) is not coherent with respect to the corresponding conversation history.\nIn the first example, the system generated outputs were judged as coherent. We found that both Re2G and KGI0 retrieved the following passage which might have helped generation of the above output -\nHorseshoe Falls / Horseshoe Falls Horseshoe Falls, also known as Canadian Falls, is the largest of the three waterfalls that collectively form Niagara Falls on the Niagara River along the Canada–United States border. Approximately 90% of the Niagara River, after diversions for hydropower generation, flows over Horseshoe Falls. The remaining 10% flows over American Falls and Bridal Veil Falls. It is located between Terrapin Point on Goat Island in the US state of New York, and Table Rock in the\nCanadian province of Ontario. Section: International border.\nAs for the ground truth, we marked it (factually) inconsistent based on the following retrieved passage -\nNiagara Falls / Located on the Niagara River, which drains Lake Erie into Lake Ontario, the combined falls have the highest flow rate of any waterfall in North America that has a vertical drop of more than . During peak daytime tourist hours, more than 168,000 m (six million cubic feet) of water goes over the crest of the falls every minute. Horseshoe Falls is the most powerful waterfall in North America, as measured by flow rate.\nIn the second example, all three texts were marked inconsistent. Interestingly, all the items in the conversation contains subjective opinion. Consequently, all the three candidate texts also contains subjective opinion. The problem is both the systems generated texts that are almost repetition of earlier conversation. In case of the ground truth, we find that the text is semantically incoherent.\nWe have also submitted files that contain all instances that were used to generate the different analysis reported in Section 4.2 of the paper. These files also contains our annotations/remarks where applicable."
+    } ],
+    "references" : [ {
+      "title" : "Autoregressive entity retrieval",
+      "author" : [ "Nicola De Cao", "Gautier Izacard", "Sebastian Riedel", "Fabio Petroni" ],
+      "venue" : "In International Conference on Learning Representations. OpenReview.net,",
+      "citeRegEx" : "Cao et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova" ],
+      "venue" : "In Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Wizard of wikipedia: Knowledge-powered conversational agents",
+      "author" : [ "Emily Dinan", "Stephen Roller", "Kurt Shuster", "Angela Fan", "Michael Auli", "Jason Weston" ],
+      "venue" : "In International Conference on Learning Representations,",
+      "citeRegEx" : "Dinan et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Dinan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Wizard of wikipedia: Knowledge-powered conversational agents",
+      "author" : [ "Emily Dinan", "Stephen Roller", "Kurt Shuster", "Angela Fan", "Michael Auli", "Jason Weston" ],
+      "venue" : "In ICLR (Poster). OpenReview.net,",
+      "citeRegEx" : "Dinan et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Dinan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Robust retrieval augmented generation for zero-shot slot filling",
+      "author" : [ "Michael Glass", "Gaetano Rossiello", "Md Faisal Mahbub Chowdhury", "Alfio Gliozzo" ],
+      "venue" : "In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Glass et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Glass et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Realm: Retrievalaugmented language model pre-training",
+      "author" : [ "Kelvin Guu", "Kenton Lee", "Zora Tung", "Panupong Pasupat", "Ming-Wei Chang" ],
+      "venue" : "arXiv preprint arXiv:2002.08909,",
+      "citeRegEx" : "Guu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Guu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Rouge: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin" ],
+      "venue" : "In Text summarization branches out,",
+      "citeRegEx" : "Lin.,? \\Q2004\\E",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Learning to rank for information retrieval",
+      "author" : [ "Tie-Yan Liu" ],
+      "venue" : "Information Retrieval,",
+      "citeRegEx" : "Liu.,? \\Q2009\\E",
+      "shortCiteRegEx" : "Liu.",
+      "year" : 2009
+    }, {
+      "title" : "Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs",
+      "author" : [ "Yu A Malkov", "Dmitry A Yashunin" ],
+      "venue" : "IEEE transactions on pattern analysis and machine intelligence,",
+      "citeRegEx" : "Malkov and Yashunin.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Malkov and Yashunin.",
+      "year" : 2018
+    }, {
+      "title" : "Ms marco: A human generated machine reading comprehension",
+      "author" : [ "Tri Nguyen", "Mir Rosenberg", "Xia Song", "Jianfeng Gao", "Saurabh Tiwary", "Rangan Majumder", "Li Deng" ],
+      "venue" : null,
+      "citeRegEx" : "Nguyen et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Nguyen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Passage reranking with bert",
+      "author" : [ "Rodrigo Nogueira", "Kyunghyun Cho" ],
+      "venue" : "arXiv preprint arXiv:1901.04085,",
+      "citeRegEx" : "Nogueira and Cho.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Nogueira and Cho.",
+      "year" : 2019
+    }, {
+      "title" : "Document ranking with a pretrained sequence-to-sequence model",
+      "author" : [ "Rodrigo Nogueira", "Zhiying Jiang", "Ronak Pradeep", "Jimmy Lin" ],
+      "venue" : "In Findings of the Association for Computational Linguistics: EMNLP",
+      "citeRegEx" : "Nogueira et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Nogueira et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Association for Computational Linguistics",
+      "author" : [ "November" ],
+      "venue" : "doi: 10.18653/v1/2020.findings-emnlp.",
+      "citeRegEx" : "November,? 2020",
+      "shortCiteRegEx" : "November",
+      "year" : 2020
+    }, {
+      "title" : "A cascade ranking model for efficient ranked retrieval",
+      "author" : [ "Lidan Wang", "Jimmy Lin", "Donald Metzler" ],
+      "venue" : "In Proceedings of the 34th international ACM SIGIR conference on Research and development in Information Retrieval,",
+      "citeRegEx" : "Wang et al\\.,? \\Q2011\\E",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Scalable zero-shot entity linking with dense entity retrieval",
+      "author" : [ "Ledell Wu", "Fabio Petroni", "Martin Josifoski", "Sebastian Riedel", "Luke Zettlemoyer" ],
+      "venue" : "In Proceedings of the 2020 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Wu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 5,
+      "context" : "REALM (Retrieval Augmented Language Model) [Guu et al., 2020] and RAG (Retrieval Augmented Generation) [Lewis et al.",
+      "startOffset" : 43,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 1,
+      "context" : "BERT [Devlin et al., 2019]) with an Autoregressive decoder (e.",
+      "startOffset" : 5,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2018a,c], and Dialog [Dinan et al., 2019] (see Figure 1).",
+      "startOffset" : 23,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 0,
+      "context" : "GENRE [Cao et al., 2021] is trained on BLINK [Wu et al.",
+      "startOffset" : 6,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2021] is trained on BLINK [Wu et al., 2020] and all KILT tasks jointly using a sequence-to-sequence language model to generate the title of the Wikipedia page where the answer can be found.",
+      "startOffset" : 28,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 4,
+      "context" : "Knowledge Graph Induction (KGI) [Glass et al., 2021] combines DPR and RAG models, both trained with task and dataset specific training.",
+      "startOffset" : 32,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 7,
+      "context" : "Early approaches in learning to rank [Liu, 2009] used features and linear classifiers.",
+      "startOffset" : 37,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 1,
+      "context" : "Pre-trained language models, especially BERT [Devlin et al., 2019], have shown state-ofthe-art performance when applied to the task of relevance ranking.",
+      "startOffset" : 45,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 10,
+      "context" : "Transformers may be applied as classifiers to each query and passage pair independently [Nogueira and Cho, 2019] or as generators to produce labels for passages in a sequence-tosequence model [Nogueira et al.",
+      "startOffset" : 88,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 11,
+      "context" : "Transformers may be applied as classifiers to each query and passage pair independently [Nogueira and Cho, 2019] or as generators to produce labels for passages in a sequence-tosequence model [Nogueira et al., 2020].",
+      "startOffset" : 192,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 1,
+      "context" : "The query and passage are input together to a BERT [Devlin et al., 2019] transformer.",
+      "startOffset" : 51,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 9,
+      "context" : "We initialize the reranker from the BERT model trained on MS MARCO [Nguyen et al., 2016] by NBoost [Thienes and Pertschuk, 2019] and available through Hugging Face3.",
+      "startOffset" : 67,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 8,
+      "context" : "After DPR Stage 1 training the passages from the corpus are indexed with a Hierarchical Navigable Small World (HNSW) [Malkov and Yashunin, 2018] using FAISS [Johnson et al.",
+      "startOffset" : 117,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 2,
+      "context" : "Wizard of Wikipedia [Dinan et al., 2018] is the dialog dataset.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 6,
+      "context" : "For Wizard of Wikipedia, Rouge-L [Lin, 2004] is used instead of accuracy, since systems are very unlikely to generate the exact target output.",
+      "startOffset" : 33,
+      "endOffset" : 44
+    } ],
+    "year" : 0,
+    "abstractText" : "As demonstrated by GPT-3 and T5, transformers grow in capability as parameter spaces become larger and larger. However, for tasks that require a large amount of knowledge, nonparametric memory allows models to grow dramatically with a sub-linear increase in computational cost and GPU memory requirements. Recent models such as RAG and REALM have introduced retrieval into conditional generation. These models incorporate neural initial retrieval from a corpus of passages. We build on this line of research, proposing ReG, which combines both neural initial retrieval and reranking into a BART-based sequenceto-sequence generation. Our reranking approach also permits merging retrieval results from sources with incomparable scores, enabling an ensemble of BM25 and neural initial retrieval. To train our system end-to-end, we introduce a novel variation of knowledge distillation to train the initial retrieval, reranker and generation using only ground truth on the target sequence output. We find large gains in four diverse tasks: zero-shot slot filling, question answering, fact checking and dialog, with relative gains of 9% to 34% over the previous state-of-the-art on the KILT leaderboard. We make our code available as open source1.",
+    "creator" : null
+  }
+}

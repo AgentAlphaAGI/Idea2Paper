@@ -1,0 +1,719 @@
+{
+  "name" : "ARR_2022_47_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Label Anchored Contrastive Learning for Language Understanding",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "In recent years, contrastive learning (CL) has been widely applied to self-supervised representation learning and led to major advances across computer vision (CV) (He et al., 2019; Chen et al., 2020b), speech (Saeed et al., 2021; Chen et al., 2021), and natural language processing (NLP) (Fang and Xie, 2020; Gao et al., 2021; Yan et al., 2021). The basic idea in these works is to pull together an anchor and a “positive” sample in the embedding space, and to push apart the anchor from many “negative” samples. Since no labels are available, a positive pair often consists of data augmentations of the sample\n(a.k.a “views”), and negative pairs are formed by the anchor and randomly chosen samples from the mini-batch. In visual representations, an effective solution to generate data augmentations is to take two random transformations of the same image (e.g., cropping, flipping, distortion and rotation) (Chen et al., 2020b; Grill et al., 2020; Chen et al., 2020c). For natural language, similar approaches are adopted such as word deletion, reordering, substitution, and back-translation etc. (Fang and Xie, 2020; Wang et al., 2021) However, data augmentation in NLP is inherently difficult because of its discrete nature. Therefore, some previous works (Gao et al., 2021; Yan et al., 2021) also use dropout technique (Srivastava et al., 2014) to obtain sentence augmentations.\nUnlike self-supervised setting, some researchers propose supervised contrastive learning (SCL) (Khosla et al., 2020; Gunel et al., 2021; Suresh and Ong, 2021) which can construct positive pairs by leveraging label information. Examples from the same class are pulled closer than the examples from different classes, leveraging the semantics of labels to construct negatives and positives rather than shallow lexical information via data augmentation. Despite the aforementioned advantages brought by SCL, we argue that CL under supervised learning is not fully explored because the label information can be better utilized. On the one hand, labels are usually not merely categorical indices in the label vocabulary, but also contain specific semantic meanings, especially in the language understanding tasks. Thus labels can be used as positive/negative samples or anchors when calculating contrastive loss. On the other hand, label embedding enjoys a built-in ability to leverage alternative sources of information related to labels, such as class hierarchies or textual descriptions. Once we obtain representative label embeddings, they can be utilized to enhance the image/text representations, and finally facilitate the classification task. Previous la-\nbel embedding based classification models (Wang et al., 2018; Xiao et al., 2019) have demonstrated the effectiveness of leveraging label information.\nMotivated by above analysis, we propose a novel label anchored supervised contrastive learning approach (denoted as LaCon), which combines the advantages of both constrastive learning and label embedding techniques. Specifically, we have the following three novel designs: 1) Instance-centered contrastive loss (ICL), which uses the InfoNCE (Gutmann and Hyvärinen, 2010) to encourage each text representation and its corresponding label representation to be closer while pushing far away mismatched instance-label pairs. We further apply a multi-head mechanism to catch different aspects of text semantics. 2) Label-centered contrastive loss (LCL), which takes label as anchor, and encourages the label representation to be more similar to the corresponding instances belonging to the same class in a mini-batch than the instances with different labels. 3) Label embedding regularizer (LER), which keeps the inter-label similarity as low as possible thus the feature space of each class is more dispersed to prevent representation degeneration. By combining above three losses, LaCon can learn good semantic representations within the same space for both input instances and labels. It’s also well aligned with the two key properties related to CL: alignment and uniformity (Wang and Isola, 2020), where alignment favors encoders that assign similar features to similar samples. Uniformity prefers a feature distribution that preserves maximal information, i.e., the uniform distribution on the unit hypersphere.\nTo validate the effectiveness of LaCon, we perform extensive experiments on eight language understanding tasks. We take the popular pre-trained language model BERT-base (Devlin et al., 2019) as text encoder without loss of generality. For simplicity, we predict the classification label by matching the instance representation with label embeddings directly. Since our approach does not require any specialized network architecture or any extra data augmentation, LaCon can be easily plugged into other pre-trained language models. Additionally, we also explore the capability of LaCon under more difficult task settings, including few-shot learning and data imbalance situations.\nTo summarize, our contributions are as follows:\n• We propose a novel label anchored contrastive learning approach for language understanding,\nwhich is equipped with a multi-head instancecentered contrastive loss, a label-centered contrastive loss, and a label embedding regularizer. All three contrastive objectives help the model learn the joint semantic representations for both input instances and labels.\n• We conduct extensive experiments on eight public language understanding tasks from GLUE (Wang et al., 2019) and CLUE (Xu et al., 2020) benchmark, and experimental results show the competitiveness of LaCon. Additionally, we also experiment on more difficult settings including few-shot learning and data imbalance situations. LaCon experimentally obtains up to 9.4% improvement over BERT-base on FewGLUE (Schick and Schütze, 2021) and FewCLUE (Xu et al., 2021) benchmark tasks.\n• We analyze the contribution of each ingredient of LaCon, and also visualize the learned instance and label representations, showing the necessity of each loss component and the advantage of LaCon on representation learning over BERT fine-tuned with cross entropy."
+    }, {
+      "heading" : "2 Model",
+      "text" : "In this section, we introduce the details of LaCon. We focus on the language understanding classification tasks. For a multi-class classification problem with C classes, we work with a batch of training examples {xi, yi}, where 1 ≤ i ≤ N and 1 ≤ yi ≤ C. Our target is to learn discriminative representations for both instances and class labels. As Figure 1 shows, we propose three supervised CL based objectives, including the instance-centered contrastive loss, the label-centered contrastive loss, and the label embedding regularizer loss."
+    }, {
+      "heading" : "2.1 The Input Encoder",
+      "text" : "The input of LaCon contains two parts including the text and all the labels for the task. Since SOTA language understanding classification models follow the “pre-training then fine-tuning” two-stage paradigm, here we take the prevalent pre-trained language model (PtLM) as input encoder. In this paper, we select BERT-base (Devlin et al., 2019) as the backbone for PtLM (denoted as f ) without loss of generality. Given a text x = {w1, w2, ..., wM} containing M tokens, the output of PtLM (i.e. BERT) is E = fPtLM ([CLS], w1, ..., wM ) where\nthe [CLS] token is the inserted sentence representation token and E ∈ R(M+1)×d. d is the dimension of the model. We use the first token output E[CLS] ∈ Rd to represent the whole input text. We then apply a projection head (denoted as g) that is a 3-layer MLP with ReLU activation function for each hidden layer to the E[CLS], where the dimension of the g is also d. For a mini-batch X with N training samples, the text representations can be obtained as Equation 1.\nH = g ◦ fPtLM (X), where X = x1, x2, ..., xN and H ∈ RN×d\n(1)\nAlong with each mini-batch, LaCon also maps the C classes into C label embeddings. For simplicity, we look up in a learnable weight matrix Wemb and map the kth label into the kth row of Wemb, where the Wemb is randomly initialized. The dimension d is the same as PtLM. We then normalize the vectors for both L and H using the l2 norm.\nL = lookup([1, 2, ..., C],Wemb)\nwhere L ∈ RC×d and Wemb ∈ RC×d (2)"
+    }, {
+      "heading" : "2.2 Instance-centered Contrastive Loss",
+      "text" : "Given a mini-batch of input text and corresponding label (xi, yi), as shown in Figure 1 (a), the instance-centered contrastive loss (ICL) takes each instance xi as anchor, and mines positive and negative samples from class labels. ICL aims to encourage each text representation and corresponding label representation to be closer while pushing far away mismatched instance-label pairs. As shown in Equation 3, we modify the InfoNCE (Gutmann and Hyvärinen, 2010) to calculate the loss. Here we leverage the cosine similarity function as the distance metric sim. τ is the temperature hyper-parameter, which can be tuned to improve\nthe performance. Lower temperature increases the influence of examples that are harder to separate, effectively creating harder negatives. Similar to the self-supervised CL, ICL also takes only one positive and many negatives. Differently, the positive is not generated from data augmentation, and the negatives are not randomly sampled from the same mini-batch. By treating the class labels as data samples, ICL can mine better positive and negatives with the supervision signal. By minimizing the ICL, the instance representation is aligned to its label representation in the same semantic space and different instances’ representations are encouraged to disperse in the uniform sphere.\nLICL = − 1\nN ∑ xi,yi log exp(sim(Hxi , Lyi)/τ)∑ 1≤p≤C exp(sim(Hxi , Lp)/τ) (3)\nInspired by the image-augmented views proposed in CV (He et al., 2019; Chen et al., 2020b,c; Grill et al., 2020), we also leverage the multi-head mechanism proposed in Transformer (Vaswani et al., 2017) to compute the ICL for each head representation with smaller representation dimension. Each head can be regarded as an clipped local view of the instance or label representation. Suppose we have m heads for both instance representation and label representation, then for the kth head, the corresponding representations for training sample (xi, yi) are hkxi and l k yi , and the dimension of each vector becomes d′ = d/m. Then, we apply the contrastive loss for each head by following Equation 4. Compared with InfoNCE, LICL and L ′ ICL do not suffer from small batch size issue (He et al., 2019; Chen et al., 2020c) because we only need to contrast the instance representation with corresponding label representation for per example loss.\nL ′ ICL = − 1\nN m∑ k=1 ∑ xi,yi log exp(sim(hkxi , l k yi)/τ)∑ 1≤p≤C exp(sim(h k xi , l k p)/τ) (4)"
+    }, {
+      "heading" : "2.3 Label-centered Contrastive Loss",
+      "text" : "As shown in Figure 1 (b), we can take the class label in a mini-batch as anchor, and mine positive/negative samples from corresponding instances. Suppose there are |P | classes in the batch, where P = {p|1 ≤ p ≤ C ∧ |A(p)| > 0}. We define that A(p) denotes the set of indices of all positive instances whose label is p, i.e. A(p) = {xi|yi = p}. And B(p) represents the set of negative instances whose label is not p, i.e. B(p) = {xj |yj ̸= p}. Then we can calculate the label-centered contrastive loss (LCL) as Equation 5, which promotes the instances of a specific label to be more similar than the others for each label. Similar to the previous SCL (Khosla et al., 2020; Gunel et al., 2021), LCL also contains many positives per anchor and many negatives. Different from SCL which sums up all the softmax scores among all pairs of instances of the same class in a batch, LCL is based on comparing a specific label representation with corresponding instances (i.e. A(p)). LCL is more stable as the label representation serves as the anchor which can be stably updated.\nLLCL = − 1 |P | ∑ p∈P ∑ a∈A(p) log exp(sim(Lp, Ha)/τ)∑ b∈B(p) exp(sim(Lp, Hb)/τ) (5)\nICL and LCL are complementary to each other and more computationally efficient than previous SCL. We conduct the detailed theoretical analysis in Appendix A.1 due to space limitation."
+    }, {
+      "heading" : "2.4 Label Embedding Regularizer",
+      "text" : "Recent researches (Wang and Isola, 2020) demonstrate that it is common and useful to add a regularization term during training to eliminate the anisotropy problem. Inspired by this, We devise a label embedding regularizer as shown in Equation 6 to promote the uniformity of our model and prevent model degeneration. As illustrated in Figure 1 (c), the label embedding regularizer (LER) encourages the label representations to be dispersed in the unit hypersphere uniformly. The LER loss is the exponential mean of the cosine similarity for all pairs of label representations. As −1 ≤ sim(Li, Lj) ≤ 1, it is quite sensitive to the loss change as the gradient is larger than 1 for exp(x) w.r.t x ≥ 0. Thus, we add 1.0 to the cosine similarity so that the value of LER varies from 0 to e2 - 1.\nLLER = avg( ∑ i ̸=j (exp(1.0 + sim(Li, Lj))− 1.0) (6)\nFinally, the overall loss function of LaCon is summarized as follows:\nL = L′ICL + LLCL + λ ∗ LLER (7)\nwhere λ is a hyper-parameter to balance the influence of our regularization term."
+    }, {
+      "heading" : "2.5 Matching based Class Prediction",
+      "text" : "Since LaCon is capable of learning instance and label representations jointly, we can predict the class by matching the instance representation to all label representations directly during inference, just as shown in Equation 8. We denote this simple and direct approach as LaCon-vanilla. Hx is the instance representation and Lj is the label representation of Class j. sim denotes the cosine similarity and 1 ≤ j ≤ C denotes the corresponding label. The advantage of LaCon-vanilla is that it does not require any complicated network architecture and can be easily plugged into the mainstream PtLMs. As a result, our inference-time model contains exactly the same number of parameters as the model using the same encoder but trained with cross entropy loss.\npred = argmax(j){scorej |sim(Hx, Lj)} (8)"
+    }, {
+      "heading" : "2.6 LaCon with Label Fusion",
+      "text" : "Previous researches (Akata et al., 2016; Wang et al., 2018; Xiao et al., 2019; Pappas and Henderson, 2019; Miyazaki et al., 2020) have proved that incorporating the label semantics into the sentence representation can improve the model performance because the label information can highlight the alignment of input tokens and label information via carefully designed fusion mechanism. Inspired by LEAM (Wang et al., 2018), here we design a fusion block to enhance the instance representations by utilizing the learnt discriminative label embeddings. We firstly calculate the cosine similarity interaction matrix G between words and labels, and then apply a convolution then max-pooling layer (convmax) to measure the attention score (βi) for each word attending the instance representation. The fusion process is illustrated as Equation 9. Then the fused vector z is fed into the projection head g to get the enhanced instance representation.\nm = convmax(G), where Gij = < Li, Ej >\n||Li|| · ||Ej || z = ∑ i βiEi, where β = softmax(m) (9)\nTo distinguish with the vanilla model above, we name this approach as LaCon-fusion. Please note that the fusion block is just applied between the text encoder and projection head, so the class prediction keeps the same as the LaCon-vanilla. Since the fusion block is not the main focus of this paper, we leave exploring more advanced fusion networks to future work."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Experimental Setup",
+      "text" : "Datasets. We experiment on 8 public datasets listed in Table 1. which are from GLUE (Wang et al., 2019), CLUE (Xu et al., 2020), DBpedia, and Yelp Dataset Challenge 2015. They cover five representative tasks including sentiment analysis (senti), genre classification (genre), paragraph identification (PI), natural language inference (NLI) and linguistic acceptability (LA). To improve the comparability and experiment confidence of the models, we follow the experimental setup in (Chen et al., 2020a) and use part of the training sets via sampling and the full original test sets for evaluation. The results of 10 runs are reported for each dataset in the format as “avg±std.dev\". More details of the datasets and experimental setups can be found in Appendix A.2."
+    }, {
+      "heading" : "3.2 Baselines",
+      "text" : "Since LaCon is based on CL and label embedding technique, we compare with several SOTA models in language understanding including BERT-base fine-tuned with cross-entropy (CE) loss, label embedding based models, and self-supervised CL and supervised CL models.\n• CE: we directly follow the instructions of original paper (Devlin et al., 2019) to finetune BERT for both English and Chinese langauge understanding tasks.\n• LEAM: Wang et al. (2018) apply cosine similarity to get matching scores between words and labels and use CNN on the matching matrix to get the label-aware attention weighted text representation for classification.\n• LSAN: Xiao et al. (2019) propose a label specific attention network that leverages labelattention and self-attention mechanism with an adaptive attention fusion strategy for multilabel classification. We use softmax instead of sigmoid for the model output due to our multi-class classification setting.\n• CE+CL: Yan et al. (2021) propose to learn sentence representations by joint fine-tuning PtLM with InfoNCE and cross-entropy based on feature augmentation. Here we leverage the framework of ConSERT (Yan et al., 2021) and the feature augmentation in SimCSE (Gao et al., 2021) to finetune and evaluate the PtLM on classification datasets.\n• CE+SCL: Gunel et al. (2021) propose to boost sentence representation learning by finetuning PtLM with both supervised contrastive learning loss (Khosla et al., 2020) and cross entropy loss. We follow the instructions in (Gunel et al., 2021) to set hyper-parameters.\nLEAM and LSAN are label embedding based methods while CE+CL and CE+SCL are contrastive learning based methods. To compare all models fairly, we use BERT-base encoder for all the baselines and our proposed model."
+    }, {
+      "heading" : "3.3 Main Results",
+      "text" : "We report the experimental results of eight language understanding tasks in Table 2. It’s observed that, LaCon-vanilla outperforms all the baselines in 7 datasets except MRPC, and LaCon-fusion achieves the best performance across all datasets. Specifically, 1) LaCon-vanilla outperforms BERT fine-tuned with CE by 4.1%, 2.3%, 1.9%, and 1.5% on RTE, Tnews, MRPC, and CoLA respectively, which indicates our proposed novel CL approach can facilitate the representation learning; 2) Compared with previous supervised contrastive learning method (CE+SCL), LaCon-fusion can still obtain very exciting improvements of 3.1%, 2.1%, 1.7%, 1.2% points on RTE, Tnews, YelpRev, QQP, which demonstrates the label fusion block can enhance the instance representations effectively; 3) Compared\nto previous label embedding methods (LEAM and LSAN) which are also equipped with the label fusion block, LaCon-fusion outperforms them with a large margin, which proves that LaCon can learn more discriminative joint representations for both labels and instances."
+    }, {
+      "heading" : "3.4 Ablation Study",
+      "text" : "In this section, we conduct three groups of ablation studies to investigate the contribution of each component in LaCon. We only conduct experiments on MRPC, RTE, and CoLA datasets due to space limitation. The experimental results are shown in Table 3. First, we replace the multi-head ICL with single head version (LaCon w/ LICL). Table 3 shows the performance drops on all three datasets. We conjecture that the multi-head version can learn different parts of the local features of the representation, which can catch the text semantics in more fine-grained granularity. Second, we remove each of our proposed CL loss separately, and the results in the second part of Table 3 demonstrate that ICL plays a more important role while LCL and LER are complementary to further improve the performance. We also try to add each CL loss in an accumulative way, please refer to Appendix A.5 for more details. Finally, we try to remove the projection head g from LaCon and the performance degrades significantly, which indicates g is critical in CL. Previous researches (Chen et al., 2020c) also find the projector head can eliminate the non-task relevant features of the encoder in CL and benefit\nthe downstream tasks. Meanwhile, Table 3 shows that it is basically useless by adding g to BERT directly (BERT w/ g), indicating that the projector head needs to be used with CL."
+    }, {
+      "heading" : "4 Discussion",
+      "text" : "In this section, we conduct further experiments under more challenging few-shot and data imbalance settings. More discussions such as hyper-parameter tuning, the impact of class number, and results on more datasets can be found in the Appendix."
+    }, {
+      "heading" : "4.1 LaCon for Few-shot Learning",
+      "text" : "Few-shot learning is critical for applications of language understanding models because the highquality human annotated datasets are usually costly and limited. Previous researches (Liang et al., 2021; Gunel et al., 2021; Aghajanyan et al., 2021) find that fine-tuning PtLM with cross entropy loss in NLP tends to be unstable across different runs especially when supervised data is limited. This limitation can result in model degeneration and model shift. Besides, some researches (Müller et al., 2019) also demonstrate that the cross-entropy optimization goal is not reachable due to the bounding of the gradient, which can also easily result in overfitting. Since LaCon is equipped by CL, it’s interesting to validate if LaCon can overcome the shortcomings of CE under few-shot learning settings.\nWe conduct further experiments with vanilla LaCon on 5 public English datasets from FewGLUE (Schick and Schütze, 2021) and 3 public Chinese datasets (Tnews, EPRSTMT and BUSTM) from FewCLUE (Xu et al., 2021). We build all the few-\nshot learning datasets by sampling 20 samples for each class to form training set. We also held out the same amount of samples for validation set but keep the whole test set unchanged. We train the model for 20 epochs and select the best model based on validation set. Table 4 shows that LaCon significantly outperforms the BERT-base fine-tuned with CE loss with a huge margin. Specifically, we observe 9.4%, 7%, and 6.2% absolute improvement on BUSTM, QQP, and EPRSTMT.\nAdditionally, we also conduct a more strict experiments by changing the number of samples per class from {10, 20, 50, 100}. Figure 2 demonstrates that the smaller the sample size per class is, the larger gain the model obtains. All above results indicate that the similarity-based CL losses in LaCon are able to hone in on the important dimensions of the multidimensional hidden representations hence lead to better and more stable few-shot learning results when fine-tuning PtLM."
+    }, {
+      "heading" : "4.2 LaCon for Data Imbalance Setting",
+      "text" : "The real-world datasets are usually imbalanced for different classes (Cao et al., 2019; Bao et al., 2020), where several dominant classes contain most of the samples while the rest minority classes only hold a handful of samples. In this section, we conduct experiments to validate the capacity of LaCon under data imbalance setting. We follow the previous research (Cao et al., 2019) to construct imbalanced classification training datasets with different imbalance degree (ρ = |classmax|/|classmin|, where |classmax| / |classmin| denotes number of samples in maximum / minimum class). For space limitation, we conduct experiments with vanilla LaCon on QNLI and CoLA. The minority class contains 32 samples and the majority class contains 32× ρ in our experiments. As shown in Figure 3, we vary the imbalance degree (ρ) from {1, 3, 5, 10, 20} and observe that LaCon outperforms BERT with CE\nconsistently, demonstrating that LaCon also has advantage on the data imbalance setting.\nWe argue that LaCon may alleviate data imbalance issue on two aspects: 1) For the infrequent classes, treating labels as anchor or positive/negative may mitigate the data insufficient issue to some extent. 2) Label representations are shared across the whole dataset during training, which may transfer the knowledge from frequent classes to infrequent classes. To validate above conjecture, we present the performance on the test sets for majority and minority classes separately. Table 5 shows that LaCon outperforms the baseline on both majority and minority classes and the gain on minority class is much larger."
+    }, {
+      "heading" : "4.3 Visualization",
+      "text" : "To demonstrate the effectiveness of LaCon on representation learning, we visualize the learned instance representations of LaCon and CE on the MRPC and CoLA dataset. In Figure 4, we use t-SNE (Van der Maaten and Hinton, 2008) to visualize both the high dimensional representations of the instances and labels on a 2D map. Different classes are depicted by different colors. As shown in Figure 4 (a), the instances of class A and class B are sparsely located and overlapped in a large area, making it hard to find a hyper-plane to separate them. However, in Figure 4 (b), the instances gather into two compact clusters and the instances stay close to the corresponding class. For CoLA, Figure 4 (c) and (d) show the similar trends. It indicates that LaCon can learn more discriminative instance representations than CE. Besides, in Fig-\nure 4 (b), the instances are near the corresponding label anchor, proving that LaCon can also learn a representative label embedding for each class."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Contrastive Learning",
+      "text" : "Contrastive Learning has become a rising domain and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021). There are two kinds of CL approaches, which are self-supervised CL and supervised CL. The self-supervised CL contrasts a single positive for each anchor (i.e., an augmented version of the same image) against a set of negatives consisting of the entire remainder of the batch. However, due to the intrinsic discrete nature of natural language, data augmentations are less effective than that in CV. Recently, researchers (Khosla et al., 2020; Gunel et al., 2021) propose supervised CL, which contrasts the set of all samples from the same class as positives against the negatives from the remainder of the batch. Suresh and Ong (2021) propose label-aware SCL method via assigning weights to instances of different labels, which treats the negative samples differently.\nLaCon belongs to the scope of supervised CL. Different from (Khosla et al., 2020; Gunel et al., 2021), LaCon can take the labels as anchors or\nmine negative/positive from labels, which does not need to construct positive pairs from the data augmentation. Meanwhile, Gunel et al. (2021) combine CL and CE losses at the same time, but LaCon is purely equipped with three CL objectives, including the instance-centered contrastive loss, the label-centered contrastive loss and the label embedding regularizer."
+    }, {
+      "heading" : "5.2 Label Representation Learning",
+      "text" : "Label representation learning aims to learn the embeddings of labels in classification tasks and has been proven to be effective in various CV (Frome et al., 2013; Akata et al., 2016) and NLP tasks (Tang et al., 2015; Pappas and Henderson, 2019; Nam et al., 2016; Zhang et al., 2018; Wang et al., 2018; Xiao et al., 2019; Miyazaki et al., 2020). In this work, we compare with two representative label embedding based models, which are LEAM (Wang et al., 2018) and LSAN (Xiao et al., 2019). Both learn label embeddings and sentence representations in a joint space based on attention mechanism and fuse them to improve the classification. Differently, LaCon learns the label and instance representations jointly via purely supervised contrastive learning. Besides, our experiments also verify that after obtaining the discriminative label and instance representations, even simple fusion block can facilitate the language understanding tasks."
+    }, {
+      "heading" : "6 Conclusions",
+      "text" : "In this paper, we proposed a novel supervised contrastive learning approach for language understanding. To utilize the class labels sufficiently, we devise three novel contrastive objectives, including a multi-head instance-centered contrastive loss, a label-centered contrastive loss, and a label embedding regularizer. Extensive experiments were conducted on eight public datasets from GLUE and CLUE benchmarks, showing the competitiveness of LaCon against various strong baselines. Besides, we also demonstrate the strong capacity of LaCon on more challenging few-shot and data imbalance settings, which leads up to 9.4% improvement on the FewGLUE and FewCLUE benchmarks. LaCon does not require any complicated network architecture or any extra data augmentation, and can be easily plugged into mainstream pre-trained language models. In the future, we will explore more advanced representation fusion approaches to enhance the capability of LaCon."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "A.1 Theoretical Analysis\nIn this section, we conduct the theoretical analysis to prove the rationality and necessity of our proposed ICL and LCL losses. We also explain why these two losses are complementary. Finally, we analyze the computational efficiency of ICL and LCL compared to InfoNCE (Gutmann and Hyvärinen, 2010) and SCL (Khosla et al., 2020).\nThe recent researches (Li et al., 2020; Gao et al., 2019) reveal that the anisotropy problem of pretrained language models, which shows that the learnt embeddings occupy a narrow cone in the dense vector space, harming the uniformity of the models and limiting the representation capacity. The singular values of the contextual embeddings decay drastically with most of them nearly zeros (Wang and Isola, 2020). CL is proposed to eliminate the long-tail distribution problem of singular values, aiming to enhance the representation capacity (Gao et al., 2021; Yan et al., 2021; Gunel et al., 2021). From the spectrum perspective (Wang et al., 2020; Wang and Isola, 2020) that analyzes the distribution and uniformity of the learned embedding space, CL flattens singular values of the embeddings thus improves the capacity of language models.\nLICL = − 1\nτ E(x,y)∼A(y)(HxLy)\n+Ex∼A(y)[logEy− /∈A(y)(e HxLy−/τ )]\n(10)\nEx∼A(y)[logEy− /∈A(y)(e HxLy−/τ )]\n= 1\nN i=N∑ i=1 log( 1 C − 1 1≤j≤C∑ j ̸=i eHxiLyj /τ )\n≥ 1 N(C − 1)τ i=N∑ i=1 j=C∑ j=1,j ̸=i HxLy−\n(11)\nTherefore, we can form an asymptotic equivalent objective of the LICL (Equation 3) as Equation 10. (x, y) ∼ A(y) denotes instances (i.e. x) with corresponding label (i.e. y) and y− denotes the label that is different from y. The first item keeps instances and corresponding labels similar and the second item pushes the mismatched instances and labels apart. We can further derive Equation 11 using Jensen’s inequality because e(.) is convex. Therefore, minimizing the LICL equals to minimization of summation of all elements in HLT ∈ RN×C . Because both H and L are normalized, tr(HTL) is a constant due to all diagonal elements are ones. sum(HLT ) is an upper bound of the largest singular value (Merikoski, 1984) and minimization of the sum(HLT ) will flatten the singular values distribution of HLT . As the HLT is a non-squared matrix, we need to optimize both the left and right singular values using HLT and LHT in order to effectively eliminate the anisotropy and promote the\nuniformity of pre-trained language models in classification tasks to enhance the model capacity. Thus, we also need to optimize the label-centered contrastive loss LLCL at the same time. From above analysis, we can see that LICL and LLCL are complementary to each other. Similarly, we can derive that minimizing LLCL results in the minimization of sum(LHT ) ∈ RC×N .\nAlthough both ICL and LCL calculate the N×C similarity scores for a mini-batch, they are different. The ICL is the average of the instance-level per sample loss while the LCL is the per label loss. The ICL intends to align each instance to corresponding label correctly. The LCL makes the instances of different labels far away from each other and instances of the same label more compact. They consider different aspects of instance and label representation through operating the N ×C similarity scores differently according to Equation 3 and 5.\nCompared to InfoNCE, ICL improves the computational efficiency from O(N2) to O(NC) because we only need to contrast the instance representation with corresponding label representations for per example loss, which is extremely useful for language understanding tasks (Wang et al., 2019; Xu et al., 2020) that commonly consist of 2 or 3 labels. Similarly, LCL is also more computationally efficient as it only contrasts one label representation to several instances rather than computes all pairs of instances belonging to a given label in the mini-batch. Thus it improves the complexity from O(N2) to O(CN) compared with SCL too.\nA.2 Detailed Experimental Setup\nDatasets. We conduct experiments with LaCon on 8 public datasets listed in Table 1, which are from GLUE (Wang et al., 2019), CLUE (Xu et al., 2020), DBpedia, and Yelp Dataset Challenge 2015. In order to improve comparability and experiment confidence of the models, we randomly sample without replacement at most 5K (binary-class) / 1K (multi-class) training instances per class from the whole datasets by following experimental setup in (Chen et al., 2020a) except for MRPC, RTE, and CoLA. Meanwhile, we keep the evaluation set for each dataset unchanged for better comparison. We use the wilcoxon rank test (Wilcoxon, 1945) to check the statistic significance. The data sampling script will be released in our source code. Training&Evaluation. During training, we run experiments for MRPC, RTE and CoLA with 10\nrandom seeds on the whole training datasets and run the sampling strategy with 10 repeats for the remaining datasets. The average evaluation metrics are reported to avoid the noise and unstable randomness of a single run. We use the AdamW optimizer with initial learning rate as {1e-5, 2e-5, 3e-5} with linear learning scheduler, 6% of warmup steps of total optimization steps, and batch size as {8,16,32,64,96}, where the hyper-parameters are tuned for different datasets. For evaluation, we leverage accuracy (ACC), Macro-F1 score and Matthew’s corr (M’ corr) metrics to evaluate the performance. We run 10 epochs for all the datasets1 and then evaluate the models on dev set. Our implementation is based on Huggingface Transformers2. We run the experiments with Nvidia Tesla P40 GPU.\nA.3 Hyper-parameter Tuning\nIn this section, we take the RTE dataset as an example for illustrating the hyper-parameter tuning process. The similar hyper-parameter tuning strategy is applied for other datasets. The tuning scripts will be released in our source code. Figure 5 shows the influence of different hyper-parameters.\nFor each experiment, we conduct a grid-based hyper-parameter sweep for τ between 0.05 and 0.5 with step 0.05, λ between 0.1 and 1.0 with step 0.1, and select the best hyper-parameter for the given dataset. The τ is the most influential hyperparameter that needs to be tuned carefully with minimum step 0.05. Larger τ results in lower accuracy in LaCon and the recommended value is around 0.1 and 0.2. Figure 5 (b) illustrates that the optimal number of heads in Equation 4 is 6 and both the most and fewest heads result in low accuracy while heads with middle sizes get relatively better accuracy scores. Small number of head shows little diversity in feature clipping while larger one results in very short vectors with poor representation capacity. The label embedding regularizer weight λ in Figure 5(c) can be set in a wide range, where either without LLER or large λ will result in poor performance.\nA.4 The Impact of Class Number\nAs the number of classes influence the difficulty of classification task directly, in this section, we\n1We split 5% of training set as validation for early stop. 2https://github.com/huggingface/\ntransformers\ndiscuss the impact of class number for our proposed model LaCon. We pick the DBPedia dataset for experiment. The original DBPedia dataset includes 14 labels. We gradually increase the label number from 2 to 14 and randomly select 1000 samples for each label in our experiment as training set. Meanwhile, we keep the whole samples for the chosen labels in the evaluation set unchanged. Figure 6 demonstrates that with the increase of the labels, the performance of all models degrades as the task becomes more difficult. However, LaConfusion outperforms CE+SCL consistently on different number of labels, which shows the advantage of leveraging labels as anchors or positive/negative samples during contrastive learning.\nA.5 Accumulative Ablation Study\nIn this section, we supplement more ablation results by adding each proposed CL loss cumulatively. We conduct experiments on MRPC, RTE, and CoLA\ndatasets and keep the setting consistent with Section 3.4. Table 7 demonstrates that the contribution of each component in more details.\nA.6 Experimental Results of More Datasets We supplement more experimental results on the remaining datasets of GLUE and CLUE benchmarks. We follow the same experimental setup with Appendix A.2. Please note that SST-B is a regression task that is beyond the capacity of the proposed LaCon. The official CLUE benchmark has replaced CMNLI with OCNLI dataset, and the CSL dataset is a keyword recognition task, which is not suitable for our proposed model. Thus, we omit the experiments on above three datasets and report the performance on the remaining language understanding tasks including SST-2, MNLI, AFQMC, OCNLI and IFLYTEK.\nTable 6 shows that, LaCon-vanilla consistently outperforms BERT fine-tuned with CE, and LaConfusion still beats the baselines among all datasets, which further demonstrates the superiority of our proposed method."
+    } ],
+    "references" : [ {
+      "title" : "Better fine-tuning by reducing representational collapse",
+      "author" : [ "Armen Aghajanyan", "Akshat Shrivastava", "Anchit Gupta", "Naman Goyal", "Luke Zettlemoyer", "Sonal Gupta." ],
+      "venue" : "9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Aus-",
+      "citeRegEx" : "Aghajanyan et al\\.,? 2021",
+      "shortCiteRegEx" : "Aghajanyan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Label-Embedding for Image Classification",
+      "author" : [ "Zeynep Akata", "Florent Perronnin", "Zaid Harchaoui", "Cordelia Schmid." ],
+      "venue" : "IEEE Transactions on Pattern Analysis and Machine Intelligence, 38(7):1425–1438.",
+      "citeRegEx" : "Akata et al\\.,? 2016",
+      "shortCiteRegEx" : "Akata et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Few-shot text classification with distributional signatures",
+      "author" : [ "Yujia Bao", "Menghua Wu", "Shiyu Chang", "Regina Barzilay." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net.",
+      "citeRegEx" : "Bao et al\\.,? 2020",
+      "shortCiteRegEx" : "Bao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning imbalanced datasets with label-distribution-aware margin loss",
+      "author" : [ "Kaidi Cao", "Colin Wei", "Adrien Gaidon", "Nikos Aréchiga", "Tengyu Ma." ],
+      "venue" : "Advances in Neural Information Processing Systems 32: Annual Conference on Neural Information Process-",
+      "citeRegEx" : "Cao et al\\.,? 2019",
+      "shortCiteRegEx" : "Cao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Mixtext: Linguistically-informed interpolation of hidden space for semi-supervised text classification",
+      "author" : [ "Jiaao Chen", "Zichao Yang", "Diyi Yang." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020, On-",
+      "citeRegEx" : "Chen et al\\.,? 2020a",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "arXiv preprint arXiv:2002.05709.",
+      "citeRegEx" : "Chen et al\\.,? 2020b",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Big selfsupervised models are strong semi-supervised learners",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Kevin Swersky", "Mohammad Norouzi", "Geoffrey Hinton." ],
+      "venue" : "arXiv preprint arXiv:2006.10029.",
+      "citeRegEx" : "Chen et al\\.,? 2020c",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "SEQ-CPC : Sequential contrastive predictive coding for automatic speech recognition",
+      "author" : [ "Yulong Chen", "Jianping Zhao", "Weiqi Wang", "Ming Fang", "Haimei Kang", "Lu Wang", "Tao Wei", "Jun Ma", "Shaojun Wang", "Jing Xiao." ],
+      "venue" : "IEEE International Conference on",
+      "citeRegEx" : "Chen et al\\.,? 2021",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Com-",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "CERT: contrastive self-supervised learning for language understanding",
+      "author" : [ "Hongchao Fang", "Pengtao Xie." ],
+      "venue" : "CoRR, abs/2005.12766.",
+      "citeRegEx" : "Fang and Xie.,? 2020",
+      "shortCiteRegEx" : "Fang and Xie.",
+      "year" : 2020
+    }, {
+      "title" : "DeViSE: A deep visualsemantic embedding model",
+      "author" : [ "Andrea Frome", "Greg S. Corrado", "Jonathon Shlens", "Samy Bengio", "Jeffrey Dean", "Marc’aurelio Ranzato", "Tomas Mikolov" ],
+      "venue" : "Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Frome et al\\.,? \\Q2013\\E",
+      "shortCiteRegEx" : "Frome et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Representation degeneration problem in training natural language generation models",
+      "author" : [ "Jun Gao", "Di He", "Xu Tan", "Tao Qin", "Liwei Wang", "TieYan Liu." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9,",
+      "citeRegEx" : "Gao et al\\.,? 2019",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Simcse: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "CoRR, abs/2104.08821.",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bootstrap your own latent - A new approach to self-supervised learning",
+      "author" : [ "Valko." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020,",
+      "citeRegEx" : "Valko.,? 2020",
+      "shortCiteRegEx" : "Valko.",
+      "year" : 2020
+    }, {
+      "title" : "Supervised contrastive learning for pre-trained language model fine-tuning",
+      "author" : [ "Beliz Gunel", "Jingfei Du", "Alexis Conneau", "Veselin Stoyanov." ],
+      "venue" : "9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021.",
+      "citeRegEx" : "Gunel et al\\.,? 2021",
+      "shortCiteRegEx" : "Gunel et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Noisecontrastive estimation: A new estimation principle for unnormalized statistical models",
+      "author" : [ "Michael Gutmann", "Aapo Hyvärinen." ],
+      "venue" : "Proceedings of the Thirteenth International Conference on Artificial Intelligence and Statistics, AISTATS 2010, Chia",
+      "citeRegEx" : "Gutmann and Hyvärinen.,? 2010",
+      "shortCiteRegEx" : "Gutmann and Hyvärinen.",
+      "year" : 2010
+    }, {
+      "title" : "Learning shared semantic space for speech-to-text translation",
+      "author" : [ "Chi Han", "Mingxuan Wang", "Heng Ji", "Lei Li." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL/IJCNLP 2021, Online Event, August 1-6, 2021, volume ACL/IJCNLP 2021",
+      "citeRegEx" : "Han et al\\.,? 2021",
+      "shortCiteRegEx" : "Han et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross Girshick." ],
+      "venue" : "arXiv preprint arXiv:1911.05722.",
+      "citeRegEx" : "He et al\\.,? 2019",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Supervised contrastive learning",
+      "author" : [ "Prannay Khosla", "Piotr Teterwak", "Chen Wang", "Aaron Sarna", "Yonglong Tian", "Phillip Isola", "Aaron Maschinot", "Ce Liu", "Dilip Krishnan." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Confer-",
+      "citeRegEx" : "Khosla et al\\.,? 2020",
+      "shortCiteRegEx" : "Khosla et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On the sentence embeddings from pre-trained language models",
+      "author" : [ "Bohan Li", "Hao Zhou", "Junxian He", "Mingxuan Wang", "Yiming Yang", "Lei Li." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "R-drop: Regularized dropout for neural networks",
+      "author" : [ "Xiaobo Liang", "Lijun Wu", "Juntao Li", "Yue Wang", "Qi Meng", "Tao Qin", "Wei Chen", "Min Zhang", "TieYan Liu." ],
+      "venue" : "CoRR, abs/2106.14448.",
+      "citeRegEx" : "Liang et al\\.,? 2021",
+      "shortCiteRegEx" : "Liang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "On the trace and the sum of elements of a matrix",
+      "author" : [ "Jorma Kaarlo Merikoski." ],
+      "venue" : "Linear Algebra and its Applications, 60:177–185.",
+      "citeRegEx" : "Merikoski.,? 1984",
+      "shortCiteRegEx" : "Merikoski.",
+      "year" : 1984
+    }, {
+      "title" : "Label embedding using hierarchical structure of labels for twitter classification",
+      "author" : [ "Taro Miyazaki", "Kiminobu Makino", "Yuka Takei", "Hiroki Okamoto", "Jun Goto." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Miyazaki et al\\.,? 2020",
+      "shortCiteRegEx" : "Miyazaki et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "When does label smoothing help",
+      "author" : [ "Rafael Müller", "Simon Kornblith", "Geoffrey E. Hinton" ],
+      "venue" : "In Advances in Neural Information Processing Systems 32: Annual Conference on Neural Information Processing Systems",
+      "citeRegEx" : "Müller et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Müller et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "All-in text: Learning document, label, and word representations jointly",
+      "author" : [ "Jinseok Nam", "Eneldo Loza Mencía", "Johannes Fürnkranz." ],
+      "venue" : "Proceedings of the thirtieth AAAI conference on artificial intelligence, pages 1948–1954.",
+      "citeRegEx" : "Nam et al\\.,? 2016",
+      "shortCiteRegEx" : "Nam et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "GILE: A Generalized Input-Label Embedding for Text Classification",
+      "author" : [ "Nikolaos Pappas", "James Henderson." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 7:139–155.",
+      "citeRegEx" : "Pappas and Henderson.,? 2019",
+      "shortCiteRegEx" : "Pappas and Henderson.",
+      "year" : 2019
+    }, {
+      "title" : "Contrastive learning of general-purpose audio representations",
+      "author" : [ "Aaqib Saeed", "David Grangier", "Neil Zeghidour." ],
+      "venue" : "IEEE International Conference on Acoustics, Speech and Signal Processing, ICASSP 2021, Toronto, ON, Canada, June 6-11, 2021, pages",
+      "citeRegEx" : "Saeed et al\\.,? 2021",
+      "shortCiteRegEx" : "Saeed et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "It’s not just size that matters: Small language models are also fewshot learners",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language",
+      "citeRegEx" : "Schick and Schütze.,? 2021",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "Dropout: a simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey E. Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "J. Mach. Learn. Res., 15(1):1929– 1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Not all negatives are equal: Label-aware contrastive loss for fine-grained text classification",
+      "author" : [ "Varsha Suresh", "Desmond C. Ong." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, EMNLP 2021, Virtual Event",
+      "citeRegEx" : "Suresh and Ong.,? 2021",
+      "shortCiteRegEx" : "Suresh and Ong.",
+      "year" : 2021
+    }, {
+      "title" : "PTE: Predictive text embedding through large-scale heterogeneous text networks",
+      "author" : [ "Jian Tang", "Meng Qu", "Qiaozhu Mei." ],
+      "venue" : "Proceedings of the ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, 2015-August:1165–",
+      "citeRegEx" : "Tang et al\\.,? 2015",
+      "shortCiteRegEx" : "Tang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Visualizing data using t-sne",
+      "author" : [ "Laurens Van der Maaten", "Geoffrey Hinton." ],
+      "venue" : "Journal of machine learning research, 9(11).",
+      "citeRegEx" : "Maaten and Hinton.,? 2008",
+      "shortCiteRegEx" : "Maaten and Hinton.",
+      "year" : 2008
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "GLUE: A multi-task benchmark and analysis platform for natural language understanding",
+      "author" : [ "Alex Wang", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel R. Bowman." ],
+      "venue" : "7th International Conference on Learning Representations,",
+      "citeRegEx" : "Wang et al\\.,? 2019",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "CLINE: contrastive learning with semantic negative examples for natural language understanding",
+      "author" : [ "Dong Wang", "Ning Ding", "Piji Li", "Haitao Zheng." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and",
+      "citeRegEx" : "Wang et al\\.,? 2021",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Joint embedding of words and labels for text classification",
+      "author" : [ "Guoyin Wang", "Chunyuan Li", "Wenlin Wang", "Yizhe Zhang", "Dinghan Shen", "Xinyuan Zhang", "Ricardo Henao", "Lawrence Carin." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the As-",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Improving neural language generation with spectrum control",
+      "author" : [ "Lingxiao Wang", "Jing Huang", "Kevin Huang", "Ziniu Hu", "Guangtao Wang", "Quanquan Gu." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding contrastive representation learning through alignment and uniformity on the hypersphere",
+      "author" : [ "Tongzhou Wang", "Phillip Isola." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event,",
+      "citeRegEx" : "Wang and Isola.,? 2020",
+      "shortCiteRegEx" : "Wang and Isola.",
+      "year" : 2020
+    }, {
+      "title" : "Individual comparisons by ranking methods",
+      "author" : [ "Frank Wilcoxon." ],
+      "venue" : "Biometrics bulletin, 1(6):80–83.",
+      "citeRegEx" : "Wilcoxon.,? 1945",
+      "shortCiteRegEx" : "Wilcoxon.",
+      "year" : 1945
+    }, {
+      "title" : "Label-specific document representation for multi-label text classification",
+      "author" : [ "Lin Xiao", "Xin Huang", "Boli Chen", "Liping Jing." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International",
+      "citeRegEx" : "Xiao et al\\.,? 2019",
+      "shortCiteRegEx" : "Xiao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "CLUE: A Chinese language understanding evaluation benchmark",
+      "author" : [ "Yiwen Zhang", "He Zhou", "Shaoweihua Liu", "Zhe Zhao", "Qipeng Zhao", "Cong Yue", "Xinrui Zhang", "Zhengliang Yang", "Kyle Richardson", "Zhenzhong Lan." ],
+      "venue" : "Proceedings of the 28th International",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Fewclue: A chinese few-shot learning evaluation benchmark",
+      "author" : [ "Liang Xu", "Xiaojing Lu", "Chenyang Yuan", "Xuanwei Zhang", "Hu Yuan", "Huilin Xu", "Guoao Wei", "Xiang Pan", "Hai Hu." ],
+      "venue" : "CoRR, abs/2107.07498.",
+      "citeRegEx" : "Xu et al\\.,? 2021",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Consert: A contrastive framework for self-supervised sentence representation transfer",
+      "author" : [ "Yuanmeng Yan", "Rumei Li", "Sirui Wang", "Fuzheng Zhang", "Wei Wu", "Weiran Xu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Multi-task label embedding for text classification",
+      "author" : [ "Honglun Zhang", "Liqiang Xiao", "Wenqing Chen", "Yongkun Wang", "Yaohui Jin." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 4545–4553.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "In recent years, contrastive learning (CL) has been widely applied to self-supervised representation learning and led to major advances across computer vision (CV) (He et al., 2019; Chen et al., 2020b), speech (Saeed et al.",
+      "startOffset" : 164,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 5,
+      "context" : "In recent years, contrastive learning (CL) has been widely applied to self-supervised representation learning and led to major advances across computer vision (CV) (He et al., 2019; Chen et al., 2020b), speech (Saeed et al.",
+      "startOffset" : 164,
+      "endOffset" : 201
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2020b), speech (Saeed et al., 2021; Chen et al., 2021), and natural language processing (NLP) (Fang and Xie, 2020; Gao et al.",
+      "startOffset" : 17,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020b), speech (Saeed et al., 2021; Chen et al., 2021), and natural language processing (NLP) (Fang and Xie, 2020; Gao et al.",
+      "startOffset" : 17,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2021), and natural language processing (NLP) (Fang and Xie, 2020; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 47,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2021), and natural language processing (NLP) (Fang and Xie, 2020; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 47,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2021), and natural language processing (NLP) (Fang and Xie, 2020; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 47,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 5,
+      "context" : ", cropping, flipping, distortion and rotation) (Chen et al., 2020b; Grill et al., 2020; Chen et al., 2020c).",
+      "startOffset" : 47,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 6,
+      "context" : ", cropping, flipping, distortion and rotation) (Chen et al., 2020b; Grill et al., 2020; Chen et al., 2020c).",
+      "startOffset" : 47,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 12,
+      "context" : "Therefore, some previous works (Gao et al., 2021; Yan et al., 2021) also use dropout technique (Srivastava et al.",
+      "startOffset" : 31,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 42,
+      "context" : "Therefore, some previous works (Gao et al., 2021; Yan et al., 2021) also use dropout technique (Srivastava et al.",
+      "startOffset" : 31,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2021) also use dropout technique (Srivastava et al., 2014) to obtain sen-",
+      "startOffset" : 35,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 18,
+      "context" : "(Khosla et al., 2020; Gunel et al., 2021; Suresh and Ong, 2021) which can construct positive pairs by leveraging label information.",
+      "startOffset" : 0,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 14,
+      "context" : "(Khosla et al., 2020; Gunel et al., 2021; Suresh and Ong, 2021) which can construct positive pairs by leveraging label information.",
+      "startOffset" : 0,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 29,
+      "context" : "(Khosla et al., 2020; Gunel et al., 2021; Suresh and Ong, 2021) which can construct positive pairs by leveraging label information.",
+      "startOffset" : 0,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 35,
+      "context" : "bel embedding based classification models (Wang et al., 2018; Xiao et al., 2019) have demonstrated",
+      "startOffset" : 42,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 39,
+      "context" : "bel embedding based classification models (Wang et al., 2018; Xiao et al., 2019) have demonstrated",
+      "startOffset" : 42,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 15,
+      "context" : "following three novel designs: 1) Instance-centered contrastive loss (ICL), which uses the InfoNCE (Gutmann and Hyvärinen, 2010) to encourage each text representation and its corresponding label representation to be closer while pushing far away",
+      "startOffset" : 99,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 37,
+      "context" : "lated to CL: alignment and uniformity (Wang and Isola, 2020), where alignment favors encoders that assign similar features to similar samples.",
+      "startOffset" : 38,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 8,
+      "context" : "We take the popular pre-trained language model BERT-base (Devlin et al., 2019) as text encoder without loss of generality.",
+      "startOffset" : 57,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 27,
+      "context" : "4% improvement over BERT-base on FewGLUE (Schick and Schütze, 2021) and FewCLUE (Xu et al.",
+      "startOffset" : 41,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 41,
+      "context" : "4% improvement over BERT-base on FewGLUE (Schick and Schütze, 2021) and FewCLUE (Xu et al., 2021) benchmark tasks.",
+      "startOffset" : 80,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 8,
+      "context" : "In this paper, we select BERT-base (Devlin et al., 2019) as the backbone for PtLM (denoted as f ) without loss of generality.",
+      "startOffset" : 35,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 15,
+      "context" : "As shown in Equation 3, we modify the InfoNCE (Gutmann and Hyvärinen, 2010) to calculate the loss.",
+      "startOffset" : 46,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 17,
+      "context" : "Inspired by the image-augmented views proposed in CV (He et al., 2019; Chen et al., 2020b,c; Grill et al., 2020), we also leverage the multi-head mechanism proposed in Transformer (Vaswani et al.",
+      "startOffset" : 53,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020), we also leverage the multi-head mechanism proposed in Transformer (Vaswani et al., 2017) to compute the ICL for each head representation with smaller representation dimension.",
+      "startOffset" : 75,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 17,
+      "context" : "Compared with InfoNCE, LICL and L ′ ICL do not suffer from small batch size issue (He et al., 2019; Chen et al., 2020c) because we only need to contrast the instance representation with corresponding label representation for per example loss.",
+      "startOffset" : 82,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 6,
+      "context" : "Compared with InfoNCE, LICL and L ′ ICL do not suffer from small batch size issue (He et al., 2019; Chen et al., 2020c) because we only need to contrast the instance representation with corresponding label representation for per example loss.",
+      "startOffset" : 82,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 18,
+      "context" : "Similar to the previous SCL (Khosla et al., 2020; Gunel et al., 2021), LCL also contains many positives per",
+      "startOffset" : 28,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 14,
+      "context" : "Similar to the previous SCL (Khosla et al., 2020; Gunel et al., 2021), LCL also contains many positives per",
+      "startOffset" : 28,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 37,
+      "context" : "Recent researches (Wang and Isola, 2020) demonstrate that it is common and useful to add a regularization term during training to eliminate the anisotropy problem.",
+      "startOffset" : 18,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 1,
+      "context" : "Previous researches (Akata et al., 2016; Wang et al., 2018; Xiao et al., 2019; Pappas and Henderson, 2019; Miyazaki et al., 2020) have proved that incorporating the label semantics into the sentence representation can improve the model performance because the label information can highlight the alignment of input tokens and label information via carefully designed fusion mechanism.",
+      "startOffset" : 20,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 35,
+      "context" : "Previous researches (Akata et al., 2016; Wang et al., 2018; Xiao et al., 2019; Pappas and Henderson, 2019; Miyazaki et al., 2020) have proved that incorporating the label semantics into the sentence representation can improve the model performance because the label information can highlight the alignment of input tokens and label information via carefully designed fusion mechanism.",
+      "startOffset" : 20,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 39,
+      "context" : "Previous researches (Akata et al., 2016; Wang et al., 2018; Xiao et al., 2019; Pappas and Henderson, 2019; Miyazaki et al., 2020) have proved that incorporating the label semantics into the sentence representation can improve the model performance because the label information can highlight the alignment of input tokens and label information via carefully designed fusion mechanism.",
+      "startOffset" : 20,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 25,
+      "context" : "Previous researches (Akata et al., 2016; Wang et al., 2018; Xiao et al., 2019; Pappas and Henderson, 2019; Miyazaki et al., 2020) have proved that incorporating the label semantics into the sentence representation can improve the model performance because the label information can highlight the alignment of input tokens and label information via carefully designed fusion mechanism.",
+      "startOffset" : 20,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 22,
+      "context" : "Previous researches (Akata et al., 2016; Wang et al., 2018; Xiao et al., 2019; Pappas and Henderson, 2019; Miyazaki et al., 2020) have proved that incorporating the label semantics into the sentence representation can improve the model performance because the label information can highlight the alignment of input tokens and label information via carefully designed fusion mechanism.",
+      "startOffset" : 20,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 35,
+      "context" : "Inspired by LEAM (Wang et al., 2018), here we design a fusion block to enhance the instance representations by utilizing the learnt discriminative label embeddings.",
+      "startOffset" : 17,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 33,
+      "context" : "Table 1: The statistics of datasets that are from GLUE (Wang et al., 2019) and CLUE (Xu et al.",
+      "startOffset" : 55,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 33,
+      "context" : "which are from GLUE (Wang et al., 2019), CLUE (Xu et al.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 4,
+      "context" : "To improve the comparability and experiment confidence of the models, we follow the experimental setup in (Chen et al., 2020a) and use part of the training sets via",
+      "startOffset" : 106,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 8,
+      "context" : "• CE: we directly follow the instructions of original paper (Devlin et al., 2019) to finetune BERT for both English and Chinese langauge understanding tasks.",
+      "startOffset" : 60,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 42,
+      "context" : "the framework of ConSERT (Yan et al., 2021) and the feature augmentation in SimCSE (Gao et al.",
+      "startOffset" : 25,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2021) and the feature augmentation in SimCSE (Gao et al., 2021) to finetune and evaluate the PtLM on classification datasets.",
+      "startOffset" : 47,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 18,
+      "context" : "boost sentence representation learning by finetuning PtLM with both supervised contrastive learning loss (Khosla et al., 2020) and cross entropy loss.",
+      "startOffset" : 105,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 14,
+      "context" : "We follow the instructions in (Gunel et al., 2021) to set hyper-parameters.",
+      "startOffset" : 30,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 6,
+      "context" : "Previous researches (Chen et al., 2020c) also find the projector head can eliminate the non-task relevant features of the encoder in CL and benefit the downstream tasks.",
+      "startOffset" : 20,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 27,
+      "context" : "We conduct further experiments with vanilla LaCon on 5 public English datasets from FewGLUE (Schick and Schütze, 2021) and 3 public Chinese datasets (Tnews, EPRSTMT and BUSTM) from FewCLUE (Xu et al.",
+      "startOffset" : 92,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 41,
+      "context" : "We conduct further experiments with vanilla LaCon on 5 public English datasets from FewGLUE (Schick and Schütze, 2021) and 3 public Chinese datasets (Tnews, EPRSTMT and BUSTM) from FewCLUE (Xu et al., 2021).",
+      "startOffset" : 189,
+      "endOffset" : 206
+    }, {
+      "referenceID" : 3,
+      "context" : "The real-world datasets are usually imbalanced for different classes (Cao et al., 2019; Bao et al., 2020), where several dominant classes contain most of the samples while the rest minority classes only hold a handful of samples.",
+      "startOffset" : 69,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 2,
+      "context" : "The real-world datasets are usually imbalanced for different classes (Cao et al., 2019; Bao et al., 2020), where several dominant classes contain most of the samples while the rest minority classes only hold a handful of samples.",
+      "startOffset" : 69,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 3,
+      "context" : "We follow the previous research (Cao et al., 2019) to construct imbalanced classification training datasets with different imbalance degree (ρ = |classmax|/|classmin|, where |classmax| / |classmin| denotes number of samples in maximum / minimum class).",
+      "startOffset" : 32,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 17,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 5,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 9,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 16,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 26,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 14,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 12,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 42,
+      "context" : "and achieved significant success in various CV, speech and NLP tasks (He et al., 2019; Chen et al., 2020b; Fang and Xie, 2020; Han et al., 2021; Saeed et al., 2021; Gunel et al., 2021; Gao et al., 2021; Yan et al., 2021).",
+      "startOffset" : 69,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 18,
+      "context" : "Recently, researchers (Khosla et al., 2020; Gunel et al., 2021) propose supervised CL, which contrasts the set of all samples from the same class as positives against the negatives from the remainder of the batch.",
+      "startOffset" : 22,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 14,
+      "context" : "Recently, researchers (Khosla et al., 2020; Gunel et al., 2021) propose supervised CL, which contrasts the set of all samples from the same class as positives against the negatives from the remainder of the batch.",
+      "startOffset" : 22,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 18,
+      "context" : "Different from (Khosla et al., 2020; Gunel et al., 2021), LaCon can take the labels as anchors or mine negative/positive from labels, which does not need to construct positive pairs from the data aug-",
+      "startOffset" : 15,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 14,
+      "context" : "Different from (Khosla et al., 2020; Gunel et al., 2021), LaCon can take the labels as anchors or mine negative/positive from labels, which does not need to construct positive pairs from the data aug-",
+      "startOffset" : 15,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 10,
+      "context" : "Label representation learning aims to learn the embeddings of labels in classification tasks and has been proven to be effective in various CV (Frome et al., 2013; Akata et al., 2016) and NLP tasks (Tang et al.",
+      "startOffset" : 143,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 1,
+      "context" : "Label representation learning aims to learn the embeddings of labels in classification tasks and has been proven to be effective in various CV (Frome et al., 2013; Akata et al., 2016) and NLP tasks (Tang et al.",
+      "startOffset" : 143,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 35,
+      "context" : "In this work, we compare with two representative label embedding based models, which are LEAM (Wang et al., 2018) and LSAN (Xiao et al.",
+      "startOffset" : 94,
+      "endOffset" : 113
+    } ],
+    "year" : 0,
+    "abstractText" : "Contrastive learning (CL) has achieved astonishing progress in computer vision, speech, and natural language processing fields recently with self-supervised learning. However, CL approach to the supervised setting is not fully explored, especially for the natural language understanding classification task. Intuitively, the class label itself has the intrinsic ability to perform hard positive/negative mining, which is crucial for CL. Motivated by this, we propose a novel label anchored contrastive learning approach (denoted as LaCon) for language understanding. Specifically, three contrastive objectives are devised, including a multi-head instance-centered contrastive loss (ICL), a label-centered contrastive loss (LCL), and a label embedding regularizer (LER). Our approach does not require any specialized network architecture or any extra data augmentation, thus it can be easily plugged into existing powerful pre-trained language models. Compared to the state-of-the-art baselines, LaCon obtains up to 4.1% improvement on the datasets of GLUE and CLUE benchmarking. Besides, LaCon also demonstrates significant advantages under the few-shot and data imbalance settings, which obtains up to 9.4% improvement on the FewGLUE and FewCLUE benchmarking tasks.",
+    "creator" : null
+  }
+}

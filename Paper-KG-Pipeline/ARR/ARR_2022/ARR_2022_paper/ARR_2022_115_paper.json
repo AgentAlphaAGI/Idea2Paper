@@ -1,0 +1,897 @@
+{
+  "name" : "ARR_2022_115_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Context-Aware Language Modeling for Goal-Oriented Dialogue Systems",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020). However, dialogue can also be viewed as a sequential decision making process which is well-suited to planning and reinforcement learning (RL) algorithms. A challenge with the classical RL approach to dialogue is the requirement for active interaction with humans (Gašić et al., 2011). Training such a system with active human-in-the-loop interaction quickly becomes expensive and cumbersome, making it desirable to develop techniques for goal-directed training of dialogue systems that\ncan effectively leverage offline data. While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end. These pipelined approaches rely on a manually designed decomposition of the dialogue task, which may be domain-specific and, more importantly, may not enjoy all of the benefits of tightly integrating lowlevel text generation with the overall goals of the task. In this work, we instead ask: how can we scalably and effectively introduce the mechanisms of goal-directed decision making into end-to-end language models, to directly steer language generation toward completing specific dialogue tasks rather than simply generating probable responses?\nTo this end, rather than utilizing a pipelined approach, we aim to directly finetune language models in a task-aware manner such that they can maximize a given utility function. We observe that large language models can already be formulated within a Markov decision processes (MDP) as capturing both the dynamics and policy for a decision-making task, where dialogue history serves as state, and the agent’s utterances serve as actions. We could utilize this observation by finetuning the models directly with online RL, but the need for human-inthe-loop training makes this difficult. Offline RL methods (Levine et al., 2020; Fujimoto et al., 2019; Wu et al., 2019b; Wang et al., 2020b) provide an alternative approach, but typically require value function estimation, which is not straightforward to perform with a language model. Instead, we propose a conditional imitation learning strategy coupled with a novel task relabeling approach that\ncan finetune language models from offline data, such that the model still represents the joint distribution over dialogues, but tilts this distribution toward dialogues with a high reward. This amounts to a task-aware finetuning strategy that integrates task information into the model.\nThe main contribution of our work is CALM (Context-Aware Language Modeling), a framework for end-to-end goal-directed dialogue generation. CALM unifies the traditional language modeling objective with task-specific supervision, where a language model is interpreted as a joint representation of dynamics and policies in an MDP, and the finetuning process utilizes a conditional imitation learning objective with a novel task relabeling strategy that teaches the model how to generate high-utility dialogues. Because CALM interprets the language model as both a dynamics model and a policy, it can be used as either a model-free method, where the dynamics are discarded and the policy component is used to greedily generate responses, or as a model-based method, where the dynamics component can be used to plan at test-time. We empirically evaluate CALM on AirDialogue (Wei et al., 2018), the largest dataset for goal-oriented dialogue based-on a flight-booking task. CALM improves the task success by 10% over the previous state-of-the-art method (Chen et al., 2020) following the evaluation protocol proposed by Wei et al. (2018), achieving the first-ever human-level performance on this dataset."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Our goal is to enable end-to-end training of goaldirected dialogue agents. In these settings, an agent aims to complete a particular task with its utterances (Smith and Hipp, 1994). Goal-directed agents have been explored in contexts such as personal assistants (McTear, 2002; Budzianowski et al., 2018; Williams et al., 2014), recommendation systems (Liu et al., 2010; Kang et al., 2019), education (Yuan et al., 2008), and negotiation (He et al., 2018; Lewis et al., 2017). While there are multiple approaches to constructing dialogue agents, in this work we frame the problem of generating dialogue as a sequential decision making problem within a (partially observed) Markov Decision Process (MDP) (Singh et al., 1999; Young et al., 2013). Prior works that utilize such an MDP formulation typically aim to train a dialogue management system (Singh et al., 2002), in which the agent reasons about higher-level abstractions of the\nstate of the conversation, and language generation is performed using a downstream procedure. Dialogue management systems have been trained using techniques such as online reinforcement learning via policy gradients (Gašić et al., 2011; He et al., 2018), off-policy reinforcement learning (Pietquin et al., 2011; Yu et al., 2016) or actor-critic methods (Su et al., 2017). Our method differs from dialogue management systems in that CALM is an end-to-end system optimized for successful task completion, and performs both high-level decision making and language generation.\nRecent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al., 2017; Liu et al., 2019; Devlin et al., 2018; Brown et al., 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020). Modelbased approaches, in which a learned agent is substituted for a human, allow learning to be done entirely within simulation without human intervention (Li et al., 2016; He et al., 2018; Kang et al., 2019; Lewis et al., 2017; Liu et al., 2018). In contrast to these approaches, CALM augments the traditional language modeling objective with taskspecific rewards in order to finetune a model that is more aware of task goals, which significantly improves performance over a naïve language model without the need for simulating human responses in an interactive training loop. Jaques et al. (2019) recently proposed a model-free, offline approach to undirected dialogue, or dialogue without a specific task goal. Our method differs in that we aim to solve goal-oriented dialogue which allows us to optimize task-specific objectives, and that we take a model-based RL approach which enables us to leverage fine-tuned language models."
+    }, {
+      "heading" : "3 Preliminaries",
+      "text" : "In this section, we review our notation and problem formulation for casting dialogue within a sequential decision making framework. POMDP formulation. We formulate dialogue generation as a partially observable Markov decision process (POMDP) (Kaelbling et al., 1998), with a state that consists of known and unknown context information about the task. Let ch ∈ C(h) denote the hidden context for the task, and let co ∈ C(o) denote the observed context. For in-\nstance, in a flight booking task, a table of available flights might correspond to co, while the particular flight that the human wants to book, which is unknown to the agent, corresponds to ch. Note that the reward, which requires booking the right flight, depends on both hidden and observed contexts. We can define such an environment as a POMDP M = (S,A,O, T ,Z, µ0,R, γ). We denote a conversation τ as τ := {a0, e0, ..., aT }, where T denotes the number of turns in a conversation and at and et represent utterances (strings of tokens) from the dialogue agent (at) and the human (et) at the t-th turn, respectively. We additionally use τ<t to denote conversation history up to the t-th turn. We can represent the underlying POMDP state st ∈ S as the concatenation of both of the contexts and the previous conversation history st := {ch, co, τ<t} = {ch, co, a0, e0, ..., at−1, et−1}. However, we only observe the last two elements of the state tuple, such that our observation ot ∈ O at the t-th conversation turn is ot = {co, τ<t}. An action at ∈ A is the agent’s response to the current state st. Given our definition of the state, the full conversation in a dialogue can be conveniently represented by the last observation and action, {oT , aT }. An agent π : O → P(A) maps observations to sets of probability measures over the action space P(·). A transition function T (·|st, at), represents a distribution over the human’s utterances, returning st+1 as the state at turn t + 1. We only consider the sparse reward setting with rT = R(sT , aT ) ∈ {0, 1} denoting task completion, and rt = 0, ∀t < T . Our final reward is therefore dependent on both the context and the dialogue: R(sT , aT ) = R(τ, ch, co), where the context {co, ch} is randomly sampled for each dialogue from some initial distribution µ0. Goal-oriented dialogue. Goal-oriented dialogue systems aim to maximize the expected reward of\nthe above POMDP E{co,ch}∼µ0,π,T [ ∑T t=0 γ\ntR(st, at)], (1) where {ch, co} is sampled from distribution µ0. Onpolicy RL algorithms optimize this objective via environment interaction, which is represented by a real human. However, because human-in-the-loop training is expensive, we pursue an offline learning approach where we are given a fixed dataset and there is no further interaction with the human in the learning process. This dataset is composed of n trajectories with Doff = {c(i)h , c (i) o , τ (i), r(i)}ni=1 with each τ (i) = {a(i)0 , e (i) 0 , , ..., a (i) T } and its corresponding final reward for task completion r(i). Our goal is to learn the policy π(a|o) which improves the dialog agent’s ability in achieving the highest task reward defined in Equation 1. Language models. While conventionally a language model is seen simply as a sequence model over tokens of the form ∏T t=1 p(xt+1|x1:t), when the sequence x1:T corresponds to a dialogue trajectory τ , we can also interpret a language model as learning the distribution over τ . This distribution can be factored into the product of the policy π(at|τ<t) and the dynamics T (τ<t+1|τ<t, at), and so we can say that a language model also represents the policy and the dynamics. Therefore, the maximum likelihood objective for training or finetuning a language model on a dialogue dataset Doff consisting of dialogue trajectories τ can be written as\nLLM (θ) =max θ E τ∼Doff T∑ t=1 ( log πθ(at|τ<t)\n+ log Tθ(τ<t+1|τ<t, at) ) , (2)\nwhere πθ(at|ot) represents a policy that generates new dialogue based on the observed context and dialogue history, and Tθ(τ<t+1|τ<t, at) represents\nthe observed dynamics characterizing human responses, and θ denotes parameters in π and T . Note that τ<t consists only of the conversation history, and does not contain any task-specific context. A naïve approach to train dialogue systems is to jointly parameterize both π and T as one language model, and optimize Equation 2 on pre-collected conversations Doff . This method corresponds to behavioral cloning (BC) (Pomerleau, 1989). Context conditioning. While an agent trained using Equation 2 can learn policies and dynamics that imitate human conversations, this objective does not incorporate the task goal, and may not produce a policy that is more performant than the dataset Doff . While it is possible to input co into the language model to maximize the conditional probability of P (τ |co) using a conditional version of the language modeling objective,\nLCTX(θ) =max θ E (τ,co)∼Doff T∑ t=1 ( log πθ(at|τ<t, co)\n+ log Tθ(ot+1|τ<t, at, co) ) , (3)\ncontexts with particular task structures (e.g., a set of entries in a table) may not be simply processed as a sequence similarly to τ . Additionally, the language model is not pretrained to read structured context, and oftentimes the recent dialogue history is much more predictive of the next utterance than the task context is. As a result, language models can ignore the task context and only learn P (τ) despite being conditioned on co. Our approach builds on this conditional modeling approach, but makes a number of improvements that allow it to be more aware of the context information, which attains significantly better results in our experiments."
+    }, {
+      "heading" : "4 Context-Aware Language Modeling",
+      "text" : "In this section, we present our method for goaloriented dialogue systems, Context-Aware Language Modeling (CALM). CALM interprets a language model as a combination of a policy and a dynamics model in the POMDP formulation of a dialogue task, as described in Section 3. Under this interpretation, naïve supervised finetuning on the dialogue dataset can be viewed as behavioral cloning (BC) (Pomerleau, 1989). However, BC only imitates data and does not necessarily produce a good policy in terms of completing tasks. We propose to improve the policy by utilizing a task relabeling strategy (described in Section 4.1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018;\nSavinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020). This relabeling procedure augments the data with examples of near-optimal utterances, making the language model more task-aware. However, we find several shortcomings with this approach alone and propose the following improvements. First, an expressive language model is liable to ignore the task context, which we address by proposing an auxiliary loss (Section 4.2) that forces the model to utilize this information. Second, learning from structured task information is difficult and can result in models that fail to capture complex task structure, so we propose a task pre-training procedure to improve the learnability (Section 4.3). Finally, to further improve performance we use a model-based planning procedure (Section 4.4) on top of the proposed method that samples multiple dialogues in parallel and selects the most promising candidates."
+    }, {
+      "heading" : "4.1 Dialogue Task Relabeling",
+      "text" : "LCTX(θ) defines a context-conditional maximum likelihood objective for training an expert imitation policy in conjunction with a dynamics model. However, simply imitating all the dialogue data does not necessarily produce the best possible policy. We would like to learn a policy that produces dialogue that is more optimal, in the sense of better maximizing the task utility, than the average dialogue in the dataset. Task relabeling enables us to learn from optimal trajectories without simply filtering the dataset for high-reward trajectories, which would unnecessarily discard potentially informative data. In the case of dialogue, we can perform task relabeling by considering the context {co, ch} as defining the task. While a given dialogue may be unsuccessful for the context for which it was collected, it could be considered successful under a different context. In this case, we can simply swap out {co, ch} to create optimal task examples from the many sub-optimal examples provided by Doff . Since our reward R(ch, co, τ) is a function of the dialogue and context, we can modify the reward for a given dialogue just by changing the given observed context co. Using this observation, we can relabel unsuccessful dialogues with successful ones, and even for already successful dialogues there may be multiple co corresponding to task success, allowing us to augment the number of successful (ch, co, τ) tuples.\nFormally, since our POMDP includes a prior distribution over contexts {ch, co} ∼ µ0, there ex-\nists a posterior q(co|τ, ch) over observed contexts that correspond to optimal task completion under a given τ . We can then re-label τ to be optimal under its context by sampling a new co from q(co|τ, ch). In practice, this sampling is performed by rejection sampling from either µ0 or some P (co|ch); the latter, lower entropy distribution, can be preferred if there is a low probability of sampling valid, highreward contexts under µ0. Now, given any τ from an offline dataset of dialogues, we can learn from the full distribution of contexts corresponding to optimal task completion under this dialogue.\nIn order for this relabeling procedure not to bias our policy towards behavior that is overlyoptimistic about the user’s responses, it is necessary that the distribution of these responses in our dataset does not depend on the portion of the context that is relabeled. For example, relabeling the table of available flights for a flight booking task should generally be reasonable, because the user is usually unaware of the flight table. On the other hand, relabeling the desired flight would not make sense, since the user’s utterances are strongly depend on this. To provide another example, in a bargaining task (Lewis et al., 2017), the agent might fail to obtain the desired item and instead get an item of lesser value. But relabeling with a context that assigns a higher value to the item received would not lead to a reasonable example, since the agent mainly received this item as a result of the user’s responses rather than as a result of their own bargaining skill.\nMethods based on similar principles have previously been proposed in the deep RL community for simple parametric tasks, such as goal-reaching or linearly-parameterized reward functions (Kaelbling, 1993; Andrychowicz et al., 2017; Eysenbach et al., 2020). However, the dialogue task relabeling that we employ is particularly effective in our setting, since there may be exponentially many contexts that are optimal for a given dialogue (e.g., many different flight tables for a flight booking task), in contrast to the simpler task parameterizations used in prior work, where for example only one goal might be optimal for a given trajectory (the one that is reached). Additionally, the structure of our specific task allows us to sample from the true posterior q(co|τ, ch), by using the rejection sampling procedure described above, rather than using approximations as in prior work (Eysenbach et al., 2020). As a result, this technique not only\nallows us to turn sub-optimal task data into optimal data, but it also allows us to greatly increase the number of optimal task examples from which we can learn, which we will show leads to a large performance improvement."
+    }, {
+      "heading" : "4.2 Task-Specific Auxiliary Loss",
+      "text" : "Goal-oriented dialogue generation can be viewed as learning the conditional distribution P (τ |co), where τ represents the generated dialogue given a specific context co. However when trained naïvely, language models are liable to ignore this conditioning context, instead focusing purely on the previous utterances in the dialogue. In this case, the model is effectively only learning P (τ) despite having both the capacity and the context to learn the lowerentropy conditional distribution P (τ |co).\nWhile dialogue tasks are by definition carried out through natural language, there is often an abstract high-level action αh ∈ A that essentially determines the success of the task. In the case of the information retrieval task that we consider in this paper, these high-level actions correspond to deciding which database entity to retrieve for the user (e.g. suggesting a flight to the customer that meets all of their needs). While these high-level actions are theoretically learn-able from correlations between the dialogue and the given context, in general, we find that learning these correlations corresponds to a relatively small decrease in dialogue entropy under the model. As a result, the model is less incentivized to learn these correlations relevant to the task than the form of the dialogue. To address this issue, we incorporate an auxiliary objective into our training, which trains the model directly to predict the abstract high-level actions taken in the present dialogue. This objective effectively up-weights gradients relevant for learning the high-level actions, which further helps the model to utilize the context to solve the high-level task through dialogue.\nFor a given dialogue-context pair (τ, {ch, co}) and high-level action, αh, our auxiliary objective is then simply to maximize the likelihood of the high-level actions taken in the dialogue:\nC(ϕ) = max ϕ\nE (ch,co,τ,αh)∼Doff\nlogPϕ(αh|τ, co).\n(4) Just like the language modeling objective, this classification objective is averaged over each token in the dialogue sequence. Our full training objective\nthen becomes: max θ,ϕ LCTX(θ) + β ∗ C(ϕ), (5) where β is a hyper-parameter and LCTX(θ) is the standard context-conditional language modeling objective as defined in Section 3."
+    }, {
+      "heading" : "4.3 Task Pretraining",
+      "text" : "As observed by Liu et al. (2021), for some structured tasks, such as table question answering, pretraining on a simplified version of the given task with a synthetic context can help the model to focus learning on the “skills” that are most relevant to utilize the task context, which leads to improved downstream task performance. We instantiate this idea in our method by pre-training our model on a simplified (dialogue-free) version of the task. Instead of simultaneously modeling all the details of the raw dialogue, as is required to learn P (τ |co), the key observation here is that in our case the task reward only depends on the tuple {ch, co, aT }. This enables us to effectively learn to execute the task by only modeling P (ch, aT |co), without any dialogue at all. By pre-training our model to first learn this simplified distribution, we effectively focus on learning the necessary skills for completing the task. It is expected that the skills learned during this pre-training phase should also generalize and transfer when we later perform training on the real dialogue. The particular instantiation of this principle in the case of AirDialogue is described in Section A.5."
+    }, {
+      "heading" : "4.4 Model-Based Dialogue Rollouts",
+      "text" : "While the methodology discussed so far can produce effective policies, language models also represent task dynamics, as discussed in Section 3. We can leverage this fact to further improve the performance of our fine-tuned models by performing model-based planning at test-time, using both the policy and dynamics components in concert to further maximize task reward. A full dialogue trajectory can then be formed by concatenating this sampled future trajectory τ≥t with the current state of the dialogue τ<t i.e., τ = {τ<t, τ≥t}. We perform the model-based planning by sampling k such future trajectories from the final fine-tuned model, and ranking them according to an estimated reward function R̂(τ, co) (see Appendix A.7). Then, we improve upon the policy π from which we took the samples by taking the action (i.e., the next utterance) at which receives the highest estimated reward among the sampled trajectories. This roll-\nout sampling procedure is identical to the one used by Lewis et al. (2017)."
+    }, {
+      "heading" : "5 CALM for AirDialogue",
+      "text" : "In this section, we instantiate our proposed method, CALM, for the AirDialogue flight booking task (Wei et al., 2018). We first give an overview of the task, and then describe how to do relabeling and context conditioning on this specific task."
+    }, {
+      "heading" : "5.1 AirDialogue Dataset",
+      "text" : "Dataset overview. The AirDialogue dataset (Wei et al., 2018) is a recently published large-scale airline reservation dataset based on the aforementioned task. The dataset includes 402,038 conversations. The dataset involves three distinct tasks: booking, canceling, and changing flights. We describe the booking task in detail below. Flight booking task. The (human) customer is given a set of 12 trip requirements, and the flight agent (bot) is provided with a table of 30 flights. The goal of the flight agent is to book a flight from the table for the customer which meets all their requirements, or to correctly inform them that no such flight is available. To determine task success, the flight agent must predict an explicit action at the end of the dialogue indicating the flight that was booked or inform no flight available. See Figure 6 for an example conversation from the dataset."
+    }, {
+      "heading" : "5.2 Processing Tables",
+      "text" : "The AirDialogue booking tasks require efficiently querying a flight table containing flight information (e.g., departing location, ticket price) given to the agent prior to the conversation. In order to successfully complete the booking task, the agent needs to be able to filter, select, and integrate information from the flight table based on the customer’s preferences inferred from the dialogue.\nInstead of treating the tables as unstructured sequences (Wei et al., 2018; Jiang et al., 2021) or as SQL databases (Chen et al., 2020), CALM models tables as an observable context consisting of a set co = {f1, f2, f3, ..., fN} of table rows. These rows are then input to our model as a set of embeddings (see appendix A.4 and A.9 for more details)."
+    }, {
+      "heading" : "5.3 Relabeling AirDialogue with CALM",
+      "text" : "While the AirDialogue dataset only includes one flight table for each dialogue, there are potentially many flight tables compatible with each dialogue as each flight can appear in many tables. We hence implement our relabeling procedure as described in Section 4.1 as follows. We perform rejection sam-\npling on the observable context (i.e., the table of flights) co ∼ q(co|τ, ch), sampling until we obtain a new context (ch, co, τ), which gives maximum reward possible R(τ, ch, co) = maxcoR(τ, ch, co). The prior distributions p(co) and p(co|ch), from which the tables in the AirDialogue dataset were sampled, are provided with the dataset. By rejection sampling from p(co|ch), we can effectively sample from the posterior q(co|τ, ch) within a certain computational budget. In this setting, co denotes tables and there are exponentially many tables which correspond to a task success under a given dialogue. Therefore, with our relabeling approach, we increase the number of near-optimal task examples exponentially, which makes it much easier for the language model to learn to query the flight table.\nOur relabeling is approximately valid according to the condition specified in Section 4.1. While the customer does not have access to the flight table and therefore is not directly affected by our relabeling, there are still some minor edge-cases in which over-optimism about the dynamics could be learned by our policy. If for example, in the dataset the customer were to occasionally reject the first flight that we suggest, our policy may learn to assign a small probability to the action of initially offering the wrong flight, relying on them subsequently rejecting it such that we can later recover and offer the correct one. However, in practice we observe that these cases are rare in AirDialogue."
+    }, {
+      "heading" : "5.4 Table Selection as Auxiliary Loss",
+      "text" : "The primary high-level action involved in AirDialogue is the decision of which flight table entry, if any, to recommend to the user. We therefore implement our auxiliary objective as a classification head on top of the language model, trained to predict the flight table entry that meets the customer’s requests. Specifically, our set of high-level actions A is the set of flight table rows {f1, f2, f3, ..., fN} plus an additional item f0, corresponding to the case in which no flights meet the customer’s requirements. If f∗ is the flight recommended in the dialogue, then our auxiliary objective is:\nC(ϕ) = max ϕ E (co,τ)∼Doff\nlogPϕ(f ∗|τ, co). (6)"
+    }, {
+      "heading" : "6 Experiments",
+      "text" : "In this section, we empirically evaluate the performance of CALM on AirDialogue (Wei et al., 2018). We first show that CALM outperforms the\nSOTA on the AirDialogue dataset by around 7% in the standard simulated evaluation protocol proposed by Chen et al. (2020), which prior work denotes as “self-play\" (see Appendix A.6), and this matches human-level performance as reported by Wei et al. (2018). Beyond this, we also perform a comprehensive set of ablation studies to validate the necessity of each component of CALM. Experiment Setup and Baselines. We compare CALM on AirDialogue with two baselines. The first is AirConcierge, the previous SOTA on AirDialogue, which explicitly parses and executes SQL queries from the dialogue (Chen et al., 2020). The other is a standard language model (denoted as LM(GPT2-small)) trained on a dataset filtered for successful task examples, without any of our context-aware language modeling techniques (see Appendix Section A.1 for more details on dataset filtering). CALM uses the fine-tuned GPT2-small model (Radford et al., 2018) as the backbone of the policy and dynamics model. After learning the dynamics model, both CALM and the LM(GPT2small) can employ two different planning strategies: (1) a simple greedy decoding of the next utterance (equivalent to beam search with beam-width one) and (2) the rollout planning as described in Section 4.4. For AirConcierge, we only evaluate greedy decoding, as this method cannot be easily adapted for producing full rollouts as rollout planning requires a method for predicting the reward of a given dialogue. We describe our specific reward predictor for AirDialogue in Appendix Section A.7. Results for Task Success. In terms of task success, CALM outperforms the prior SOTA (AirConcierge) by approximately 7%, achieving 88% task success when using greedy decoding from the language model. Compared with AirConcierge, where all reasoning about the task context is done outside of the language model, CALM does all of the filtering, selecting, and responding with relevant flight table\nentries within the language model, in a fully endto-end manner. Meanwhile, CALM also improves over LM(GPT2-small) by 50% in terms of task success, indicating the necessity of our contextaware approach for goal-oriented tasks.\nWe further evaluate the the performance of various methods, when utilizing the rollout planning technique. As shown in Figure 3, as the number of rollout samples increases, the performance improves for all methods. Remarkably, applying the rollout planning to CALM further increases total task success by 2%, raising it to 90% and matching human performance on the AirDialogue task. The baseline LM(GPT2-small) benefits much more from rollout planning than CALM, and we suspect that at around 90% task completion, the performance becomes bottlenecked by the customer bot’s mistakes, therefore we only observe less gain from rollout planning with CALM. Results for Language Quality. To quantitatively measure the generated language quality, we present perplexity and BLEU for all methods in Table 2. CALM performs similarly to LM(GPT2-small) and outperforms AirConcierge significantly. Ablation Study. To examine the effectiveness of each single component in our method, we train and evaluate four ablations of CALM. Each of these\nablations remove one of the components in our approach: task relabeling (Section 4.1), auxiliary loss (Section 4.2), and table pre-training (Section 4.3). Beyond this, we also examine CALM without both task relabeling and pre-training. As shown in Table 3, removing any one of these components drops task success by at least 10%, and in most cases much more than that. This shows that each piece of our method plays a critical role in helping CALM to effectively learn the goal-oriented task."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "We proposed an end-to-end framework, CALM, for goal-oriented dialogue systems. Formulating end-to-end dialogue generation as a Markov decision process, CALM employs task relabeling and context-aware finetuning to steer supervised learning of language models towards specific goals, improving task performance drastically while preserving language quality. We show that this improves performance on AirDialogue over the previous state of the art, and matches previously reported human performance under the standard simulated evaluation protocol."
+    }, {
+      "heading" : "8 Ethical Statement",
+      "text" : "We note that CALM is imperfect and in generating free-form dialogue can potentially produce harmful outputs. We therefore do not recommend applying this method in particularly sensitive or sufficiently wide-reaching domains without additional measures to mitigate harmful generations."
+    }, {
+      "heading" : "A Appendix",
+      "text" : "In this appendix, we provide all the details in our implementation for CALM."
+    }, {
+      "heading" : "A.1 AirDialogue Dataset Filtering",
+      "text" : "When training the LM(GPT2-small) and Customer Bot, we filter the dataset by only keeping the successful task examples. This is be achieved by simultaneously checking for successful task completion and whether a set of simple string matching heuristics are satisfied in the dialogue. Our heuristics aim to ensure that strings corresponding to each of the customer’s flight requirements and the customer’s goal are explicitly present in the dialogue. This combination of filtering steps reduces the size of the training set by 26%. Despite this, we find that this is still more than enough data for the model to successfully learn the task."
+    }, {
+      "heading" : "A.2 Rollout Planning",
+      "text" : "In Figure 4, we show the rollout planning procedure, which described in Section 4.4."
+    }, {
+      "heading" : "A.3 Training Our Customer Bot",
+      "text" : "Our customer bot is fine-tuned from GPT2-small (124M parameters), using the standard language modeling objective. We used the Huggingface Transformers library’s implementation of GPT2 (Wolf et al., 2020). The customer’s flight requirements are provided to the model as a prefix to the dialogue, which formatted as a comma separated list consisting of the customer’s goal and flight requirements. We trained the customer bot for maximum 10 epochs with early stopping on the filtered dataset. For training, it takes around 1 day on 4 GPUs. Specifically, we trained using Adam with learning rate 1e-4 and batch size 8. Our customer bot achieves a perplexity of 1.47 on the development set and a BLEU score of 38.5."
+    }, {
+      "heading" : "A.4 Fight Agent Bot Details",
+      "text" : "All our flight agent bots are fine-tuned from GPT2-small (124M parameters) using the standard language modeling objective. We used the\nHuggingface Transformers library’s implementation of GPT2 (Wolf et al., 2020). Similar as the customer bot, we trained for maximum 10 epochs with early stopping on the filtered dataset, which takes roughly 1 day on 4 GPUs. Specifically, we trained using Adam with learning rate 1e-4 and batch size 8. We implement the final action prediction as a sequence of tokens generated at the end of each dialogue. The flight table is passed to the model as a prefix of flight embeddings, where each embedding is produced by summing embeddings corresponding to each attribute of a given flight (e.g., flight arrival/departure day/location, flight price, etc.)."
+    }, {
+      "heading" : "A.5 AirDialogue Task Pretraining",
+      "text" : "Initialized using GPT2-small (124M parameters), we further pre-train our flight-agent bots by training on simplified task sequences. Specifically, these sequences consist of our flight table followed by a comma separated list of the customer’s flight requirements and a string representing the final action taken. We also apply our auxiliary loss and task-relabeling techniques during this pre-training.\nWe pre-train on 4 million unique samples, using batch size 64 and Adam with learning rate 1e-4, which takes around 2 days on 4 GPUs. During pre-training, we found that it took around 2 million unique samples before the model suddenly started to learn the task of querying the flight table, and it took roughly 2 million more samples before it became proficient at querying the table. Both the unusual progression of learning during this pre-training phase and the high sample complexity needed to learn the task, indicates the difficulty in learning to query the flight table. This calls for future work about further investigate the challenges in learning complex logical functions using neural networks."
+    }, {
+      "heading" : "A.6 Self-Play Evaluation",
+      "text" : "Prior works primarily evaluate bots for the flight agent through “self-play\" (Chen et al., 2020; Wei et al., 2018). We follow the same evaluation protocol in our work. Basically, we train a bot to play the role of the customer during evaluation and compute task success by simulating conversations against this bot. We run all self-play evaluations on the same subset of 1,000 dialogue scenarios, randomly selected from the validation set.\nAll models are evaluated against the same customer bot. including models for the baselines. We find that when running against our self-play bot,\ntask completion success for prior methods is increased, sometimes by more than 8% (from what was reported by such prior works under the same evaluation setting). The only difference is the specific model used for customer’s side of the conversation, and we conjecture that this difference is likely due to the architecture difference and the details of our dataset filtering. This significant change in evaluation performance compared with prior works, not only indicates the quality of our customer bot, but also suggests the importance of accounting for these factors in evaluating and comparing dialogue systems. To promote fair evaluations in future works that use the AirDialogue dataset, we will release the code and model weights for our customer bot upon acceptance."
+    }, {
+      "heading" : "A.7 AirDialogue Reward Predictor for Rollout Planning",
+      "text" : "To execute rollout planning, we need a reward predictor which can estimate whether a given dialogue is a successful example of task completion or not. In the case of AirDialogue, we found that the most robust way to estimate this reward is the following: we first fine-tune a RoBERTa-base model (123M parameters) to predict the customer’s ground-truth goal and flight requirements from the set of dialogues in the training set. We used the Huggingface Transformers library’s implementation of RoBERTa (Wolf et al., 2020). We do not filter the training-set when training this model. Once this model is trained, our procedure for predicting dialogue success is the following:\n1. Given a dialogue, use our RoBERTa model to predict the customer’s goal and flight requirements.\n2. We then execute this predicted information against the agent’s flight table and reservation flag, to produce a set of valid final actions.\n3. If the final action taken in the dialogue is within the set of predicted final actions, then\npredict that the current dialogue is successful, otherwise predict that it is unsuccessful.\nSee Figure 5 for a visual illustration of this procedure. Our model obtains 94% accuracy in predicting the reward of the dialogues in the validation set (see Table 4 for a more extensive breakdown of the model’s accuracy)."
+    }, {
+      "heading" : "A.8 Example Conversation in AirDialogue",
+      "text" : "In Figure 6, we showcase a specific example for the conversation in AirDialogue."
+    }, {
+      "heading" : "A.9 Previous Approaches to Flight Table Processing",
+      "text" : "Prior works (Wei et al., 2018; Jiang et al., 2021) typically input the table directly into a language model, expecting that the skill of querying the table will be naturally learned via the standard language modeling objective. We found this approach to under-perform in our experiments. These findings are also consistent with recent works which show that pre-training transformers for querying tables can significantly improve the transformer’s performance on downstream tasks which use tables (Liu et al., 2021). AirConcierge (Chen et al., 2020) takes a different approach, and explicitly predicts and executes SQL queries based on the dialogue. This approach obtains the SOTA task success on AirDialogue, but it involves several complex components, requires the ability to preform semantic\nparsing on the dialogue, and of course requires additional domain knowledge about the format and structure of the flight table, which reprsents the task context. In our work, we show that applying CALM for AirDialogue can close this gap by inducing task learning from language models and achieve end-to-end learning from the flight table, without sacrificing the generated language quality."
+    } ],
+    "references" : [ {
+      "title" : "Towards a human-like open-domain chatbot",
+      "author" : [ "Daniel Adiwardana", "Minh-Thang Luong", "David R So", "Jamie Hall", "Noah Fiedel", "Romal Thoppilan", "Zi Yang", "Apoorv Kulshreshtha", "Gaurav Nemade", "Yifeng Lu" ],
+      "venue" : "arXiv preprint arXiv:2001.09977",
+      "citeRegEx" : "Adiwardana et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Adiwardana et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hindsight experience replay",
+      "author" : [ "Marcin Andrychowicz", "Filip Wolski", "Alex Ray", "Jonas Schneider", "Rachel Fong", "Peter Welinder", "Bob McGrew", "Josh Tobin", "Pieter Abbeel", "Wojciech Zaremba." ],
+      "venue" : "Advances in Neural Information Processing Systems,",
+      "citeRegEx" : "Andrychowicz et al\\.,? 2017",
+      "shortCiteRegEx" : "Andrychowicz et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A sequence-to-sequence model for user simulation in spoken dialogue systems",
+      "author" : [ "Layla El Asri", "Jing He", "Kaheer Suleman." ],
+      "venue" : "arXiv preprint arXiv:1607.00070.",
+      "citeRegEx" : "Asri et al\\.,? 2016",
+      "shortCiteRegEx" : "Asri et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Language models are few-shot learners. arXiv preprint arXiv:2005.14165",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multiwoz-a largescale multi-domain wizard-of-oz dataset for taskoriented dialogue modelling",
+      "author" : [ "Paweł Budzianowski", "Tsung-Hsien Wen", "Bo-Hsiang Tseng", "Iñigo Casanueva", "Stefan Ultes", "Osman Ramadan", "Milica Gasic." ],
+      "venue" : "Proceedings of the",
+      "citeRegEx" : "Budzianowski et al\\.,? 2018",
+      "shortCiteRegEx" : "Budzianowski et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Airconcierge: Generating task-oriented dialogue via efficient large-scale knowledge retrieval",
+      "author" : [ "Chieh-Yang Chen", "Pei-Hsin Wang", "Shih-Chieh Chang", "Da-Cheng Juan", "Wei Wei", "Jia-Yu Pan." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Semantically conditioned dialog response generation via hierarchical disentangled self-attention",
+      "author" : [ "Wenhu Chen", "Jianshu Chen", "Pengda Qin", "Xifeng Yan", "William Yang Wang." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Compu-",
+      "citeRegEx" : "Chen et al\\.,? 2019",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Developing a flexible spoken dialog system using simulation",
+      "author" : [ "Grace Chung." ],
+      "venue" : "Proceedings of the 42nd Annual Meeting of the Association for Computational Linguistics (ACL-04), pages 63–70.",
+      "citeRegEx" : "Chung.,? 2004",
+      "shortCiteRegEx" : "Chung.",
+      "year" : 2004
+    }, {
+      "title" : "Bert: Pre-training of deep",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova" ],
+      "venue" : null,
+      "citeRegEx" : "Devlin et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Sequence-tosequence generation for spoken dialogue via deep syntax trees and strings",
+      "author" : [ "Ondřej Dušek", "Filip Jurcicek." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 45–51.",
+      "citeRegEx" : "Dušek and Jurcicek.,? 2016",
+      "shortCiteRegEx" : "Dušek and Jurcicek.",
+      "year" : 2016
+    }, {
+      "title" : "User modeling for spoken dialogue system evaluation",
+      "author" : [ "Wieland Eckert", "Esther Levin", "Roberto Pieraccini." ],
+      "venue" : "1997 IEEE Workshop on Automatic Speech Recognition and Understanding Proceedings, pages 80–87. IEEE.",
+      "citeRegEx" : "Eckert et al\\.,? 1997",
+      "shortCiteRegEx" : "Eckert et al\\.",
+      "year" : 1997
+    }, {
+      "title" : "A copyaugmented sequence-to-sequence architecture gives good performance on task-oriented dialogue",
+      "author" : [ "Mihail Eric", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 15th Conference of the European Chapter of the Association for Computational Lin-",
+      "citeRegEx" : "Eric and Manning.,? 2017",
+      "shortCiteRegEx" : "Eric and Manning.",
+      "year" : 2017
+    }, {
+      "title" : "Rewriting history with inverse rl: Hindsight inference for policy improvement",
+      "author" : [ "Benjamin Eysenbach", "Xinyang Geng", "Sergey Levine", "Ruslan Salakhutdinov." ],
+      "venue" : "arXiv preprint arXiv:2002.11089.",
+      "citeRegEx" : "Eysenbach et al\\.,? 2020",
+      "shortCiteRegEx" : "Eysenbach et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Off-policy deep reinforcement learning without exploration",
+      "author" : [ "Scott Fujimoto", "David Meger", "Doina Precup." ],
+      "venue" : "International Conference on Machine Learning, pages 2052–2062.",
+      "citeRegEx" : "Fujimoto et al\\.,? 2019",
+      "shortCiteRegEx" : "Fujimoto et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "On-line policy optimisation of spoken dialogue systems via live interaction with human subjects",
+      "author" : [ "Milica Gašić", "Filip Jurčíček", "Blaise Thomson", "Kai Yu", "Steve Young." ],
+      "venue" : "2011 IEEE Workshop on Automatic Speech Recognition & Understanding, pages",
+      "citeRegEx" : "Gašić et al\\.,? 2011",
+      "shortCiteRegEx" : "Gašić et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "User simulation for spoken dialogue systems: Learning and evaluation",
+      "author" : [ "Kallirroi Georgila", "James Henderson", "Oliver Lemon." ],
+      "venue" : "Ninth International Conference on Spoken Language Processing.",
+      "citeRegEx" : "Georgila et al\\.,? 2006",
+      "shortCiteRegEx" : "Georgila et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Reinforcement learning of argumentation dialogue policies in negotiation",
+      "author" : [ "Kallirroi Georgila", "David Traum." ],
+      "venue" : "Twelfth Annual Conference of the International Speech Communication Association.",
+      "citeRegEx" : "Georgila and Traum.,? 2011",
+      "shortCiteRegEx" : "Georgila and Traum.",
+      "year" : 2011
+    }, {
+      "title" : "Learning to reach goals without reinforcement learning",
+      "author" : [ "Dibya Ghosh", "Abhishek Gupta", "Justin Fu", "Ashwin Reddy", "Coline Devin", "Benjamin Eysenbach", "Sergey Levine" ],
+      "venue" : null,
+      "citeRegEx" : "Ghosh et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Ghosh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Decoupling strategy and generation in negotiation dialogues",
+      "author" : [ "He He", "Derek Chen", "Anusha Balakrishnan", "Percy Liang." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing, pages 2333–2343. Association for Computational Linguis-",
+      "citeRegEx" : "He et al\\.,? 2018",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Representing the reinforcement learning state in a negotiation dialogue",
+      "author" : [ "Peter A Heeman." ],
+      "venue" : "2009 IEEE Workshop on Automatic Speech Recognition & Understanding, pages 450–455. IEEE.",
+      "citeRegEx" : "Heeman.,? 2009",
+      "shortCiteRegEx" : "Heeman.",
+      "year" : 2009
+    }, {
+      "title" : "A simple language model for task-oriented dialogue",
+      "author" : [ "Ehsan Hosseini-Asl", "Bryan McCann", "Chien-Sheng Wu", "Semih Yavuz", "Richard Socher." ],
+      "venue" : "volume 33.",
+      "citeRegEx" : "Hosseini.Asl et al\\.,? 2020",
+      "shortCiteRegEx" : "Hosseini.Asl et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Way off-policy batch deep reinforcement learning of implicit human preferences in dialog",
+      "author" : [ "Natasha Jaques", "Asma Ghandeharioun", "Judy Hanwen Shen", "Craig Ferguson", "Agata Lapedriza", "Noah Jones", "Shixiang Gu", "Rosalind Picard." ],
+      "venue" : "arXiv preprint",
+      "citeRegEx" : "Jaques et al\\.,? 2019",
+      "shortCiteRegEx" : "Jaques et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Towards automatic evaluation of dialog systems: A model-free off-policy evaluation approach",
+      "author" : [ "Haoming Jiang", "Bo Dai", "Mengjiao Yang", "Tuo Zhao", "Wei Wei." ],
+      "venue" : "arXiv preprint arXiv:2102.10242.",
+      "citeRegEx" : "Jiang et al\\.,? 2021",
+      "shortCiteRegEx" : "Jiang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Learning to achieve goals",
+      "author" : [ "Leslie Pack Kaelbling." ],
+      "venue" : "IJCAI, pages 1094–1099. Citeseer.",
+      "citeRegEx" : "Kaelbling.,? 1993",
+      "shortCiteRegEx" : "Kaelbling.",
+      "year" : 1993
+    }, {
+      "title" : "Planning and acting in partially observable stochastic domains",
+      "author" : [ "Leslie Pack Kaelbling", "Michael L Littman", "Anthony R Cassandra." ],
+      "venue" : "Artificial intelligence, 101(1-2):99–134.",
+      "citeRegEx" : "Kaelbling et al\\.,? 1998",
+      "shortCiteRegEx" : "Kaelbling et al\\.",
+      "year" : 1998
+    }, {
+      "title" : "Recommendation as a communication game: Self-supervised bot-play for goal-oriented dialogue",
+      "author" : [ "Dongyeop Kang", "Anusha Balakrishnan", "Pararth Shah", "Paul A Crook", "Y-Lan Boureau", "Jason Weston." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical",
+      "citeRegEx" : "Kang et al\\.,? 2019",
+      "shortCiteRegEx" : "Kang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A stochastic model of human-machine interaction for learning dialog strategies",
+      "author" : [ "Esther Levin", "Roberto Pieraccini", "Wieland Eckert." ],
+      "venue" : "IEEE Transactions on speech and audio processing, 8(1):11–23.",
+      "citeRegEx" : "Levin et al\\.,? 2000",
+      "shortCiteRegEx" : "Levin et al\\.",
+      "year" : 2000
+    }, {
+      "title" : "Offline reinforcement learning: Tutorial, review, and perspectives on open problems",
+      "author" : [ "Sergey Levine", "Aviral Kumar", "George Tucker", "Justin Fu." ],
+      "venue" : "arXiv preprint arXiv:2005.01643.",
+      "citeRegEx" : "Levine et al\\.,? 2020",
+      "shortCiteRegEx" : "Levine et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deal or no deal? end-to-end learning of negotiation dialogues",
+      "author" : [ "Mike Lewis", "Denis Yarats", "Yann Dauphin", "Devi Parikh", "Dhruv Batra." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing, pages 2443–2453.",
+      "citeRegEx" : "Lewis et al\\.,? 2017",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep reinforcement learning for dialogue generation",
+      "author" : [ "Jiwei Li", "Will Monroe", "Alan Ritter", "Dan Jurafsky", "Michel Galley", "Jianfeng Gao." ],
+      "venue" : "Conference on Empirical Methods in Natural Language Processing.",
+      "citeRegEx" : "Li et al\\.,? 2016",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dialogue learning with human teaching and feedback in end-to-end trainable task-oriented dialogue systems",
+      "author" : [ "Bing Liu", "Gokhan Tür", "Dilek Hakkani-Tür", "Pararth Shah", "Larry Heck." ],
+      "venue" : "Proceedings of NAACL-HLT, pages 2060–2069.",
+      "citeRegEx" : "Liu et al\\.,? 2018",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Dialogue-oriented review summary generation",
+      "author" : [ "Jingjing Liu", "Stephanie Seneff", "Victor Zue" ],
+      "venue" : null,
+      "citeRegEx" : "Liu et al\\.,? \\Q2010\\E",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Tapex: Table pre-training via learning a neural sql executor",
+      "author" : [ "Qian Liu", "Bei Chen", "Jiaqi Guo", "Zeqi Lin", "Jianguang Lou." ],
+      "venue" : "arXiv preprint arXiv:2107.07653.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "arXiv preprint arXiv:1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning latent plans from play",
+      "author" : [ "Corey Lynch", "Mohi Khansari", "Ted Xiao", "Vikash Kumar", "Jonathan Tompson", "Sergey Levine", "Pierre Sermanet." ],
+      "venue" : "Conference on Robot Learning, pages 1113–1132. PMLR.",
+      "citeRegEx" : "Lynch et al\\.,? 2020",
+      "shortCiteRegEx" : "Lynch et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Spoken dialogue technology: enabling the conversational user interface",
+      "author" : [ "Michael F McTear." ],
+      "venue" : "ACM Computing Surveys (CSUR), 34(1):90–169.",
+      "citeRegEx" : "McTear.,? 2002",
+      "shortCiteRegEx" : "McTear.",
+      "year" : 2002
+    }, {
+      "title" : "Coherent dialogue with attention-based language models",
+      "author" : [ "Hongyuan Mei", "Mohit Bansal", "Matthew R Walter." ],
+      "venue" : "Proceedings of the Thirty-First AAAI Conference on Artificial Intelligence, pages 3252–3258. AAAI Press.",
+      "citeRegEx" : "Mei et al\\.,? 2017",
+      "shortCiteRegEx" : "Mei et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Soloist: Few-shot task-oriented dialog with a single pretrained auto-regressive model",
+      "author" : [ "Baolin Peng", "Chunyuan Li", "Jinchao Li", "Shahin Shayandeh", "Lars Liden", "Jianfeng Gao." ],
+      "venue" : "arXiv preprint arXiv:2005.05298.",
+      "citeRegEx" : "Peng et al\\.,? 2020",
+      "shortCiteRegEx" : "Peng et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sampleefficient batch reinforcement learning for dialogue management optimization",
+      "author" : [ "Olivier Pietquin", "Matthieu Geist", "Senthilkumar Chandramohan", "Hervé Frezza-Buet." ],
+      "venue" : "ACM Transactions on Speech and Language Processing (TSLP), 7(3):1–21.",
+      "citeRegEx" : "Pietquin et al\\.,? 2011",
+      "shortCiteRegEx" : "Pietquin et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Alvinn: An autonomous land vehicle in a neural network",
+      "author" : [ "Dean A Pomerleau." ],
+      "venue" : "Technical report.",
+      "citeRegEx" : "Pomerleau.,? 1989",
+      "shortCiteRegEx" : "Pomerleau.",
+      "year" : 1989
+    }, {
+      "title" : "Temporal difference models: Modelfree deep rl for model-based control",
+      "author" : [ "Vitchyr Pong", "Shixiang Gu", "Murtaza Dalal", "Sergey Levine." ],
+      "venue" : "arXiv preprint arXiv:1802.09081.",
+      "citeRegEx" : "Pong et al\\.,? 2018",
+      "shortCiteRegEx" : "Pong et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever." ],
+      "venue" : "OpenAI Blog.",
+      "citeRegEx" : "Radford et al\\.,? 2018",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Semi-parametric topological memory for navigation",
+      "author" : [ "Nikolay Savinov", "Alexey Dosovitskiy", "Vladlen Koltun." ],
+      "venue" : "arXiv preprint arXiv:1803.00653.",
+      "citeRegEx" : "Savinov et al\\.,? 2018",
+      "shortCiteRegEx" : "Savinov et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Agenda-based user simulation for bootstrapping a pomdp dialogue system",
+      "author" : [ "Jost Schatzmann", "Blaise Thomson", "Karl Weilhammer", "Hui Ye", "Steve Young." ],
+      "venue" : "Human Language Technologies 2007: The",
+      "citeRegEx" : "Schatzmann et al\\.,? 2007",
+      "shortCiteRegEx" : "Schatzmann et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Reinforcement learning for spoken dialogue systems",
+      "author" : [ "Satinder Singh", "Michael Kearns", "Diane Litman", "Marilyn Walker." ],
+      "venue" : "Advances in neural information processing systems, 12:956–962.",
+      "citeRegEx" : "Singh et al\\.,? 1999",
+      "shortCiteRegEx" : "Singh et al\\.",
+      "year" : 1999
+    }, {
+      "title" : "Optimizing dialogue management with reinforcement learning: Experiments with the njfun system",
+      "author" : [ "Satinder Singh", "Diane Litman", "Michael Kearns", "Marilyn Walker." ],
+      "venue" : "Journal of Artificial Intelligence Research, 16:105–133.",
+      "citeRegEx" : "Singh et al\\.,? 2002",
+      "shortCiteRegEx" : "Singh et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Spoken natural language dialog systems: A practical approach",
+      "author" : [ "Ronnie W Smith", "D Richard Hipp." ],
+      "venue" : "Oxford University Press on Demand.",
+      "citeRegEx" : "Smith and Hipp.,? 1994",
+      "shortCiteRegEx" : "Smith and Hipp.",
+      "year" : 1994
+    }, {
+      "title" : "Sample-efficient actor-critic reinforcement learning with supervised data for dialogue management",
+      "author" : [ "Pei-Hao Su", "Paweł Budzianowski", "Stefan Ultes", "Milica Gasic", "Steve Young." ],
+      "venue" : "Proceedings of the 18th Annual SIGdial Meeting on Discourse and",
+      "citeRegEx" : "Su et al\\.,? 2017",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Continuously learning neural dialogue management",
+      "author" : [ "Pei-Hao Su", "Milica Gasic", "Nikola Mrksic", "Lina RojasBarahona", "Stefan Ultes", "David Vandyke", "TsungHsien Wen", "Steve Young." ],
+      "venue" : "arXiv preprint arXiv:1606.02689.",
+      "citeRegEx" : "Su et al\\.,? 2016",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Lstm neural networks for language modeling",
+      "author" : [ "Martin Sundermeyer", "Ralf Schlüter", "Hermann Ney." ],
+      "venue" : "Thirteenth annual conference of the international speech communication association.",
+      "citeRegEx" : "Sundermeyer et al\\.,? 2012",
+      "shortCiteRegEx" : "Sundermeyer et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Modelling hierarchical structure between dialogue policy and natural language generator with option framework for task-oriented dialogue system",
+      "author" : [ "Jianhong Wang", "Yuan Zhang", "Tae-Kyun Kim", "Yunjie Gu." ],
+      "venue" : "arXiv preprint arXiv:2006.06814.",
+      "citeRegEx" : "Wang et al\\.,? 2020a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Airdialogue: An environment for goal-oriented dialogue research",
+      "author" : [ "Wei Wei", "Quoc Le", "Andrew Dai", "Jia Li." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 3844–3854.",
+      "citeRegEx" : "Wei et al\\.,? 2018",
+      "shortCiteRegEx" : "Wei et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The dialog state tracking challenge series",
+      "author" : [ "Jason D Williams", "Matthew Henderson", "Antoine Raux", "Blaise Thomson", "Alan Black", "Deepak Ramachandran." ],
+      "venue" : "AI Magazine, 35(4):121–124.",
+      "citeRegEx" : "Williams et al\\.,? 2014",
+      "shortCiteRegEx" : "Williams et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Huggingface’s transformers: State-of-the-art natural language processing",
+      "author" : [ "Teven Le Scao", "Sylvain Gugger", "Mariama Drame", "Quentin Lhoest", "Alexander M. Rush" ],
+      "venue" : null,
+      "citeRegEx" : "Scao et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Scao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Alternating recurrent dialog model with large-scale pre-trained language models",
+      "author" : [ "Qingyang Wu", "Yichi Zhang", "Yu Li", "Zhou Yu" ],
+      "venue" : null,
+      "citeRegEx" : "Wu et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Behavior regularized offline reinforcement learning",
+      "author" : [ "Yifan Wu", "George Tucker", "Ofir Nachum." ],
+      "venue" : "arXiv preprint arXiv:1911.11361.",
+      "citeRegEx" : "Wu et al\\.,? 2019b",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Pomdp-based statistical spoken dialog systems: A review",
+      "author" : [ "Steve Young", "Milica Gašić", "Blaise Thomson", "Jason D Williams." ],
+      "venue" : "Proceedings of the IEEE, 101(5):1160–1179.",
+      "citeRegEx" : "Young et al\\.,? 2013",
+      "shortCiteRegEx" : "Young et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Strategy and policy learning for nontask-oriented conversational systems",
+      "author" : [ "Zhou Yu", "Ziyu Xu", "Alan W Black", "Alexander Rudnicky." ],
+      "venue" : "Proceedings of the 17th annual meeting of the special interest group on discourse and dialogue, pages 404–412.",
+      "citeRegEx" : "Yu et al\\.,? 2016",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A human-computer dialogue system for educational debate: A computational dialectics approach",
+      "author" : [ "Tangming Yuan", "David Moore", "Alec Grierson." ],
+      "venue" : "International Journal of Artificial Intelligence in Education, 18(1):3–26.",
+      "citeRegEx" : "Yuan et al\\.,? 2008",
+      "shortCiteRegEx" : "Yuan et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "Taskoriented dialog systems that consider multiple appropriate responses under the same context",
+      "author" : [ "Yichi Zhang", "Zhijian Ou", "Zhou Yu." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 34, pages 9604–9611.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Rethinking action spaces for reinforcement learning in end-to-end dialog agents with latent variable models",
+      "author" : [ "Tiancheng Zhao", "Kaige Xie", "Maxine Eskenazi." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Zhao et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 9,
+      "context" : "1 Introduction Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 322
+    }, {
+      "referenceID" : 11,
+      "context" : "1 Introduction Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 322
+    }, {
+      "referenceID" : 36,
+      "context" : "1 Introduction Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 322
+    }, {
+      "referenceID" : 6,
+      "context" : "1 Introduction Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 322
+    }, {
+      "referenceID" : 37,
+      "context" : "1 Introduction Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 322
+    }, {
+      "referenceID" : 0,
+      "context" : "1 Introduction Dialogue systems have typically approached the problem of generating realistic dialogue from the perspective of supervised learning (Dušek and Jurcicek, 2016; Eric and Manning, 2017; Mei et al., 2017; Chen et al., 2019; Wu et al., 2019a; HosseiniAsl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 147,
+      "endOffset" : 322
+    }, {
+      "referenceID" : 14,
+      "context" : "A challenge with the classical RL approach to dialogue is the requirement for active interaction with humans (Gašić et al., 2011).",
+      "startOffset" : 109,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 10,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 26,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 7,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 15,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 43,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 19,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 16,
+      "context" : "While many dialogue generation techniques based on RL and learned control have been proposed (Eckert et al., 1997; Levin et al., 2000; Chung, 2004; Georgila et al., 2006; Schatzmann et al., 2007; Heeman, 2009; Georgila and Traum, 2011), most such systems take a pipelined approach, where an abstract representation of states and actions is designed by hand and then combined with RL to train a “dialogue management” system, rather than generating dialogue end-to-end.",
+      "startOffset" : 93,
+      "endOffset" : 235
+    }, {
+      "referenceID" : 27,
+      "context" : "Offline RL methods (Levine et al., 2020; Fujimoto et al., 2019; Wu et al., 2019b; Wang et al., 2020b) provide an alternative approach, but typically require value function estimation, which is not straightforward to perform with a language model.",
+      "startOffset" : 19,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 13,
+      "context" : "Offline RL methods (Levine et al., 2020; Fujimoto et al., 2019; Wu et al., 2019b; Wang et al., 2020b) provide an alternative approach, but typically require value function estimation, which is not straightforward to perform with a language model.",
+      "startOffset" : 19,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 56,
+      "context" : "Offline RL methods (Levine et al., 2020; Fujimoto et al., 2019; Wu et al., 2019b; Wang et al., 2020b) provide an alternative approach, but typically require value function estimation, which is not straightforward to perform with a language model.",
+      "startOffset" : 19,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 52,
+      "context" : "We empirically evaluate CALM on AirDialogue (Wei et al., 2018), the largest dataset for goal-oriented dialogue based-on a flight-booking task.",
+      "startOffset" : 44,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 5,
+      "context" : "vious state-of-the-art method (Chen et al., 2020) following the evaluation protocol proposed by Wei et al.",
+      "startOffset" : 30,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 46,
+      "context" : "In these settings, an agent aims to complete a particular task with its utterances (Smith and Hipp, 1994).",
+      "startOffset" : 83,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 35,
+      "context" : "Goal-directed agents have been explored in contexts such as personal assistants (McTear, 2002; Budzianowski et al., 2018; Williams et al., 2014), recommendation systems (Liu et al.",
+      "startOffset" : 80,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 4,
+      "context" : "Goal-directed agents have been explored in contexts such as personal assistants (McTear, 2002; Budzianowski et al., 2018; Williams et al., 2014), recommendation systems (Liu et al.",
+      "startOffset" : 80,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 53,
+      "context" : "Goal-directed agents have been explored in contexts such as personal assistants (McTear, 2002; Budzianowski et al., 2018; Williams et al., 2014), recommendation systems (Liu et al.",
+      "startOffset" : 80,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2014), recommendation systems (Liu et al., 2010; Kang et al., 2019), education (Yuan et al.",
+      "startOffset" : 32,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2014), recommendation systems (Liu et al., 2010; Kang et al., 2019), education (Yuan et al.",
+      "startOffset" : 32,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 59,
+      "context" : ", 2019), education (Yuan et al., 2008), and negotiation (He et al.",
+      "startOffset" : 19,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 44,
+      "context" : "While there are multiple approaches to constructing dialogue agents, in this work we frame the problem of generating dialogue as a sequential decision making problem within a (partially observed) Markov Decision Process (MDP) (Singh et al., 1999; Young et al., 2013).",
+      "startOffset" : 226,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 57,
+      "context" : "While there are multiple approaches to constructing dialogue agents, in this work we frame the problem of generating dialogue as a sequential decision making problem within a (partially observed) Markov Decision Process (MDP) (Singh et al., 1999; Young et al., 2013).",
+      "startOffset" : 226,
+      "endOffset" : 266
+    }, {
+      "referenceID" : 45,
+      "context" : "Prior works that utilize such an MDP formulation typically aim to train a dialogue management system (Singh et al., 2002), in which the agent reasons about higher-level abstractions of the state of the conversation, and language generation is performed using a downstream procedure.",
+      "startOffset" : 101,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 14,
+      "context" : "Dialogue management systems have been trained using techniques such as online reinforcement learning via policy gradients (Gašić et al., 2011; He et al., 2018), off-policy reinforcement learning (Pietquin et al.",
+      "startOffset" : 122,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 18,
+      "context" : "Dialogue management systems have been trained using techniques such as online reinforcement learning via policy gradients (Gašić et al., 2011; He et al., 2018), off-policy reinforcement learning (Pietquin et al.",
+      "startOffset" : 122,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2018), off-policy reinforcement learning (Pietquin et al., 2011; Yu et al., 2016) or actor-critic methods (Su et al.",
+      "startOffset" : 43,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 58,
+      "context" : ", 2018), off-policy reinforcement learning (Pietquin et al., 2011; Yu et al., 2016) or actor-critic methods (Su et al.",
+      "startOffset" : 43,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 49,
+      "context" : "Recent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al.",
+      "startOffset" : 74,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 2,
+      "context" : "Recent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al.",
+      "startOffset" : 74,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 48,
+      "context" : "Recent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al.",
+      "startOffset" : 74,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 61,
+      "context" : "Recent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al.",
+      "startOffset" : 74,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 51,
+      "context" : "Recent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al.",
+      "startOffset" : 74,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 60,
+      "context" : "Recent advancements in language models, such as recurrent neural networks (Sundermeyer et al., 2012; Asri et al., 2016; Su et al., 2016; Zhao et al., 2019; Wang et al., 2020a; Zhang et al., 2020) and attention-based architectures (Vaswani et al.",
+      "startOffset" : 74,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 50,
+      "context" : ", 2020) and attention-based architectures (Vaswani et al., 2017; Liu et al., 2019; Devlin et al., 2018; Brown et al., 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al.",
+      "startOffset" : 42,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2020) and attention-based architectures (Vaswani et al., 2017; Liu et al., 2019; Devlin et al., 2018; Brown et al., 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al.",
+      "startOffset" : 42,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2020) and attention-based architectures (Vaswani et al., 2017; Liu et al., 2019; Devlin et al., 2018; Brown et al., 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al.",
+      "startOffset" : 42,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2020) and attention-based architectures (Vaswani et al., 2017; Liu et al., 2019; Devlin et al., 2018; Brown et al., 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al.",
+      "startOffset" : 42,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2020), have spurred increasing interest in such endto-end dialogue systems (Hosseini-Asl et al., 2020; Peng et al., 2020; Adiwardana et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 29,
+      "context" : "stituted for a human, allow learning to be done entirely within simulation without human intervention (Li et al., 2016; He et al., 2018; Kang et al., 2019; Lewis et al., 2017; Liu et al., 2018).",
+      "startOffset" : 102,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 18,
+      "context" : "stituted for a human, allow learning to be done entirely within simulation without human intervention (Li et al., 2016; He et al., 2018; Kang et al., 2019; Lewis et al., 2017; Liu et al., 2018).",
+      "startOffset" : 102,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 25,
+      "context" : "stituted for a human, allow learning to be done entirely within simulation without human intervention (Li et al., 2016; He et al., 2018; Kang et al., 2019; Lewis et al., 2017; Liu et al., 2018).",
+      "startOffset" : 102,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 28,
+      "context" : "stituted for a human, allow learning to be done entirely within simulation without human intervention (Li et al., 2016; He et al., 2018; Kang et al., 2019; Lewis et al., 2017; Liu et al., 2018).",
+      "startOffset" : 102,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 30,
+      "context" : "stituted for a human, allow learning to be done entirely within simulation without human intervention (Li et al., 2016; He et al., 2018; Kang et al., 2019; Lewis et al., 2017; Liu et al., 2018).",
+      "startOffset" : 102,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 24,
+      "context" : "We formulate dialogue generation as a partially observable Markov decision process (POMDP) (Kaelbling et al., 1998), with a state that consists of known and unknown context information about the task.",
+      "startOffset" : 91,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 39,
+      "context" : "This method corresponds to behavioral cloning (BC) (Pomerleau, 1989).",
+      "startOffset" : 51,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 39,
+      "context" : "Under this interpretation, naïve supervised finetuning on the dialogue dataset can be viewed as behavioral cloning (BC) (Pomerleau, 1989).",
+      "startOffset" : 120,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 23,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 1,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 40,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 42,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 17,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 34,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 12,
+      "context" : "1), analogous to prior task relabeling approaches (Kaelbling, 1993; Andrychowicz et al., 2017; Pong et al., 2018; Savinov et al., 2018; Ghosh et al., 2019; Lynch et al., 2020; Eysenbach et al., 2020).",
+      "startOffset" : 50,
+      "endOffset" : 199
+    }, {
+      "referenceID" : 28,
+      "context" : "To provide another example, in a bargaining task (Lewis et al., 2017), the agent might fail to obtain the desired item and instead get an item of lesser value.",
+      "startOffset" : 49,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 23,
+      "context" : "Methods based on similar principles have previously been proposed in the deep RL community for simple parametric tasks, such as goal-reaching or linearly-parameterized reward functions (Kaelbling, 1993; Andrychowicz et al., 2017; Eysenbach et al., 2020).",
+      "startOffset" : 185,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 1,
+      "context" : "Methods based on similar principles have previously been proposed in the deep RL community for simple parametric tasks, such as goal-reaching or linearly-parameterized reward functions (Kaelbling, 1993; Andrychowicz et al., 2017; Eysenbach et al., 2020).",
+      "startOffset" : 185,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 12,
+      "context" : "Methods based on similar principles have previously been proposed in the deep RL community for simple parametric tasks, such as goal-reaching or linearly-parameterized reward functions (Kaelbling, 1993; Andrychowicz et al., 2017; Eysenbach et al., 2020).",
+      "startOffset" : 185,
+      "endOffset" : 253
+    }, {
+      "referenceID" : 12,
+      "context" : "Additionally, the structure of our specific task allows us to sample from the true posterior q(co|τ, ch), by using the rejection sampling procedure described above, rather than using approximations as in prior work (Eysenbach et al., 2020).",
+      "startOffset" : 215,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 52,
+      "context" : "In this section, we instantiate our proposed method, CALM, for the AirDialogue flight booking task (Wei et al., 2018).",
+      "startOffset" : 99,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 52,
+      "context" : "The AirDialogue dataset (Wei et al., 2018) is a recently published large-scale airline reservation dataset based on the aforementioned task.",
+      "startOffset" : 24,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 52,
+      "context" : "Instead of treating the tables as unstructured sequences (Wei et al., 2018; Jiang et al., 2021) or as SQL databases (Chen et al.",
+      "startOffset" : 57,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 22,
+      "context" : "Instead of treating the tables as unstructured sequences (Wei et al., 2018; Jiang et al., 2021) or as SQL databases (Chen et al.",
+      "startOffset" : 57,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2021) or as SQL databases (Chen et al., 2020), CALM models tables as an observable context consisting of a set",
+      "startOffset" : 28,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 52,
+      "context" : "In this section, we empirically evaluate the performance of CALM on AirDialogue (Wei et al., 2018).",
+      "startOffset" : 80,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 5,
+      "context" : "The first is AirConcierge, the previous SOTA on AirDialogue, which explicitly parses and executes SQL queries from the dialogue (Chen et al., 2020).",
+      "startOffset" : 128,
+      "endOffset" : 147
+    }, {
+      "referenceID" : 41,
+      "context" : "CALM uses the fine-tuned GPT2-small model (Radford et al., 2018) as the backbone of the policy and dynamics model.",
+      "startOffset" : 42,
+      "endOffset" : 64
+    } ],
+    "year" : 0,
+    "abstractText" : "Goal-oriented dialogue systems face a tradeoff between fluent language generation and task-specific control. While supervised learning with large language models is capable of producing realistic text, how to steer such responses towards completing a specific task without sacrificing language quality remains an open question. In this work, we formulate goal-oriented dialogue as a partially observed Markov decision process, interpreting the language model as a representation of both the dynamics and the policy. This view allows us to extend techniques from learning-based control, such as task relabeling, to derive a simple and effective method to finetune language models in a goal-aware way, leading to significantly improved task performance. We additionally introduce a number of training strategies that serve to better focus the model on the task at hand. We evaluate our method, Context-Aware Language Models (CALM), on a practical flightbooking task using AirDialogue. Empirically, CALM outperforms state-of-the-art method by 7% in terms of task success, matching humanlevel task performance on this dataset.",
+    "creator" : null
+  }
+}

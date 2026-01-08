@@ -1,0 +1,616 @@
+{
+  "name" : "ARR_2022_196_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "CLIP Models are Few-shot Learners: Empirical Studies on VQA and Visual Entailment",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Vision-language understanding (VLU) tasks, such as visual question answering (Antol et al., 2015) and visual entailment (Xie et al., 2019), test a system’s ability to comprehensively understand the semantics of both visual world and natural language. To capture the alignment between vision and language, various efforts have been made to build the vision-language pre-trained models (Tan and Bansal, 2019; Lu et al., 2019; Chen et al., 2020; Su et al., 2020; Zhang et al., 2021). Despite their superior performances, these methods have extensively utilized human-annotated training data that are expensive or require expert knowledge, such as object detection datasets (Lin et al., 2014; Kuznetsova et al., 2020) and aligned image-text pairs (Deng et al., 2009; Sharma et al., 2018). Collecting such datasets requires heavy work on data gathering and human annotation, and thus their scales are only in the realm of tens of millions, which are\nmuch smaller than the large corpora of Internet text for NLP pre-training (Devlin et al., 2019; Radford et al., 2019; Raffel et al., 2020; Brown et al., 2020).\nRecently, CLIP (Radford et al., 2021) has been proposed to learn visual concepts with natural language supervision, where its 400 million imagetext pairs are crawled from the Internet. CLIP consists of a visual encoder and a text encoder, and it learns visual representations by aligning images and texts through contrastive loss. In this way, CLIP achieves strong zero-shot performances on vision benchmarks such as ImageNet. Besides, Shen et al. (2021) prove that CLIP could be leveraged as a strong visual encoder to benefit downstream vision-language tasks. However, there are two major differences between CLIP and previous visual encoders: 1) it is trained on much larger yet noisy web data, and 2) it has a shallow interaction between vision and language. The first feature promises the generalization ability of CLIP, and the second one equips alignment ability across modalities. Could the strong zero-shot ability of CLIP be transferred to vision-language understanding tasks?\nTo answer the above question, in this work, we empirically study how to transfer CLIP’s zero-shot ability into VLU tasks and further turn CLIP into a few-shot learner. We carried out experiments on two VLU tasks: 1) visual question answering, where the model needs to give an answer according to the details of an image and a natural sentence question, and 2) visual entailment, where the model needs to determine the entailment relation between an image and a natural sentence. Figure 1 demonstrates the basic forms of the two studied tasks.\nFor the zero-shot visual question answering task, the key to a successful zero-shot capability transfer is to mitigate the gap between the pre-training task of CLIP and the task form of question answering. Inspired by the recent advancements of few-shot learning in NLP (Schick and Schütze, 2021b; Gao et al., 2021), we address this issue by introducing a two-step prompt generation strategy, including automatic conversions from question to statement to get masked templates, and a span-infilling with generative pre-trained T5 model (Raffel et al., 2020) to get candidate answers.\nWe explore a zero-shot cross-modality (language and vision) transfer capability through the visual entailment task. Specifically, we replace the image with its captions during training and only update a small classification layer. Then at inference, as usual, we still use image-text pairs for testing. This allows us to investigate how well the language and vision representations are aligned in CLIP models.\nWe further leverage few-shot learning to improve CLIP’s visual question answering performance based on the zero-shot transferring methods. We find that optimizing only bias and normalization (BiNor) parameters would make better use of limited examples and yield better results than the latest few-shot model Frozen (Menick et al., 2021). Experiments confirm that CLIP models can be good vision-language few-shot learners.\nOur contributions are summarized as follows:\n• To the best of our knowledge, this is the first work that studies how to transfer CLIP’s zeroshot capabilities into VLU tasks and confirms CLIP models can be good few-shot learners.\n• A zero-shot cross-modality transfer capability in CLIP is demonstrated.\n• A parameter-efficient fine-tuning strategy, BiNor, is proposed to boost CLIP’s few-shot visual question answering performance."
+    }, {
+      "heading" : "2 Preliminaries",
+      "text" : ""
+    }, {
+      "heading" : "2.1 CLIP",
+      "text" : "CLIP, short for Contrastive Language-Image Pretraining (Radford et al., 2021), learns visual representations from natural language supervision. Figure 2 shows its key components and the way it works. It consists of a visual encoder V, e.g. ResNet (He et al., 2016) and ViT (Dosovitskiy et al., 2020), and a text encoder T, e.g. transformer (Vaswani et al., 2017), where they encode images and texts independently. Followed up is a dot-product between the two encoders’ outputs, i.e. T(text) · V(image), which is used as an alignment score between the input image and text. It is pretrained to distinguish aligned image-text pairs from randomly combined ones by a contrastive loss. Instead of training on vision benchmarks, CLIP leverages abundant language supervisions from 400 million web-crawled image-text pairs and can conduct a variety of image classification tasks without specific optimizing. However, directly applying CLIP as a vision-language understanding model is still difficult (Kim et al., 2021; Shen et al., 2021)."
+    }, {
+      "heading" : "2.2 Visual-Language Understanding Tasks",
+      "text" : "Visual question answering. The task of VQA requires the model to answer questions about the details of input images. Following previous work, we experiment on the VQAv2 (Goyal et al., 2017) dataset and formulate the task as a classification problem over 3,129 pre-defined most frequent answers. The images in VQAv2 come from Microsoft COCO (Lin et al., 2014), and there are 65 types of questions in the dataset, such as how many and what color is. For answers, there are three types, including yes/no, number, and other.\nVisual entailment. Similar to the natural language inference (NLI), the task of visual entailment predicts the entailment relations, including entailment, neutral, and contradiction, between a premise and a hypothesis. Under the VL setting, the premise in visual entailment is based on the details of an image rather than textual descriptions in NLI. The SNLI-VE dataset (Xie et al., 2019) is adapted from SNLI (Bowman et al., 2015) and replaces SNLI’s premises with the images in the Flickr30k dataset (Young et al., 2014). Considering the above characteristics, here we leverage the SNLI-VE dataset to verify the zero-shot crossmodality (language and vision) transfer capabilities of the CLIP models. This zero-shot setting investigates how well the vision and language representations are aligned in CLIP models."
+    }, {
+      "heading" : "3 Zero-shot VQA",
+      "text" : ""
+    }, {
+      "heading" : "3.1 A Two-Step Prompt Generation Method",
+      "text" : "Previous works (Kim et al., 2021; Shen et al., 2021) have found that directly applying CLIP models for zero-shot VL tasks are infeasible. For example, nearly random-chance level zero-shot performances are observed on the VQAv2 dataset by directly applying a “question: [question text] answer: [answer text]” prompt template (Shen et al., 2021). After rethinking the essence of prompt engineering in CLIP, we can find that the key to a successful zero-shot capability transfer for the VQA task is to mitigate the gap between natural language description and the form of question answering.\nMotivated by the above observations, we propose a two-step automatic prompt generation method to enable the zero-shot VQA capabilities in CLIP models, with the assistant of a pre-trained generative T5 model (Raffel et al., 2020). The key ideas of the two-step prompt generation method is illustrated in Figure 3: the first step is to convert the question into a masked template T , and the second step is to filter out impossible answers by language model and get a candidate answer set VF . The infilled template connects both the question and answers in a natural description way and thus could be an ideal form of prompt for the VQA task.\nStep I: Automatic Template Generation This step is designed to convert the question into a template, which is a statement with a mask token. To tackle the conversion challenge, we explore two ways, including an in-context demonstration method and a dependency parsing based method.\nDemonstration to T5. The idea of this conversion method is relatively simple: by demonstrating question-to-template (with [mask] token) examples to the language model, the model could implicitly capture the conversion pattern. We define a few examples for each question type and convert the questions according to their types. Figure 3 shows a conversion example. More cases could be found at appendix D. Specifically, we use T5 (Raffel et al., 2020), a large pre-trained text-to-text Transformer, for the question to template conversion. T5 is pretrained to infill the missing spans (replaced by T5 special tokens, e.g. <extra_id_0>) of a sentence.\nWe present a concatenation of examples, question, and the <extra_id_0> token to T5 for conditional generation to restore it, and the generated span is our masked template, named as Tdemo.\nDependency parsing. Although the T5 conversion method works well in most situations, it still faces some out-of-coverage problems. To compensate for this shortcoming, we turn to a traditional dependency parsing based way. This method converts a question to a statement by its part-of-speech tagging and parsing results, where the wh-word, root word, auxiliary, or copula, as well as prepositions and particles that are dependents of the whword or the root, are identified, and transformations are performed according to grammar rules. We use the Stanza (Qi et al., 2020) to POS tag and parse the question and leave the answer as a mask token. Then the rules1 in Demszky et al. (2018) are leveraged to perform the conversion. We name the template obtained in this way as Tparsing.\nStep II: Answer Filtering As common sense, “the specie of a flower” can never be a vase. Therefore, leveraging pre-trained language models, which have well learned such concepts during pre-training, to filter out less likely answers would have a positive influence on the final question answering performance. Given a masked template T , a language model L, and the answer vocabulary V , we get the filtered answers VF as:\nTop-k v∈V {logPL ([mask] = v|T )} , (1)\nwhere the [mask] is the answer span in template T , and PL is the output distribution of the language model. Here we also apply the T5 to infill answers because it makes no assumption about the length and position of the span. Once we get the template T and the filtered answers VF , we replace the [mask] token in template T with every selected answer in VF to get the prompts P ."
+    }, {
+      "heading" : "3.2 TAP-C Method for VQA",
+      "text" : "The proposed method follows a Template-AnswerPrompt then CLIP discrimination pipeline, and thus we name it as TAP-C. To make better use of template Tparsing and Tdemo, we use an ensemble of both templates by simply setting a threshold for the T5’s generation confidence. We prefer to use Tdemo but\n1https://github.com/kelvinguu/qanli\nuse Tparsing if the generation confidence is low. Finally, given an image i and the generated prompts P , the TAP-C method can get a zero-shot VQA prediction by:\nmax v∈VF , pv∈P\n{V (i) · T (pv)} , (2)\nwhere V and T are the visual and text encoders in CLIP models. The pv is a prompt generated by the TAP-C method, where the masked template is infilled with answer v from the filtered answer vocabulary VF ."
+    }, {
+      "heading" : "4 Zero-shot Cross-modality Transfer",
+      "text" : "Recent pre-trained multilingual language models (Wu and Dredze, 2019; Liu et al., 2020; Xue et al., 2021) have been shown to be successful in transferring representations across different languages. For example, they can be only fine-tuned on a source language and evaluated on various target languages without specific training, yet still achieving good performance. On the other hand, the CLIP models achieve strong zero-shot performances on both image-to-text and text-to-image retrieval tasks (Radford et al., 2021) only through a dot product between vision and language representations, which gives us an intuition that the two modalities are well aligned in the CLIP models. Is there a cross-modality capability between language and vision in the CLIP models, just like the multilingual ones across languages?\nTo answer the above question, we utilize the visual entailment task (§ 2.2) to explore the zero-shot cross-modality performance. Figure 4 briefs the key idea. Specifically, we train an MLP classifier over the fused representations of premise and hy-\npothesis, and the fusion function is:\nfuse (v1, v2) = [v1, v2, v1 + v2, v1 − v2, v1 · v2] ,\nwhere v1 and v2 are two input vectors. During training, text-only premise and hypothesis are used as the input of CLIP text encoder:\nMLP {fuse (T(pret), T(hypt))} , (3)\nwhere T is the CLIP text encoder and is not updated during training. And pret and hypt are the text premise and hypothesis. Then at inference, the premise is in image and is fed into the CLIP visual encoder. The trained MLP is leveraged for prediction:\nmax {MLP {fuse (V(prei), T(hypt))}} , (4)\nwhere the prei is the image premise and V is the CLIP visual encoder."
+    }, {
+      "heading" : "5 Few-shot Learning for VQA",
+      "text" : "In this section, We aim to investigate whether the CLIP models could benefit from few-shot learning, where we work on the visual question answering task to study it."
+    }, {
+      "heading" : "5.1 Setup of Few-shot VQA",
+      "text" : "Here we briefly define the terminology used in our few-shot visual question answering settings:\n• Number of ways. Originally, it is defined as the distinct classes in a task. However, rather than defining a 3,129-way task according to the answer vocabulary, we define the number of ways as question type times answer type (§ 2.2), i.e., 65×3=195 ways, to ensure the model’s generalization ability where it can answer a type of questions.\n• Number of shots. The number of distinct examples in each way. Here a shot is an image along with the question and the answer.\n• Support set and query set. Before training, we will sample a 195-way K-shot subset from the VQAv2 training set, and thus there are 195×K distinct examples available during few-shot learning. In each training epoch, we select C ways out of 195 ways for parameter optimizing and divide k shots in each way into support set and query set with a fixed proportion. The support set is used for model training, and the query set is used for performance evaluation (similar to a typical dev set)."
+    }, {
+      "heading" : "5.2 Parameter-efficient Fine-tuning",
+      "text" : "Under the few-shot setting, our goal is to make the CLIP models learn from N-way K-shot examples and improve the zero-shot VQA performance. Specifically, we identify only a very small set of parameters in CLIP models (about 0.3 million out of over 100 million, details in appendix B.3), including the bias term and normalization term, to be optimized. For either the BatchNorm in ResNet or the LayerNorm in Transformer, the normalization could be uniformly denoted as:\ny = x− E(x)√ Var(x) + · γ + β, (5)\nwhere x and y are the mini-batched input and output, and the γ and β are learned parameters. And for all the linear layers and projection layers in CLIP models, they could be denoted as:\no = w · h+ bias, (6)\nwhere h and o are the input and output vectors. We define the learnable parameter set as:\nPlearn = {bias, γ, β}. (7)\nWe optimize the Bias and Normalization (BiNor) parameters on the few-shot examples with a standard cross-entropy loss over the dot products from each image-prompt pair (Eq.2).\nBesides, when there are a few examples available, we could also leverage an in-context demonstration manner to improve the performance of the answer filtering process in TAP-C (§ 3.1) by:\nTop-k v∈V {logPL ([mask] = v | [D, T ])} , (8)\nwhere the D denotes the demonstrations. D is similar to template T but has been infilled with the answers, and it is sampled from the same type of question in the available few-shot examples. The resulting filtered vocabulary is noted as Vdemo. We report the few-shot training procedure in appendix C."
+    }, {
+      "heading" : "6 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "6.1 Experimental Settings",
+      "text" : "Datasets. For visual question answering and visual entailment, we carry out experiments on the VQAv2 (Goyal et al., 2017) and the SNLI-VE (Xie et al., 2019) datasets, respectively. We report the statistics of the two datasets in appendix A. For\nthe VQA task’s evaluation, we follow the Frozen model (Menick et al., 2021) to calculate the vqa scores on the VQAv2 validation set. For visual entailment, we calculate the accuracy on both validation and test sets through the sklearn toolkit.\nCLIP models. According to the types of visual encoders, e.g. ResNet or ViT, CLIP models have different variants, resulting in a significant difference in the number of learnable bias and normalization parameters. We report the number of learnable parameters of CLIP variants in appendix B.3. We select two best performing (and publicly available) variants from two kinds of visual encoders, including the CLIP Res50x16 and the CLIP ViT-B/16, to empirically study their zero-shot and few-shot vision-language understanding performances by applying our transferring methods (§§ 3–5)."
+    }, {
+      "heading" : "6.2 Results of Zero-shot VQA",
+      "text" : "As previous VL models heavily rely on object detection sub-modules, it is not feasible to directly apply them under the zero-shot setting. Here we setup zero-shot VL baselines from two latest works:\n• Frozen. Frozen (Menick et al., 2021) prompts a seven-billion-parameter 32-layer language model with image representations. It is trained on aligned image-caption data and is also the first model that shows promising zero-shot and few-shot VQA performances.\n• Question irrelevant prompt. Shen et al. (2021) explored directly prompting the CLIP models for the VQA task. They used a “question: [question text] answer: [answer text]” template, together with the prompt engineering of image classification, to prepare prompts. The resulting prompts are irrelevant to questions, and thus we note this method as QIP.\nWe report the zero-shot VQA results in Table 1. The experimental results verify our hypothesis (§ 3.1) that the prompts of CLIP should be used to describe the labels rather than the tasks. As we can see, the question irrelevant prompting methods simply present the task description and answers to the CLIP models and only get barely better than random guess results. In contrast, by converting questions into templates and filtering answers with pre-trained language models, our TAP-C method enables CLIP models a strong zero-shot capability on the VQA task, even compared with the sevenbillion-parameter Frozen zero-shot model."
+    }, {
+      "heading" : "6.3 Zero-shot Cross-modality Transfer",
+      "text" : "We report the zero-shot cross-modality transfer results in Table 2. We first investigate the language to vision transfer capability. As introduced in § 4, we train a classifier on the text-only SNLI-VE dataset where the image is replaced by its caption. At inference, the trained classifier is evaluated by taking the image and text as inputs. As shown in the first group of results, after solely trained on text-text (caption as the premise) entailment data, different CLIP variants could successfully gain a similar discriminative ability under the image-text setting. To ensure that the above results are indeed transferring from language to vision, we made a double check by masking out the images at inference time, and the results are reported at Image Masked. As we can, the results are similar to a random guess of three entailment relations, indicating the images are of importance in the cross-modality evaluation.\nNow that we have observed the language to vision transferring capability in CLIP models, we further investigate whether there is also a vision to language transfer capability. We conduct a similar experiment but train the classifier on the original SNLI-VE dataset, i.e., image premise and text hypothesis. At inference, we evaluate the classifier with the text-only valid and test data. The results are reported in Table 2, which confirms the vision to language capability. Since text data are usually much cheaper than visual data, the first kind of transferring tends to be more promising in practice."
+    }, {
+      "heading" : "6.4 Results of Few-shot VQA",
+      "text" : "We report the few-shot VQA results in Table 3. We take the Frozen model and the image blacked out Frozenblind as baselines. Under different k, our methods could always learn from limited training examples and improve over the zero-shot results, which confirms that CLIP models could be VL fewshot learners. With the increase of the number of shots, significant performance gains are observed in other category, which concurs with our intuition: as we sample examples from each question type, most answers in other category are not revealed to the model. As a result, the model could always learn to improve. Similarly, presenting examples to the T5 could also improve the answer filtering process, leading to significant performance gains over the other category. In contrast, the score of number category improves significantly when the model just begins to see some training examples while slowing down as k continues to increase."
+    }, {
+      "heading" : "6.5 Analyses and Discussion",
+      "text" : "The effects of template generation methods. Our TAP-C method uses an ensemble of depen-\ndency parsing template Tparsing and T5 demonstration template Tdemo. Here we investigate whether it is necessary to use such an ensemble. We report the ablation results of two templates in Table 4. The results show that the two templates have different effects over different questions, and the ensemble could make the best use of their advantages.\nThe effects of two steps in TAP-C. The TAP-C method generates prompts through template generation (t.gen.) and answer filtering (a.filt.). Here we quantify how much each step contributes to the final zero/few-shot VQA performances. We report the ablation results in Table 5. When we remove the answer filtering step (w/o a.filt.), both the zeroshot and few-shot performances generally fall by about 20%, but the models still retain some fewshot learning capabilities. We further remove the template generation step and only use question irrelevant templates: all results are nearly cut in half, indicating the importance of considering questions in both zero-shot and few-shot scenarios.\nComparisons of fine-tuning methods. We only update the bias and normalization parameters during few-shot learning (§ 5.2). To investigate whether our BiNor fine-tuning strategy works well, we compare BiNor with two fine-tuning methods: 1) Full-FT (Full fine-tuning), which updates all parameters in the model. 2) BitFit (Ben Zaken et al., 2021), which only updates the bias-terms in all model layers. We report the comparison results in Table 6. Both BiNor and BitFit significantly outperform the full fine-tuning way: millions of parameters are very easy to overfit to a few training examples. When k is small, the performance differences between BiNor and BitFit are very small. When k becomes larger, BiNor begins to outperform BitFit with a noticeable margin. Our BiNor fine-tuning strategy is similar to the BitFit but differs in that it also updates the normalization parameters, which would grant the ResNet CLIP models better flexibility to adapt to new examples due to their larger number of batch normalization parameters. For the specific number of different parameters in each CLIP variant, please refer to the appendix B.3.\nLimitations of TAP-C. The proposed TAP-C method explores CLIP models’ potential to conduct zero/few-shot VQA tasks. However, we also found several limitations that hinder further improving the few-shot performance, which could be rooted in the CLIP models. First, CLIP models struggle with counting the number of fine-grained objects in an image, especially counting from a small area of the image. This shortcoming can hardly be improved by any kind of language knowledge. Besides, the CLIP models perform poorly in distinguishing subtle semantic differences. For example, when asked “what is the man in the background doing?”, all the experimented CLIP models give predictions of the man “in the foreground”. Under such cases, even if the TAP-C method perfectly converts the question into a prompt, the final results would still be wrong. Nevertheless, We\nbelieve this issue could be well addressed by enhancing CLIP models with a stronger text encoder, and we will make explorations in future work."
+    }, {
+      "heading" : "7 Related Work",
+      "text" : "Vision-language few-shot learning. Leveraging aligned image and caption data, visionlanguage models pre-trained by an image-text discriminative loss have recently enabled strong zeroshot generalization on image classification and cross-modality retrieval tasks (Jia et al., 2021; Radford et al., 2021). Different from the discriminative manner, Menick et al. (2021) prompt a large language model with vision prefix in a generative way, which is the first vision-language few-shot model.\nLanguage model prompting. This work is also inspired by the line of research in language model prompting (Liu et al., 2021). Initialized by the GPT series (Radford et al., 2018, 2019; Brown et al., 2020), prompting has become a popular manner to mining knowledge from pre-trained language models (Petroni et al., 2019) in a zero-shot or few-shot way (Shin et al., 2020; Gao et al., 2021; Qin and Eisner, 2021). Besides mining knowledge from the language model, PET work (Schick and Schütze, 2021a,b) presents a semi-supervised prompting method for improving few-shot language understanding performance."
+    }, {
+      "heading" : "8 Conclusions",
+      "text" : "In this work, we empirically studied how to transfer CLIP models into vision-language understanding tasks. We first explored the CLIP models’ zero-shot VQA capability by leveraging language prompts and further proposed a parameter-efficient finetuning method to boost the few-shot performance. We also demonstrate a zero-shot cross-modality transfer capability of CLIP models on the visual entailment task. Experiments and analyses on VQAv2 and SNLI-VE confirm that the CLIP models can be good VL few-shot learners."
+    }, {
+      "heading" : "A Datasets Statistics",
+      "text" : ""
+    }, {
+      "heading" : "B Details of Implementation",
+      "text" : "B.1 Zero-shot Model Briefs In our experiments, we leverage two kinds of pretrained models: the CLIP variants and the T5. We brief these models as follows.\nFor the CLIP models, the text encoder is always a transformer, but its hidden size varies according to the size of visual encoders. And there are two architectures of visual encoders, including the vision transformer (ViT) and ResNet.\n• CLIP ViT-B/16: both the text and visual encoders are 12-layer transformers, with a hidden size of 512.\n• CLIP RN101: the text encoder is a 12- layer transformer, and the visual encoder is ResNet101, both with a hidden size of 512.\n• CLIP RN50x16: the text encoder is a 12- layer transformer, and the visual encoder is ResNet50x16, both with a hidden size of 768.\nAll CLIP models we used are from the official CLIP repository2. For the language model T5, we use a publicly available T5large checkpoint from the Huggingface repository3. The T5large has 24 hidden layers, 16 self-attention heads, 1024 hidden size, and a total of 770M parameters. It is trained on Colossal Clean Crawled Corpus (C4).\nB.2 Hyperparameters We report the hyperparameter settings of few-shot CLIP training in Table 8. We apply the same set of hyperparameters to fine-tune both ResNet CLIP and ViT CLIP.\n2https://github.com/openai/CLIP 3https://huggingface.co/models\nThe hyperparameters used for the MLP classifier in the visual entailment task are reported in Table 9. We performed grid searches on the combination of the learning rate, batch size, and dropout. The CLIP variants reached the best performances under different parameter combinations.\nTable 10 shows the hyperparameter configurations for T5’s conditional generation, which is leveraged to generate the masked template and filter answers.\nB.3 The Number of Learnable Parameters\nTable 11 shows the number of different type of learnable parameter in CLIP models. The counting of Bias and Normalization share the β in Eq.7. The numbers of BiNor parameters are about 0.2M to 0.3M, accounting for less than 0.3% of all parameters."
+    }, {
+      "heading" : "C Few-shot Training Procedure",
+      "text" : "Algorithm 1 CLIP models few-shot training. Input: V: visual encoder, ResNet or ViT; T: text encoder,\nTransformer; I: few-shot images; P : few-shot prompts; A: few-shot answers; τ : learned temperature parameter; N : max iterations; Adam: optimizer; Output: Few-shot CLIP model. 1: initial epoch = 0, freeze parameters in V and T except\nbias and normalization; 2: repeat 3: Sample C-way K-shot E from (I ,P ,A); 4: Split E into support set and query set; 5: for all minibatch (i,p,a) in support set do 6: If = V(i), Tf = T(p); 7: Ie = norm(If ), Te = norm(Tf ); 8: logits = τ * dot(Ie, Te); 9: labels = map(a, p);\n10: loss = cross_entropy(logits, labels); 11: Adam.step(); 12: end for; 13: epoch = epoch+ 1; 14: Evaluate on query set; 15: until (epoch ≥ N )."
+    }, {
+      "heading" : "D Examples of Template Generation",
+      "text" : "In this section, we showcase several template generation examples to illustrate how the proposed method works. Since we have introduced how to convert a question into a masked template by demonstrating examples to the T5 (§ 3.1), here we directly present several examples in Table 12. These examples are sampled from five different question types and also cover the three answer types. As shown in Table 12, a single demo in the demonstration consists of a question and an answer with the [mask] token. Notice that the [mask] token is only a placeholder rather than a real mask in the pre-trained language models. Different from\nthe <extra_id_0> in T5 that represents a corrupted span, the [mask] is used to inform the T5 where the answer words should be placed. After seeing several examples in the demonstration, the powerful T5large model could capture the conversion pattern in each type of question and perfectly complete most conversions without ignoring the subtle grammars. Once the masked template is generated, we could infill the [mask] place with answer words and then carry out further processing. The processing for the yes/no type is a little different: as it is a binary task, we directly generate a positive prompt and a negative prompt, rather than masked templates, for the yes and no, respectively."
+    } ],
+    "references" : [ {
+      "title" : "Vqa: Visual question answering",
+      "author" : [ "Stanislaw Antol", "Aishwarya Agrawal", "Jiasen Lu", "Margaret Mitchell", "Dhruv Batra", "C Lawrence Zitnick", "Devi Parikh." ],
+      "venue" : "Proceedings of the IEEE international conference on computer vision, pages 2425–2433.",
+      "citeRegEx" : "Antol et al\\.,? 2015",
+      "shortCiteRegEx" : "Antol et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Bitfit: Simple parameter-efficient fine-tuning for transformer-based masked languagemodels",
+      "author" : [ "Elad Ben Zaken", "Shauli Ravfogel", "Yoav Goldberg." ],
+      "venue" : "arXiv e-prints, pages arXiv–2106.",
+      "citeRegEx" : "Zaken et al\\.,? 2021",
+      "shortCiteRegEx" : "Zaken et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A large annotated corpus for learning natural language inference",
+      "author" : [ "Samuel Bowman", "Gabor Angeli", "Christopher Potts", "Christopher D Manning." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing, pages",
+      "citeRegEx" : "Bowman et al\\.,? 2015",
+      "shortCiteRegEx" : "Bowman et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Language models are few-shot learners. arXiv preprint arXiv:2005.14165",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Uniter: Universal image-text representation learning",
+      "author" : [ "Yen-Chun Chen", "Linjie Li", "Licheng Yu", "Ahmed El Kholy", "Faisal Ahmed", "Zhe Gan", "Yu Cheng", "Jingjing Liu." ],
+      "venue" : "European conference on computer vision, pages 104–120. Springer.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Transforming question answering datasets into natural language inference datasets",
+      "author" : [ "Dorottya Demszky", "Kelvin Guu", "Percy Liang." ],
+      "venue" : "arXiv preprint arXiv:1809.02922.",
+      "citeRegEx" : "Demszky et al\\.,? 2018",
+      "shortCiteRegEx" : "Demszky et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Imagenet: A large-scale hierarchical image database",
+      "author" : [ "Jia Deng", "Wei Dong", "Richard Socher", "Li-Jia Li", "Kai Li", "Li Fei-Fei." ],
+      "venue" : "2009 IEEE conference on computer vision and pattern recognition, pages 248–255. Ieee.",
+      "citeRegEx" : "Deng et al\\.,? 2009",
+      "shortCiteRegEx" : "Deng et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An image is worth 16x16 words: Transformers",
+      "author" : [ "Alexey Dosovitskiy", "Lucas Beyer", "Alexander Kolesnikov", "Dirk Weissenborn", "Xiaohua Zhai", "Thomas Unterthiner", "Mostafa Dehghani", "Matthias Minderer", "Georg Heigold", "Sylvain Gelly" ],
+      "venue" : null,
+      "citeRegEx" : "Dosovitskiy et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Dosovitskiy et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Making pre-trained language models better few-shot learners",
+      "author" : [ "Tianyu Gao", "Adam Fisch", "Danqi Chen." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Nat-",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Making the v in vqa matter: Elevating the role of image understanding in visual question answering",
+      "author" : [ "Yash Goyal", "Tejas Khot", "Douglas Summers-Stay", "Dhruv Batra", "Devi Parikh." ],
+      "venue" : "Proceedings of the IEEE Conference on Computer Vision",
+      "citeRegEx" : "Goyal et al\\.,? 2017",
+      "shortCiteRegEx" : "Goyal et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Deep residual learning for image recognition",
+      "author" : [ "Kaiming He", "Xiangyu Zhang", "Shaoqing Ren", "Jian Sun." ],
+      "venue" : "Proceedings of the IEEE conference on computer vision and pattern recognition, pages 770– 778.",
+      "citeRegEx" : "He et al\\.,? 2016",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Scaling up visual and vision-language representation learning with noisy text supervision",
+      "author" : [ "Chao Jia", "Yinfei Yang", "Ye Xia", "Yi-Ting Chen", "Zarana Parekh", "Hieu Pham", "Quoc V Le", "Yunhsuan Sung", "Zhen Li", "Tom Duerig." ],
+      "venue" : "arXiv preprint",
+      "citeRegEx" : "Jia et al\\.,? 2021",
+      "shortCiteRegEx" : "Jia et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Vilt: Vision-and-language transformer without convolution or region supervision",
+      "author" : [ "Wonjae Kim", "Bokyung Son", "Ildoo Kim." ],
+      "venue" : "arXiv preprint arXiv:2102.03334.",
+      "citeRegEx" : "Kim et al\\.,? 2021",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "The open images dataset v4",
+      "author" : [ "Alina Kuznetsova", "Hassan Rom", "Neil Alldrin", "Jasper Uijlings", "Ivan Krasin", "Jordi Pont-Tuset", "Shahab Kamali", "Stefan Popov", "Matteo Malloci", "Alexander Kolesnikov" ],
+      "venue" : null,
+      "citeRegEx" : "Kuznetsova et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Kuznetsova et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Microsoft coco: Common objects in context",
+      "author" : [ "Tsung-Yi Lin", "Michael Maire", "Serge Belongie", "James Hays", "Pietro Perona", "Deva Ramanan", "Piotr Dollár", "C Lawrence Zitnick." ],
+      "venue" : "European conference on computer vision, pages 740–755. Springer.",
+      "citeRegEx" : "Lin et al\\.,? 2014",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Pretrain, prompt, and predict: A systematic survey of prompting methods in natural language processing",
+      "author" : [ "Pengfei Liu", "Weizhe Yuan", "Jinlan Fu", "Zhengbao Jiang", "Hiroaki Hayashi", "Graham Neubig." ],
+      "venue" : "arXiv preprint arXiv:2107.13586.",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Transactions of the Association for Computational Linguis-",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Vilbert: Pretraining task-agnostic visiolinguistic representations for vision-and-language tasks",
+      "author" : [ "Jiasen Lu", "Dhruv Batra", "Devi Parikh", "Stefan Lee." ],
+      "venue" : "Advances in Neural Information Processing Systems, 32:13–23.",
+      "citeRegEx" : "Lu et al\\.,? 2019",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multimodal few-shot learning with frozen language models",
+      "author" : [ "Jacob Menick", "Maria Tsimpoukelli", "Serkan Cabi", "SM Eslami", "Oriol Vinyals", "Felix Hill." ],
+      "venue" : "arXiv preprint arXiv:2106.13884.",
+      "citeRegEx" : "Menick et al\\.,? 2021",
+      "shortCiteRegEx" : "Menick et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models as knowledge bases",
+      "author" : [ "Fabio Petroni", "Tim Rocktäschel", "Sebastian Riedel", "Patrick Lewis", "Anton Bakhtin", "Yuxiang Wu", "Alexander Miller" ],
+      "venue" : "In Proceedings of EMNLP-IJCNLP",
+      "citeRegEx" : "Petroni et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Petroni et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Stanza: A Python natural language processing toolkit for many human languages",
+      "author" : [ "Peng Qi", "Yuhao Zhang", "Yuhui Zhang", "Jason Bolton", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Qi et al\\.,? 2020",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning how to ask: Querying lms with mixtures of soft prompts",
+      "author" : [ "Guanghui Qin", "Jason Eisner." ],
+      "venue" : "Proceedings of NAACL 2021, pages 5203–5212.",
+      "citeRegEx" : "Qin and Eisner.,? 2021",
+      "shortCiteRegEx" : "Qin and Eisner.",
+      "year" : 2021
+    }, {
+      "title" : "Learning transferable visual models from natural language supervision",
+      "author" : [ "Alec Radford", "Jong Wook Kim", "Chris Hallacy", "Aditya Ramesh", "Gabriel Goh", "Sandhini Agarwal", "Girish Sastry", "Amanda Askell", "Pamela Mishkin", "Jack Clark" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving language understanding by generative pre-training",
+      "author" : [ "Alec Radford", "Karthik Narasimhan", "Tim Salimans", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever" ],
+      "venue" : "OpenAI blog,",
+      "citeRegEx" : "Radford et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "Journal of Machine Learning Research,",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploiting cloze-questions for few-shot text classification and natural language inference",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main Vol-",
+      "citeRegEx" : "Schick and Schütze.,? 2021a",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "It’s not just size that matters: Small language models are also few-shot learners",
+      "author" : [ "Timo Schick", "Hinrich Schütze." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Lan-",
+      "citeRegEx" : "Schick and Schütze.,? 2021b",
+      "shortCiteRegEx" : "Schick and Schütze.",
+      "year" : 2021
+    }, {
+      "title" : "Conceptual captions: A cleaned, hypernymed, image alt-text dataset for automatic image captioning",
+      "author" : [ "Piyush Sharma", "Nan Ding", "Sebastian Goodman", "Radu Soricut." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Compu-",
+      "citeRegEx" : "Sharma et al\\.,? 2018",
+      "shortCiteRegEx" : "Sharma et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "How much can clip benefit vision-and-language tasks? arXiv preprint arXiv:2107.06383",
+      "author" : [ "Sheng Shen", "Liunian Harold Li", "Hao Tan", "Mohit Bansal", "Anna Rohrbach", "Kai-Wei Chang", "Zhewei Yao", "Kurt Keutzer" ],
+      "venue" : null,
+      "citeRegEx" : "Shen et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Eliciting knowledge from language models using automatically generated prompts",
+      "author" : [ "Taylor Shin", "Yasaman Razeghi", "Robert L Logan IV", "Eric Wallace", "Sameer Singh." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Lan-",
+      "citeRegEx" : "Shin et al\\.,? 2020",
+      "shortCiteRegEx" : "Shin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Vl-bert: Pretraining of generic visual-linguistic representations",
+      "author" : [ "Weijie Su", "Xizhou Zhu", "Yue Cao", "Bin Li", "Lewei Lu", "Furu Wei", "Jifeng Dai." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Su et al\\.,? 2020",
+      "shortCiteRegEx" : "Su et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Lxmert: Learning cross-modality encoder representations from transformers",
+      "author" : [ "Hao Tan", "Mohit Bansal." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP 2019, pages 5100–5111.",
+      "citeRegEx" : "Tan and Bansal.,? 2019",
+      "shortCiteRegEx" : "Tan and Bansal.",
+      "year" : 2019
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Beto, bentz, becas: The surprising cross-lingual effectiveness of bert",
+      "author" : [ "Shijie Wu", "Mark Dredze." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP 2019, pages 833– 844.",
+      "citeRegEx" : "Wu and Dredze.,? 2019",
+      "shortCiteRegEx" : "Wu and Dredze.",
+      "year" : 2019
+    }, {
+      "title" : "Visual entailment: A novel task for fine-grained image understanding",
+      "author" : [ "Ning Xie", "Farley Lai", "Derek Doran", "Asim Kadav." ],
+      "venue" : "arXiv preprint arXiv:1901.06706.",
+      "citeRegEx" : "Xie et al\\.,? 2019",
+      "shortCiteRegEx" : "Xie et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "mt5: A massively multilingual pre-trained text-to-text transformer",
+      "author" : [ "Linting Xue", "Noah Constant", "Adam Roberts", "Mihir Kale", "Rami Al-Rfou", "Aditya Siddhant", "Aditya Barua", "Colin Raffel." ],
+      "venue" : "Proceedings of NAACL 2021, pages 483–498.",
+      "citeRegEx" : "Xue et al\\.,? 2021",
+      "shortCiteRegEx" : "Xue et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "From image descriptions to visual denotations: New similarity metrics for semantic inference over event descriptions",
+      "author" : [ "Peter Young", "Alice Lai", "Micah Hodosh", "Julia Hockenmaier." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 2:67–78.",
+      "citeRegEx" : "Young et al\\.,? 2014",
+      "shortCiteRegEx" : "Young et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Deep modular co-attention networks for visual question answering",
+      "author" : [ "Zhou Yu", "Jun Yu", "Yuhao Cui", "Dacheng Tao", "Qi Tian." ],
+      "venue" : "Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 6281–6290.",
+      "citeRegEx" : "Yu et al\\.,? 2019",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Vinvl: Revisiting visual representations in vision-language models",
+      "author" : [ "Pengchuan Zhang", "Xiujun Li", "Xiaowei Hu", "Jianwei Yang", "Lei Zhang", "Lijuan Wang", "Yejin Choi", "Jianfeng Gao." ],
+      "venue" : "Proceedings of the IEEE/CVF Conference on Computer Vision and",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 0,
+      "context" : "Vision-language understanding (VLU) tasks, such as visual question answering (Antol et al., 2015) and visual entailment (Xie et al.",
+      "startOffset" : 77,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2015) and visual entailment (Xie et al., 2019), test a system’s ability to comprehensively understand the semantics of both visual world and natural language.",
+      "startOffset" : 30,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 33,
+      "context" : "To capture the alignment between vision and language, various efforts have been made to build the vision-language pre-trained models (Tan and Bansal, 2019; Lu et al., 2019; Chen et al., 2020; Su et al., 2020; Zhang et al., 2021).",
+      "startOffset" : 133,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 18,
+      "context" : "To capture the alignment between vision and language, various efforts have been made to build the vision-language pre-trained models (Tan and Bansal, 2019; Lu et al., 2019; Chen et al., 2020; Su et al., 2020; Zhang et al., 2021).",
+      "startOffset" : 133,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 4,
+      "context" : "To capture the alignment between vision and language, various efforts have been made to build the vision-language pre-trained models (Tan and Bansal, 2019; Lu et al., 2019; Chen et al., 2020; Su et al., 2020; Zhang et al., 2021).",
+      "startOffset" : 133,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 32,
+      "context" : "To capture the alignment between vision and language, various efforts have been made to build the vision-language pre-trained models (Tan and Bansal, 2019; Lu et al., 2019; Chen et al., 2020; Su et al., 2020; Zhang et al., 2021).",
+      "startOffset" : 133,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 40,
+      "context" : "To capture the alignment between vision and language, various efforts have been made to build the vision-language pre-trained models (Tan and Bansal, 2019; Lu et al., 2019; Chen et al., 2020; Su et al., 2020; Zhang et al., 2021).",
+      "startOffset" : 133,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 15,
+      "context" : "Despite their superior performances, these methods have extensively utilized human-annotated training data that are expensive or require expert knowledge, such as object detection datasets (Lin et al., 2014; Kuznetsova et al., 2020) and aligned image-text pairs (Deng et al.",
+      "startOffset" : 189,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 14,
+      "context" : "Despite their superior performances, these methods have extensively utilized human-annotated training data that are expensive or require expert knowledge, such as object detection datasets (Lin et al., 2014; Kuznetsova et al., 2020) and aligned image-text pairs (Deng et al.",
+      "startOffset" : 189,
+      "endOffset" : 232
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2020) and aligned image-text pairs (Deng et al., 2009; Sharma et al., 2018).",
+      "startOffset" : 37,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2020) and aligned image-text pairs (Deng et al., 2009; Sharma et al., 2018).",
+      "startOffset" : 37,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 7,
+      "context" : "much smaller than the large corpora of Internet text for NLP pre-training (Devlin et al., 2019; Radford et al., 2019; Raffel et al., 2020; Brown et al., 2020).",
+      "startOffset" : 74,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 25,
+      "context" : "much smaller than the large corpora of Internet text for NLP pre-training (Devlin et al., 2019; Radford et al., 2019; Raffel et al., 2020; Brown et al., 2020).",
+      "startOffset" : 74,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 26,
+      "context" : "much smaller than the large corpora of Internet text for NLP pre-training (Devlin et al., 2019; Radford et al., 2019; Raffel et al., 2020; Brown et al., 2020).",
+      "startOffset" : 74,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 3,
+      "context" : "much smaller than the large corpora of Internet text for NLP pre-training (Devlin et al., 2019; Radford et al., 2019; Raffel et al., 2020; Brown et al., 2020).",
+      "startOffset" : 74,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 23,
+      "context" : "Recently, CLIP (Radford et al., 2021) has been proposed to learn visual concepts with natural language supervision, where its 400 million imagetext pairs are crawled from the Internet.",
+      "startOffset" : 15,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 28,
+      "context" : "Inspired by the recent advancements of few-shot learning in NLP (Schick and Schütze, 2021b; Gao et al., 2021), we address this issue by introducing a two-step prompt generation strategy, including automatic conversions from question to statement to get masked templates, and a span-infilling with generative pre-trained T5 model (Raffel et al.",
+      "startOffset" : 64,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 9,
+      "context" : "Inspired by the recent advancements of few-shot learning in NLP (Schick and Schütze, 2021b; Gao et al., 2021), we address this issue by introducing a two-step prompt generation strategy, including automatic conversions from question to statement to get masked templates, and a span-infilling with generative pre-trained T5 model (Raffel et al.",
+      "startOffset" : 64,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2021), we address this issue by introducing a two-step prompt generation strategy, including automatic conversions from question to statement to get masked templates, and a span-infilling with generative pre-trained T5 model (Raffel et al., 2020) to get candidate answers.",
+      "startOffset" : 227,
+      "endOffset" : 248
+    }, {
+      "referenceID" : 19,
+      "context" : "We find that optimizing only bias and normalization (BiNor) parameters would make better use of limited examples and yield better results than the latest few-shot model Frozen (Menick et al., 2021).",
+      "startOffset" : 176,
+      "endOffset" : 197
+    }, {
+      "referenceID" : 23,
+      "context" : "CLIP, short for Contrastive Language-Image Pretraining (Radford et al., 2021), learns visual representations from natural language supervision.",
+      "startOffset" : 55,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 11,
+      "context" : "ResNet (He et al., 2016) and ViT (Dosovitskiy et al.",
+      "startOffset" : 7,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2016) and ViT (Dosovitskiy et al., 2020), and a text encoder T, e.",
+      "startOffset" : 16,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 13,
+      "context" : "However, directly applying CLIP as a vision-language understanding model is still difficult (Kim et al., 2021; Shen et al., 2021).",
+      "startOffset" : 92,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 30,
+      "context" : "However, directly applying CLIP as a vision-language understanding model is still difficult (Kim et al., 2021; Shen et al., 2021).",
+      "startOffset" : 92,
+      "endOffset" : 129
+    }, {
+      "referenceID" : 10,
+      "context" : "Following previous work, we experiment on the VQAv2 (Goyal et al., 2017) dataset and formulate the task as a classification problem over 3,129 pre-defined most frequent answers.",
+      "startOffset" : 52,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 15,
+      "context" : "The images in VQAv2 come from Microsoft COCO (Lin et al., 2014), and there are 65 types of questions in the dataset, such as how many and what color is.",
+      "startOffset" : 45,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 36,
+      "context" : "The SNLI-VE dataset (Xie et al., 2019) is adapted from SNLI (Bowman et al.",
+      "startOffset" : 20,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2019) is adapted from SNLI (Bowman et al., 2015) and replaces SNLI’s premises with the images in the Flickr30k dataset (Young et al.",
+      "startOffset" : 29,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 38,
+      "context" : ", 2015) and replaces SNLI’s premises with the images in the Flickr30k dataset (Young et al., 2014).",
+      "startOffset" : 78,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 13,
+      "context" : "Previous works (Kim et al., 2021; Shen et al., 2021) have found that directly applying CLIP models for zero-shot VL tasks are infeasible.",
+      "startOffset" : 15,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 30,
+      "context" : "Previous works (Kim et al., 2021; Shen et al., 2021) have found that directly applying CLIP models for zero-shot VL tasks are infeasible.",
+      "startOffset" : 15,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 30,
+      "context" : "For example, nearly random-chance level zero-shot performances are observed on the VQAv2 dataset by directly applying a “question: [question text] answer: [answer text]” prompt template (Shen et al., 2021).",
+      "startOffset" : 186,
+      "endOffset" : 205
+    }, {
+      "referenceID" : 26,
+      "context" : "Motivated by the above observations, we propose a two-step automatic prompt generation method to enable the zero-shot VQA capabilities in CLIP models, with the assistant of a pre-trained generative T5 model (Raffel et al., 2020).",
+      "startOffset" : 207,
+      "endOffset" : 228
+    }, {
+      "referenceID" : 26,
+      "context" : "Specifically, we use T5 (Raffel et al., 2020), a large pre-trained text-to-text Transformer, for the question to template conversion.",
+      "startOffset" : 24,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 21,
+      "context" : "We use the Stanza (Qi et al., 2020) to POS tag and parse the question and leave the answer as a mask token.",
+      "startOffset" : 18,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 35,
+      "context" : "Recent pre-trained multilingual language models (Wu and Dredze, 2019; Liu et al., 2020; Xue et al., 2021) have been shown to be successful in transferring representations across different languages.",
+      "startOffset" : 48,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 17,
+      "context" : "Recent pre-trained multilingual language models (Wu and Dredze, 2019; Liu et al., 2020; Xue et al., 2021) have been shown to be successful in transferring representations across different languages.",
+      "startOffset" : 48,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 37,
+      "context" : "Recent pre-trained multilingual language models (Wu and Dredze, 2019; Liu et al., 2020; Xue et al., 2021) have been shown to be successful in transferring representations across different languages.",
+      "startOffset" : 48,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 23,
+      "context" : "On the other hand, the CLIP models achieve strong zero-shot performances on both image-to-text and text-to-image retrieval tasks (Radford et al., 2021) only through a dot product between vision and language representations, which gives us an intuition that the two modalities are well aligned in the CLIP models.",
+      "startOffset" : 129,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 10,
+      "context" : "For visual question answering and visual entailment, we carry out experiments on the VQAv2 (Goyal et al., 2017) and the SNLI-VE (Xie et al.",
+      "startOffset" : 91,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2017) and the SNLI-VE (Xie et al., 2019) datasets, respectively.",
+      "startOffset" : 24,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 19,
+      "context" : "the VQA task’s evaluation, we follow the Frozen model (Menick et al., 2021) to calculate the vqa scores on the VQAv2 validation set.",
+      "startOffset" : 54,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 19,
+      "context" : "Frozen (Menick et al., 2021) prompts a seven-billion-parameter 32-layer language model with image representations.",
+      "startOffset" : 7,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 16,
+      "context" : "This work is also inspired by the line of research in language model prompting (Liu et al., 2021).",
+      "startOffset" : 79,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 20,
+      "context" : "2020), prompting has become a popular manner to mining knowledge from pre-trained language models (Petroni et al., 2019) in a zero-shot or few-shot way (Shin et al.",
+      "startOffset" : 98,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2019) in a zero-shot or few-shot way (Shin et al., 2020; Gao et al., 2021; Qin and Eisner, 2021).",
+      "startOffset" : 39,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2019) in a zero-shot or few-shot way (Shin et al., 2020; Gao et al., 2021; Qin and Eisner, 2021).",
+      "startOffset" : 39,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2019) in a zero-shot or few-shot way (Shin et al., 2020; Gao et al., 2021; Qin and Eisner, 2021).",
+      "startOffset" : 39,
+      "endOffset" : 98
+    } ],
+    "year" : 0,
+    "abstractText" : "CLIP has shown a remarkable zero-shot capability on a wide range of vision tasks. Previously, CLIP is only regarded as a powerful visual encoder. However, after being pretrained by language supervision from a large amount of image-caption pairs, CLIP itself should also have acquired some few-shot abilities for vision-language tasks. In this work, we empirically show that CLIP can be a strong vision-language few-shot learner by leveraging the power of language. We first evaluate CLIP’s zero-shot performance on a typical visual question answering task and demonstrate a zero-shot cross-modality transfer capability of CLIP on the visual entailment task. Then we propose a parameter-efficient fine-tuning strategy to boost the few-shot performance on the vqa task. We achieve competitive zero/fewshot results on the visual question answering and visual entailment tasks without introducing any additional pre-training procedure.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,368 @@
+{
+  "name" : "ARR_2022_15_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Controllable Natural Language Generation with Contrastive Prefixes",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "The goal of controllable Natural Language Generation (NLG) is to guide generation towards the desired attributes in the concerned aspects of the text. For example, the aspect can be topic or sentiment, and sentiment may have two attributes: positive and negative. Previous work has focused on directly fine-tuning the existing models (Keskar et al., 2019; Hu et al., 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al., 2020; Krause et al., 2020; Holtzman et al., 2018). CTRL (Keskar et al., 2019) achieves controllability at the expense of training a large conditional LM. GeDi (Krause et al., 2020) also trains conditional LMs but uses them as discriminators to guide generation, introducing additional 345M parameters. Besides, GeDi focuses on single-aspect control, ignoring the need for multi-aspect control.\nPPLM (Dathathri et al., 2020) guides generation by iteratively updating the LM’s hidden activations. However, this decoding strategy is extremely computationally intensive, resulting in a slow generation speed (Gehman et al., 2020).\nPrefix-tuning (Li and Liang, 2021) proposes to optimize a prefix, which is a small continuous taskspecific vector, as a lightweight alternative to finetuning an NLG task, such as table-to-text generation or summarization. Inspired by Li and Liang (2021), we propose to use prefixes, a set of small continuous attribute-specific vectors, to steer NLG. Compared with using an attribute model or a generative discriminator (Dathathri et al., 2020; Krause et al., 2020), using learned prefixes to achieve controllability has the following benefits. First, it introduces fewer additional parameters (~0.2%-2% of GPT2 parameters in our experiments). Second, using prefixes keeps the inference speed comparable to that of the original GPT2 model.\nIn a general sense, prefix-tuning (Li and Liang, 2021) can be considered as controlling the generation of language models. Prefix-tuning views each prefix as an independent control task thus trains\neach prefix separately (top in Figure 1). However, one aspect of controllability in NLG involves multiple attributes, which might have a relationship with each other. For example, the sentiment aspect usually has two attributes: positive and negative, which are in opposition to each other. We think that this opposite relationship can be helpful to improve the controllability of a prefix. Therefore, we propose a novel supervised method and a novel unsupervised one in our framework, which takes the relationship among prefixes into consideration and trains multiple prefixes simultaneously with novel training objectives, as illustrated in Figure 1.\nExperimental results on the single-aspect control tasks (sentiment control, detoxification, and topic control) show that our proposed methods can guide generation towards the target attribute while keeping high linguistic quality, even when only several dozen labeled examples are available. In addition to single-aspect control, multi-aspect control can be achieved by combining the proposed supervised method with the unsupervised method in our framework. Experimental results on the sentiment and topic control show that the prefixes trained with our method can successfully control these two aspects simultaneously.\nOur main contributions are as follows:\n• We propose a novel framework that utilizes prefixes with frozen LMs as a lightweight alternative for controllable GPT2 generation.\n• We propose a supervised method and an unsupervised method with novel objectives for prefix training, where the relationship among prefixes are considered and multiple prefixes are trained simultaneously.\n• This work provides a unified perspective for single-aspect control and multi-aspect control. Experimental results show that our methods can effectively guide generation in both single-aspect control and multi-aspect control."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Ficler and Goldberg (2017) control the stylistic aspects of the generated text with a conditioned RNN (Recurrent Neural Network) LM. Holtzman et al. (2018) compose a committee of discriminators to guide an RNN generator towards the generations with the desired linguistic quality. Hu et al. (2017) aim at controlling the sentiment and tense of the generated text by combining variational autoencoders (VAE) and attribute discriminators. Con-\ntrolling these attributes of text generation has manifold applications, such as knowledge-grounded conversation (Dinan et al., 2019) and poetry generation (Ghazvininejad et al., 2017).\nMore recently, with the advent of Transformers and large pretrained language models, such as GPT2, an extensive body of work has focused on controlling the generation of these Transformerbased models. Keskar et al. (2019) train a 1.63 billion-parameter conditional transformer LM from scratch with 55 attribute control codes to guide generation. However, this method is expensive and lacks flexibility since the control codes are fixed. Dathathri et al. (2020) address these limitations by developing a plug-and-play model which leverages an attribute discriminator to perturb the LM’s hidden activations. However, updating gradients at the token level results in slow inference. Instead of updating the hidden activations, Krause et al. (2020); Yang and Klein (2021); Lin and Riedl (2021) introduce generative discriminators to re-weight the next token distributions on the fly during inference, thus improving the inference speed.\nOur work is mostly related to Yu et al. (2021); Li and Liang (2021). Yu et al. (2021) use a pretrained LM followed by an attribute alignment function to encode the tokens of the target attributes and the resulting hidden states are used to control generation. Different from their work, we do not take the tokens of the target attributes as input. Instead, we directly train a set of parameters, which acts as the prepended hidden states of GPT2, to control generation. Avoiding using attribute tokens can circumvent the problems when it is difficult to describe the desired attribute with only one word. Besides, Yu et al. (2021) focus on attributes disentanglement, which is not a focus in our work, so our training methods are different. Prefix-tuning (Li and Liang, 2021) can, in a general sense, be viewed as controlling the generation of LMs, where the LM is controlled to depict a specific NLG task, while in this work, the LM is controlled to carry specific attributes in a generation. Besides, our proposed methods for prefix training are different from Li and Liang (2021), as stated in Section 1."
+    }, {
+      "heading" : "3 Method",
+      "text" : "Our method uses prefixes to guide GPT2 generation, where a prefix is a continuous attributespecific vector prepended to the activations of the GPT2 model. Prefixes are free parameters denoted\nas Hθ. Different from Li and Liang (2021), where each prefix is trained independently, we consider the relationship among attributes and train multiple prefixes simultaneously, so Hθ is of dimension N ×M ×D, where N is the number of prefixes. In single-aspect control, N equals the number of attributes in the concerned aspect while in multiaspect control, N equals the product of the number of attributes in each aspect. M is the length of a prefix, and D is the dimension of the activation in GPT2. Following Li and Liang (2021), we reparametrize Hθ[i, j, :] = WiH ′θ[i, j, :] by a smaller parameter (H ′θ) composed with a large matrix (Wi). After the training finishes, onlyHθ needs to be saved for generation while W and H ′θ can be discarded. Since the GPT2 parameters are kept frozen during training, they do not need to be saved either. Figure 2 shows an example of the generation process under the control of a trained prefix. The prefixes can be trained in a supervised, semi-supervised, or unsupervised way. Since the semi-supervised method is a combination of the supervised and the unsupervised method, we introduce the supervised and the unsupervised method in this section. For clarity, we introduce these methods under the single-aspect control setting."
+    }, {
+      "heading" : "3.1 Supervised Method",
+      "text" : "Suppose the concerned aspect has the attribute set Y , each training example is a pair of (x, y) where x is the input text and y ∈ Y is the attribute label of x. Note that the attribute label also indicates the ground truth index of the prefix in Hθ, so y also refers to the prefix index in the following description. As mentioned in Section 1, we introduce an additional discriminative loss to train multiple prefixes simultaneously. Therefore, the training loss Lsup is a weighted sum of the language model loss LLM and the discriminative loss Ld:\nLsup = ω1LLM + ω2Ld (1)\nLLM = − T∑ t=1 log p(xt|x<t, y) (2)\nLd = − log p(y)p(x|y)∑\ny′∈Y p(y ′)p(x|y′)\n(3)\nThe computation of log p(xt|x<t, y) is parameterized as log pθ,γ(xt|x<t, Hθ[y, :, :]), where γ is the set of fixed GPT2 parameters, and θ represents learnable prefix parameters. log p(x|y) =∑\nt log p(xt|x<t, y), so the parameterization of log p(x|y) is the sum of log pθ,γ(xt|x<t, Hθ[y, :, :])\nover t. Note that each prefix can be trained independently using LLM alone, which would be the same as prefix-tuning (Li and Liang, 2021). Intuitively, prefixes trained by LLM are infused with the information of what is encouraged to generate. However, we observe that in controllable NLG, it is helpful to also infuse a prefix with the information of what is discouraged to generate. Given a training example (x, y), the prefix Hθ[y, :, :] should be optimized towards generating x, while the other prefixes should be discouraged to generate x. To achieve this goal, all the prefixes in Hθ should be trained simultaneously. Therefore, the discriminative loss Ld is introduced. As in equation 3, optimizing Ld improves the attribute alignment p(y|x) by increasing p(x|y) and lowering p(x|ȳ), ȳ ∈ Y \\{y} at the same time. We assume uniform prior, so p(y) and p(y′) can be canceled out in Equation 3. Figure 3 illustrates the training process with two prefixes."
+    }, {
+      "heading" : "3.2 Unsupervised Method",
+      "text" : "In the unsupervised setting, we assume the attribute set Y of the concerned aspect is known. The training example consists of input text x only. The attribute label y is no longer available and thus the index of the prefix associated with x is unknown. Inspired by VQ-VAE (van den Oord et al., 2017), we consider the index of the prefix as a latent variable z. We take the backbone model in the above supervised method as the decoder and introduce an encoder to parameterize the categorical distribution q(z|x). According to q(z|x), a prefix index z is sampled and the prefix Hθ[z, :, :] is then fed into the decoder to reconstruct the input text x. Since the sampling process of the prefixes is non-differentiable, we use Gumbel-Softmax (GS) relaxation (Jang et al., 2017; Maddison et al., 2017) following Sønderby et al. (2017); Ramesh et al.\n(2021). Formally, q(z|x) is computed as follows: q(z|x) = GS(−‖Enc(x)−Hθ‖2, τ) (4) where τ is the temperature of Gumbel-Softmax, and Enc is the encoder function. To train the prefixes, the loss function is a weighted sum of the three loss terms:\nLuns = ω1LLM + ω2LKL + ω3Lc (5)\nLLM = − T∑ t=1 log p(xt|x<t, z) (6)\nLKL = KL[q(z|x)||p(z)] (7) where LLM is the language model loss. Similar as that in the supervised method, the computation of log p(xt|x<t, z) is parameterized as log pθ,γ(xt|x<t, Hθ[z, :, :]). LKL is the KullbackLeibler divergence, where we assume the prior p(z) to be uniform. Note that these two terms constitute the loss function of VAE. Optimizing these two loss terms improves the Evidence Lower BOund (ELBO) of log p(x). Similar to the intuition behind Ld in the supervised method, if the ground truth\nprefix for x is Hθ[y, :, :], then the other prefixes should be discouraged to generate x. However, Ld requires the ground truth attribute label y for computation. Instead, we introduce an unsupervised contrastive loss Lc during training. Lc = max(m− ‖p(z|x)− p(z̄|x)‖2, 0)2 (8) where m is a pre-set margin and z̄ is another latent variable indicating the index of the opposite prefix of x. q(z̄|x) is computed as follows:\nq(z̄|x) = GS(‖Enc(x)−Hθ‖2, τ) (9) Lc is aimed at increasing the attribute alignment by pushing p(z|x) away from p(z̄|x) by a margin. The computation of p(z|x) is as follows:\np(z|x) = p(z)p(x|z)∑ z′∈Y p(z ′)p(x|z′) (10)\nWe assume uniform prior, so p(z) and p(z′) can be canceled out. Similar as the parameterization of log p(x|y) in the supervised method, the parameterization of log p(x|z) is the sum of log pθ,γ(xt|x<t, Hθ[z, :, :]) over t. The training process is illustrated in Figure 4."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "We experiment with three tasks: sentiment control, detoxification, and topic control. We compare our method to GPT2, PPLM, and GeDi. We experiment with GPT2-medium (345M parameters) for all the methods. We use the original implementation of PPLM and GeDi released by Dathathri et al. (2020) and Krause et al. (2020), and the hyperparameters are set to the reported value in the original paper. The detailed hyperparameters in each task are listed in appendix A. For the GPT2 model, we do experiments under two settings. First, the GPT2 model generates completions of each prompt in the evaluation dataset, which is denoted as GPT2medium. Second, GPT2-medium + prompt engineering prepends a guiding sentence to each testing prompt and then generates completions of each augmented prompt. We evaluate the linguistic quality and attribute alignment of the generation. The linguistic quality is evaluated using the perplexity calculated by GPT2-large (774M parameters).\nTo evaluate the robustness of our supervised method with the size of the training dataset, we experiment with the following three different settings: 1) using the complete training dataset; 2) using 1,000 examples per attribute for training; 3) using 24 examples per attribute for training. We evaluate our unsupervised method on the sentiment control task and the detoxification task, which are binary tasks. Note that different from the supervised method, our unsupervised method does not use any attribute labels, so the order of the attributes in the trained prefixes is undetermined. After the prefixes finish training using the unsupervised method, we manually check the order of the attributes."
+    }, {
+      "heading" : "4.1 Single-Aspect Control",
+      "text" : ""
+    }, {
+      "heading" : "4.1.1 Tasks",
+      "text" : "Sentiment Control Same as GeDi, we use IMDb movie reviews (Maas et al., 2011) to train our model. The number of prefixes is 2. Note that GeDi only uses 11.25k examples from the dataset for training. To be a fair comparison, we randomly sample 11.25k examples from the dataset to train our model. To evaluate the sentiment alignment of the generated text, we finetune a RoBERTa (Liu et al., 2019) classifier using the Yelp Review dataset (Zhang et al., 2015). The prompts used for evaluation are the same as those in the PPLM experiment (Dathathri et al., 2020). For each of the 15 prompts, 45 completions are gen-\nerated. In the GPT2-medium + prompt engineering setting, we prepend each prompt with the guiding sentence “This is a negative review:” for negative sentiment control, and similarly, we prepend each prompt with “This is a positive review:” for positive sentiment control.\nDetoxification We use Jigsaw Toxic Comment Classification Challenge Dataset1 to train our model. The number of prefixes is 2. Google Perspective API2 is used for toxicity evaluation. The testing prompts are collected from RealToxicityPrompts (Gehman et al., 2020). We use the prompts categorized as “challenging” in the dataset. We further filter out the prompts with toxicity larger than 0.5, scored by Perspective. The resulted evaluation dataset consists of 203 prompts. For each of these prompts, 20 completions are generated. In the GPT2-medium + prompt engineering setting, we prepend each prompt with the guiding sentence\n“This is a non-toxic comment:”.\nTopic Control We experiment with the AGNews dataset and DBPedia dataset (Zhang et al., 2015). The number of prefixes is 4 and 14, respectively. The prompts used for evaluation are the same as those in the PPLM experiment (Dathathri et al., 2020). For each of the 20 prompts, 45 completions are generated. Same as that in GeDi, we split each of the original training datasets in half. One half is used to train prefixes, while the other half is used to train a RoBERTa topic classifier for topic relevance evaluation. In the GPT2-medium + prompt engineering setting, the guiding sentence follows the template “The following is about [TOPIC]”. We do not compare with PPLM in the topic control task since PPLM uses a bag-of-words attribute model to do topic control, where the 7 predefined topics are different from the topics in the AGNews dataset or the DBPedia dataset.\nAll the experiments are conducted on NVIDIA Tesla V100 GPUs. The detailed hyper-parameters for each experiment are listed in appendix A."
+    }, {
+      "heading" : "4.1.2 Results",
+      "text" : "In the unsupervised setting, GPT2-medium + prompt engineering shows controllability on sentiment control (Table 1) and topic control (Table 3). However, this method does not work on the detoxification task (Table 2). Our unsupervised method\n1https://www.kaggle.com/c/jigsaw-toxic-commentclassification-challenge/\n2https://www.perspectiveapi.com\nsignificantly lowers the toxicity on the detoxification task and the ablation study shows that the contrastive loss Lc is crucial. On the sentiment control task, our unsupervised method does not achieve good attribute alignment when the target sentiment is negative, but it performs well when the target sentiment is positive. One possible reason is that compared with the differences between toxic and normal sentences, the difference between positive sentiment and negative sentiment is more subtle, so it is more challenging for the GPT2 encoder in our unsupervised model to accurately separate the unlabeled data into two sentiments. As a result, the encoder’s implicit criterion to categorize the input text may not be exactly the sentiment, which is also the reason that after removing the contrastive loss Lc in the unsupervised loss function, the attribute relevance on the negative sentiment is higher while that on the positive sentiment is lower.\nIn the supervised setting with full data, our supervised method consistently achieves better controlla-\nbility than PPLM while maintaining the linguistic quality of the generations (Table 1, 2). Although GeDi achieves a high attribute alignment score on the three tasks, it severely sacrifices the linguistic quality, as indicated by the high perplexity. In the few-shot setting, where the number of labeled training examples is reduced to 1000 or 24 examples per attribute, our supervised method can still maintain good controllability on the three tasks, showing the robustness of our method to the size of the training data.\nAblation study shows the importance of the discriminative loss Ld in our supervised method. As mentioned in section 3, training without Ld is equivalent to prefix-tuning. Comparing the results ofOurs−Ld and GPT2-medium show that directly using prefix-tuning can achieve controllability on the sentiment or the topic. However, it is less effective on detoxification. The reason is that different from topic control or sentiment control, detoxification requires the model to avoid generating some\nwords or phrases according to the context, which can not be achieved by prefix-tuning. Ld fills this gap by increasing p(x|y) and lowering p(x|ȳ) at the same time. Therefore, incorporating Ld is of critical importance to the detoxification task. In the DBPedia topic control task, adding Ld also achieves a large improvement on attribute alignment. The number of attributes in this task is much larger than that in the other tasks, so incorporating Ld can effectively push the prefixes to capture the unique features of each topic.\nWe compare the average inference speed of our methods with the baselines (Table 5). The inference speed of PPLM is several dozen times slower than that of the original GPT2 model. GeDi’s inference speed is much faster than that of PPLM. The inference speed of our method is the closest to that of the original GPT2."
+    }, {
+      "heading" : "4.1.3 Human Evaluation",
+      "text" : "Besides automatic evaluation, we also conduct human evaluations on Amazon Mechanical Turk to compare the performance of the baselines and our methods. In each task, workers are presented with a prompt along with the completions generated by different methods. Workers are instructed to answer two questions:“Which one has the best linguistic quality?” and “The target attribute is [ATT]. Which one aligns best with the target attribute?”. [ATT] is the control attribute used when generating the completions. In order to evaluate the linguistic quality and the attribute alignment separately, the workers are instructed not to consider the control aspect or the factual errors when answering the first question and not to consider the linguistic quality when answering the second question. The user interface provided to the workers is shown in the appendix (Figure 5). We conduct human evaluations on the results of the sentiment control experiment and those of the AGNews topic control experiment separately. 100 tasks are randomly sampled from the results of each control experiment. Each task is assigned to 3 different Mechanical Turk workers and the annotations are aggregated by majority voting. To ensure data quality, we restrict the workers to be in Canada or United States with a HIT approval rate higher than 95%. In total, 81 workers participated in the human evaluation. For the sentiment control task, we compare the results of GPT2-medium + prompt engineering, PPLM, GeDi, and our supervised method (with full training dataset). For the AGNews topic control task,\nPPLM is not evaluated as explained above. The results are shown in Table 4. The inter-annotator agreement on the sentiment task and the AGNews task is 0.39 and 0.30 in Fleiss’ κ, respectively. Appendix B lists other details of the human evaluation.\nIn the sentiment control task, the result of human evaluation on linguistic quality is generally consistent with the result of automatic evaluation. However, different from the result of the automatic evaluation, annotators are more inclined to select Ours and GPT2 + prompt engineering when evaluating attribute alignment. Although the annotators are instructed not to consider linguistic quality when evaluating sentiment alignment, they tend to select the one with better linguistic quality when multiple completions exhibits equally good attribute alignment. In the AGNews topic control task, the result of human evaluation on attribute alignment is generally consistent with the result of automatic evaluation. However, in more than half of the linguistic quality questions, the annotators select Ours, although GPT2-medium + prompt engineering achieves lower perplexity than Ours. On inspection, we find that GPT2-medium + prompt engineering in this task exhibits a more severe repetition problem compared to that in the sentiment control task. This inconsistency shows the limitation of using automatic evaluations, as alluded to in Welbl et al. (2021).\nBoth human evaluation and automatic evaluation show that the linguistic quality of GeDi is inferior to that of the other methods. One possible reason is the length of the prompt. In the original experiment in Krause et al. (2020), each prompt is at least 150 characters for sentiment control evaluation and at least 30 characters for topic control evaluation. However, we use the prompts as in Dathathri et al. (2020), where the average prompt length is 11.8 characters for sentiment control evaluation and 14.5 characters for topic control evaluation. The generated examples are shown in the appendix (Table 7)."
+    }, {
+      "heading" : "4.2 Multi-Aspect Control",
+      "text" : "Our method can also be applied to multi-aspect control. Directly applying our supervised method\nto multi-aspect control requires training examples with multi-aspect labels. However, such datasets are usually not readily available since most of the datasets are labeled for a single task. Although multi-aspect labeled examples are limited, we have training examples with single-aspect labels from multiple aspects, which can be utilized to achieve multi-aspect control. One method is to train a set of prefixes for each aspect separately using our supervised method and then concatenate the prefixes from different aspects for generation. This method is denoted as Ours (concatenation) in the result table. Another method is to train the prefixes of multiple aspects simultaneously by considering each single-aspect labeled example as partially labeled. We use a semi-supervised method for training, which is a combination of our supervised method and unsupervised method in Section 3. The model structure is the same as in the unsupervised method (Figure 4). The loss function is as follows:\nL = ω1LLM + ω2Ld + ω3Lenc (11) Lenc = − log q(zsup = y|x) (12) q(z|x) = σ(−‖Enc(x)−Hθ‖2) (13) where the latent variable z is the concatenation of the latent variable of each aspect, including both the supervised aspects and the unsupervised ones z = [zsup; zuns]. Lenc is used to train the encoder. It is introduced because the partially labeled examples imply the ground truth indexes of the prefixes in the labeled aspect, providing supervision for both the prefix and the encoder. σ is the softmax function.\nWe experiment with controlling the following two aspects simultaneously: sentiment and topic. We use the binary sentiment dataset from Amazon review (Zhang et al., 2015) and the DBPedia topic dataset. The prompts used for evaluation are the same as those in the topic control experiment. For each of the 20 prompts, 45 completions are generated. In the GPT2-medium + prompt engineering setting, the guiding sentence follows the template “This is a [SENTIMENT] review on [TOPIC]:”. In\nOurs (concatenation), the sentiment prefixes and the topic prefixes are trained separately using our supervised method and then concatenated as multiaspect prefixes. In Ours (semi-supervised), we reuse the prefixes trained in the single-aspect control tasks to initializeHθ. For example, if the target sentiment is positive and the target topic is an album, the prepended guiding sentence is “This is a positive review on an album:”. All the experiments are conducted on NVIDIA Tesla V100 GPUs. The hyper-parameters are listed in appendix A.\nExperimental results on multi-aspect control (Table 6) show that simply concatenating the prefixes trained for single-aspect control can effectively control the sentiment and topic simultaneously, and our experiments show that the order of the prefixes does not impact the result. On the other hand, training using the combination of our supervised and unsupervised methods can further improve the attribute alignment without sacrificing too much linguistic quality. Same as the observations stated in Section 4.1.2, removing the discriminative loss Ld will significantly degrade the attribute relevance, especially the topic relevance. Removing the encoder loss Lenc may achieve higher overall attribute relevance at the cost of linguistic quality, indicated by a higher perplexity. We present the generated examples in the appendix (Table 7)."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We propose a novel framework for controllable GPT2 generation with frozen LMs, which utilizes contrastive prefixes to guide generation. Experimental results show that our framework can not only successfully guide generation from a single aspect but also achieve promising results on multiaspect control tasks. Besides the control tasks we experimented with, our proposed framework can be freely applied to other desired attributes. We intend to make our implementation freely available online to facilitate future research and downstream applications."
+    }, {
+      "heading" : "A Hyperparameters",
+      "text" : "For PPLM and GeDi, we use the hyperparameters reported in their original work (Dathathri et al., 2020; Krause et al., 2020). Note that GeDi has multiple versions of submission available online and we refer to the latest one on OpenReivew.\nIn all the experiments with our methods, the random seed is fixed to 42, and the optimizer is AdamW with a learning rate of 2e-5. D = 24 × 2× 1024, where 24 is the number of hidden layers in GPT2-medium, 1024 is the size of hidden states in GPT2-medium, and 2 represent one key and one value. In the sentiment control task and the topic control tasks, the maximum generation length is set to 50 during evaluation while in the detoxification task the maximum generation length is set to 20. Unless stated otherwise, the prefix length M = 10.\nSentiment Control In the Ours (unsupervised) setting, the training batch size is 8. ω1 = 0.8, ω3 = 2.0. The weight of the KL loss term ω2 anneals from 0.001 to 0.1 during training while the temperature τ reduces from 1.0 to 0.5. The number of training epochs is 60. During training, we randomly mask the input tokens when computing the next token probabilities so as to force the prefix to preserve the key information of the input text. The mask rate is 0.5.\nIn the Ours (supervised) setting, the training batch size is 8. ω1 = 0.8, ω2 = 0.2. The number of training epochs is 50.\nFor PPLM, we use the hyperparameters reported by Dathathri et al. (2020).γ = 1.0, m = 10, α = 0.03, λkl = 0.01, and γgm = 0.95.\nFor GeDi, we use the hyperparameters reported by Krause et al. (2020). ω = 20 and ρ = 0.7.\nDetoxification In the Ours (unsupervised) setting, the training batch size is 8. ω1 = 0.8, ω3 = 2.0. The weight of the KL loss term ω2 anneals from 0.001 to 0.1 during training while the temperature τ reduces from 1.0 to 0.5. The number of training epochs is 4. Same as in the sentiment control task, the mask rate is 0.5.\nIn the Ours (supervised) setting, the training batch size is 8. ω1 = 0.8, ω2 = 0.2. The number of training epochs is 5.\nFor PPLM, we use the hyperparameters reported by Dathathri et al. (2020). γ = 1.0, m = 10, α = 0.02, λkl = 0.01, and γgm = 0.9.\nFor GeDi, we use the hyperparameters reported by Krause et al. (2020). ω = 30 and ρ = 0.8.\nAGNews Topic Control In the Ours (supervised) setting, the training batch size is 4. ω1 = 0.8, ω2 = 0.2. The number of training epochs is 8.\nFor GeDi, we use the hyperparameters reported by Krause et al. (2020). ω = 150 and ρ = 0.8.\nDBPedia Topic Control In the Ours (supervised) setting, the training batch size is 4. ω1 = 0.8, ω2 = 0.2. The number of training epochs is 2.\nMulti-Aspect Control In the Ours (concatenation) setting, the sentiment prefix with length M = 10 and the topic prefix with length M = 10 are concatenated, so the resultant multi-aspect prefix has a length M = 20.\nIn the Ours (semi-supervised) setting, the prefix length M = 10. The training batch size is 4. In the first 80,000 training steps, ω1 = 0, ω2 = 0, ω3 = 1, which means only the encoder is trained. After that, the model is updated by another 80,000 steps with ω1 = 0.8, ω2 = 0.2, ω3 = 0.4. We add a top-k filter and a top-p filter on q(z|x) for each aspect. For sentiment, k = 1, p = 0.8. For topic, k = 1, p = 0.5."
+    }, {
+      "heading" : "B Human Evaluation",
+      "text" : "The payment for each approved annotation is set to $0.6. The average completion time is 3 minutes 45 seconds per HIT (prorated to an hourly wage of $9.6)."
+    } ],
+    "references" : [ {
+      "title" : "Plug and play language models: A simple approach to controlled text generation",
+      "author" : [ "Sumanth Dathathri", "Andrea Madotto", "Janice Lan", "Jane Hung", "Eric Frank", "Piero Molino", "Jason Yosinski", "Rosanne Liu." ],
+      "venue" : "8th International Conference on Learning Represen-",
+      "citeRegEx" : "Dathathri et al\\.,? 2020",
+      "shortCiteRegEx" : "Dathathri et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Wizard of wikipedia: Knowledge-powered conversational agents",
+      "author" : [ "Emily Dinan", "Stephen Roller", "Kurt Shuster", "Angela Fan", "Michael Auli", "Jason Weston." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA,",
+      "citeRegEx" : "Dinan et al\\.,? 2019",
+      "shortCiteRegEx" : "Dinan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Controlling linguistic style aspects in neural language generation",
+      "author" : [ "Jessica Ficler", "Yoav Goldberg." ],
+      "venue" : "CoRR, abs/1707.02633.",
+      "citeRegEx" : "Ficler and Goldberg.,? 2017",
+      "shortCiteRegEx" : "Ficler and Goldberg.",
+      "year" : 2017
+    }, {
+      "title" : "Realtoxicityprompts: Evaluating neural toxic degeneration in language models",
+      "author" : [ "Samuel Gehman", "Suchin Gururangan", "Maarten Sap", "Yejin Choi", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Lan-",
+      "citeRegEx" : "Gehman et al\\.,? 2020",
+      "shortCiteRegEx" : "Gehman et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Hafez: an interactive poetry generation system",
+      "author" : [ "Marjan Ghazvininejad", "Xing Shi", "Jay Priyadarshi", "Kevin Knight." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics, ACL 2017, Vancouver, Canada, July 30 -",
+      "citeRegEx" : "Ghazvininejad et al\\.,? 2017",
+      "shortCiteRegEx" : "Ghazvininejad et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Learning to write with cooperative discriminators",
+      "author" : [ "Ari Holtzman", "Jan Buys", "Maxwell Forbes", "Antoine Bosselut", "David Golub", "Yejin Choi." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics, ACL 2018,",
+      "citeRegEx" : "Holtzman et al\\.,? 2018",
+      "shortCiteRegEx" : "Holtzman et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Toward controlled generation of text",
+      "author" : [ "Zhiting Hu", "Zichao Yang", "Xiaodan Liang", "Ruslan Salakhutdinov", "Eric P. Xing." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August",
+      "citeRegEx" : "Hu et al\\.,? 2017",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Categorical reparameterization with gumbel-softmax",
+      "author" : [ "Eric Jang", "Shixiang Gu", "Ben Poole." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings. OpenReview.net.",
+      "citeRegEx" : "Jang et al\\.,? 2017",
+      "shortCiteRegEx" : "Jang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "CTRL: A conditional transformer language model for controllable generation",
+      "author" : [ "Nitish Shirish Keskar", "Bryan McCann", "Lav R. Varshney", "Caiming Xiong", "Richard Socher." ],
+      "venue" : "CoRR, abs/1909.05858.",
+      "citeRegEx" : "Keskar et al\\.,? 2019",
+      "shortCiteRegEx" : "Keskar et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Gedi: Generative discriminator guided sequence generation",
+      "author" : [ "Ben Krause", "Akhilesh Deepak Gotmare", "Bryan McCann", "Nitish Shirish Keskar", "Shafiq R. Joty", "Richard Socher", "Nazneen Fatema Rajani." ],
+      "venue" : "CoRR, abs/2009.06367.",
+      "citeRegEx" : "Krause et al\\.,? 2020",
+      "shortCiteRegEx" : "Krause et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Prefix-tuning: Optimizing continuous prompts for generation",
+      "author" : [ "Xiang Lisa Li", "Percy Liang." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Lan-",
+      "citeRegEx" : "Li and Liang.,? 2021",
+      "shortCiteRegEx" : "Li and Liang.",
+      "year" : 2021
+    }, {
+      "title" : "Plug-and-blend: A framework for controllable story generation with blended control codes",
+      "author" : [ "Zhiyu Lin", "Mark Riedl." ],
+      "venue" : "CoRR, abs/2104.04039.",
+      "citeRegEx" : "Lin and Riedl.,? 2021",
+      "shortCiteRegEx" : "Lin and Riedl.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "CoRR, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning word vectors for sentiment analysis",
+      "author" : [ "Andrew L. Maas", "Raymond E. Daly", "Peter T. Pham", "Dan Huang", "Andrew Y. Ng", "Christopher Potts." ],
+      "venue" : "The 49th Annual Meeting of the Association for Computational Linguistics: Human Language Tech-",
+      "citeRegEx" : "Maas et al\\.,? 2011",
+      "shortCiteRegEx" : "Maas et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "The concrete distribution: A continuous relaxation of discrete random variables",
+      "author" : [ "Chris J. Maddison", "Andriy Mnih", "Yee Whye Teh." ],
+      "venue" : "5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Con-",
+      "citeRegEx" : "Maddison et al\\.,? 2017",
+      "shortCiteRegEx" : "Maddison et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever" ],
+      "venue" : "OpenAI blog,",
+      "citeRegEx" : "Radford et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Zero-shot text-to-image generation",
+      "author" : [ "Aditya Ramesh", "Mikhail Pavlov", "Gabriel Goh", "Scott Gray", "Chelsea Voss", "Alec Radford", "Mark Chen", "Ilya Sutskever." ],
+      "venue" : "Proceedings of the 38th International Conference on Machine Learning, ICML 2021, 18-24",
+      "citeRegEx" : "Ramesh et al\\.,? 2021",
+      "shortCiteRegEx" : "Ramesh et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Continuous relaxation training of discrete latent variable image models",
+      "author" : [ "Casper Kaae Sønderby", "Ben Poole", "Andriy Mnih." ],
+      "venue" : "Beysian DeepLearning workshop, NIPS, volume 201.",
+      "citeRegEx" : "Sønderby et al\\.,? 2017",
+      "shortCiteRegEx" : "Sønderby et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural discrete representation learning",
+      "author" : [ "Aäron van den Oord", "Oriol Vinyals", "Koray Kavukcuoglu." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural 9",
+      "citeRegEx" : "Oord et al\\.,? 2017",
+      "shortCiteRegEx" : "Oord et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Challenges in detoxifying language models",
+      "author" : [ "Johannes Welbl", "Amelia Glaese", "Jonathan Uesato", "Sumanth Dathathri", "John Mellor", "Lisa Anne Hendricks", "Kirsty Anderson", "Pushmeet Kohli", "Ben Coppin", "Po-Sen Huang." ],
+      "venue" : "Findings of the Associ-",
+      "citeRegEx" : "Welbl et al\\.,? 2021",
+      "shortCiteRegEx" : "Welbl et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "FUDGE: controlled text generation with future discriminators",
+      "author" : [ "Kevin Yang", "Dan Klein." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,",
+      "citeRegEx" : "Yang and Klein.,? 2021",
+      "shortCiteRegEx" : "Yang and Klein.",
+      "year" : 2021
+    }, {
+      "title" : "Attribute alignment: Controlling text generation from pretrained language models",
+      "author" : [ "Dian Yu", "Kenji Sagae", "Zhou Yu." ],
+      "venue" : "CoRR, abs/2103.11070.",
+      "citeRegEx" : "Yu et al\\.,? 2021",
+      "shortCiteRegEx" : "Yu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Jake Zhao", "Yann LeCun." ],
+      "venue" : "Advances in Neural Information Processing Systems 28: Annual Conference on Neural Information Processing Systems 2015, December 7-",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 15,
+      "context" : "In this work, we propose a novel lightweight framework for controllable GPT2 (Radford et al., 2019) generation, which utilizes a set of small attribute-specific vectors, called prefixes (Li and Liang, 2021), to steer natural language generation.",
+      "startOffset" : 77,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2019) generation, which utilizes a set of small attribute-specific vectors, called prefixes (Li and Liang, 2021), to steer natural language generation.",
+      "startOffset" : 94,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 8,
+      "context" : "Previous work has focused on directly fine-tuning the existing models (Keskar et al., 2019; Hu et al., 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al.",
+      "startOffset" : 70,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 6,
+      "context" : "Previous work has focused on directly fine-tuning the existing models (Keskar et al., 2019; Hu et al., 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al.",
+      "startOffset" : 70,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 2,
+      "context" : "Previous work has focused on directly fine-tuning the existing models (Keskar et al., 2019; Hu et al., 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al.",
+      "startOffset" : 70,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al., 2020; Krause et al., 2020; Holtzman et al., 2018).",
+      "startOffset" : 80,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al., 2020; Krause et al., 2020; Holtzman et al., 2018).",
+      "startOffset" : 80,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2017; Ficler and Goldberg, 2017) or using a discriminator to guide generation (Dathathri et al., 2020; Krause et al., 2020; Holtzman et al., 2018).",
+      "startOffset" : 80,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 8,
+      "context" : "CTRL (Keskar et al., 2019) achieves controllability at the expense of training a large conditional LM.",
+      "startOffset" : 5,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 9,
+      "context" : "GeDi (Krause et al., 2020) also trains conditional LMs but uses them as discriminators to guide generation, introducing additional 345M parameters.",
+      "startOffset" : 5,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 10,
+      "context" : "Figure 1: A comparison of prefix-tuning (Li and Liang, 2021) (top) and our framework (bottom) on sentiment control.",
+      "startOffset" : 40,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 0,
+      "context" : "PPLM (Dathathri et al., 2020) guides generation by iteratively updating the LM’s hidden activations.",
+      "startOffset" : 5,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 3,
+      "context" : "However, this decoding strategy is extremely computationally intensive, resulting in a slow generation speed (Gehman et al., 2020).",
+      "startOffset" : 109,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 10,
+      "context" : "Prefix-tuning (Li and Liang, 2021) proposes to optimize a prefix, which is a small continuous taskspecific vector, as a lightweight alternative to finetuning an NLG task, such as table-to-text generation or summarization.",
+      "startOffset" : 14,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 0,
+      "context" : "Compared with using an attribute model or a generative discriminator (Dathathri et al., 2020; Krause et al., 2020), using learned prefixes to achieve controllability has the following benefits.",
+      "startOffset" : 69,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 9,
+      "context" : "Compared with using an attribute model or a generative discriminator (Dathathri et al., 2020; Krause et al., 2020), using learned prefixes to achieve controllability has the following benefits.",
+      "startOffset" : 69,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 10,
+      "context" : "In a general sense, prefix-tuning (Li and Liang, 2021) can be considered as controlling the generation of language models.",
+      "startOffset" : 34,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 1,
+      "context" : "conversation (Dinan et al., 2019) and poetry generation (Ghazvininejad et al.",
+      "startOffset" : 13,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 10,
+      "context" : "Prefix-tuning (Li and Liang, 2021) can, in a general sense, be viewed as controlling the generation of LMs, where the LM is controlled to depict a specific NLG task, while in this work, the LM is controlled to carry specific attributes in a generation.",
+      "startOffset" : 14,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 10,
+      "context" : "dently using LLM alone, which would be the same as prefix-tuning (Li and Liang, 2021).",
+      "startOffset" : 65,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 7,
+      "context" : "Since the sampling process of the prefixes is non-differentiable, we use Gumbel-Softmax (GS) relaxation (Jang et al., 2017; Maddison et al., 2017) following Sønderby et al.",
+      "startOffset" : 104,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 14,
+      "context" : "Since the sampling process of the prefixes is non-differentiable, we use Gumbel-Softmax (GS) relaxation (Jang et al., 2017; Maddison et al., 2017) following Sønderby et al.",
+      "startOffset" : 104,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 13,
+      "context" : "Sentiment Control Same as GeDi, we use IMDb movie reviews (Maas et al., 2011) to train our model.",
+      "startOffset" : 58,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 12,
+      "context" : "To evaluate the sentiment alignment of the generated text, we finetune a RoBERTa (Liu et al., 2019) classifier using the Yelp Review dataset (Zhang et al.",
+      "startOffset" : 81,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2019) classifier using the Yelp Review dataset (Zhang et al., 2015).",
+      "startOffset" : 49,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 0,
+      "context" : "The prompts used for evaluation are the same as those in the PPLM experiment (Dathathri et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 0,
+      "context" : "The prompts used for evaluation are the same as those in the PPLM experiment (Dathathri et al., 2020).",
+      "startOffset" : 77,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 10,
+      "context" : "Ours − Ld is equivalent to prefixtuning (Li and Liang, 2021).",
+      "startOffset" : 40,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 10,
+      "context" : "Ours− Ld is equivalent to prefix-tuning (Li and Liang, 2021).",
+      "startOffset" : 40,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 22,
+      "context" : "We use the binary sentiment dataset from Amazon review (Zhang et al., 2015) and the DBPedia topic dataset.",
+      "startOffset" : 55,
+      "endOffset" : 75
+    } ],
+    "year" : 0,
+    "abstractText" : "To guide the generation of large pretrained language models (LM), previous work has focused on directly fine-tuning the language model or utilizing an attribute discriminator. In this work, we propose a novel lightweight framework for controllable GPT2 (Radford et al., 2019) generation, which utilizes a set of small attribute-specific vectors, called prefixes (Li and Liang, 2021), to steer natural language generation. Different from Li and Liang (2021), where each prefix is trained independently, we take the relationship among prefixes into consideration and train multiple prefixes simultaneously, as illustrated in Figure 1. We propose a novel supervised method and also an unsupervised method to train the prefixes for single-aspect control while the combination of these two methods can achieve multi-aspect control. Experimental results on both singleaspect and multi-aspect control show that our methods can guide generation towards the desired attributes while keeping high linguistic quality.",
+    "creator" : null
+  }
+}

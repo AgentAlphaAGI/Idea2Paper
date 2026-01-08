@@ -1,0 +1,299 @@
+{
+  "name" : "ARR_2022_349_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "CHAPTERBREAK: A Challenge Dataset for Long-Range Language Models",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Research on long-range language models (LRLMs) aims to process extremely long input sequences by making the base Transformer architecture more efficient (e.g., through sparse attention, recurrence, or cached memory). These modifications are commonly validated by training LRLMs on PG-19 (Rae et al., 2020), a long-document language modeling dataset, and demonstrating small perplexity decreases over shorter context models (Roy et al., 2021). However, recent analysis experiments (Sun et al., 2021; Press et al., 2021) show that modern LRLMs rely mostly on local context (i.e., the immediately preceding 1-2K tokens) and are insensitive to tokens earlier in the input sequence.\nIn this paper, we move beyond token-level perplexity by evaluating LRLMs on a task that requires a rich understanding of long-range dependencies. Our task is an instance of suffix identification, in\nprefix of the narrative to correctly disambiguate the start of the next chapter from negative examples.\nwhich a language model is given a long input sequence (or prefix) and asked to disambiguate the next n-token segment from a set of hard negatives that are randomly sampled from the same narrative. To succeed at this task, an LRLM should assign high probability to the ground-truth next segment and low probability to the negatives. To specifically test long-range dependencies, we restrict our prefixes to end at chapter breaks of a longer cohesive narrative (e.g., a novel).\nWe construct a challenge dataset, CHAPTERBREAK, by automatically detecting chapter boundaries within both held-out PG-19 documents (indomain for pretrained LRLMs) and works of fan fiction published on the Archive of Our Own (out of domain).1 We perform a detailed analysis of the\n1https://archiveofourown.org\ntypes of chapter transitions in our dataset and discover a high frequency of narrative shifts in pointof-view, location, and time, all of which require global narrative understanding. For example, Figure 1 contains a complex prefix in which the timetraveling Billy Pilgrim moves between World War II, 1960s suburban life, and an alien planet. Understanding the cliffhanger ending, in which the narrative abruptly switches from a wartime scene to a 1967 alien abduction, requires an LRLM to make connective inferences using details buried far back in the context (e.g., Billy’s age in 1967).\nWe evaluate three LRLMs on CHAPTERBREAK, including BigBird (Zaheer et al., 2020), the Routing Transformer (Roy et al., 2021), and its local attention variant, all pretrained or fine-tuned on PG-19. Our experiments show that these LRLMs perform poorly at selecting the ground-truth suffix, regardless of the length of the input sequence. As an upper bound, we train a small RoBERTa-based suffix-level language model on PG-19 and discover that it substantially outperforms all LRLMs on the task. Finally, we perform an analysis on the instances in which all models struggle to choose the correct suffix, which reveals that chapters containing shifts in location and events in focus are particularly challenging to disambiguate. Taken together, these results suggest that CHAPTERBREAK is a useful benchmark for future research into LRLMs."
+    }, {
+      "heading" : "2 The CHAPTERBREAK dataset",
+      "text" : "Authors often break long-form narratives into a sequence of discrete chapters to impose “an order and shape over events in time” (Stevick, 1970). Chapters come in many flavors: for example, Murakami’s Kafka on the Shore uses chapter breaks to alternate between parallel narratives focusing on the two protagonists, while cliffhanger endings such as the one in Figure 1 add suspense. Making sense of the complex narrative shifts associated with chapter transitions (e.g., changes in point-ofview, time, location, and theme) requires a deep understanding of the entire text. To maintain global narrative coherence, Myers et al. (1994) show that human readers tend to reactivate “backgrounded” information from the long-range context.\nTask overview: Given that understanding chapter transitions requires global context understanding, how can we turn this into a task to evaluate LRLMs? A simple approach is to evaluate the token-level perplexity of an LRLM only at chapter\nboundaries (i.e., on the first n tokens of each chapter); however, the vast majority of tokens can be predicted using just local context (Sun et al., 2021) under the teacher-forcing setup, which obscures an LRLM’s usage of long-range context as we show in Section 3. We instead turn to the task of suffix identification, which closely resembles existing datasets such as SWAG (Zellers et al., 2018). Each instance of our task is defined by a triplet (c, s+, s−i ∈ N), where c is a prefix sequence of up to 8K tokens that ends at a chapter break, s+ is the gold suffix of length 128 tokens (i.e., the beginning of the next chapter), and s−i is a negative 128-token-long suffix from a set N of five segments2 sampled from the same narrative3 that do not overlap with the prefix and gold suffix. We then evaluate whether an LRLM assigns higher probability to the gold suffix P (s+|c) than to all negative suffixes P (s−i |c).\nDataset overview: Where do we get these triplets from? We collect a dataset, CHAPTERBREAK, with two splits: CHAPTERBREAKPG19, which contains 328 examples extracted from the PG-19 validation set (Rae et al., 2020),4 and CHAPTERBREAKAO3, which contains 7,349 examples extracted from an online dump5 of fanfiction posted on Archive of Our Own (AO3).6 Even though the CHAPTERBREAKPG19 split is small, we include it because many LRLMs are pretrained on PG-19; the much larger CHAPTERBREAKAO3 split is out-of-distribution for all models that we evaluate. To extract chapters in PG-19, we match for lines beginning with the string “chapter”, while AO3 stories already have chapter-level metadata.\nWhat are the different types of transitions in CHAPTERBREAK and how often do they occur? To get a better sense of our dataset, we perform a fine-grained annotation of 300 randomly-selected chapter transitions from CHAPTERBREAKAO3. For each transition, we annotate any changes in the following four aspects: events, actors (characters in focus), locations, and continuity. To annotate\n2We use a small number of negatives because it is very slow to evaluate the probabilities of long sequences with LRLMs.\n3We show in Appendix F why in-book negatives are more suitable for this task.\n4We only collect examples from validation set as two baseline models in the later sections are trained on PG-19.\n5https://archive.org/download/AO3_ story_dump_continuing\n6We apply filtering to remove fanfiction works that are too short or not rated for general audiences. Each work contains on average 44K words and 22.2 chapters. More preprocessing details and statistics can be found in Appendix A.\ncontinuity, we follow a simplified version of the scheme proposed by Ireland (1986),7 which considers five categories: continuous (the next chapter occurs within a day of the previous chapter), discontinuous (the next chapter occurs more than a day after the previous chapter), analepsis (the next chapter is a “flashback” to an earlier point in the narrative), and parallel (the next chapter reverts to the time of a previous chapter, switching the character or event in focus).8 The results, shown in Table 1, demonstrate that CHAPTERBREAK covers a diverse array of transitions, including many that require global narrative understanding."
+    }, {
+      "heading" : "3 Experiments",
+      "text" : "We evaluate three different long-range language models on CHAPTERBREAK and compare their results to those of standard Transformer language models as well as an upper bound directly trained for suffix prediction.\nLanguage models: We evaluate three LRLMs pretrained on PG-19: the Local Transformer (Roy et al., 2021, LT), Routing Transformer (RT) (Roy et al., 2021, RT), and BigBird (Zaheer et al., 2020).9 We also evaluate two standard Transformer language models, GPT-2 large (Radford et al., 2019) and GPT-3 (Brown et al., 2020).10 We summarize these models in Table 2.\n7To validate our continuity annotations, we also annotate every chapter in Pride and Prejudice and obtain almost the same proportion of continuous transitions (67%) as the number reported by the expert annotation of Ireland (1986) (72%).\n8Appendix B contains more details about each category. 9The BigBird model is the decoder part of the released checkpoint fine-tuned with causal LM objective on 15k books of PG-19 with peak learning rate 0.0001 for 100k steps. More details about each model are included in Appendix C.\n10Due to OpenAI’s API costs for GPT-3, we only evaluate a small subset of 230 examples instead of the full dataset.\nAn upper bound directly trained for suffix identification: As authors often write stories that are intended to surprise readers, it is possible that many examples in CHAPTERBREAK are ambiguous by nature (i.e., the upper bound for suffix identification accuracy may not be 100%). To obtain a reasonable upper bound, we also train a model (SuffixLM) directly on the suffix identification task by scaling up the sentence-level language model proposed by Ippolito et al. (2020).12 We divide a sequence to multiple segments, embedding each with a finetuned RoBERTa network (Liu et al., 2019). Our SuffixLM then performs “language modeling” atop these dense representations, predicting the next segment representation given the representations of previous segments via contrastive predictive coding (van den Oord et al., 2018).13\n11Due to OpenAI’s API cost, we only evaluate GPT-3 on a subset of 230 examples, not the full dataset.\n12Our SuffixLM can process up to 10K tokens, while the model of Ippolito et al. (2020) supports only up to ten sentences. More details about our SuffixLM are in Appendix D.\n13Our SuffixLM is closely related to the model in Ainslie et al. (2020), but differs crucially by predicting the representation of next segment instead of summaries."
+    }, {
+      "heading" : "4 Results & Analysis",
+      "text" : "Overall, the results in Table 2 (rightmost two columns) confirm that all of the language models studied in this paper struggle on CHAPTERBREAK, especially when compared to the SuffixLM upper bound (outperforms the best LM by ∼35% absolute accuracy). Other interesting results include:\nAccuracy increases with longer prefixes: Figure 2 shows that as prefix sequence length increases, some LRLMs (RT, LT) barely improve, while others show modest improvements (BigBird). However, our SuffixLM achieves by far the largest improvement (from 57% at sequence length of 256 to 75% at 4K on the PG-19 split), indicating that LRLMs are currently not taking full advantage of information in the long-range context.\nPerplexity does not always correlate with accuracy: Previous LRLM efforts use validation perplexity (e.g., on PG-19) to compare against other models. However, we show that perplexity is not by itself a predictor of suffix identification accuracy: as shown in Table 2, GPT-2 achieves significantly higher accuracy than RT despite yielding a perplexity of 82.7 on gold suffixes, compared to 54.8 for RT.14 Future LRLM research should evaluate their methods on suffix identification tasks like CHAPTERBREAK, as perplexity does not measure how well an LRLM processes long-range dependencies.\nWhy chapter breaks over other discourse boundaries? We create suffix identification datasets using two other discourse markers, cause and dialogue, that often prompt human readers to reactivate memories of global context (Albrecht and\n14As these models use different tokenizers, we normalize the subword-level perplexities all to word-level as suggested by Rae et al. (2020).\nMyers, 1995).15 Figure 3 (left) shows that our SuffixLM benefits far more from longer prefixes on chapter breaks than the other two boundaries.\nShort-context Transformers can outperform LRLMs: Our results show that GPT-2, despite its high perplexity on gold suffixes and short maximum sequence length (1024 tokens), outperforms both LT and RT on CHAPTERBREAKPG19, and it outperforms all three LRLMs on the out-of-domain AO3 split even at their maximum sequence lengths. Meanwhile, GPT-3 outperforms all other models on both CHAPTERBREAK at a sequence length of 2,048 tokens, and the increasing GPT-3 curve in Figure 2 is promising for future work scaling hugescale LMs to longer sequence lengths."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Our work depends heavily on recent advances in efficient Transformers (Tay et al., 2020) that process long sequences (Rae et al., 2020; Beltagy et al., 2020; Zaheer et al., 2020; Ainslie et al., 2020; Roy et al., 2021). Sparse attention (Child et al., 2019), relative position encoding (Shaw et al., 2018; Raffel et al., 2020; Guo et al., 2021) and other tricks (Dai et al., 2019; Weston et al., 2015; Shen et al., 2020; Stock et al., 2021; Katharopoulos et al., 2020) are commonly adopted by efficient Transformers. Existing long-sequence downstream tasks include long-form QA (Fan et al., 2019; Pang et al., 2021), document-level summarization (Kryściński et al., 2021; Huang et al., 2021), and machine translation (Liu and Zhang, 2020). More recently, Shaham et al. (2022) introduce a new benchmark covering multiple domains and tasks, while Tay et al. (2021) propose multimodal long sequence tasks."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We introduce CHAPTERBREAK, a suffix identification dataset targeted at evaluating the discourselevel understanding of LRLMs. The dataset is extracted from long-form narratives and covers a variety of complex chapter transitions. Experiments show that existing LRLMs perform poorly on CHAPTERBREAK and much worse than a SuffixLM trained as an upper bound on this task. We release the dataset to spur more principled development of future LRLMs.\n15Appendix A contains more details.\nEthical Considerations\nCHAPTERBREAK is constructed from two sources: public domain books published prior to 1919 (from the held-out set of PG-19) and works of fanfiction extracted from an online dump of stories posted on Archive of Our Own (AO3). We refer readers to Rae et al. (2020) for more details about PG-19. For AO3, we apply multiple filters to obtain long fanfiction stories rated as suitable for “General Audiences”. We refer readers to Appendix A for more details. More generally, this work focuses on longrange language models, which could potentially be misused to generate offensive output. However, the main purpose of this paper is to present a dataset which provides a better evaluation of the discourselevel capabilities of such models."
+    }, {
+      "heading" : "A Dataset statistics",
+      "text" : "We collected 15,771 fanfictions from an online dump of stories posted on Archive of Our Own (AO3) by filtering works written in English language, rated General Audience by the author and contains at least 10K words and more than 10 chapters. For each chapter, we remove the text within the range of “**Notes for the Chapter:**”, “**Summary for the Chapter:**” and “**Author’s Note:**”. The meta-comments inserted into the main text by the authors are not removed. The statistics of this long-fic dataset are included in Table 3. We do not apply any other profanity filter to the fictions, therefore there could still be inappropriate content for children. Besides chapter breaks introduced in the main text, we also collected two other discourse boundaries, cause and dialogue, as comparisons to the chapter breaks examples. We present the statistics each type of examples in Table 4."
+    }, {
+      "heading" : "B Annotation Scheme",
+      "text" : "We annotate each chapter transition from four aspects: events, actors (point-of-view or characters in focus), location, and continuity in timeline.\nEvents We define two subcategories based on whether (1) previous event ends in the previous\nchapter and new event starts in the new chapter, (2) old event does not end and continues into the next chapter.\nActors We define two subcategories based on whether there is a shift in POV or main character in focus.\nLocation We define two subcategories based on whether the location described in the prefix and in the new chapter is different.\nContinuity Following Ireland (1986)’s work, we categorize the chapter transition by timeline continuity into four subcategories:\n• Discontinuous but chronological: Reusing the standard by Ireland (1986), discontinuous represents a gap in time forward for more than one night.\n• Continuous: The time interval between chapters lasts for no more than one night.\n• Analepsis: Analepsis represents retrospective evocation of an event, or “flashback” to an earlier point in the narrative.\n• Parallel: This includes timeline reverting back to the time of any previous chapter, typically accompanied by switching character in focus or description a separate set of events independent of the last chapter. This category is a collapse of “alternate phase”, “parallel phase” and “simultaneous phase” introduced in (Ireland, 1986)."
+    }, {
+      "heading" : "C Baselines",
+      "text" : "Bigbird (Zaheer et al., 2020) To reduce the quadratic complexity of self-attention in the standard Transformer, the Bigbird model employs a mixture of global, random and local attention mechanisms, which successfully reduce the complexity to linear. The idea is to insert each sequence O(1) global tokens, which attend to all other tokens. The\nrest tokens attend to their neighbor tokens, random tokens in the sequence as well as the inserted global tokens. A very similar idea is developed concurrently in the Longformer (Beltagy et al., 2020). The Bigbird model we fine-tuned is the decoder part of the released checkpoint. We fine-tune the model with causal LM objective on 15K books of PG-19 with peak learning rate 0.0001 for 100K steps. We set attention type to be “original_full” instead of using “block_sparse” during fine-tuning. We perform training on a single RTX8000 GPU for around 6 days.\nLocal Transformer Rather than implementing all three types of sparse attention in Bigbird, the Local Transformer relies only on the local attention, i.e., each token attends to neighbors within a local window. The maximum attainable sequence length scales linearly with the number of layers, e.g., with window size k, the token representation at layer l theoretically covers information in a range of k × l tokens.\nRouting Transformer (Roy et al., 2021) Different from previously described models which use position-based sparse attention, the Routing Transformer employs content-based sparse attention. Namely, each token are routed to clusters and the attention is performed only within each cluster. The clustering operation effectively reduces the quadratic complexity in length L to O(L1.5). Both the RT and LT checkpoint we used were trained on PG-19 (Rae et al., 2020). For both RT and LT, we evaluate on RTX8000 GPU.\nGPT-2/3 Unlike the previous models, the GPT models have a lot shorter maximum input length than previous models. While GPT-2 model does not use sparse attentions at all, GPT-3 model adopts alternated layers of sparse and dense self-attention. We use the GPT-2 large model, which was pretrained on data scraped from the Internet. The GPT3 model was pre-trained on a mixture of filtered CommonCrawl, WebText2, Books1, Books2, and Wikipedia."
+    }, {
+      "heading" : "D Finding the best SuffixLM",
+      "text" : "Let zi be the dense representation obtained for the ith segment from the encoder, the training objective of our SuffixLM can be formally described as follows. Given the predicted representation ẑi, gold representation z+i , and negative set Z − i consisting of multiple negatives, our SuffixLM strives\nto optimize the following loss:\nLi = − log exp(ẑi ⊤z+i )∑ zi∈{z+i ,Z − i } exp(ẑi ⊤zi)\nAs there are no prior long-range segment-level LM architectures that we can borrow from, we experiment multiple design choices and report the result of only the best performing one in the main text. For all variants, we use RoBERTa-base (Liu et al., 2019) as the encoder to obtain the encoded segment representation. This is done by extracting the representation of the [CLS] token prepended at the beginning of each sequence. We describe five variants below.\n• SuffixLM-A This variant contains a frozen RoBERTa-base encoder and a SuffixLM using a 6-layer Transformer as the base architecture.\n• SuffixLM-B This variant contains a frozen RoBERTa-base encoder and a SuffixLM using a 6-layer average-attention Transformer as the backbone. The motivation of using uniform distribution for attention weights is to encourage the model to get more information from the distant context rather than rely too much on local context.\n• SuffixLM-C This variant is essentically SuffixLM-A but during training we perform “segdrop” – stochastically dropping prefix segments with probability 0.216 when performing self-attention. When the local segments are dropped, the model has to predict the next segments with only the distant context, which\n16Tried {0.1, 0.2, 0.4}, 0.2 works the best.\nEvaluation on PG19\nalso encourages learning better long-range prefix representations.\n• SuffixLM-D Instead of freezing the encoder, this variant fine-tunes part of the encoder and the rest is the same as SuffixLM-A. Due to limited memory capacity, we only fine-tune the last two layers of the RoBERTa-base.\n• SuffixLM-E This model is the same as SuffixLM-D except that we truncate the encoder to just the two tunable layers and train all parameters in the encoder including the embedding parameters.\nAll SuffixLMs with frozen encoders are trained with average sequence length of 10240 tokens for up to 60k steps, and the one with trainable encoder is trained for max 120k steps. The dimension of the model is 768, hidden dimension 2048,attention heads 8. The peak learning rate is 0.0001 with warm up steps 4000. We train SuffixLM on entire PG19 dataset and evaluate the best checkpoint selected with dev loss. We plot the suffix identification accuracy of each variant on CHAPTERBREAK while feeding in prefix of increasing length. As shown in Figure 4, SuffixLM-E predominates other variants across various prefix lengths. Therefore in the maintext, all SuffixLM refers to the SuffixLM-\nE variant. Note that one limitation of SuffixLM is it exclusively model on segment-level, which prohibits it from performing token-by-token generation."
+    }, {
+      "heading" : "E Suffix perplexity",
+      "text" : "Although the task of CHAPTERBREAK is to identify gold suffix from negatives, we also present the gold suffix perplexity of next-token prediction LMs. Note that all models were trained or fine-tuned on PG-19 except for GPT-2. As these models use different tokenizers, the 128-token suffix may cover different number of words, to make the results comparable, we convert the subword-level perplexity to word-level by multiplying a constant to the log probability value of each model. For RT/LT, we multiple by 1.248 as used in the official repository. We multiply the value by 1.30 for GPT-2, and 1.22 for Bigbird. These values are estimated via the subword/word ratio on validation set of PG-19. Our fine-tuned Bigbird model achieves the lowest perplexity on PG-19, even better than Routing Transformer or Local Transformer. This implies that context from long-range is not necessary for achieving low perplexity since the maximum input length of Bigbird is half that of RT/LT.\nF In-book vs. Out-of-book\nThis section is better read after reading through § 3. In this analysis experiment, we show why it is better that the negatives are from the same narrative as the gold suffix. We evaluate our upperbound model SuffixLM on PG-19 set when the negatives are randomly sampled from other books, and plot the suffix identification accuracy of in Figure 6. When evaluate against out-of-book negatives, this suffix identification task is almost solved by our SuffixLM. The fact that good performance (>0.8) is achieved under out-of-book setup when the sequence length is short enough indicates the segment representation from different books are easy for the model to distinguish, thus we adopt a harder setup where the negatives are from the same book.\nG Various Discourse Relationships\nIn addition to chapter breaks, we also evaluate the other two types of discourse boundary examples introduced in Appendix A. As shown in Figure 5, for all suffix types other than chapter breaks, the evaluated models stop improving as the sequence length grows to more than 2K tokens long. However, there is a significant increasing trend in chapter breaks, especially while evaluating SuffixLM. For the rest models, the performance is either flat or not improving. On PG-19, the accuracy of SuffixLM improves for ∼ 0.18 as the sequence length increases from 256 to more than 4K, whereas the improvement of the Routing Transformer is merely ∼ 0.06. This is in contrast with SuffixLM’s ∼ 0.04 and RT’s ∼ 0.02 improvement under the ‘cause’ category. Two things can be concluded from these observations: (1) the chapter breaks examples form a special case where longer prefix is preferred to choose the correct continuation. (2) Even by comparing the relative improvement, the token-level LMs fall far behind the SuffixLM, which is, besides the absolute performance gap, another evidence for the imperfection of long-range modeling ability of current LRLMs."
+    }, {
+      "heading" : "H Tackle difference in Tokenizers",
+      "text" : "As the models we evaluated use different tokenizers, there are small variations in term of suffix length, i.e., the 128-token suffix may cover different number of words. To understand how the difference in length impacts validity of evaluation, we evaluate SuffixLM with various suffix lengths. Figure 7 indicates even though there are small variances when the suffices are of different lengths, the large gap between SuffixLM and Routing Transformer still remains, thus the difference in suffix length does not explain the large performance gap."
+    }, {
+      "heading" : "I Error analysis",
+      "text" : "Among the 300 examples we annotated in Section 2, 89 examples were wrongly predicted by every model we examined in the main text. We present the distribution of these examples in Table 5. Results indicate that models tend to make the wrong prediction when there is a shift in location and events in focus, and when plots are continuous in timeline."
+    } ],
+    "references" : [ {
+      "title" : "Etc: Encoding long and structured inputs in transformers",
+      "author" : [ "Joshua Ainslie", "Santiago Ontanon", "Chris Alberti", "Vaclav Cvicek", "Zachary Fisher", "Philip Pham", "Anirudh Ravula", "Sumit Sanghai", "Qifan Wang", "Li Yang" ],
+      "venue" : null,
+      "citeRegEx" : "Ainslie et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Ainslie et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Role of context in accessing distant information during reading",
+      "author" : [ "Jason E. Albrecht", "Jerome L. Myers." ],
+      "venue" : "Journal of experimental psychology. Learning, memory, and cognition, 21 6:1459–68.",
+      "citeRegEx" : "Albrecht and Myers.,? 1995",
+      "shortCiteRegEx" : "Albrecht and Myers.",
+      "year" : 1995
+    }, {
+      "title" : "Longformer: The long-document transformer",
+      "author" : [ "Iz Beltagy", "Matthew E. Peters", "Arman Cohan" ],
+      "venue" : null,
+      "citeRegEx" : "Beltagy et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Beltagy et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Language models are few-shot learners. arXiv preprint arXiv:2005.14165",
+      "author" : [ "Tom B Brown", "Benjamin Mann", "Nick Ryder", "Melanie Subbiah", "Jared Kaplan", "Prafulla Dhariwal", "Arvind Neelakantan", "Pranav Shyam", "Girish Sastry", "Amanda Askell" ],
+      "venue" : null,
+      "citeRegEx" : "Brown et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Brown et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Generating long sequences with sparse transformers",
+      "author" : [ "Rewon Child", "Scott Gray", "Alec Radford", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Child et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Child et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Transformer-XL: Attentive language models beyond a fixed-length context",
+      "author" : [ "Zihang Dai", "Zhilin Yang", "Yiming Yang", "Jaime Carbonell", "Quoc Le", "Ruslan Salakhutdinov." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Dai et al\\.,? 2019",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Eli5: Long form question answering",
+      "author" : [ "Angela Fan", "Yacine Jernite", "Ethan Perez", "David Grangier", "Jason Weston", "Michael Auli" ],
+      "venue" : null,
+      "citeRegEx" : "Fan et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Longt5: Efficient text-to-text transformer for long sequences",
+      "author" : [ "Mandy Guo", "Joshua Ainslie", "David Uthus", "Santiago Ontanon", "Jianmo Ni", "Yun-Hsuan Sung", "Yinfei Yang" ],
+      "venue" : null,
+      "citeRegEx" : "Guo et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Guo et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Efficient attentions for long document summarization",
+      "author" : [ "Luyang Huang", "Shuyang Cao", "Nikolaus Parulian", "Heng Ji", "Lu Wang." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human",
+      "citeRegEx" : "Huang et al\\.,? 2021",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Toward better storylines with sentence-level language models",
+      "author" : [ "Daphne Ippolito", "David Grangier", "Douglas Eck", "Chris Callison-Burch." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7472–7478, Online.",
+      "citeRegEx" : "Ippolito et al\\.,? 2020",
+      "shortCiteRegEx" : "Ippolito et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards a grammar of narrative sequence: The model of the french lieutenant’s woman",
+      "author" : [ "KR Ireland." ],
+      "venue" : "Poetics today, 7(3):397–420.",
+      "citeRegEx" : "Ireland.,? 1986",
+      "shortCiteRegEx" : "Ireland.",
+      "year" : 1986
+    }, {
+      "title" : "Transformers are rnns: Fast autoregressive transformers with linear attention",
+      "author" : [ "Angelos Katharopoulos", "Apoorv Vyas", "Nikolaos Pappas", "Francois Fleuret." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning.",
+      "citeRegEx" : "Katharopoulos et al\\.,? 2020",
+      "shortCiteRegEx" : "Katharopoulos et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Booksum: A collection of datasets for long-form narrative summarization",
+      "author" : [ "Wojciech Kryściński", "Nazneen Rajani", "Divyansh Agarwal", "Caiming Xiong", "Dragomir Radev" ],
+      "venue" : null,
+      "citeRegEx" : "Kryściński et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Kryściński et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Corpora for document-level neural machine translation",
+      "author" : [ "Siyou Liu", "Xiaojun Zhang." ],
+      "venue" : "Proceedings of the 12th Language Resources and Evaluation Conference, pages 3775–3781, Marseille, France. European Language Resources Association.",
+      "citeRegEx" : "Liu and Zhang.,? 2020",
+      "shortCiteRegEx" : "Liu and Zhang.",
+      "year" : 2020
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov" ],
+      "venue" : null,
+      "citeRegEx" : "Liu et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Maintaining global coherence during reading",
+      "author" : [ "Jerome Myers", "Edward O’Brien", "Jason Albrecht", "Robert Mason" ],
+      "venue" : "Journal of Experimental Psychology: Learning, Memory, and Cognition,",
+      "citeRegEx" : "Myers et al\\.,? \\Q1994\\E",
+      "shortCiteRegEx" : "Myers et al\\.",
+      "year" : 1994
+    }, {
+      "title" : "Shortformer: Better language modeling using shorter inputs",
+      "author" : [ "Ofir Press", "Noah A. Smith", "Mike Lewis." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natu-",
+      "citeRegEx" : "Press et al\\.,? 2021",
+      "shortCiteRegEx" : "Press et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeffrey Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever." ],
+      "venue" : "OpenAI blog, 1(8):9. 5",
+      "citeRegEx" : "Radford et al\\.,? 2019",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits",
+      "author" : [ "Wei Li", "Peter J. Liu" ],
+      "venue" : null,
+      "citeRegEx" : "Li and Liu.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Li and Liu.",
+      "year" : 2020
+    }, {
+      "title" : "Efficient content-based sparse",
+      "author" : [ "David Grangier" ],
+      "venue" : null,
+      "citeRegEx" : "Grangier.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Grangier.",
+      "year" : 2021
+    }, {
+      "title" : "Q-bert: Hessian based ultra low pre",
+      "author" : [ "Keutzer" ],
+      "venue" : null,
+      "citeRegEx" : "2020.,? \\Q2020\\E",
+      "shortCiteRegEx" : "2020.",
+      "year" : 2020
+    }, {
+      "title" : "The Chapter in Fiction: Theo",
+      "author" : [ "Philip Stevick" ],
+      "venue" : null,
+      "citeRegEx" : "8821",
+      "shortCiteRegEx" : "8821",
+      "year" : 1970
+    }, {
+      "title" : "Efficient transformers: A survey",
+      "author" : [ "Yi Tay", "Mostafa Dehghani", "Dara Bahri", "Donald Metzler" ],
+      "venue" : null,
+      "citeRegEx" : "Tay et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Tay et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Representation learning with contrastive predictive coding",
+      "author" : [ "Aäron van den Oord", "Yazhe Li", "Oriol Vinyals." ],
+      "venue" : "ArXiv, abs/1807.03748.",
+      "citeRegEx" : "Oord et al\\.,? 2018",
+      "shortCiteRegEx" : "Oord et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "SWAG: A large-scale adversarial dataset for grounded commonsense inference",
+      "author" : [ "Rowan Zellers", "Yonatan Bisk", "Roy Schwartz", "Yejin Choi." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 93–104, Brus-",
+      "citeRegEx" : "Zellers et al\\.,? 2018",
+      "shortCiteRegEx" : "Zellers et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 16,
+      "context" : "However, recent analysis experiments (Sun et al., 2021; Press et al., 2021) show that modern LRLMs rely mostly on local context (i.",
+      "startOffset" : 37,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 24,
+      "context" : "We instead turn to the task of suffix identification, which closely resembles existing datasets such as SWAG (Zellers et al., 2018).",
+      "startOffset" : 109,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 17,
+      "context" : "9 We also evaluate two standard Transformer language models, GPT-2 large (Radford et al., 2019) and GPT-3 (Brown et al.",
+      "startOffset" : 73,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 14,
+      "context" : "12 We divide a sequence to multiple segments, embedding each with a finetuned RoBERTa network (Liu et al., 2019).",
+      "startOffset" : 94,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 22,
+      "context" : "Our work depends heavily on recent advances in efficient Transformers (Tay et al., 2020) that process long sequences (Rae et al.",
+      "startOffset" : 70,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2020) that process long sequences (Rae et al., 2020; Beltagy et al., 2020; Zaheer et al., 2020; Ainslie et al., 2020; Roy et al., 2021).",
+      "startOffset" : 36,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2020) that process long sequences (Rae et al., 2020; Beltagy et al., 2020; Zaheer et al., 2020; Ainslie et al., 2020; Roy et al., 2021).",
+      "startOffset" : 36,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 4,
+      "context" : "Sparse attention (Child et al., 2019), relative position encoding (Shaw et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2019), relative position encoding (Shaw et al., 2018; Raffel et al., 2020; Guo et al., 2021) and other tricks (Dai et al.",
+      "startOffset" : 36,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2021) and other tricks (Dai et al., 2019; Weston et al., 2015; Shen et al., 2020; Stock et al., 2021; Katharopoulos et al., 2020) are commonly adopted by efficient Transformers.",
+      "startOffset" : 25,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2021) and other tricks (Dai et al., 2019; Weston et al., 2015; Shen et al., 2020; Stock et al., 2021; Katharopoulos et al., 2020) are commonly adopted by efficient Transformers.",
+      "startOffset" : 25,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 6,
+      "context" : "Existing long-sequence downstream tasks include long-form QA (Fan et al., 2019; Pang et al., 2021), document-level summarization (Kryściński et al.",
+      "startOffset" : 61,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2021), document-level summarization (Kryściński et al., 2021; Huang et al., 2021), and machine translation (Liu and Zhang, 2020).",
+      "startOffset" : 38,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2021), document-level summarization (Kryściński et al., 2021; Huang et al., 2021), and machine translation (Liu and Zhang, 2020).",
+      "startOffset" : 38,
+      "endOffset" : 83
+    } ],
+    "year" : 0,
+    "abstractText" : "While numerous architectures for long-range language models (LRLMs) have recently been proposed, a meaningful evaluation of their discourse-level language understanding capabilities has not yet followed. To this end, we introduce CHAPTERBREAK, a challenge dataset that provides an LRLM with a long segment from a narrative that ends at a chapter boundary and asks it to distinguish the beginning of the ground-truth next chapter from a set of negative segments sampled from the same narrative. A fine-grained human annotation reveals that our dataset contains many complex types of chapter transitions (e.g., parallel narratives, cliffhanger endings) that require processing global context to comprehend. Experiments on CHAPTERBREAK show that existing LRLMs fail to effectively leverage long-range context, substantially underperforming a segment-level model trained directly for this task. We publicly release our CHAPTERBREAK dataset to spur more principled future research into LRLMs.",
+    "creator" : null
+  }
+}

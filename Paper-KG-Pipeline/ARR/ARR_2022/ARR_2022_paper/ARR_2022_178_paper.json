@@ -1,0 +1,855 @@
+{
+  "name" : "ARR_2022_178_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "A Simple Hash-Based Early Exiting Approach For Language Understanding and Generation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Early exiting is a widely used technique to accelerate inference of deep neural networks. With the rising of pre-trained language models (PLMs) (Devlin et al., 2019; Yang et al., 2019; Lan et al., 2020; Raffel et al., 2020; Qiu et al., 2020), early exiting is drawing increasing attention in the NLP community. At its core, early exiting allows simple instances to exit early while allowing hard instances to exit late. Thus, how to measure instance difficulty is a crucial problem.\nMost existing early exiting methods attach multiple internal classifiers to the PLM and adopt\nsome heuristic metrics, such as entropy (Xin et al., 2020; Liu et al., 2020a) or maximum softmax score (Schwartz et al., 2020) of internal outputs, to measure instance difficulty. However, these methods can not easily generalize to new tasks. On the one hand, these metrics are not accessible on some tasks such as regression. On the other hand, In order for these methods to perform well, one usually needs to fine-tune the threshold, which varies widely across different tasks and datasets.\nAnother way to measure instance difficulty is to directly learn it. Recent studies (Elbayad et al., 2020; Xin et al., 2021) that use the idea of \"learn-toexit\" have achieved promising results. They jointly train a neural model to predict for each instance the exiting layer. At their core, the learn-to-exit module is to estimate the difficulty for each instance. Compared with previous heuristically designed metrics for difficulty, learn-to-exit is task-agnostic and does not require threshold-tuning, therefore is a more promising way.\nDespite their success, it is still unknown whether or how well the instance difficulty can be learned. As a response, in this work, we construct datasets for two kinds of instance difficulty: (a) Humandefined difficulty, and (b) Model-defined difficulty. The dataset for human-defined difficulty has two labels, 0 for instances that can be annotated by human and 1 for instances that cannot. For modeldefined difficulty, we train a multi-exit BERT (Devlin et al., 2019), which is attached with an internal classifier at each layer, on a sentence-level classification task, SNLI (Bowman et al., 2015), and a token-level classification task, OntoNotes NER (Hovy et al., 2006). The trained multi-exit BERTs are then used to annotate for each development instance whether it can be correctly predicted by each internal classifier. Thus, our constructed sentence-level and token-level model-defined difficulty datasets are multi-label classification datasets. Experimental results demonstrate that, modern neu-\nral networks perform poorly on predicting instance difficulty. This observation is consistent with previous work (Laverghetta et al., 2020) on estimating instance difficulty for curriculum learning.\nGiven that instance difficulty is hard to be predicted, then what works in the learn-to-exit modules? We hypothesis that the consistency between training and inference may play an important role. That is, for a training instance xi that is predicted to exit at layer l, an inference instance xj that is similar with xi should be predicted to exit at layer l, too. Since neural networks are usually smooth functions (Ziegel, 2003), this consistency can be easily satisfied by neural learn-to-exit modules. If this hypothesis holds, we can replace the learn-to-exit module with a simple hash function. In particular, we use hash functions to assign each token to a fixed exiting layer. This hash-based early exiting method is named HASHEE.\nCompared with previous methods that use heuristic metrics for difficulty or jointly learn to exit, HASHEE offers several advantages: (a) HASHEE requires no internal classifiers nor extra parameters, which are necessary in previous work. (b) HASHEE can perform token-level early exiting without supervision, therefore can be widely used on various tasks including language understanding and generation. (c) The speed-up ratio can be easily tuned by modifying the hash function. (d) HASHEE can significantly accelerate model inference on a per-batch basis instead of per-instance basis as in previous work (Xin et al., 2020; Liu et al., 2020a; Zhou et al., 2020).\nWe conduct experiments on classification, regression, and generation tasks. Experimental results on ELUE (Liu et al., 2021a) demonstrate that HASHEE, despite its simplicity, can achieve higher performance with fewer FLOPs and inference time than previous state-of-the-art methods on various tasks. Besides, our experiments on several text summarization datasets show that HASHEE can reduce ∼50% FLOPs of BART (Lewis et al., 2020) and CPT (Shao et al., 2021) while maintaining 97% ROUGE-1 score."
+    }, {
+      "heading" : "2 Can Instance Difficulty Be Learned?",
+      "text" : "In this section, we examine whether or to what extent instance difficulty can be learned. In particular, we manage to evaluate how well a neural network that trained on some data with difficulty annotation can generalize to unseen data. Here we consider\ntwo kinds of difficulty: human-defined difficulty and model-defined difficulty."
+    }, {
+      "heading" : "2.1 Human-defined Difficulty",
+      "text" : "Dataset Construction Human-defined difficulty of an instance measures how difficult for human to judge its label. To construct such a dataset, we use the SNLI dataset (Bowman et al., 2015), which is a collection of 570k human-written English sentence pairs that are manually labeled with the inference relation between the two sentences: entailment, contradiction, or neutral. The labels in SNLI are determined by the majority of the crowd-sourced annotators. If there is no majority for an instance, its label would be \"Unknown\". We collect 1,119 unknown instances from SNLI dataset as our difficult instances, and collect 1,119 labeled instances from the instances of three classes (i.e., entailment, contradiction, and neutral) in equal proportion as our simple instances, obtaining a balanced binary classification (difficult or simple) dataset with 2,238 instances. We randomly sample 1,238 instances with balanced labels as training set and use the remaining 1,000 instances as test set.\nLearning Human-defined Difficulty We then train a BERT model (Devlin et al., 2019) with a linear classifier on the top on our constructed training set, and evaluate on the test set to see if it can predict whether an unseen instance is simple or difficult. As shown in Figure 1, the BERT model that fits well on the training set can only achieve ∼60% accuracy on the test set, demonstrating that neural models (even BERT) can not easily learn to estimate human-defined difficulty."
+    }, {
+      "heading" : "2.2 Model-defined Difficulty",
+      "text" : "However, model can have a different view of instance difficulty from human. For example, an instance can be defined as a difficult one if it can not be correctly predicted by a well-trained model.\nThus, we also construct datasets to characterize model-defined difficulty for each instance, which is more realistic in the context of early exiting. In particular, we construct two datasets labeled with model-defined difficulty at sentence-level and token-level, respectively.\nSentence-level Difficulty Estimating modeldefined difficulty of a sentence (or sentence pairs) is helpful to language understanding tasks such as text classification and natural language inference (Xin et al., 2021). To obtain the sentence-level difficulty, we train a multi-exit BERT that is attached with an internal classifier at each layer on SNLI training set. Once the multi-exit BERT is trained, it can serve as an annotator to label each instance in the SNLI development set whether it can be correctly predicted by each internal classifier. In our experiments, we use BERTBASE that has 12 layers, and therefore for each instance in the SNLI development set we have 12 labels, each takes values of 0 or 1 to indicate whether or not the corresponding internal classifier correctly predict its label. By this, we label the 9,842 SNLI development instances to construct a multi-label classification dataset, from which we randomly sample 8,000 instances as training set and use the remaining 1,842 instances as test set.\nToken-level Difficulty We also construct a dataset for estimating model-defined difficulty of each token, which can be used in language generation tasks (Elbayad et al., 2020) and sequence labeling tasks (Li et al., 2021b). Similarly, we train a multi-exit BERT on OntoNotes NER (Hovy et al., 2006) training set, and use it to annotate each token in the OntoNotes development instances whether it can be correctly predicted by each internal classifier. By this, we obtain a token-level multilabel classification datasets consisting of 13,900"
+    }, {
+      "heading" : "Model Precision Recall F1 Score",
+      "text" : "instances, from which we randomly sample 10,000 instances to construct a training set and use the remaining 3,900 instances as test set.\nLearning Model-defined Difficulty For each constructed model-defined difficulty dataset, we evaluate several models: (1) Majority model always predicts the majority class for each label, with class priors learned from the training data. (2) Linear-M is a multi-classification linear layer that takes as input the average pooled word embeddings and outputs the exiting layer. This model corresponds to the multinomial variants of Elbayad et al. (2020). Since the inputs of Linear-M is noncontextualized, we did not apply it to estimate token-level difficulty. (3) Linear-B is a binary classification linear layer that takes as input the hidden states at each BERT layer and outputs whether or not the instance (or token) is correctly predicted. This model corresponds to the geometric variants of Elbayad et al. (2020) and the learn-to-exit module in BERxiT (Xin et al., 2021). (4) We also train and evaluate a bidirectional LSTM model (Hochreiter and Schmidhuber, 1997) with one layer and hidden size of 256. It takes as input the instance and outputs the exiting layer. (5) BERT model (Devlin et al., 2019) is also considered for this task. For these models, except for Linear-B, we use the binary cross entropy loss to handle the multi-label classification. Since most development instances are correctly predicted, our constructed datasets are label-imbalanced. To alleviate this issue, we adopt over-sampling for classes with fewer instances.\nOur experimental results are shown in Figure 2, from which we find that: (1) For the task of estimating sentence-level difficulty, the shallow neural models perform as well as simple majority model. Only the BERT model can slightly outperform the majority model. (2) For token-level difficulty, these neural models perform slightly better than the majority model. The insignificant improvement over the majority model demonstrate that, the performance of the neural models mainly come from the learning of prior distribution of label instead of extracting difficulty-related features from instances. In the case of label imbalance, the accuracy can not well measure model performance. Besides, in the context of early exiting, we are more interested in cases that the model performs a false exit for an unsolved instance. Thus, we also report the precision, recall, and F1 score on the negative class. As shown in Table 1, all the evaluated models perform poorly on recognizing the incorrectly predicted instances and tokens.\nThough, it can not be concluded that the instance difficulty can not be learned since there are still a variety of machine learning models and training techniques that are under explored. Our preliminary experiments demonstrate that, at least, instance difficulty, whether human-defined or modeldefined, is hard to learn for modern neural networks. In fact, our evaluated learn-to-exit models are upper baselines than that used in previous work because: (1) we also adopt more powerful deep models instead of simple linear models in previous methods (Elbayad et al., 2020; Xin et al., 2021), and (2) Different from our method that trains learnto-exit module on development set, previous methods jointly train their learn-to-exit module on the training set where few instances are incorrectly predicted, leading to more serious label imbalance. To facilitate future research, our constructed difficulty datasets will be publicly available."
+    }, {
+      "heading" : "3 HASHEE: Hash Early Exiting",
+      "text" : ""
+    }, {
+      "heading" : "3.1 What is Unnecessary and What Works?",
+      "text" : "On the one hand, previous methods (Elbayad et al., 2020; Xin et al., 2021) that use learn-to-exit modules have achieved competitive results, which implies that something works in the learn-to-exit modules. On the other hand, our preliminary experiments show that instance difficulty is hard to be predicted in advance, which indicates that learning can be unnecessary to achieve a good performance.\nTo find what works, we formally describe the prediction of an early exiting model as P (y|x) =∑\nd∈D P (y|x, d)P (d|x), where d is the difficulty (e.g., the exiting layer) for x. Note that in practice, P (D|x) is an one-hot distribution, so when d is predicted, the exiting layer, i.e., the model architecture is determined. Therefore, the difficulty d actually corresponds to an architecture.1 Now given that the mapping from instance x to its difficulty d, i.e., the best architecture, is hard to be learned, a natural idea to make P (y|x) performs well is to keep P (d|x) consistent: if a training instance xi is predicted to exit at layer l, then an inference instance xj that is similar with xi should exit at layer l, too. By this, the activated architecture can well-handle the instance xj during inference because it is well-trained on similar instances such as xi. Note that this consistency between training and inference can be easily satisfied by previous learnto-exit modules due to the smoothness of neural models (Ziegel, 2003). Based on this hypothesis, we manage to remove the learning process and only stick to the consistency. In particular, we replace the neural learn-to-exit module P (d|x) with a simple hash function."
+    }, {
+      "heading" : "3.2 Method",
+      "text" : "Without loss of generality, we first consider sequence classification tasks. A straightforward idea is to design a hash function to map semantically similar instances into the same bucket, and therefore the hash function should be some powerful sequence encoder such as Sentence-BERT (Reimers and Gurevych, 2019), which is cumbersome in computation. In addition, a high-quality sequence encoder as a hash function usually maps instances with the same label into the same bucket (i.e. the same exiting layer), which makes the internal classifier at that layer suffer from label imbalance. Due to the difficulty of holding consistency at sentencelevel, we rather propose to hold the consistency at token-level. By assigning each token into a fixed bucket, the token-level consistency between training and inference is easily satisfied.\nAn overview of our method is illustrated in Figure 3. We adopt a simple and efficient hash function to map each token into a fixed bucket in advance, where each bucket corresponds to an exiting layer.\n1Note that this formulation is similar to some differentiable Neural Architecture Search (NAS) and Mixture-of-Expert (MoE) works, which also encountered similar difficulties in learning architectures (Wang et al., 2021; Roller et al., 2021)."
+    }, {
+      "heading" : "Calculated Token Exited Token Attention Copy",
+      "text" : "We use pre-trained Transformers (Vaswani et al., 2017) as our backbones. During model’s forward pass, the representation of exited tokens will not be updated through self-attention, and its hidden states of the upper layers are directly copied from the hidden states of the exiting layer. By this token-level early exiting, the computation in self-attention and the following feed-forward network is reduced."
+    }, {
+      "heading" : "3.3 Hash Functions",
+      "text" : "To hold the token-level consistency between training and inference, HASHEE employs hash functions to compute in advance the exiting layer for each token. During training and inference, each token exits at a fixed layer according to the precomputed hash lookup table. The hash functions can take a variety of forms. Here we consider several hash functions as possible alternatives.\nRandom Hash Random hash is a lower baseline, wherein we assign each token to a fixed, random exiting layer at initialization. To examine our hypothesis, we also consider to use two different random hash functions for training and inference respectively, in which case the consistency does not hold. We denote these two random hash functions as Rand-cons and Rand-incons.\nFrequency Hash To achieve higher speed-up, a natural way is to assign frequent tokens to lower layers to exit. Intuitively, frequent tokens are usually well-trained during pre-training and therefore do not require too much refinement by looking at their contexts. Thus we can design a hash function that assigns tokens into exiting layers by frequency. In particular, the tokens are sorted by frequency and then divided equally into B buckets.\nMI Hash Further, we also consider a taskspecific hash function that is based on the mutual information (MI) between each token and the corresponding label, which, as an instance of HASHEE, is also adopted in Liu et al. (2021b). Tokens are sorted by their MI values between the task label, and then divided equally into B buckets. Tokens with higher MI values are assigned to lower layers.\nClustered Hash It is also intuitive that similar tokens should be assigned to the same layer to exit, and therefore we also experiment with a clustered hash function. The clusters are obtained by performing k-means clustering using token embeddings from BERTBASE embedding layer. The clustered tokens are then sorted by norm, which often relates to token frequency (Schakel and Wilson, 2015) and difficulty (Liu et al., 2020b). The clustered tokens with small average norms are assigned to lower layers."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Tasks and Datasets",
+      "text" : "Since HASHEE requires no supervision, it can be applied to a variety of tasks and architectures. In our work, we conduct experiments on natural language understanding tasks including sentiment analysis, natural language inference, similarity regression, and a language generation task, text summarization. Statistics of our used datasets are shown in Appendix A.1.\nUnderstanding Tasks For the convenience of comparison with other efficient models, we evaluate our proposed HASHEE on the ELUE benchmark (Liu et al., 2021a), which is comprised of SST-2 (Socher et al., 2013), IMDb (Maas et al., 2011), SNLI (Bowman et al., 2015), SciTail (Khot et al., 2018), MRPC (Dolan and Brockett, 2005), and STS-B (Cer et al., 2017)). Note that STS-B is a regression task.\nGeneration Tasks For language generation, we evaluate HASHEE on two English summarization datasets, CNN/DailyMail (Hermann et al., 2015) and Reddit (Kim et al., 2019), and two Chinese summarization datasets: TTNews (Hua et al., 2017) and CSL (Xu et al., 2020b)."
+    }, {
+      "heading" : "4.2 Experimental Setup",
+      "text" : "Baselines We compare HASHEE with the following competitive baseline models: (1) Pre-Trained\nLanguage Models. We directly fine-tune the first layers of pre-trained language models including BERT (Devlin et al., 2019), ALBERT (Lan et al., 2020), RoBERTa (Liu et al., 2019), and ElasticBERT (Liu et al., 2021a) with a MLP classifier on the top. (2) Static Models. We compare with several static approaches to accelerate language model inference, including DistilBERT (Sanh et al., 2019), TinyBERT (Jiao et al., 2020), HeadPrune (Michel et al., 2019), and BERTof-Theseus (Xu et al., 2020a). (3) Dynamic models. We compare with DeeBERT (Xin et al., 2020), FastBERT (Liu et al., 2020a), PABEE (Zhou et al., 2020), BERxiT (Xin et al., 2021), and CascadeBERT (Li et al., 2021a).\nTraining For most NLU experiments we adopt the ElasticBERTBASE model (Liu et al., 2021a) as our backbone model, which is a pre-trained multi-exit Transformer encoder. For small datasets (i.e., SST-2, MRPC, and STS-B) we report the mean performance and the standard deviation (in Table 3 and 9) over 5 runs with different random seeds. For text summarization datasets we adopt BARTBASE (Lewis et al., 2020) and CPTBASE (Shao et al., 2021) as our backbone models and use the frequency hash to assign tokens\nto the encoder layers. All of the experiments are conducted on GeForce RTX 3090 GPUs. More experimental details are given in Appendix A.2."
+    }, {
+      "heading" : "4.3 Results and Analysis",
+      "text" : "Results on ELUE We first show our main comparison results on ELUE test sets in Table 2. Us-\ning the frequency hash that assigns tokens to the first 6 layers of ElasticBERTBASE, HASHEE can outperform most considered baselines with fewer FLOPs. To fairly compare with baselines of various speedup ratios, we also report the ELUE score (Liu et al., 2021a), which is a two-dimensional (performance and FLOPs) metric for efficient NLP models, measuring how much a model oversteps ElasticBERT. Table 2 shows that HASHEE achieved a new state-of-the-art ELUE score. To fairly compare with the learn-to-exit baseline we also implement BERxiT (Xin et al., 2021) with ElasticBERTBASE.\nComparison of Different Hash Functions We then evaluate HASHEE with different hash functions detailed in Section 3.3. For all these hash functions, we assign tokens to the 6 and 12 layers of ElasticBERT-6L and ElasticBERT-12L, respectively. Experimental results on SST-2, SNLI, and MRPC are given in Table 3. Among the hash functions, the frequency hash achieves the highest speedup while maintaining a considerable performance. With the backbone of ElasticBERT-12L, these hash functions, except for the frequency hash, cannot achieve considerable speedup. Besides, we find that ElasticBERT-12L did not significantly outperform ElasticBERT-6L with HASHEE. We conjecture that higher layers are not good at querying information from hidden states of tokens that exit too early. In this work, we are more interested in the case of high acceleration ratio, so we adopt ElasticBERT-6L as our main backbone. To make a more intuitive comparison of these hash functions with different speedup ratios, we also show in Figure 4 the ELUE scores on SST-2 and SNLI with ElasticBERT-6L as backbone. We find that the frequency hash outperforms other hash functions by a large margin, and therefore in the following\nexperiments we mainly use the frequency hash. Besides, only the Rand-incons hash obtains negative ELUE score, demonstrating the benefit of maintaining consistency between training and inference.\nComparison of Actual Inference Time Because most of the operations in the Transformer architecture are well optimized by modern deep learning frameworks and parallel processing hardwares such as GPU and TPU, FLOPs may not precisely reflect the actual inference time. To that end, here we also evaluate actual inference time on a single GeForce RTX 3090 GPU. Note that the speedup ratio of previous early exiting methods are usually tested on a per-instance basis, i.e. the batch size is set to 1. However, batch inference is often more favorable in both offline scenarios and low-latency scenarios (Zhang et al., 2019). Here we compare HASHEE with two baselines that have similar performance, i.e., FastBERT and PABEE. Our experiments are conducted on two datasets with very different average sentence length, i.e., SNLI and IMDb. Results are given in Table 5 and Figure 5. We find HASHEE has an advantage in processing speed when the batch size exceeds 8. Besides, HASHEE can perform larger batch inference due to its memory-efficiency.\nComparison of Different Backbones To evaluate the versatility of HASHEE, we also conduct experiments with other backbone models, i.e., BERT, ALBERT, and RoBERTa. As shown in Figure 6, HASHEE outperforms other baselines with the same backbone.\nAccelerating Seq2Seq Models Since HASHEE requires no supervision, it can also be applied to seq2seq models for generation tasks. We first evaluate HASHEE with BARTBASE as our backbone on two English summarization tasks. As shown in Table 4, HASHEE can achieve significant speedup for BART encoder while maintaining considerable ROUGE scores. Besides, we find that previous early exiting methods that measure the uncertainty of internal outputs\nwould rather slow down decoder inference due to the heavy computation of prediction over large vocabulary. In addition, to further explore the speedup potential of HASHEE, we also experiment with CPT (Shao et al., 2021), which has a deep encoder and a shallow decoder. Results on CSL and TTNews depict that HASHEE can achieve 2.3× speedup relative to CPT while maintaining 97% ROUGE-1. We also report results of the 6-layer versions of BART (with 3 encoder layers and 3 decoder layers) and CPT (with 5 encoder layers and 1 decoder layer)."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Large-scale pre-trained language models (PLMs) have achieved great success in recent years. Despite their power, the inference is time-consuming, which hinders their deployment in low-latency scenarios. To accelerate PLM inference, there are currently two streams of work: (1) Compressing a cumbersome PLM through knowledge distillation (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2020), model pruning (Gordon et al., 2020; Michel et al., 2019), quantization (Shen et al., 2020), module replacing (Xu et al., 2020a), etc. (2) Selectively activating parts of the model conditioned on the input, such as Universal Transformer (Dehghani et al., 2019), FastBERT (Liu et al., 2020a), DeeBERT (Xin et al., 2020), PABEE (Zhou et al., 2020), LeeBERT (Zhu, 2021), CascadeBERT (Li et al., 2021a), ElasticBERT (Liu et al., 2021a) and other similar methods (Elbayad et al., 2020; Schwartz et al., 2020; Liao et al., 2021; Xin et al., 2021; Sun et al., 2021). Different from these methods, our proposed HASHEE requires no internal classifiers (which imply extra parameters) and supervision, and therefore can be widely used in a variety of tasks and model architectures."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We first empirically study the learnability of instance difficulty, which is a crucial problem in early exiting. Based on the observation that modern neural models perform poorly on estimating instance difficulty, we propose a hash-based early exiting approach, named HASHEE, that removes the learning process and only sticks to the consistency between training and inference. Our experiments on classification, regression, and generation tasks show that HASHEE can achieve state-of-the-art performance with fewer computation and inference time."
+    }, {
+      "heading" : "A Appendix",
+      "text" : ""
+    }, {
+      "heading" : "A.1 Dataset Statistics",
+      "text" : "Here we list the statistics of our used language understanding and generation datasets in Table 6 and Table 7."
+    }, {
+      "heading" : "Tasks Datasets |Train| |Dev| |Test|",
+      "text" : ""
+    }, {
+      "heading" : "A.2 Experimental Details",
+      "text" : "For small datasets in ELUE, i.e. SST-2, MRPC, and STS-B, we conduct grid search over batch sizes of {16, 32}, learning rates of {2e-5, 3e-5, 5e-5}, number of epochs of {3, 4, 5}, warmup step ratios of {0.1, 0.01}, and weight decays of {0.1, 0.01} with an AdamW optimizer. We select the hyperparameters that achieved the best performance on the development sets, and perform 5 runs with different random seeds to obtain the mean performance and standard deviation. For SNLI, SciTail, and IMDb, we use the same hyperparameters. All of the hyperparameters used in our language understanding experiments are given in Table 8.\nFor English summarization tasks, i.e., CNN/DailyMail and Reddit, we use the same hyperparameters as BART. For Chinese summarization tasks, i.e., TTNews and CSL, we use the same hyperparameters as CPT."
+    }, {
+      "heading" : "A.3 Additional Experimental Results",
+      "text" : "In previous experiments we assign tokens to the same number of buckets as the number of layers. Here we also explore other configurations. For"
+    }, {
+      "heading" : "Tasks LR BSZ Epoch WSR WD",
+      "text" : ""
+    }, {
+      "heading" : "12 2.8× 85.6 (±0.37) 89.8 84.4 (±0.17)",
+      "text" : "each configuration, we assign tokens to B buckets, corresponding to exiting layers {1 + 12b/B}B−1b=0 . For instance, if we have 12 layers and 3 buckets, the 3 buckets correspond to the {1, 5, 9} layers. Overall results are given in Table 9, where we show results of 8 configurations with the frequency hash. Similar with Table 3, we find that 6-layer models perform well while achieving higher acceleration ratios. In addition, the number of buckets has no significant effect on acceleration ratio. Configurations that the number of layers equals to the number of buckets perform slightly better than other configurations."
+    }, {
+      "heading" : "A.4 Details on FLOPs Calculation",
+      "text" : "Here we take a closer look at the HASHEE model forward process, and see which FLOPs are saved during inference.\nGiven the hidden states at layer l as Hl ∈ Rn×d and the hidden states of remaining tokens are denoted as hl ∈ Rm×d, where n is the original sequence length and m is the number of remaining tokens at layer l, the calculation of one Transformer encoder layer with HASHEE can be formally de-\nscribed as\nqi,Ki,Vi = h lWQi ,H lWKi ,H lWVi , (1)\nxi = Softmax( qiK ⊤ i√\ndk )Vi, (2)\nx = Concat(x1, · · · ,xh)WO, (3) hl+1 = ReLU(xW1)W2, (4)\nHl+1 = Copy(Hl,hl+1), (5)\nwhere we lowercase the representations with reduced shape, i.e., qi,xi ∈ Rm×dk , x,h ∈ Rm×d. dk is the dimension of each attention head. Copy(Hl,hl+1) is to copy the hidden states of the exited tokens from Hl and concatenate with the updated hidden states hl+1. By this token-level early exiting, the computation in self-attention and the following feed-forward network is reduced.\nIn particular, we show in Table 10 the saved MACs (Multiply–Accumulate Operations) in each module of one Transformer encoder layer. We estimate FLOPs with twice the MACs."
+    } ],
+    "references" : [ {
+      "title" : "A large annotated corpus for learning natural language inference",
+      "author" : [ "Samuel R. Bowman", "Gabor Angeli", "Christopher Potts", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 2015 Conference on Empirical Methods in Natural Language Processing,",
+      "citeRegEx" : "Bowman et al\\.,? 2015",
+      "shortCiteRegEx" : "Bowman et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semeval2017 task 1: Semantic textual similarity - multilingual and cross-lingual focused evaluation",
+      "author" : [ "Daniel M. Cer", "Mona T. Diab", "Eneko Agirre", "Iñigo Lopez-Gazpio", "Lucia Specia." ],
+      "venue" : "CoRR, abs/1708.00055.",
+      "citeRegEx" : "Cer et al\\.,? 2017",
+      "shortCiteRegEx" : "Cer et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Universal transformers",
+      "author" : [ "Mostafa Dehghani", "Stephan Gouws", "Oriol Vinyals", "Jakob Uszkoreit", "Lukasz Kaiser." ],
+      "venue" : "7th International Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net.",
+      "citeRegEx" : "Dehghani et al\\.,? 2019",
+      "shortCiteRegEx" : "Dehghani et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT: pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatically constructing a corpus of sentential paraphrases",
+      "author" : [ "William B. Dolan", "Chris Brockett." ],
+      "venue" : "Proceedings of the Third International Workshop on Paraphrasing, IWP@IJCNLP 2005, Jeju Island, Korea, October 2005, 2005. Asian Federation of Nat-",
+      "citeRegEx" : "Dolan and Brockett.,? 2005",
+      "shortCiteRegEx" : "Dolan and Brockett.",
+      "year" : 2005
+    }, {
+      "title" : "Depth-adaptive transformer",
+      "author" : [ "Maha Elbayad", "Jiatao Gu", "Edouard Grave", "Michael Auli." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net.",
+      "citeRegEx" : "Elbayad et al\\.,? 2020",
+      "shortCiteRegEx" : "Elbayad et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Compressing BERT: studying the effects of weight pruning on transfer learning",
+      "author" : [ "Mitchell A. Gordon", "Kevin Duh", "Nicholas Andrews." ],
+      "venue" : "Proceedings of the 5th Workshop on Representation Learning for NLP, RepL4NLP@ACL 2020, Online, July 9, 2020,",
+      "citeRegEx" : "Gordon et al\\.,? 2020",
+      "shortCiteRegEx" : "Gordon et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomás Kociský", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Advances in Neural Information Processing Systems 28: Annual Conference on Neu-",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural Comput., 9(8):1735– 1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Ontonotes: The 90% solution",
+      "author" : [ "Eduard H. Hovy", "Mitchell P. Marcus", "Martha Palmer", "Lance A. Ramshaw", "Ralph M. Weischedel." ],
+      "venue" : "Human Language Technology Conference of the North American Chapter of the Association of Computational Linguistics,",
+      "citeRegEx" : "Hovy et al\\.,? 2006",
+      "shortCiteRegEx" : "Hovy et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Overview of the nlpcc 2017 shared task: Single document summarization",
+      "author" : [ "Lifeng Hua", "Xiaojun Wan", "Lei Li." ],
+      "venue" : "National CCF Conference on Natural Language Processing and Chinese Computing, pages 942–947. Springer.",
+      "citeRegEx" : "Hua et al\\.,? 2017",
+      "shortCiteRegEx" : "Hua et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Tinybert: Distilling BERT for natural language understanding",
+      "author" : [ "Xiaoqi Jiao", "Yichun Yin", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Linlin Li", "Fang Wang", "Qun Liu." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Process-",
+      "citeRegEx" : "Jiao et al\\.,? 2020",
+      "shortCiteRegEx" : "Jiao et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Scitail: A textual entailment dataset from science question answering",
+      "author" : [ "Tushar Khot", "Ashish Sabharwal", "Peter Clark." ],
+      "venue" : "Proceedings of the ThirtySecond AAAI Conference on Artificial Intelligence, (AAAI-18), the 30th innovative Applications of Arti-",
+      "citeRegEx" : "Khot et al\\.,? 2018",
+      "shortCiteRegEx" : "Khot et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Abstractive summarization of reddit posts with multi-level memory networks",
+      "author" : [ "Byeongchang Kim", "Hyunwoo Kim", "Gunhee Kim." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics:",
+      "citeRegEx" : "Kim et al\\.,? 2019",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "ALBERT: A lite BERT for self-supervised learning of language representations",
+      "author" : [ "Zhenzhong Lan", "Mingda Chen", "Sebastian Goodman", "Kevin Gimpel", "Piyush Sharma", "Radu Soricut." ],
+      "venue" : "8th International Conference on Learning Representations,",
+      "citeRegEx" : "Lan et al\\.,? 2020",
+      "shortCiteRegEx" : "Lan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards a task-agnostic model of difficulty estimation for supervised learning tasks",
+      "author" : [ "Antonio Laverghetta", "Jamshidbek Mirzakhalov", "John Licato." ],
+      "venue" : "Proceedings of the 1st Conference of the Asia-Pacific Chapter of the Association for Computational Lin-",
+      "citeRegEx" : "Laverghetta et al\\.,? 2020",
+      "shortCiteRegEx" : "Laverghetta et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Cascadebert: Accelerating inference of pre-trained language models via calibrated complete models cascade",
+      "author" : [ "Lei Li", "Yankai Lin", "Deli Chen", "Shuhuai Ren", "Peng Li", "Jie Zhou", "Xu Sun." ],
+      "venue" : "Findings of EMNLP.",
+      "citeRegEx" : "Li et al\\.,? 2021a",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Accelerating BERT inference for sequence labeling via earlyexit",
+      "author" : [ "Xiaonan Li", "Yunfan Shao", "Tianxiang Sun", "Hang Yan", "Xipeng Qiu", "Xuanjing Huang." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and",
+      "citeRegEx" : "Li et al\\.,? 2021b",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A global past-future early exit method for accelerating inference of pretrained language models",
+      "author" : [ "Kaiyuan Liao", "Yi Zhang", "Xuancheng Ren", "Qi Su", "Xu Sun", "Bin He." ],
+      "venue" : "Proceedings of the 2021 Conference of the North American Chapter of the",
+      "citeRegEx" : "Liao et al\\.,? 2021",
+      "shortCiteRegEx" : "Liao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Fastbert: a selfdistilling BERT with adaptive inference time",
+      "author" : [ "Weijie Liu", "Peng Zhou", "Zhiruo Wang", "Zhe Zhao", "Haotang Deng", "Qi Ju." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020,",
+      "citeRegEx" : "Liu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards efficient NLP: A standard evaluation and A strong baseline",
+      "author" : [ "Xiangyang Liu", "Tianxiang Sun", "Junliang He", "Lingling Wu", "Xinyu Zhang", "Hao Jiang", "Zhao Cao", "Xuanjing Huang", "Xipeng Qiu." ],
+      "venue" : "CoRR, abs/2110.07038.",
+      "citeRegEx" : "Liu et al\\.,? 2021a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Norm-based curriculum learning for neural machine translation",
+      "author" : [ "Xuebo Liu", "Houtim Lai", "Derek F. Wong", "Lidia S. Chao." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020, Online, July 5-10,",
+      "citeRegEx" : "Liu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Faster depth-adaptive transformers",
+      "author" : [ "Yijin Liu", "Fandong Meng", "Jie Zhou", "Yufeng Chen", "Jinan Xu." ],
+      "venue" : "Thirty-Fifth AAAI Conference on Artificial Intelligence, AAAI 2021, Thirty-Third Conference on Innovative Applications of Artificial Intelligence,",
+      "citeRegEx" : "Liu et al\\.,? 2021b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "CoRR, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Learning word vectors for sentiment analysis",
+      "author" : [ "Andrew L. Maas", "Raymond E. Daly", "Peter T. Pham", "Dan Huang", "Andrew Y. Ng", "Christopher Potts." ],
+      "venue" : "The 49th Annual Meeting of the Association for Computational Linguistics: Human Language Tech-",
+      "citeRegEx" : "Maas et al\\.,? 2011",
+      "shortCiteRegEx" : "Maas et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Are sixteen heads really better than one? In Advances in Neural Information Processing Systems",
+      "author" : [ "Paul Michel", "Omer Levy", "Graham Neubig" ],
+      "venue" : "Annual Conference on Neural Information Processing Systems",
+      "citeRegEx" : "Michel et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Michel et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Pre-trained models for natural language processing: A survey",
+      "author" : [ "Xipeng Qiu", "Tianxiang Sun", "Yige Xu", "Yunfan Shao", "Ning Dai", "Xuanjing Huang." ],
+      "venue" : "SCIENCE CHINA Technological Sciences.",
+      "citeRegEx" : "Qiu et al\\.,? 2020",
+      "shortCiteRegEx" : "Qiu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J. Liu." ],
+      "venue" : "J. Mach. Learn. Res., 21:140:1–140:67.",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sentence-bert: Sentence embeddings using siamese bert-networks",
+      "author" : [ "Nils Reimers", "Iryna Gurevych." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural",
+      "citeRegEx" : "Reimers and Gurevych.,? 2019",
+      "shortCiteRegEx" : "Reimers and Gurevych.",
+      "year" : 2019
+    }, {
+      "title" : "Hash layers for large sparse models",
+      "author" : [ "Stephen Roller", "Sainbayar Sukhbaatar", "Arthur Szlam", "Jason Weston" ],
+      "venue" : null,
+      "citeRegEx" : "Roller et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Roller et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Distilbert, a distilled version of BERT: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "CoRR, abs/1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Measuring word significance using distributed representations of words",
+      "author" : [ "Adriaan M.J. Schakel", "Benjamin J. Wilson." ],
+      "venue" : "CoRR, abs/1508.02297.",
+      "citeRegEx" : "Schakel and Wilson.,? 2015",
+      "shortCiteRegEx" : "Schakel and Wilson.",
+      "year" : 2015
+    }, {
+      "title" : "The right tool for the job: Matching model and instance complexities",
+      "author" : [ "Roy Schwartz", "Gabriel Stanovsky", "Swabha Swayamdipta", "Jesse Dodge", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Schwartz et al\\.,? 2020",
+      "shortCiteRegEx" : "Schwartz et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "CPT: A pre-trained unbalanced transformer for both chinese language understanding and generation",
+      "author" : [ "Yunfan Shao", "Zhichao Geng", "Yitao Liu", "Junqi Dai", "Fei Yang", "Li Zhe", "Hujun Bao", "Xipeng Qiu." ],
+      "venue" : "CoRR, abs/2109.05729.",
+      "citeRegEx" : "Shao et al\\.,? 2021",
+      "shortCiteRegEx" : "Shao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Q-BERT: hessian based ultra low precision quantization of BERT",
+      "author" : [ "Sheng Shen", "Zhen Dong", "Jiayu Ye", "Linjian Ma", "Zhewei Yao", "Amir Gholami", "Michael W. Mahoney", "Kurt Keutzer." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Wu", "Jason Chuang", "Christopher D. Manning", "Andrew Y. Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 2013 Conference on",
+      "citeRegEx" : "Socher et al\\.,? 2013",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Patient knowledge distillation for BERT model compression",
+      "author" : [ "Siqi Sun", "Yu Cheng", "Zhe Gan", "Jingjing Liu." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Nat-",
+      "citeRegEx" : "Sun et al\\.,? 2019",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Early exiting with ensemble internal classifiers",
+      "author" : [ "Tianxiang Sun", "Yunhua Zhou", "Xiangyang Liu", "Xinyu Zhang", "Hao Jiang", "Zhao Cao", "Xuanjing Huang", "Xipeng Qiu." ],
+      "venue" : "CoRR, abs/2105.13792.",
+      "citeRegEx" : "Sun et al\\.,? 2021",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems 30: Annual Conference on Neural",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Rethinking architecture selection in differentiable NAS",
+      "author" : [ "Ruochen Wang", "Minhao Cheng", "Xiangning Chen", "Xiaocheng Tang", "Cho-Jui Hsieh." ],
+      "venue" : "9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7,",
+      "citeRegEx" : "Wang et al\\.,? 2021",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Deebert: Dynamic early exiting for accelerating BERT inference",
+      "author" : [ "Ji Xin", "Raphael Tang", "Jaejun Lee", "Yaoliang Yu", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, ACL 2020, Online, July 5-10,",
+      "citeRegEx" : "Xin et al\\.,? 2020",
+      "shortCiteRegEx" : "Xin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Berxit: Early exiting for BERT with better finetuning and extension to regression",
+      "author" : [ "Ji Xin", "Raphael Tang", "Yaoliang Yu", "Jimmy Lin." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Xin et al\\.,? 2021",
+      "shortCiteRegEx" : "Xin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bert-of-theseus: Compressing BERT by progressive module replacing",
+      "author" : [ "Canwen Xu", "Wangchunshu Zhou", "Tao Ge", "Furu Wei", "Ming Zhou." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing, EMNLP 2020,",
+      "citeRegEx" : "Xu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "CLUE: A chinese language understanding evaluation benchmark",
+      "author" : [ "Yiwen Zhang", "He Zhou", "Shaoweihua Liu", "Zhe Zhao", "Qipeng Zhao", "Cong Yue", "Xinrui Zhang", "Zhengliang Yang", "Kyle Richardson", "Zhenzhong Lan." ],
+      "venue" : "Proceedings of the 28th International",
+      "citeRegEx" : "Zhang et al\\.,? 2020b",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Xlnet: Generalized autoregressive pretraining for language understanding",
+      "author" : [ "Zhilin Yang", "Zihang Dai", "Yiming Yang", "Jaime G. Carbonell", "Ruslan Salakhutdinov", "Quoc V. Le." ],
+      "venue" : "Advances in Neural Information Processing Systems 32: Annual Confer-",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Mark: Exploiting cloud services for costeffective, slo-aware machine learning inference serving",
+      "author" : [ "Chengliang Zhang", "Minchen Yu", "Wei Wang", "Feng Yan." ],
+      "venue" : "2019 USENIX Annual Technical Conference, USENIX ATC 2019, Renton, WA, USA, July 10-12,",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT loses patience: Fast and robust inference with early exit",
+      "author" : [ "Wangchunshu Zhou", "Canwen Xu", "Tao Ge", "Julian J. McAuley", "Ke Xu", "Furu Wei." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information",
+      "citeRegEx" : "Zhou et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Leebert: Learned early exit for BERT with cross-level optimization",
+      "author" : [ "Wei Zhu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing,",
+      "citeRegEx" : "Zhu.,? 2021",
+      "shortCiteRegEx" : "Zhu.",
+      "year" : 2021
+    }, {
+      "title" : "The elements of statistical learning",
+      "author" : [ "Eric R. Ziegel." ],
+      "venue" : "Technometrics, 45(3):267–268. 11",
+      "citeRegEx" : "Ziegel.,? 2003",
+      "shortCiteRegEx" : "Ziegel.",
+      "year" : 2003
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 3,
+      "context" : "With the rising of pre-trained language models (PLMs) (Devlin et al., 2019; Yang et al., 2019; Lan et al., 2020; Raffel et al., 2020; Qiu et al., 2020), early exiting is drawing increasing attention in the NLP community.",
+      "startOffset" : 54,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 44,
+      "context" : "With the rising of pre-trained language models (PLMs) (Devlin et al., 2019; Yang et al., 2019; Lan et al., 2020; Raffel et al., 2020; Qiu et al., 2020), early exiting is drawing increasing attention in the NLP community.",
+      "startOffset" : 54,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 14,
+      "context" : "With the rising of pre-trained language models (PLMs) (Devlin et al., 2019; Yang et al., 2019; Lan et al., 2020; Raffel et al., 2020; Qiu et al., 2020), early exiting is drawing increasing attention in the NLP community.",
+      "startOffset" : 54,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 27,
+      "context" : "With the rising of pre-trained language models (PLMs) (Devlin et al., 2019; Yang et al., 2019; Lan et al., 2020; Raffel et al., 2020; Qiu et al., 2020), early exiting is drawing increasing attention in the NLP community.",
+      "startOffset" : 54,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 26,
+      "context" : "With the rising of pre-trained language models (PLMs) (Devlin et al., 2019; Yang et al., 2019; Lan et al., 2020; Raffel et al., 2020; Qiu et al., 2020), early exiting is drawing increasing attention in the NLP community.",
+      "startOffset" : 54,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 40,
+      "context" : "Most existing early exiting methods attach multiple internal classifiers to the PLM and adopt some heuristic metrics, such as entropy (Xin et al., 2020; Liu et al., 2020a) or maximum softmax score (Schwartz et al.",
+      "startOffset" : 134,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 19,
+      "context" : "Most existing early exiting methods attach multiple internal classifiers to the PLM and adopt some heuristic metrics, such as entropy (Xin et al., 2020; Liu et al., 2020a) or maximum softmax score (Schwartz et al.",
+      "startOffset" : 134,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020a) or maximum softmax score (Schwartz et al., 2020) of internal outputs, to measure instance difficulty.",
+      "startOffset" : 34,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 5,
+      "context" : "Recent studies (Elbayad et al., 2020; Xin et al., 2021) that use the idea of \"learn-toexit\" have achieved promising results.",
+      "startOffset" : 15,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 41,
+      "context" : "Recent studies (Elbayad et al., 2020; Xin et al., 2021) that use the idea of \"learn-toexit\" have achieved promising results.",
+      "startOffset" : 15,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 3,
+      "context" : "For modeldefined difficulty, we train a multi-exit BERT (Devlin et al., 2019), which is attached with an internal classifier at each layer, on a sentence-level classification task, SNLI (Bowman et al.",
+      "startOffset" : 56,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2019), which is attached with an internal classifier at each layer, on a sentence-level classification task, SNLI (Bowman et al., 2015), and a token-level classification task, OntoNotes NER (Hovy et al.",
+      "startOffset" : 116,
+      "endOffset" : 137
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2015), and a token-level classification task, OntoNotes NER (Hovy et al., 2006).",
+      "startOffset" : 62,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 15,
+      "context" : "vious work (Laverghetta et al., 2020) on estimating instance difficulty for curriculum learning.",
+      "startOffset" : 11,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 48,
+      "context" : "tions (Ziegel, 2003), this consistency can be easily satisfied by neural learn-to-exit modules.",
+      "startOffset" : 6,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 40,
+      "context" : "(d) HASHEE can significantly accelerate model inference on a per-batch basis instead of per-instance basis as in previous work (Xin et al., 2020; Liu et al., 2020a; Zhou et al., 2020).",
+      "startOffset" : 127,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 19,
+      "context" : "(d) HASHEE can significantly accelerate model inference on a per-batch basis instead of per-instance basis as in previous work (Xin et al., 2020; Liu et al., 2020a; Zhou et al., 2020).",
+      "startOffset" : 127,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 46,
+      "context" : "(d) HASHEE can significantly accelerate model inference on a per-batch basis instead of per-instance basis as in previous work (Xin et al., 2020; Liu et al., 2020a; Zhou et al., 2020).",
+      "startOffset" : 127,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 20,
+      "context" : "Experimental results on ELUE (Liu et al., 2021a) demonstrate that HASHEE, despite its simplicity, can achieve higher performance with fewer FLOPs and inference time than previous state-of-the-art methods on various tasks.",
+      "startOffset" : 29,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2020) and CPT (Shao et al., 2021) while maintaining 97% ROUGE-1 score.",
+      "startOffset" : 16,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 0,
+      "context" : "To construct such a dataset, we use the SNLI dataset (Bowman et al., 2015), which is a collection of 570k human-written English sentence pairs that are manually labeled with the inference",
+      "startOffset" : 53,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 3,
+      "context" : "Learning Human-defined Difficulty We then train a BERT model (Devlin et al., 2019) with a linear classifier on the top on our constructed training set, and evaluate on the test set to see if it can predict whether an unseen instance is simple or difficult.",
+      "startOffset" : 61,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 41,
+      "context" : "Sentence-level Difficulty Estimating modeldefined difficulty of a sentence (or sentence pairs) is helpful to language understanding tasks such as text classification and natural language inference (Xin et al., 2021).",
+      "startOffset" : 197,
+      "endOffset" : 215
+    }, {
+      "referenceID" : 5,
+      "context" : "Token-level Difficulty We also construct a dataset for estimating model-defined difficulty of each token, which can be used in language generation tasks (Elbayad et al., 2020) and sequence labeling tasks (Li et al.",
+      "startOffset" : 153,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2020) and sequence labeling tasks (Li et al., 2021b).",
+      "startOffset" : 36,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 9,
+      "context" : "Similarly, we train a multi-exit BERT on OntoNotes NER (Hovy et al., 2006) training set, and use it to annotate each token in the OntoNotes development instances whether it can be correctly predicted by each internal classifier.",
+      "startOffset" : 55,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 41,
+      "context" : "(2020) and the learn-to-exit module in BERxiT (Xin et al., 2021).",
+      "startOffset" : 46,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 8,
+      "context" : "(4) We also train and evaluate a bidirectional LSTM model (Hochreiter and Schmidhuber, 1997) with one layer and hidden size of 256.",
+      "startOffset" : 58,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 3,
+      "context" : "(5) BERT model (Devlin et al., 2019) is also considered for this task.",
+      "startOffset" : 15,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 5,
+      "context" : "because: (1) we also adopt more powerful deep models instead of simple linear models in previous methods (Elbayad et al., 2020; Xin et al., 2021), and (2) Different from our method that trains learnto-exit module on development set, previous methods jointly train their learn-to-exit module on the training set where few instances are incorrectly predicted, leading to more serious label imbalance.",
+      "startOffset" : 105,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 41,
+      "context" : "because: (1) we also adopt more powerful deep models instead of simple linear models in previous methods (Elbayad et al., 2020; Xin et al., 2021), and (2) Different from our method that trains learnto-exit module on development set, previous methods jointly train their learn-to-exit module on the training set where few instances are incorrectly predicted, leading to more serious label imbalance.",
+      "startOffset" : 105,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 5,
+      "context" : "On the one hand, previous methods (Elbayad et al., 2020; Xin et al., 2021) that use learn-to-exit modules have achieved competitive results, which implies that something works in the learn-to-exit modules.",
+      "startOffset" : 34,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 41,
+      "context" : "On the one hand, previous methods (Elbayad et al., 2020; Xin et al., 2021) that use learn-to-exit modules have achieved competitive results, which implies that something works in the learn-to-exit modules.",
+      "startOffset" : 34,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 48,
+      "context" : "Note that this consistency between training and inference can be easily satisfied by previous learnto-exit modules due to the smoothness of neural models (Ziegel, 2003).",
+      "startOffset" : 154,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 28,
+      "context" : "is to design a hash function to map semantically similar instances into the same bucket, and therefore the hash function should be some powerful sequence encoder such as Sentence-BERT (Reimers and Gurevych, 2019), which is cumbersome in computation.",
+      "startOffset" : 184,
+      "endOffset" : 212
+    }, {
+      "referenceID" : 39,
+      "context" : "Note that this formulation is similar to some differentiable Neural Architecture Search (NAS) and Mixture-of-Expert (MoE) works, which also encountered similar difficulties in learning architectures (Wang et al., 2021; Roller et al., 2021).",
+      "startOffset" : 199,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 29,
+      "context" : "Note that this formulation is similar to some differentiable Neural Architecture Search (NAS) and Mixture-of-Expert (MoE) works, which also encountered similar difficulties in learning architectures (Wang et al., 2021; Roller et al., 2021).",
+      "startOffset" : 199,
+      "endOffset" : 239
+    }, {
+      "referenceID" : 38,
+      "context" : "We use pre-trained Transformers (Vaswani et al., 2017) as our backbones.",
+      "startOffset" : 32,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 31,
+      "context" : "The clustered tokens are then sorted by norm, which often relates to token frequency (Schakel and Wilson, 2015) and difficulty (Liu et al.",
+      "startOffset" : 85,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 21,
+      "context" : "The clustered tokens are then sorted by norm, which often relates to token frequency (Schakel and Wilson, 2015) and difficulty (Liu et al., 2020b).",
+      "startOffset" : 127,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 20,
+      "context" : "Understanding Tasks For the convenience of comparison with other efficient models, we evaluate our proposed HASHEE on the ELUE benchmark (Liu et al., 2021a), which is comprised of SST-2 (Socher et al.",
+      "startOffset" : 137,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 35,
+      "context" : ", 2021a), which is comprised of SST-2 (Socher et al., 2013), IMDb (Maas et al.",
+      "startOffset" : 38,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2013), IMDb (Maas et al., 2011), SNLI (Bowman et al.",
+      "startOffset" : 14,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2011), SNLI (Bowman et al., 2015), SciTail (Khot et al.",
+      "startOffset" : 14,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2015), SciTail (Khot et al., 2018), MRPC (Dolan and Brockett, 2005), and STS-B (Cer et al.",
+      "startOffset" : 17,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2018), MRPC (Dolan and Brockett, 2005), and STS-B (Cer et al.",
+      "startOffset" : 14,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2018), MRPC (Dolan and Brockett, 2005), and STS-B (Cer et al., 2017)).",
+      "startOffset" : 52,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 7,
+      "context" : "Generation Tasks For language generation, we evaluate HASHEE on two English summarization datasets, CNN/DailyMail (Hermann et al., 2015) and Reddit (Kim et al.",
+      "startOffset" : 114,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2015) and Reddit (Kim et al., 2019), and two Chinese summarization datasets: TTNews (Hua et al.",
+      "startOffset" : 19,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2019), and two Chinese summarization datasets: TTNews (Hua et al., 2017) and CSL (Xu et al.",
+      "startOffset" : 56,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 20,
+      "context" : "Table 2: Main results on the ELUE benchmark (Liu et al., 2021a).",
+      "startOffset" : 44,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 3,
+      "context" : "first layers of pre-trained language models including BERT (Devlin et al., 2019), ALBERT (Lan et al.",
+      "startOffset" : 59,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2019), ALBERT (Lan et al., 2020), RoBERTa (Liu et al.",
+      "startOffset" : 16,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2020), RoBERTa (Liu et al., 2019), and ElasticBERT (Liu et al.",
+      "startOffset" : 17,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2019), and ElasticBERT (Liu et al., 2021a) with a MLP classifier on the top.",
+      "startOffset" : 25,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 30,
+      "context" : "pare with several static approaches to accelerate language model inference, including DistilBERT (Sanh et al., 2019), TinyBERT (Jiao et al.",
+      "startOffset" : 97,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2019), TinyBERT (Jiao et al., 2020), HeadPrune (Michel et al.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2020), HeadPrune (Michel et al., 2019), and BERTof-Theseus (Xu et al.",
+      "startOffset" : 19,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 40,
+      "context" : "We compare with DeeBERT (Xin et al., 2020), FastBERT (Liu et al.",
+      "startOffset" : 24,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2020), FastBERT (Liu et al., 2020a), PABEE (Zhou et al.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2020a), PABEE (Zhou et al., 2020), BERxiT (Xin et al.",
+      "startOffset" : 16,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 41,
+      "context" : ", 2020), BERxiT (Xin et al., 2021), and CascadeBERT (Li et al.",
+      "startOffset" : 16,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 20,
+      "context" : "Training For most NLU experiments we adopt the ElasticBERTBASE model (Liu et al., 2021a) as our backbone model, which is a pre-trained multi-exit Transformer encoder.",
+      "startOffset" : 69,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2020) and CPTBASE (Shao et al., 2021) as our backbone models and use the frequency hash to assign tokens Hash Speed SST-2 SNLI MRPC Functions -up (8.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 5,
+      "context" : "Here we re-implement the confidence thresholding variant of DAT (Elbayad et al., 2020).",
+      "startOffset" : 64,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 20,
+      "context" : "To fairly compare with baselines of various speedup ratios, we also report the ELUE score (Liu et al., 2021a), which is a two-dimensional (performance and FLOPs) metric for efficient NLP models, measuring how much a model oversteps ElasticBERT.",
+      "startOffset" : 90,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 41,
+      "context" : "To fairly compare with the learn-to-exit baseline we also implement BERxiT (Xin et al., 2021) with ElasticBERTBASE.",
+      "startOffset" : 75,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 45,
+      "context" : "However, batch inference is often more favorable in both offline scenarios and low-latency scenarios (Zhang et al., 2019).",
+      "startOffset" : 101,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 33,
+      "context" : "In addition, to further explore the speedup potential of HASHEE, we also experiment with CPT (Shao et al., 2021), which has a deep encoder and a shallow decoder.",
+      "startOffset" : 93,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 30,
+      "context" : "a cumbersome PLM through knowledge distillation (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2020), model pruning (Gordon et al.",
+      "startOffset" : 48,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 36,
+      "context" : "a cumbersome PLM through knowledge distillation (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2020), model pruning (Gordon et al.",
+      "startOffset" : 48,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 11,
+      "context" : "a cumbersome PLM through knowledge distillation (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2020), model pruning (Gordon et al.",
+      "startOffset" : 48,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2020), model pruning (Gordon et al., 2020; Michel et al., 2019), quantization (Shen et al.",
+      "startOffset" : 23,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2020), model pruning (Gordon et al., 2020; Michel et al., 2019), quantization (Shen et al.",
+      "startOffset" : 23,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2019), quantization (Shen et al., 2020), module replacing (Xu et al.",
+      "startOffset" : 22,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 2,
+      "context" : "tively activating parts of the model conditioned on the input, such as Universal Transformer (Dehghani et al., 2019), FastBERT (Liu et al.",
+      "startOffset" : 93,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2019), FastBERT (Liu et al., 2020a), DeeBERT (Xin et al.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2020a), DeeBERT (Xin et al., 2020), PABEE (Zhou et al.",
+      "startOffset" : 18,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2020), PABEE (Zhou et al., 2020), LeeBERT (Zhu, 2021), CascadeBERT (Li",
+      "startOffset" : 15,
+      "endOffset" : 34
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2021a), ElasticBERT (Liu et al., 2021a) and other similar methods (Elbayad et al.",
+      "startOffset" : 22,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2021a) and other similar methods (Elbayad et al., 2020; Schwartz et al., 2020; Liao et al., 2021; Xin et al., 2021; Sun et al., 2021).",
+      "startOffset" : 35,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2021a) and other similar methods (Elbayad et al., 2020; Schwartz et al., 2020; Liao et al., 2021; Xin et al., 2021; Sun et al., 2021).",
+      "startOffset" : 35,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2021a) and other similar methods (Elbayad et al., 2020; Schwartz et al., 2020; Liao et al., 2021; Xin et al., 2021; Sun et al., 2021).",
+      "startOffset" : 35,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 41,
+      "context" : ", 2021a) and other similar methods (Elbayad et al., 2020; Schwartz et al., 2020; Liao et al., 2021; Xin et al., 2021; Sun et al., 2021).",
+      "startOffset" : 35,
+      "endOffset" : 135
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2021a) and other similar methods (Elbayad et al., 2020; Schwartz et al., 2020; Liao et al., 2021; Xin et al., 2021; Sun et al., 2021).",
+      "startOffset" : 35,
+      "endOffset" : 135
+    } ],
+    "year" : 0,
+    "abstractText" : "Early exiting allows instances to exit at different layers according to the estimation of difficulty. Previous works usually adopt heuristic metrics such as the entropy of internal outputs to measure instance difficulty, which suffers from generalization and threshold-tuning. In contrast, learning to exit, or learning to predict instance difficulty is a more appealing way. Though some effort has been devoted to employing such \"learn-to-exit\" modules, it is still unknown whether and how well the instance difficulty can be learned. As a response, we first conduct experiments on the learnability of instance difficulty, which demonstrates that modern neural models perform poorly on predicting instance difficulty. Based on this observation, we propose a simple-yet-effective Hashbased Early Exiting approach (HASHEE) that replaces the learn-to-exit modules with hash functions to assign each token to a fixed exiting layer. Different from previous methods, HASHEE requires no internal classifiers nor extra parameters, and therefore is more efficient. Experimental results on classification, regression, and generation tasks demonstrate that HASHEE can achieve higher performance with fewer FLOPs and inference time compared with previous state-of-the-art early exiting methods.",
+    "creator" : null
+  }
+}

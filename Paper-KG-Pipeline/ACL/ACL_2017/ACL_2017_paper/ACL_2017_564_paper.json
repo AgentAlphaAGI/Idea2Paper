@@ -1,0 +1,391 @@
+{
+  "name" : "ACL_2017_564_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Lexically Constrained Decoding for Sequence Generation Using Grid Beam Search",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "We present Grid Beam Search (GBS), an algorithm which extends beam search to allow the inclusion of pre-specified lexical constraints. The algorithm can be used with any model that generates a sequence ŷ = {y0 . . . yT }, by maximizing p(y|x) =\n∏ t p(yt|x; {y0 . . . yt−1}). Lex-\nical constraints take the form of phrases or words that must be present in the output sequence. This is a very general way to incorporate additional knowledge into a model’s output without requiring any modification of the model parameters or training data. We demonstrate the feasibility and flexibility of Lexically Constrained Decoding by conducting experiments on Neural Interactive-Predictive Translation, as well as Domain Adaptation for Neural Machine Translation. Experiments show that GBS can provide large improvements in translation quality in interactive scenarios, and that, even without any user input, GBS can be used to achieve significant gains in performance in domain adaptation scenarios."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "The output of many natural language processing models is a sequence of text. Examples include automatic summarization (Rush et al., 2015), machine translation (Koehn, 2010; Bahdanau et al., 2014), caption generation (Xu et al., 2015), and dialog generation (Serban et al., 2016), among others.\nIn many real-world scenarios, additional information that could inform the search for the optimal output sequence may be available at inference\ntime. Humans can provide corrections after viewing a system’s initial output, or separate classification models may be able to predict parts of the output with high confidence. When the domain of the input is known, a domain terminology may be employed to ensure specific phrases are present in a system’s predictions. Our goal in this work is to find a way to force the output of a model to contain such lexical constraints, while still taking advantage of the distribution learned from training data.\nFor Machine Translation (MT) usecases in particular, final translations are often produced by combining automatically translated output with user inputs. Examples include Post-Editing (PE) (Koehn, 2009; Specia, 2011) and InteractivePredictive MT (Foster, 2002; Barrachina et al., 2009; Green, 2014). These interactive scenarios can be unified by considering user inputs to be lexical constraints which guide the search for the optimal output sequence.\nIn this paper, we formalize the notion of lexical constraints, and propose a decoding algorithm which allows the specification of subsequences that are required to be present in a model’s output. Individual constraints may be single tokens or multi-word phrases, and any number of constraints may be specified simultaneously.\nAlthough we focus upon interactive applications for MT in our experiments, lexically constrained decoding is relevant to any scenario where a model is asked to generate a sequence ŷ = {y0 . . . yT } given both an input x, and a set {c0...cn}, where each ci is a sub-sequence {ci0 . . . cij}, that must appear somewhere in ŷ. This makes our work applicable in a wide range of text generation scenarios, including image description, dialog generation, automatic summarization, and question answering.\nThe rest of this paper is organized as follows: Section 2 gives the necessary background for our\ndiscussion of GBS, Section 3 discusses the lexically constrained decoding algorithm in detail, Section 4 presents our experiments, and Section 5 gives an overview of closely related work."
+    }, {
+      "heading" : "2 Background: Beam Search for Sequence Generation",
+      "text" : "Under a model parameterized by θ, let the best output sequence ŷ given input x be Eq. 1.\nŷ = argmax y∈{y[T]}\npθ(y|x), (1)\nwhere we use {y[T]} to denote the set of all sequences of length T . Because the number of possible sequences for such a model is |v|T , where |v| is the number of output symbols, the search for ŷ can be made more tractable by factorizing pθ(y|x) into Eq. 2:\npθ(y|x) = T∏ t=0 pθ(yt|x; {y0 . . . yt−1}). (2)\nThe standard approach is thus to generate the output sequence from beginning to end, conditioning the output at each timestep upon the input x, and the already-generated symbols {y0 . . . yi−t}. However, greedy selection of the most probable output at each timestep, i.e.:\nŷt = argmax yi∈{v}\np(yi|x; {y0 . . . yt−1}), (3)\nrisks making locally optimal decisions which are actually globally sub-optimal. On the other hand, an exhaustive exploration of the output space would require scoring |v|T sequences, which is intractable for most real-world models. Thus, a search or decoding algorithm is often used as a compromise between these two extremes. A common solution is use a heuristic search to attempt\nto find the best output efficiently (Pearl, 1984; Koehn, 2010; Rush et al., 2013). The key idea is to discard bad options early, while avoiding discarding candidates that may be locally risky, but could eventually result in the best overall output.\nBeam search (Och and Ney, 2004) is probably the most popular search algorithm for decoding sequences. Beam search is simple to implement, and is flexible in the sense that the semantics of the graph of beams can be adapted to take advantage of additional structure that may be available for specific tasks. For example, in Phrase-Based Statistical MT (PB-SMT) (Koehn, 2010), beams are organized by the number of source words that are covered by the hypotheses in the beam – a hypothesis is “finished” when it has covered all source words. In chart-based decoding algorithms such as CYK, beams are also tied to coverage of the input, but are organized as cells in a chart, which facilitates search for the optimal latent structure of the output (Chiang, 2007). Figure 2 visualizes three common ways to structure search. (A) and (B) depend upon explicit structural information between the input and output, (C) only assumes that the output is a sequence where later symbols depend upon earlier ones. Note also that (C) corresponds exactly to the bottom rows of Figures 1 and 3.\nWith the recent success of neural models for\ntext generation, beam search has become the de-facto choice for decoding optimal output sequences (Sutskever et al., 2014). However, with neural sequence models, we cannot organize beams by their explicit coverage of the input. A simpler alternative is to organize beams by output timesteps from t0 · · · tN , where N is a hyperparameter that can be set heuristically, for example by multiplying a factor with the length of the input to make an educated guess about the maximum length of the output (Sutskever et al., 2014). Output sequences are generally considered complete once a special “end-of-sentence”(EOS) token has been generated. Beam size in these models is also typically kept small, and recent work has shown that the performance of some architectures can actually degrade with larger beam size (Tu et al., 2016)."
+    }, {
+      "heading" : "3 Grid Beam Search",
+      "text" : "Our goal is to organize decoding in such a way that we can constrain the search space to outputs which contain one or more pre-specified sub-sequences. We thus wish to use a model’s distribution both to “place” lexical constraints correctly, and to generate the parts of the output which are not covered by the constraints.\nAlgorithm 1 Pseudo-code for Grid Beam Search, note that t and c indices are 0-based 1: procedure CONSTRAINEDSEARCH(model, input, constraints, maxLen, numC, k) 2: startHyp⇐ model.getStartHyp(input, constraints) 3: Grid⇐ initGrid(maxLen, numC, k) . initialize beams in grid 4: Grid[0][0] = startHyp 5: for t = 1, t++, t < maxLen do 6: for c = max(0, (numC + t)−maxLen), c++, c ≤ min(t, numC) do 7: n, s, g = ∅ 8: for each hyp ∈ Grid[t− 1][c] do 9: if hyp.isOpen() then\n10: g ⇐ g ⋃\nmodel.generate(hyp, input, constraints) . generate new open hyps 11: end if 12: end for 13: if c > 0 then 14: for each hyp ∈ Grid[t− 1][c− 1] do 15: if hyp.isOpen() then 16: n⇐ n ⋃ model.start(hyp, input, constraints) . start new constrained hyps 17: else 18: s⇐ s ⋃ model.continue(hyp, input, constraints) . continue unfinished 19: end if 20: end for 21: end if 22: Grid[t][c] = k-argmax\nh∈n ⋃ s ⋃ g model.score(h) . k-best scoring hypotheses stay on the beam\n23: end for 24: end for 25: topLevelHyps⇐ Grid[:][numC] . get hyps in top-level beams 26: finishedHyps⇐ hasEOS(topLevelHyps) . finished hyps have generated the EOS token 27: bestHyp⇐ argmax\nh∈finishedHyps model.score(h)\n28: return bestHyp 29: end procedure\nAlgorithm 1 presents the pseudo-code for lexically constrained decoding, see Figures 1 and 3 for visualizations of the search process. Beams in the grid are indexed by t and c. The t variable tracks the timestep of the search, while the c variable indicates how many constraint tokens are covered by the hypotheses in the current beam. Note that each step of c covers a single constraint token. In other words, constraints is an array of sequences, where individual tokens can be indexed as constraintsij , i.e. tokenj in constrainti. The numC parameter in Algorithm 1 represents the total number of tokens in all constraints.\nThe hypotheses in a beam can be separated into two types (see lines 9-11 and 15-19 of Algorithm 1):\n1. open hypotheses can either generate from the model’s distribution, or start available con-\nstraints,\n2. closed hypotheses can only generate the next token for in a currently unfinished constraint.\nAt each step of the search the beam at Grid[t][c] is filled with candidates which may be created in three ways:\n1. the open hypotheses in the beam to the left (Grid[t − 1][c]) may generate continuations from the model’s distribution pθ(yi|x, {y0 . . . yi−1}),\n2. the open hypotheses in the beam to the left and below (Grid[t−1][c−1]) may start new constraints,\n3. the closed hypotheses in the beam to the left and below (Grid[t−1][c−1]) may continue new constraints.\nTherefore, the model in Algorithm 1 implements an interface with three functions: generate, start, and continue, which build new hypotheses in each of the three ways. Note that the scoring function of the model does not need to be aware of the existence of constraints, but it may be, for example via a feature which indicates if a hypothesis is part of a constraint or not.\nThe beams at the top level of the grid (beams where c = numConstraints) contain hypotheses which cover all of the constraints. Once a hypothesis on the top level generates the EOS token, it can be added to the set of finished hypotheses. The highest scoring hypothesis in the set of finished hypotheses is the best sequence which covers all constraints."
+    }, {
+      "heading" : "3.1 Multi-token Constraints",
+      "text" : "By distinguishing between open and closed hypotheses, we can allow for arbitrary multi-token phrases in the search. Thus, the set of constraints for a particular output may include both individual tokens and phrases. Each hypothesis also maintains a coverage vector ensuring that constraints cannot be repeated in a search path – hypotheses which have already covered constrainti can only generate, or start constraints that have not yet been covered.\nNote also that discontinuous lexical constraints, such as phrasal verbs in English or German, are easy to incorporate into GBS, by adding filters to the search, which require that one or more conditions must be met before a constraint can be used. For example, adding the phrasal verb “ask 〈someone〉 out” as a constraint would mean using “ask” as constraint0 and “out” as constraint1, with two filters: one requiring that constraint1 cannot be used before constraint0, and another requiring that there must be at least one generated token between the constraints."
+    }, {
+      "heading" : "3.2 Subword Units",
+      "text" : "Both the computation of the score for a hypothesis, and the granularity of the tokens (character, subword, word, etc...) are left to the underlying model. Because our decoder can handle arbitrary constraints, there is a risk that constraints will contain tokens that were never observed in the training data, and thus are unknown by the model. Especially in domain adaptation scenarios, some userspecified constraints are very likely to contain unseen tokens. Subword representations provide an\nelegant way to circumvent this problem, by breaking unknown or rare tokens into character n-grams which are part of the model’s vocabulary (Sennrich et al., 2016; Wu et al., 2016). In the experiments in Section 4, we use this technique to ensure that no input tokens are unknown, even if a constraint contains words which never appeared in the training data."
+    }, {
+      "heading" : "3.3 Efficiency",
+      "text" : "Because the number of beams is multiplied by the number of constraints, the runtime complexity of a naive implementation of GBS is O(ktc). Standard time-based beam search is O(kt); therefore, some consideration must be given to the efficiency of this algorithm. Note that the beams in each column c of Figure 3 are independent, meaning that GBS can be parallelized to allow all beams at each timestep to be filled simultaneously. Also, we find that the most time is spent computing the states for the hypothesis candidates, so by keeping the beam size small, we can make GBS significantly faster."
+    }, {
+      "heading" : "3.4 Models",
+      "text" : "The models used for our experiments are stateof-the-art Neural Machine Translation (NMT) systems using our own implementation of NMT with attention over the source sequence (Bahdanau et al., 2014). We used Blocks and Fuel to implement our NMT models (van Merrinboer et al., 2015). To conduct the experiments in the following section, we trained baseline translation models for English–German (EN-DE), English– French (EN-FR), and English–Portuguese (ENPT). We created a shared subword representation for each language pair by extracting a vocabulary of 80000 symbols from the concatenated source and target data. See the Appendix for more details on our training data and hyperparameter configuration for each language pair. The beamSize parameter is set to 10 for all experiments.\nBecause our experiments use NMT models, we can now be more explicit about the implementations of the generate, start, and continue functions for this GBS instantiation. For an NMT model at timestep t, generate(hypt−1) first computes a vector of output probabilities ot = softmax(g(yt−1, si, ci))\n1 using the state information available from hypt−1. and returns the best k continuations, i.e. Eq. 4:\n1we use the notation for the g function from Bahdanau et al. (2014)\ngt = k-argmax i oti. (4)\nThe start and continue functions simply index into the softmax output of the model, selecting specific tokens instead of doing a k-argmax over the entire target language vocabulary. For example, to start constraint ci, we find the score of token ci0 , i.e. otci0 ."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Pick-Revise for Interactive Post Editing",
+      "text" : "Pick-Revise is an interaction cycle for MT PostEditing proposed by Cheng et al. (2016). Starting with the original translation hypothesis, a (simulated) user first picks a part of the hypothesis which is incorrect, and then provides the correct translation for that portion of the output. The userprovided correction is then used as a constraint for the next decoding cycle. The Pick-Revise process can be repeated as many times as necessary, with a new constraint being added at each cycle.\nWe modify the experiments of Cheng et al. (2016) slightly, and assume that the user only provides sequences of up to three words which are missing from the hypothesis2. To simulate user interaction, at each iteration we chose a phrase of up to three tokens from the reference translation which does not appear in the current MT hypotheses. In the strict setting, the complete phrase must be missing from the hypothesis. In the relaxed setting, only the first word must be missing. Table 1 shows results for a simulated editing session with four cycles. When a three-token phrase cannot be found, we backoff to two-token phrases, then to single tokens as constraints. If a hypothesis already matches the reference, no constraints are added. By specifying a new constraint of up to three words at each cycle, an increase of over 20 BLEU points is achieved in all language pairs."
+    }, {
+      "heading" : "4.2 Domain Adaptation via Terminology",
+      "text" : "The requirement for use of domain-specific terminologies is common in real-world applications of MT (Crego et al., 2016). Existing approaches incorporate placeholder tokens into NMT systems, which requires modifying the pre- and post- processing of the data, and training the system with\n2NMT models do not use explicit alignment between source and target, so we cannot use alignment information to map target phrases to source phrases\ndata that contains the same placeholders which occur in the test data (Crego et al., 2016). The MT system also loses any possibility to model the tokens in the terminology, since they are represented by abstract tokens such as “〈TERM 1〉”. An attractive alternative is to simply provide term mappings as constraints, allowing any existing system to adapt to the terminology used in a new test domain.\nFor the target domain data, we use the Autodesk Post-Editing corpus (Zhechev, 2012), which is a dataset collected from actual MT post-editing sessions. The corpus is focused upon software localization, a domain which is likely to be very different from the WMT data used to train our general domain models. We divide the corpus into approximately 100,000 training sentences, and 1000 test segments, and automatically generate a terminology by computing the Pointwise Mutual Information (PMI) (Church and Hanks, 1990) between source and target n-grams in the training set. We extract all n-grams from length 2-5 as terminology candidates.\npmi(x;y) = log p(x, y)\np(x)p(y) (5)\nnpmi(x;y) = pmi(x;y)\nh(x,y) (6)\nEquations 5 and 6 show how we compute the normalized PMI for a terminology candidate pair. The PMI score is normalized to the range [−1,+1] by dividing by the entropy h of the joint probability p(x,y). We then filter the candidates to only include pairs whose PMI is≥ 0.9, and where both the source and target phrases occur at least five times in the corpus. When source phrases that match the terminology are observed in the test data, the corresponding target phrase is added to the constraints for that segment. Results are shown in Table 2.\nThis simple method of domain adaptation leads to a significant improvement in the BLEU score of the model without any human intervention. Thus, manually created domain terminologies are likely to lead to even greater performance gains. Surprisingly, even an automatically created terminology combined with the constrained decoding search yields performance improvements of approximately +2 BLEU points for En-De and EnFr, and a gain of almost 14 points for En-Pt. The large improvement for En-Pt is probably due to\nthe training data for this system being very different from the IT domain (see Appendix). Using a terminology with GBS is likely to benefit any model where the terminology used in the test domain is significantly different from the original training data."
+    }, {
+      "heading" : "4.3 Analysis",
+      "text" : "Subjective analysis of decoder output shows that phrases added as constraints are not only placed correctly within the output sequence, but also have global effects upon translation quality. This is a desirable effect for user interaction, since it implies that users can bootstrap quality by adding the most critical constraints (i.e. those that are most essential to the output), first. Table 3 shows several examples from the experiments in Table 1, where the addition of lexical constraints was able to guide our NMT systems away from initially quite low-scoring hypotheses to outputs which perfectly\nmatch the reference translations."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Most related work to date has presented modifications of SMT systems for specific usecases which constrain MT output via auxilliary inputs. The largest body of work considers Interactive Machine Translation (IMT): an MT system searches for the optimal target-language suffix given a complete source sentence and a desired prefix for the target output (Foster, 2002; Barrachina et al., 2009; Green, 2014). IMT can be viewed as subcase of constrained decoding, where there is only one constraint which is guaranteed to be placed at the beginning of the output sequence. Wuebker et al. (2016) introduce prefix-decoding, which modifies the SMT beam search to first ensure that the target prefix is covered, and only then continues to build hypotheses for the suffix using beams organized by coverage of the remaining phrases in the source segment.\nRecently, some attention has also been given to SMT decoding with multiple lexical constraints. The Pick-Revise (PRIMT) (Cheng et al., 2016) framework for Interactive Post Editing introduces the concept of edit cycles. Translators specify constraints by editing a part of the MT output that is incorrect, and then asking the system for a new hypothesis, which must contain the user-provided correction. This process is repeated, maintaining constraints from previous iterations and adding new ones as needed. Importantly, their approach relies upon the phrase segmentation provided by the SMT system. The decoding algorithm can only make use of constraints that match phrase\nboundaries, because constraints are implemented as “rules” enforcing that source phrases must be translated as the aligned target phrases that have been selected as constraints. In contrast, our approach decodes at the token level, and is not dependent upon any explicit structure in the underlying model.\nDomingo et al. (2016) also consider an interactive scenario where users first choose portions of an MT hypothesis to keep, then query for an updated translation which preserves these portions. The MT system decodes the source phrases which are not aligned to the user-selected phrases until the source sentence is fully covered. This approach is similar to the system of Cheng et al., and uses the “forced decoding” feature in Moses (Koehn et al., 2007).\nSome recent work considers the inclusion of soft lexical constraints directly into deep models for dialog generation, and special cases, such as recipe generation from a list of ingredients (Wen et al., 2015; Kiddon et al., 2016). Such constraintaware models are complementary to our work, and could be used with GBS decoding without any change to the underlying models.\nTo the best of our knowledge, ours is the first work which considers general lexically constrained decoding for any model which outputs sequences, without relying upon alignments between input and output, and without using a search\norganized by coverage of the input."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "Lexically constrained decoding is a flexible way to incorporate arbitrary subsequences into the output of any model that generates output sequences token-by-token. A wide spectrum of popular text generation models have this characteristic, and GBS should be straightforward to use with any model that already uses beam search.\nIn translation interfaces where translators can provide corrections to an existing hypothesis, these user inputs can be used as constraints, generating a new output each time a user fixes an error. By simulating this scenario, we have shown that such a workflow can provide a large improvement in translation quality at each iteration.\nBy using a domain-specific terminology to generate target-side constraints, we have shown that a general domain model can be adapted to a new domain without any retraining. Surprisingly, this simple method can lead to significant performance gains, even when the terminology is created automatically.\nIn future work, we hope to evaluate GBS with models outside of MT, such as automatic summarization, image captioning or dialog generation. We also hope to introduce new constraintaware models, for example via secondary attention mechanisms over lexical constraints."
+    }, {
+      "heading" : "A NMT System Configurations",
+      "text" : "We train all systems for 500000 iterations, with validation every 5000 steps. The best single model from validation is used in all of the experiments for a language pair. We use `2 regularization on all parameters with α = 1e−5. Dropout is used on the output layers with p(drop) = 0.5. We sort minibatches by source sentence length, and reshuffle training data after each epoch.\nAll systems use a bidirectional GRUs (Cho et al., 2014) to create the source representation and GRUs for the decoder transition. We use AdaDelta (Zeiler, 2012) to update gradients, and clip large gradients to 1.0.\nTraining Configurations EN-DE Embedding Size 300 Recurrent Layers Size 1000 Source Vocab Size 80000 Target Vocab Size 90000 Batch Size 50 EN-FR Embedding Size 300 Recurrent Layers Size 1000 Source Vocab Size 66000 Target Vocab Size 74000 Batch Size 40 EN-PT Embedding Size 200 Recurrent Layers Size 800 Source Vocab Size 60000 Target Vocab Size 74000 Batch Size 40\nA.1 English-German Our English-German training corpus consists of 4.4 Million segments from the Europarl (Bojar et al., 2015) and CommonCrawl (Smith et al., 2013) corpora.\nA.2 English-French Our English-French training corpus consists of 4.9 Million segments from the Europarl and CommonCrawl corpora.\nA.3 English-Portuguese Our English-Portuguese training corpus consists of 28.5 Million segments from the Europarl, JRC-\nAquis (Steinberger et al., 2006) and OpenSubtitles3 corpora.\n3http://www.opensubtitles.org/"
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1409.0473 .",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "PRIMT: A pickrevise framework for interactive machine translation",
+      "author" : [ "Shanbo Cheng", "Shujian Huang", "Huadong Chen", "Xinyu Dai", "Jiajun Chen." ],
+      "venue" : "Kevin Knight, Ani Nenkova, and Owen Rambow, editors, NAACL HLT 2016, The 2016",
+      "citeRegEx" : "Cheng et al\\.,? 2016",
+      "shortCiteRegEx" : "Cheng et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Hierarchical phrase-based translation",
+      "author" : [ "David Chiang." ],
+      "venue" : "Comput. Linguist. 33(2):201–228. https://doi.org/10.1162/coli.2007.33.2.201.",
+      "citeRegEx" : "Chiang.,? 2007",
+      "shortCiteRegEx" : "Chiang.",
+      "year" : 2007
+    }, {
+      "title" : "Learning phrase representations using rnn encoder–decoder for statistical machine translation",
+      "author" : [ "Kyunghyun Cho", "Bart van Merriënboer", "Çalar Gülçehre", "Dzmitry Bahdanau", "Fethi Bougares", "Holger Schwenk", "Yoshua Bengio." ],
+      "venue" : "Proceedings of",
+      "citeRegEx" : "Cho et al\\.,? 2014",
+      "shortCiteRegEx" : "Cho et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Word association norms, mutual information, and lexicography",
+      "author" : [ "Kenneth Ward Church", "Patrick Hanks." ],
+      "venue" : "Comput. Linguist. 16(1):22–29. http://dl.acm.org/citation.cfm?id=89086.89095.",
+      "citeRegEx" : "Church and Hanks.,? 1990",
+      "shortCiteRegEx" : "Church and Hanks.",
+      "year" : 1990
+    }, {
+      "title" : "Interactive-predictive translation based on multiple word-segments",
+      "author" : [ "Miguel Domingo", "Alvaro Peris", "Francisco Casacuberta." ],
+      "venue" : "Baltic J. Modern Computing 4(2):282–291.",
+      "citeRegEx" : "Domingo et al\\.,? 2016",
+      "shortCiteRegEx" : "Domingo et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Text Prediction for Translators",
+      "author" : [ "George F. Foster." ],
+      "venue" : "Ph.D. thesis, Montreal, P.Q., Canada, Canada. AAINQ72434.",
+      "citeRegEx" : "Foster.,? 2002",
+      "shortCiteRegEx" : "Foster.",
+      "year" : 2002
+    }, {
+      "title" : "Mixed-Initiative Natural Language Translation",
+      "author" : [ "Spence Green." ],
+      "venue" : "Ph.D. thesis, Stanford, CA, United States.",
+      "citeRegEx" : "Green.,? 2014",
+      "shortCiteRegEx" : "Green.",
+      "year" : 2014
+    }, {
+      "title" : "Globally coherent text generation with neural checklist models",
+      "author" : [ "Chloé Kiddon", "Luke Zettlemoyer", "Yejin Choi." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, EMNLP 2016, Austin,",
+      "citeRegEx" : "Kiddon et al\\.,? 2016",
+      "shortCiteRegEx" : "Kiddon et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A process study of computeraided translation",
+      "author" : [ "Philipp Koehn." ],
+      "venue" : "Machine Translation 23(4):241– 263. https://doi.org/10.1007/s10590-010-9076-3.",
+      "citeRegEx" : "Koehn.,? 2009",
+      "shortCiteRegEx" : "Koehn.",
+      "year" : 2009
+    }, {
+      "title" : "Statistical Machine Translation",
+      "author" : [ "Philipp Koehn." ],
+      "venue" : "Cambridge University Press, New York, NY, USA, 1st edition.",
+      "citeRegEx" : "Koehn.,? 2010",
+      "shortCiteRegEx" : "Koehn.",
+      "year" : 2010
+    }, {
+      "title" : "The alignment template approach to statistical machine translation",
+      "author" : [ "Franz Josef Och", "Hermann Ney." ],
+      "venue" : "Comput. Linguist. 30(4):417–449. https://doi.org/10.1162/0891201042544884.",
+      "citeRegEx" : "Och and Ney.,? 2004",
+      "shortCiteRegEx" : "Och and Ney.",
+      "year" : 2004
+    }, {
+      "title" : "Heuristics: Intelligent Search Strategies for Computer Problem Solving",
+      "author" : [ "Judea Pearl." ],
+      "venue" : "AddisonWesley Longman Publishing Co., Inc., Boston, MA, USA.",
+      "citeRegEx" : "Pearl.,? 1984",
+      "shortCiteRegEx" : "Pearl.",
+      "year" : 1984
+    }, {
+      "title" : "Optimal beam search for machine translation",
+      "author" : [ "Alexander Rush", "Yin-Wen Chang", "Michael Collins." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguis-",
+      "citeRegEx" : "Rush et al\\.,? 2013",
+      "shortCiteRegEx" : "Rush et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "A neural attention model for abstractive sentence summarization",
+      "author" : [ "Alexander M. Rush", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "Llus Mrquez, Chris Callison-Burch, Jian Su, Daniele Pighin, and Yuval Marton, editors, EMNLP. The Association for Com-",
+      "citeRegEx" : "Rush et al\\.,? 2015",
+      "shortCiteRegEx" : "Rush et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, August 7-12,",
+      "citeRegEx" : "Sennrich et al\\.,? 2016",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Building end-to-end dialogue systems using generative hierarchical neural network models",
+      "author" : [ "Iulian V. Serban", "Alessandro Sordoni", "Yoshua Bengio", "Aaron Courville", "Joelle Pineau." ],
+      "venue" : "Proceedings of the Thirtieth AAAI Conference on Artificial Intel-",
+      "citeRegEx" : "Serban et al\\.,? 2016",
+      "shortCiteRegEx" : "Serban et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Dirt cheap web-scale parallel text from the common crawl",
+      "author" : [ "Jason R. Smith", "Herve Saint-amand", "Chris Callisonburch", "Magdalena Plamada", "Adam Lopez." ],
+      "venue" : "In Proceedings of the Conference of the Association for Computational Linguistics (ACL.",
+      "citeRegEx" : "Smith et al\\.,? 2013",
+      "shortCiteRegEx" : "Smith et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Exploiting objective annotations for measuring translation post-editing effort",
+      "author" : [ "Lucia Specia." ],
+      "venue" : "Proceedings of the European Association for Machine Translation. May.",
+      "citeRegEx" : "Specia.,? 2011",
+      "shortCiteRegEx" : "Specia.",
+      "year" : 2011
+    }, {
+      "title" : "The jrc-acquis: A multilingual aligned parallel corpus with 20+ languages",
+      "author" : [ "Ralf Steinberger", "Bruno Pouliquen", "Anna Widiger", "Camelia Ignat", "Toma Erjavec", "Dan Tufi." ],
+      "venue" : "In Proceedings of the 5th International Conference on Language Resources",
+      "citeRegEx" : "Steinberger et al\\.,? 2006",
+      "shortCiteRegEx" : "Steinberger et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V. Le." ],
+      "venue" : "Proceedings of the 27th International Conference on Neural Information Processing Systems. MIT Press, Cam-",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Neural machine translation with reconstruction",
+      "author" : [ "Zhaopeng Tu", "Yang Liu", "Lifeng Shang", "Xiaohua Liu", "Hang Li." ],
+      "venue" : "arXiv preprint arXiv:1611.01874 .",
+      "citeRegEx" : "Tu et al\\.,? 2016",
+      "shortCiteRegEx" : "Tu et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Blocks and fuel: Frameworks for deep learning",
+      "author" : [ "Bart van Merrinboer", "Dzmitry Bahdanau", "Vincent Dumoulin", "Dmitriy Serdyuk", "David Warde-Farley", "Jan Chorowski", "Yoshua Bengio." ],
+      "venue" : "CoRR abs/1506.00619.",
+      "citeRegEx" : "Merrinboer et al\\.,? 2015",
+      "shortCiteRegEx" : "Merrinboer et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Semantically conditioned lstm-based natural language generation for spoken dialogue systems",
+      "author" : [ "Tsung-Hsien Wen", "Milica Gašić", "Nikola Mrkšić", "PeiHao Su", "David Vandyke", "Steve Young." ],
+      "venue" : "Proceedings of the 2015 Conference on Em-",
+      "citeRegEx" : "Wen et al\\.,? 2015",
+      "shortCiteRegEx" : "Wen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Models and inference for prefix-constrained machine translation",
+      "author" : [ "Joern Wuebker", "Spence Green", "John DeNero", "Sasa Hasan", "Minh-Thang Luong." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Wuebker et al\\.,? 2016",
+      "shortCiteRegEx" : "Wuebker et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Show, attend and tell: Neural image caption generation with visual attention",
+      "author" : [ "Kelvin Xu", "Jimmy Ba", "Ryan Kiros", "Kyunghyun Cho", "Aaron Courville", "Ruslan Salakhudinov", "Rich Zemel", "Yoshua Bengio." ],
+      "venue" : "David Blei and Francis Bach, editors,",
+      "citeRegEx" : "Xu et al\\.,? 2015",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "ADADELTA: an adaptive learning rate method",
+      "author" : [ "Matthew D. Zeiler." ],
+      "venue" : "CoRR abs/1212.5701. http://arxiv.org/abs/1212.5701.",
+      "citeRegEx" : "Zeiler.,? 2012",
+      "shortCiteRegEx" : "Zeiler.",
+      "year" : 2012
+    }, {
+      "title" : "Machine Translation Infrastructure and Post-editing Performance at Autodesk",
+      "author" : [ "Ventsislav Zhechev." ],
+      "venue" : "AMTA 2012 Workshop on Post-Editing Technology and Practice (WPTP 2012). Association for Machine Translation in the Americas (AMTA), San",
+      "citeRegEx" : "Zhechev.,? 2012",
+      "shortCiteRegEx" : "Zhechev.",
+      "year" : 2012
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 14,
+      "context" : "Examples include automatic summarization (Rush et al., 2015), machine translation (Koehn, 2010; Bahdanau et al.",
+      "startOffset" : 41,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2015), machine translation (Koehn, 2010; Bahdanau et al., 2014), caption generation (Xu et al.",
+      "startOffset" : 29,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2015), machine translation (Koehn, 2010; Bahdanau et al., 2014), caption generation (Xu et al.",
+      "startOffset" : 29,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2014), caption generation (Xu et al., 2015), and dialog generation (Serban et al.",
+      "startOffset" : 28,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2015), and dialog generation (Serban et al., 2016), among others.",
+      "startOffset" : 31,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 9,
+      "context" : "Examples include Post-Editing (PE) (Koehn, 2009; Specia, 2011) and InteractivePredictive MT (Foster, 2002; Barrachina et al.",
+      "startOffset" : 35,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 18,
+      "context" : "Examples include Post-Editing (PE) (Koehn, 2009; Specia, 2011) and InteractivePredictive MT (Foster, 2002; Barrachina et al.",
+      "startOffset" : 35,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 6,
+      "context" : "Examples include Post-Editing (PE) (Koehn, 2009; Specia, 2011) and InteractivePredictive MT (Foster, 2002; Barrachina et al., 2009; Green, 2014).",
+      "startOffset" : 92,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 7,
+      "context" : "Examples include Post-Editing (PE) (Koehn, 2009; Specia, 2011) and InteractivePredictive MT (Foster, 2002; Barrachina et al., 2009; Green, 2014).",
+      "startOffset" : 92,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 12,
+      "context" : "to find the best output efficiently (Pearl, 1984; Koehn, 2010; Rush et al., 2013).",
+      "startOffset" : 36,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 10,
+      "context" : "to find the best output efficiently (Pearl, 1984; Koehn, 2010; Rush et al., 2013).",
+      "startOffset" : 36,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 13,
+      "context" : "to find the best output efficiently (Pearl, 1984; Koehn, 2010; Rush et al., 2013).",
+      "startOffset" : 36,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 11,
+      "context" : "Beam search (Och and Ney, 2004) is probably the most popular search algorithm for decoding sequences.",
+      "startOffset" : 12,
+      "endOffset" : 31
+    }, {
+      "referenceID" : 10,
+      "context" : "For example, in Phrase-Based Statistical MT (PB-SMT) (Koehn, 2010), beams are organized by the number of source words that are covered by the hypotheses in the beam – a hypothesis is “finished” when it has covered all source words.",
+      "startOffset" : 53,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 2,
+      "context" : "In chart-based decoding algorithms such as CYK, beams are also tied to coverage of the input, but are organized as cells in a chart, which facilitates search for the optimal latent structure of the output (Chiang, 2007).",
+      "startOffset" : 205,
+      "endOffset" : 219
+    }, {
+      "referenceID" : 20,
+      "context" : "text generation, beam search has become the de-facto choice for decoding optimal output sequences (Sutskever et al., 2014).",
+      "startOffset" : 98,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 20,
+      "context" : "A simpler alternative is to organize beams by output timesteps from t0 · · · tN , where N is a hyperparameter that can be set heuristically, for example by multiplying a factor with the length of the input to make an educated guess about the maximum length of the output (Sutskever et al., 2014).",
+      "startOffset" : 271,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 21,
+      "context" : "Beam size in these models is also typically kept small, and recent work has shown that the performance of some architectures can actually degrade with larger beam size (Tu et al., 2016).",
+      "startOffset" : 168,
+      "endOffset" : 185
+    }, {
+      "referenceID" : 15,
+      "context" : "Subword representations provide an elegant way to circumvent this problem, by breaking unknown or rare tokens into character n-grams which are part of the model’s vocabulary (Sennrich et al., 2016; Wu et al., 2016).",
+      "startOffset" : 174,
+      "endOffset" : 214
+    }, {
+      "referenceID" : 0,
+      "context" : "The models used for our experiments are stateof-the-art Neural Machine Translation (NMT) systems using our own implementation of NMT with attention over the source sequence (Bahdanau et al., 2014).",
+      "startOffset" : 173,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 27,
+      "context" : "For the target domain data, we use the Autodesk Post-Editing corpus (Zhechev, 2012), which is a dataset collected from actual MT post-editing sessions.",
+      "startOffset" : 68,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 4,
+      "context" : "We divide the corpus into approximately 100,000 training sentences, and 1000 test segments, and automatically generate a terminology by computing the Pointwise Mutual Information (PMI) (Church and Hanks, 1990) between source and target n-grams in the training set.",
+      "startOffset" : 185,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 6,
+      "context" : "The largest body of work considers Interactive Machine Translation (IMT): an MT system searches for the optimal target-language suffix given a complete source sentence and a desired prefix for the target output (Foster, 2002; Barrachina et al., 2009; Green, 2014).",
+      "startOffset" : 211,
+      "endOffset" : 263
+    }, {
+      "referenceID" : 7,
+      "context" : "The largest body of work considers Interactive Machine Translation (IMT): an MT system searches for the optimal target-language suffix given a complete source sentence and a desired prefix for the target output (Foster, 2002; Barrachina et al., 2009; Green, 2014).",
+      "startOffset" : 211,
+      "endOffset" : 263
+    }, {
+      "referenceID" : 1,
+      "context" : "The Pick-Revise (PRIMT) (Cheng et al., 2016) framework for Interactive Post Editing introduces the concept of edit cycles.",
+      "startOffset" : 24,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 23,
+      "context" : "Some recent work considers the inclusion of soft lexical constraints directly into deep models for dialog generation, and special cases, such as recipe generation from a list of ingredients (Wen et al., 2015; Kiddon et al., 2016).",
+      "startOffset" : 190,
+      "endOffset" : 229
+    }, {
+      "referenceID" : 8,
+      "context" : "Some recent work considers the inclusion of soft lexical constraints directly into deep models for dialog generation, and special cases, such as recipe generation from a list of ingredients (Wen et al., 2015; Kiddon et al., 2016).",
+      "startOffset" : 190,
+      "endOffset" : 229
+    } ],
+    "year" : 0,
+    "abstractText" : "We present Grid Beam Search (GBS), an algorithm which extends beam search to allow the inclusion of pre-specified lexical constraints. The algorithm can be used with any model that generates a sequence ŷ = {y0 . . . yT }, by maximizing p(y|x) = ∏ t p(yt|x; {y0 . . . yt−1}). Lexical constraints take the form of phrases or words that must be present in the output sequence. This is a very general way to incorporate additional knowledge into a model’s output without requiring any modification of the model parameters or training data. We demonstrate the feasibility and flexibility of Lexically Constrained Decoding by conducting experiments on Neural Interactive-Predictive Translation, as well as Domain Adaptation for Neural Machine Translation. Experiments show that GBS can provide large improvements in translation quality in interactive scenarios, and that, even without any user input, GBS can be used to achieve significant gains in performance in domain adaptation scenarios.",
+    "creator" : null
+  }
+}

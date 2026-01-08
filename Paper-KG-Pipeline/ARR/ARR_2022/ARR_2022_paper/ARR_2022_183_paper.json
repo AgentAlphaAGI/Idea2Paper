@@ -1,0 +1,375 @@
+{
+  "name" : "ARR_2022_183_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Bias Mitigation in Machine Translation Quality Estimation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Despite the great advances of Machine Translation (MT) models over the past years, the adequacy and fluency of the translations cannot be guaranteed. Without access to a gold-standard reference translation, it can be difficult to validate the reliability of the MT model’s predictions. To address this issue, the field of MT Quality Estimation (QE) emerged, aiming to develop models that can approximate the quality of machine-generated translations in a scalable way. However, recent research suggests that state-of-the-art QE approaches tend to over-rely on features that do not have a causal impact on the quality of a translation. In particular, there appears to be a partial input bias, i.e. a tendency to assign\nhigh quality scores to translations that are fluent and grammatical, even though they do not resemble the actual meaning of the source (Sun et al., 2020).\nBuilding upon these findings, the objective of our work is to characterise and, most importantly, mitigate the partial input bias of QE models. We focus on the use of auxiliary training tasks to specifically target the observed biases while avoiding strong modifications of the original model as well as the expensive collection and manual labelling of additional training data. Our efforts concentrate on testing and improving MonoTransQuest, the best-performing architecture in the shared task on sentence-level QE hosted as part of the Fifth Conference on Machine Translation (WMT 2020) (Specia et al., 2020). We work with the recently published multilingual QE dataset MLQE-PE (Fomicheva et al., 2020), allowing us to test the generalisability of our approaches across different languages and quality scores.\nOur main contributions are as follows:\n• Bias analysis. We expand on previous research which suggested the partial input bias in QE and find that the model as well as the annotators tend to over-rate the quality of fluent but inadequate translations. • Bias mitigation. To the best of our knowledge, we are the first to explore the mitigation of biases with auxiliary tasks in the field of QE. We group our approaches into four categories: Multitask training with mixed languages, multitask training with additional augmented data, training with adversarial tasks and training with debiased focal loss. • New architectures. We implement and compare several multitask architectures and find that iteratively training the tasks with two optimisers is better suited for our objective than backpropagating a weighted sum of the losses. Further, we reformulate focal loss for regres-\nsion tasks, a technique that is traditionally based upon the cross-entropy loss. • Results. Utilising the multitask architecture, we successfully reduce the partial input bias while maintaining the same performance as the benchmark model and examine the best model’s robustness.\nIn the subsequent sections, we first present related work, followed by the analysis of the partial input bias. Building upon the findings, we explain the four bias mitigation approaches in Section 4 and discuss the results in Section 5."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Machine Translation Quality Estimation",
+      "text" : "QE is an area of research concerned with the development of models for the prediction of the quality of machine-generated translations when gold standard translations are not available. QE is normally addressed as a supervised machine learning task, which may take as input general information from the source and translated texts, as well as from the MT system. The quality is typically assessed at sentence level, but word- and document-level QE are also possible (Specia et al., 2018, pp. 2). Sentencelevel QE has evolved from the first feature-heavy prediction models in Blatz et al. (2004) to neural architectures such as RNNs and Transformers (Vaswani et al., 2017), which accelerated the developments in the field by reducing the work of manual feature engineering and improving contextual representations (Kim et al., 2017; Wang et al., 2018; Fan et al., 2019).\nA prominent state-of-the-art QE architecture is MonoTransQuest, proposed by Ranasinghe et al. (2020). It builds upon XLM-R, a popular pretrained cross-lingual language model with a good ability to generalise to low-resource languages (Conneau et al., 2020). MonoTransQuest achieved the best results for sentence-level direct assessment score prediction in the WMT 2020 shared task on QE (Specia et al., 2020).\nSun et al. (2020) showed that QE models like MonoTransQuest have a tendency to over-rely on spurious correlations, which is partially due to skewed label distributions and statistical artifacts in QE datasets. In particular, they show the existence of a partial input bias, i.e. the tendency to predict the quality of a translation based on just the target sentence (Poliak et al., 2018). While the fluency\nand grammatical correctness of the output is a factor influencing the quality, the original meaning should be preserved, which is only possible if the model takes both source and target into consideration. Following their work, in an attempt to reduce statistical artifacts, MLQE-PE (Fomicheva et al., 2020) – a new QE dataset diversifying the topics and languages covered – was created, which forms the basis of this work and will be described in more detail in Section 3.1."
+    }, {
+      "heading" : "2.2 Bias Mitigation with Auxiliary Tasks",
+      "text" : "We define auxiliary tasks in a broad sense, using the term to refer to settings where a main task is trained alongside one or more helper tasks used to improve the main task’s performance and generalisability. Most commonly, the tasks are trained in a multitask-setting, where some layers are shared across the tasks and some layers are task-specific. The auxiliary tasks can either be related to the main task or adversarial (Ruder, 2017). In addition, we consider the concept of debiased focal loss, where the main and auxiliary task are trained in separate models which are connected via the loss function (Karimi Mahabadi et al., 2020).\nRelated Tasks: In settings where the data is limited, noisy or high-dimensional, using additional tasks is a way of introducing an inductive bias that prevents the model from overfitting to noise (Caruana, 1997). In addition, the model might be able to use new features that were learned through an auxiliary task for the main task as well (Ruder, 2019). MT models, for example, have been shown to benefit from auxiliary tasks such as named entity recognition, part-of-speech tagging and dependency parsing (Niehues and Cho, 2017; Kiperwasser and Ballesteros, 2018).\nAdversarial Tasks: Adversarial tasks can be used to actively discourage the model from overfitting to domain-specific, spurious cues. The technique was introduced by Ganin and Lempitsky (2015) and used for domain adaptation. More recently, it has been successfully used to reduce partial input biases in different fields of NLP, such as natural language inference (NLI) (Belinkov et al., 2019; Stacey et al., 2020) and visual question answering (VQA) (Ramakrishnan et al., 2018). The core idea is to train the auxiliary task using just the partial input. During backpropagation, the gradient is reversed. Consequently, the shared layers are updated such that the adversary’s loss is maximised;\nthe undesired behaviour is penalised. The methodology chapter illustrates the architectural design in more detail.\nDebiased Focal Loss: Another approach that has recently been used to mitigate known biases, particularly partial input biases, is debiased focal loss. The notion of focal loss was first introduced by Lin et al. (2017) as a means to improve classification results on imbalanced classes by downweighting the impact of samples that the model had already learned to classify well. In the field of NLI, Karimi Mahabadi et al. (2020) have shown that it is possible to adapt the notion of focal loss to mitigate partial input biases. They train the main model alongside a bias model that learns to predict the label based on the hypothesis only. In this scenario, the bias model’s predictions are used to weigh the main model’s cross-entropy loss. Intuitively, samples that are classified well by the bias model are weighted down so that the main model primarily learns from less biased inputs. The bias model is updated separately and discarded after training."
+    }, {
+      "heading" : "3 Bias Analysis",
+      "text" : "In the following, we will describe the dataset and baseline model used, show benchmark results and analyse the partial input bias in more detail."
+    }, {
+      "heading" : "3.1 Dataset",
+      "text" : "We work with the MLQE-PE dataset (Fomicheva et al., 2020) which was specifically designed for the training of MT QE models. Published in 2020, it formed the basis for the WMT 2020 and 2021 shared tasks on Quality Estimation (Specia et al., 2020).1 It consists of 6 high-, mid- and low-resource language pairs which originate from Wikipedia articles: English-German and EnglishChinese, Romanian-English and Estonian-English as well as Nepalese-English and Sinhala-English. A seventh dataset, Russian-English, was collected based on Reddit posts and WikiQuotes. The translations were generated using Transformer-based Neural MT models. For each language, 9000 sentence pairs (7000 train, 1000 dev, 1000 test) were annotated on two different scales:\n• Human-targeted Translation Edit Rate (HTER): Each sentence-pair was edited by two independent translators. The reported\n1The train, dev and test20 test sets are available via https://github.com/sheffieldnlp/mlqe-pe\nHTER score is the averaged edit rate comparing the machine-generated translations and the post-edited versions. The score ranges between 0 (perfect translation) to 1 (everything was edited). • Direct Assessment Scores (DA): Each sentence pair was judged on a scale from 0-100 by at least 3 evaluators. The reported DA score is the mean of the individual judgements. Different than the HTER scores, the DA scale provides a measure of the severity of the errors, where inadequate (i.e. non-meaning preserving) translations should not receive a score higher than 70, even if only one word is incorrect."
+    }, {
+      "heading" : "3.2 Benchmark",
+      "text" : "We use the XLM-R based architecture MonoTransQuest as our baseline model, which fine-tunes XLM-R for sentence-level QE (Ranasinghe et al., 2020). While there are alternative candidates with a good performance on QE tasks, MonoTransQuest was chosen for several reasons: State-of-the-art performance, availability and replicability (all hyperparameters and the source code are open-sourced), as well as the generic design of the architecture which is transferable to related NLP domains.\nWe train separate MonoTransQuest models for each combination of language pair and quality score using the originally proposed architecture and fine-tuned hyperparameters specified in the TransQuest GitHub repository.2 All experiments were conducted on a 16GB Nvidia Tesla P100 GPU and averaged across five trainings on the seeds 555, 666, 777, 888 and 999. Our results are shown in Table 3 in the Appendix. In QE, the best practice is to use Pearson’s r to measure performance (Specia et al., 2018, pp. 58). Most notably, the Pearson correlation between the predictions and the labels is lowest for the high-resource languages English-German and English-Chinese. This has also been observed in the QE shared task findings (Specia et al., 2020). A possible explanation is the high average quality of the generated translations, making the labelling significantly harder and the annotations less consistent, i.e. more noisy."
+    }, {
+      "heading" : "3.3 Partial Input Bias",
+      "text" : "We examine the partial input bias by training the model on the combined representation of source\n2https://github.com/TharinduDR/ TransQuest\nand target and testing how the performance changes when the prediction is based on only one of the two. If the performance does not significantly decrease, the model has likely learned to base its predictions mostly on one part of the input. Figure 1 shows the results from this experiment. A clear target sentence bias can be observed for the English-German and English-Chinese language pairs. One reason could be the good quality of the translations that MT systems generate for high-resource languages: The occurrence of adequacy errors is lower, so that the target sentence may suffice for a decent prediction. In contrast, the mid-resource RomanianEnglish model, which shows the best overall performance, appears to be most dependent on both inputs. Figure 1 shows a clear performance deterioration when the model is tested on just the source or target sentence. One particularity of the RO-EN dataset is the high abundance of fluent, but clearly inadequate translations and hallucinations which require both the source and translation to be detected (Specia et al., 2020). Perhaps due to the distinct nature of Reddit data and WikiQuotes (both user-generated), the Russian-English dataset is an exception where the source sentence is a good predictor for the translation quality.\nTo further examine the nature of the partial input bias, an in-depth analysis of the strongly affected English-German translations was conducted. In particular, the aim was to better understand how MonoTransQuest, but also the annotators, judge the quality of fluent but inadequate translations. To achieve this, we manually annotated translations in the test set that are grammatically correct but do not preserve the meaning of the source.\nIn total, 145 out of 1000 translations were marked as fluent but inadequate. A key takeaway\nfrom the labelling process was that it is not only the models that have a partial input bias – human annotators clearly seem to over-rely on the target fluency. Despite the instructions clarly specify that a DA score below 70 should be assigned to inadequate translations,3 annotators tended to give higher scores if the sentence was fluent and appeared logical. Figure 2 shows that more than half of the fluent but inadequate translations were given a score higher than 70, with an average rating of 81.4 A likely reason is that adequacy-related mistakes are easy to miss when considering several quality factors, i.e. spelling, grammar and content, at the same time.\n3The DA annotation guidelines used in the MLQE-PE data dictate that a score in 70–90 indicates a translation that closely preserves the semantics of the source sentence.\n4The HTER score was not examined in this analysis since it does not explicitly account for the adequacy of the translation."
+    }, {
+      "heading" : "4 Methodology",
+      "text" : "Based on the bias analysis, our goal is to find an effective and feasible way to reduce the impact of spurious correlations and overly dominant features. As outlined in the previous section, the two high-resource datasets (EN-DE and EN-ZH) clearly show the strongest partial input bias. They will therefore be at the centre of the bias mitigation efforts. All four methods presented hereinafter share the core idea of using auxiliary tasks to achieve this aim: The main task – QE – is combined with helper tasks designed to reduce known biases. At test time, the auxiliary tasks can be discarded. Hereinafter, we introduce four approaches and the corresponding model architectures. The first two methods are tailored to combat the biased behaviour by supporting the model with additional data. In contrast, the two alternative, restrictive approaches actively penalise the model for learning unwanted behaviour. We define three criteria to ensure comparability between the approaches: A good solution should 1) mitigate the observed biases, 2) retain the prediction quality of the benchmark model, and 3) avoid computational overhead and interference with the original model’s design."
+    }, {
+      "heading" : "4.1 Supportive Approaches",
+      "text" : "We experiment with two different supporting tasks, each combining the main task and the auxiliary task in a multitask setup. The first approach is to train with different language pairs, aiming to transfer information between the language domains. Instead of mixing the languages arbitrarily, we build upon the bias analysis and examine if using a less biased language (RO-EN) to train the auxiliary task can help to reduce biases in the main task (EN-DE or EN-ZH). The bias analysis clearly showed that the models trained on the RO-EN dataset performed poorly when using just the source or target as input, indicating that the predictive power of the individual sentences is low. Thus, the incentive for the multitask model to over-rely on the target should be reduced. In this scenario, both tasks are regression problems and optimise the MSE loss.\nThe second approach is to collect additional translations originating from the same topic and language domain and use it as the input for the auxiliary task. We choose WikiMatrix (Schwenk et al., 2021), a large parallel sentence corpus based on Wikipedia articles, as data source for the experiments. Without further preprocessing, the vast\nmajority of these sentence pairs would qualify as good translations. While labelling on a continuous scale would require manual annotations, augmenting the data to achieve \"bad\" translations is more feasible. Hence, we augment 50% of the data to obtain bad translations. We experiment with two augmentation strategies: First, we shuffle the sentences to create mismatched sentence pairs. Second, we augment the sentence to mimic fluent but inadequate translations as seen in the original MLQE-PE dataset and discussed in Section 3.3. To do so, we implement a contextual augmentation pipeline that uses a language model (XLM-R) to replace 30% of the nouns, adjectives, verbs and adverbs such that the meaning of the sentence is changed while the grammatical correctness is preserved in the majority of cases.5 In both cases, the main task optimises the MSE loss, however, the auxiliary task is a binary classification problem using the binary cross-entropy loss."
+    }, {
+      "heading" : "4.2 Restrictive Approaches",
+      "text" : "We experiment with two setups that directly penalise the biased behaviour. First, we combine the main task with an adversarial task in a multitask architecture. Intuitively, the adversary is incentivised to predict the quality scores based on the target sentence only. The shared layers, however, are penalised for learning a mapping between target sentence and scores. The risk of working with an adversarial task setup is that it optimises towards eliminating all cues associated with the adversary. In QE, however, the target sentence provides relevant information, such as grammar and spelling. As a result, the overall model performance might suffer. As an alternative to training with adversarial tasks and a multitask architecture in general, we repurpose the concept of debiased focal loss for regression. While model architecture and training method are different, the underlying idea to use the partial input based predictions to influence the learning remains the same. The subsequent section explains the multitask architecture used for the first three approaches as well as the re-formulated debiased focal loss technique in more detail.\n5The link to the corresponding repository will be added after the anonymous review period."
+    }, {
+      "heading" : "4.3 Architecture & Training",
+      "text" : ""
+    }, {
+      "heading" : "4.3.1 MultiTransQuest",
+      "text" : "To realise the first three approaches, we propose the architecture MultiTransQuest, expanding on the MonoTransQuest baseline. The pre-trained language model XLM-R remains at the core and is entirely shared between tasks. The two key changes affect the final layers and the optimisation strategy: Firstly, we exchange the original prediction head to support multiple tasks. As illustrated in Figure 3, the final layers and loss functions are separate per task, thus allowing the mixing of regression and classification tasks. The figure exemplarily shows the adversarial setup, where the gradients are reversed during back-propagation, i.e. weighted with -1. For the two supportive tasks, we use the same setup but remove the weighted gradient layers and adjust the input and loss function for the auxiliary tasks accordingly. We experiment with different numbers of shared and separate layers. Secondly, we adapt the training procedure to support multiple tasks. The data loader is designed so that it alternates between the tasks per training step, with each batch containing only samples for one task which are then passed through the shared layers and the corresponding task-specific layers. We compare two optimisation strategies:\n• Training the tasks in turns, where backpropagation is performed per batch and task. Each task works with a separate AdamW optimizer to avoid averaging gradients across tasks.\n• Performing one forward pass for every task and combining the calculated losses as a weighted sum which is backpropagated through all layers using a single optimizer."
+    }, {
+      "heading" : "4.3.2 Debiased Focal Loss Architecture",
+      "text" : "In contrast to the previously discussed multitask approaches, debiased focal loss enables a complete separation of the main model and bias model, thus requiring no changes to the core MonoTransQuest architecture. To the best of our knowledge, (debiased) focal loss has only been applied to classification tasks so far as it explicitly modifies the cross-entropy loss function. Since our QE task is formulated as a regression problem, we attempt to find an equivalent strategy to down-weigh biased examples when working with MSE loss. In our scenario, the bias model is trained on partial inputs, receiving the translated sentence only. The better\nthe bias model’s prediction, the lower the MSE and the more biased the sample. In line with the original debiased focal loss idea, we can therefore use the bias model’s loss as an indication for the bias per sample.\nAs the MSE loss can vary greatly during training, we decide against training both models in an endto-end approach. First, the trained bias model is used to predict the respective quality scores for the training set, using only the target. Next, the absolute error for each of the training samples is calculated. We use the error to approximate the partial input bias: The lower the error, the easier it is for the bias model to predict the sample’s quality score correctly. To control the scale of the weights, we normalise the error value between 0 and 1. The resulting weights w are used to scale the MSE loss of the main model fM before backpropagation. We use the hyperparameter β to exponentially scale the loss (Eq. 1). We further experiment with a sigmoid-shaped function scaled between 0 and 1 (Eq. 2).\nDFL = wβ ( fyiM (xi)− ŷi )2 (1) DFL = 1\n1 + (\nw 1−w\n)−β (fyiM (xi)− ŷi)2 (2)"
+    }, {
+      "heading" : "5 Results",
+      "text" : "In the following, we present and discuss the results of the experiments conducted. Based on the analysis in Section 3.3, the experiments concentrate on the two most biased datasets English-German and English-Chinese, each in combination with the DA and HTER scores. For each of the four sections, we assess different hyperparameter configurations on the EN-DE validation set. A configuration is considered to be good if the bias is reduced and the overall performance is at least maintained. The most promising variant is then evaluated on the EN-DE and EN-ZH test set, to see if the method generalises across language domains. Finally, we compare the four methods against one another and provide further analyses on the robustness of the best-performing model."
+    }, {
+      "heading" : "5.1 Hyperparameters and Design Choices",
+      "text" : "Within each of the four approaches, we experiment with different hyperparameter configurations and design choices. While each setup requires individual fine-tuning, observed trends, backed by Table 4, 5, 6, 7 and 8 in the Appendix, include:\n• For the multitask architecture, training the tasks in turns with separate optimisers results in a good balance between bias reduction and maintaining performance. Backpropagating the weighted loss is also possible, but requires more task-specific fine-tuning.\n• For supportive auxiliary tasks, more separate layers, i.e. a larger degree of freedom, and a larger batch size improves the performance, for adversarial tasks the opposite is the case.\n• When augmenting additional WikiMatrix data, shuffling the sentence pairs achieves better results than mimicking fluent but inadequate translations with contextual augmentation.\n• The effect of the debiased focal loss technique is limited. A sigmoid-shaped weight distribution does not improve the results."
+    }, {
+      "heading" : "5.2 Comparison of the Four Approaches",
+      "text" : "Table 1 summarises the results obtained for each of the four methods. With respect to the choice of architecture, MultiTransQuest, used for methods 1-3, reduces the partial input bias more effectively than MonoTransQuest trained with focal loss. A key advantage of the multitask architecture is that the model is able to learn a balance between the tasks. In contrast, the degree of freedom is significantly limited for the focal loss architecture, where the main hyperparameter is how to scale the weights. We believe that this limitation is what makes the model even more sensitive to the inseparability of the bias and helpful features.\nContrasting the multitask-training with related or adversarial tasks, we find that the two supportive methods maintain a solid performance across all four constellations, while also reducing the bias. Compared to this, the adversarial approach generalises less well, despite its successful application in NLI and VQA. We hypothesise that this discrepancy is rooted in the nature of the partial inputs: In VQA as well as NLI, the task can only be solved when considering both question and image or premise and hypothesis, respectively. In contrast, the translation provides information that is valuable for the QE model regardless of the source, such as the fluency of the generated sentence. Hence, it is\ndifficult to isolate the bias from valuable information, an assumption that both adversarial training and the focal loss technique rely on. Without an unbiased reference dataset (which is hard to acquire due to the subjective nature of the annotation process) the line between desired information and bias is difficult to quantify. The lower the correlation between the existence of the bias and the performance of the adversarial task, the noisier the feedback that is propagated into the shared layers.\nThe best trade-off between overall performance and bias reduction is achieved with MultiTransQuest when combining the main task with a binary classification task trained on shuffled WikiMatrix data. The binary classification task is simple to learn, yet impossible to solve without paying equal attention to source and translation. For better illustration of the model behaviour and improvements, Figure 6 in the Appendix directly compares the performance and bias reduction achieved by the best model to the benchmark. In addition, Figures 7 and 8 show the distribution of DA and HTER predictions generated by the debiased model.\nSince the reduction of the performance on the target sentence is only considering the reduction of the partial input bias, we additionally test the models in a zero-shot setting on RO-EN data. As elaborated on in Section 3.3, the RO-EN dataset provokes the partial input bias significantly less than the other language pairs. Consequently, a model with reduced partial input bias should perform better when tested on the dataset, indicating improved robustness. We train the MonoTransQuest benchmark and debiased MultiTransQuest architecture on the EN-DE and EN-ZH datasets and use these models to predict the respective scores on the ROEN dataset. Since this is an out-of-domain setting, we do not expect the models to reach a performance that can compete with the models trained on Romanian-English data. However, the debiased models should outperform the benchmark. Indeed, Table 2 shows that all MultiTransQuest models outperform MonoTransQuest in this zero-shot scenario."
+    }, {
+      "heading" : "6 Future Work",
+      "text" : "Building upon the previously discussed results, we propose ideas for future work. Firstly, the multitask architecture provides additional degrees of freedom that were not explored extensively, yet. For example, one could vary the amount of training per task or even learn the training schedule as a parameter which adapts dynamically during the training process (Kiperwasser and Ballesteros, 2018; Zaremoodi et al., 2018). In addition, the number of auxiliary tasks could be increased to two or more, mixing different task types. Furthermore, it would be interesting to apply our proposed methods and architectures in adjacent fields of NLP. We think that the adapted debiased focal loss technique for regression might function in scenarios where it is possible to better isolate the bias and thus train a representative bias model. The most promising approach of training a multitask architecture with a supportive auxiliary task might generalise well to related settings, such as quality estimation for machine-generated text summaries. Seeing the method applied in the fields of NLI and VQA, both of which face partial input biases, would be intriguing, too."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "This paper expands on recent research which suggests that QE models are susceptible to learning spurious correlations. Based on additional analysis, and inspired by related work in the fields of NLI and VQA, we propose a range of auxiliary tasks that inform the main Quality Estimation task during training and are discarded at test time. First, we train the main Quality Estimation task together with additional, less biased data in a multitask setting. Then, we explore adversarial training and debiased focal loss to directly target the partial input bias. We find that the former approaches yield more stable results than the latter and conjecture that this is due to the difficulty of isolating partial input bias effects from useful predictive information encoded in the translation. We show that our proposed multitask architecture MultiTransQuest, especially when trained with additional shuffled WikiMatrix data, generalises well across the two most biased language pairs and the two different quality scores. Our method retains the overall prediction quality, reduces the observed biases significantly and increases the models’ robustness in a zero-shot setting."
+    }, {
+      "heading" : "5 8 1 -0.5 0.3159 0.3714 0.0161 0.1084 0.4509 0.4357 0.0317 0.1153",
+      "text" : ""
+    }, {
+      "heading" : "4 8 1 -1 0.3356 0.3957 0.0162 0.1049 0.4213 0.4089 0.0333 0.0548",
+      "text" : ""
+    }, {
+      "heading" : "3 16 3 -1 0.1160 0.2450 0.0172 0.0049 0.0921 0.1091 0.0374 -0.0744",
+      "text" : ""
+    }, {
+      "heading" : "2 16 2 -1 0.1738 0.2355 0.0231 0.0981 0.4619 0.4508 0.0332 -0.2574",
+      "text" : ""
+    }, {
+      "heading" : "1 16 1 -1 0.3015 0.3588 0.0184 -0.0868 0.4459 0.4075 0.0316 0.3221",
+      "text" : ""
+    } ],
+    "references" : [ {
+      "title" : "On Adversarial Removal of Hypothesis-only Bias in Natural Language Inference",
+      "author" : [ "Yonatan Belinkov", "Adam Poliak", "Stuart Shieber", "Benjamin Van Durme", "Alexander Rush." ],
+      "venue" : "Proceedings of the Eighth Joint Conference on Lexical and Compu-",
+      "citeRegEx" : "Belinkov et al\\.,? 2019",
+      "shortCiteRegEx" : "Belinkov et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Confidence estimation for machine translation",
+      "author" : [ "John Blatz", "Erin Fitzgerald", "George Foster", "Simona Gandrabur", "Cyril Goutte", "Alex Kulesza", "Alberto Sanchis", "Nicola Ueffing." ],
+      "venue" : "COLING 2004: Proceedings of the 20th International Conference on",
+      "citeRegEx" : "Blatz et al\\.,? 2004",
+      "shortCiteRegEx" : "Blatz et al\\.",
+      "year" : 2004
+    }, {
+      "title" : "Multitask Learning",
+      "author" : [ "Rich Caruana." ],
+      "venue" : "Machine Learning, 28:41–75.",
+      "citeRegEx" : "Caruana.,? 1997",
+      "shortCiteRegEx" : "Caruana.",
+      "year" : 1997
+    }, {
+      "title" : "Unsupervised cross-lingual representation learning at scale",
+      "author" : [ "Alexis Conneau", "Kartikay Khandelwal", "Naman Goyal", "Vishrav Chaudhary", "Guillaume Wenzek", "Francisco Guzmán", "Edouard Grave", "Myle Ott", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "Pro-",
+      "citeRegEx" : "Conneau et al\\.,? 2020",
+      "shortCiteRegEx" : "Conneau et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bilingual Expert\" Can Find Translation Errors",
+      "author" : [ "Kai Fan", "Bo Li", "Feng-Ming Zhou", "Jiayi Wang." ],
+      "venue" : "AAAI Conference. Association for the Advancement of Artificial Intelligence.",
+      "citeRegEx" : "Fan et al\\.,? 2019",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "MLQE-PE : a multilingual quality estimation and post-editing dataset",
+      "author" : [ "Marina Fomicheva", "S Sun", "E R Fonseca", "Frédéric Blain", "V Chaudhary", "Francisco Guzman", "N Lopatina", "Lucia Specia", "A F T Martins." ],
+      "venue" : "arXiv.",
+      "citeRegEx" : "Fomicheva et al\\.,? 2020",
+      "shortCiteRegEx" : "Fomicheva et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unsupervised Domain Adaptation by Backpropagation",
+      "author" : [ "Yaroslav Ganin", "Victor Lempitsky." ],
+      "venue" : "Proceedings of the 32nd International Conference on International Conference on Machine Learning Volume 37, ICML’15, pages 1180–1189. JMLR.org.",
+      "citeRegEx" : "Ganin and Lempitsky.,? 2015",
+      "shortCiteRegEx" : "Ganin and Lempitsky.",
+      "year" : 2015
+    }, {
+      "title" : "End-to-End Bias Mitigation by Modelling Biases in Corpora",
+      "author" : [ "Rabeeh Karimi Mahabadi", "Yonatan Belinkov", "James Henderson." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 8706–8716, Online. Asso-",
+      "citeRegEx" : "Mahabadi et al\\.,? 2020",
+      "shortCiteRegEx" : "Mahabadi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "PredictorEstimator",
+      "author" : [ "Hyun Kim", "Hun-Young Jung", "Hongseok Kwon", "JongHyeok Lee", "Seung-Hoon Na." ],
+      "venue" : "ACM Transactions on Asian and LowResource Language Information Processing, 17(1).",
+      "citeRegEx" : "Kim et al\\.,? 2017",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Scheduled Multi-Task Learning: From Syntax to Translation",
+      "author" : [ "Eliyahu Kiperwasser", "Miguel Ballesteros." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 6:225–240.",
+      "citeRegEx" : "Kiperwasser and Ballesteros.,? 2018",
+      "shortCiteRegEx" : "Kiperwasser and Ballesteros.",
+      "year" : 2018
+    }, {
+      "title" : "Focal Loss for Dense Object Detection",
+      "author" : [ "Tsung-Yi Lin", "Priya Goyal", "Ross Girshick", "Kaiming He", "Piotr Dollar." ],
+      "venue" : "Proceedings of the IEEE International Conference on Computer Vision (ICCV).",
+      "citeRegEx" : "Lin et al\\.,? 2017",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Exploiting Linguistic Resources for Neural Machine Translation Using Multi-task Learning",
+      "author" : [ "Jan Niehues", "Eunah Cho." ],
+      "venue" : "Proceedings of the Second Conference on Machine Translation, pages 80–89, Copenhagen, Denmark. Association for Computa-",
+      "citeRegEx" : "Niehues and Cho.,? 2017",
+      "shortCiteRegEx" : "Niehues and Cho.",
+      "year" : 2017
+    }, {
+      "title" : "Hypothesis only baselines in natural language inference",
+      "author" : [ "Adam Poliak", "Jason Naradowsky", "Aparajita Haldar", "Rachel Rudinger", "Benjamin Van Durme." ],
+      "venue" : "Proceedings of the Seventh Joint Conference on Lexical and Computational Semantics, pages",
+      "citeRegEx" : "Poliak et al\\.,? 2018",
+      "shortCiteRegEx" : "Poliak et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Overcoming Language Priors in Visual Question Answering with Adversarial Regularization",
+      "author" : [ "Sainandan Ramakrishnan", "Aishwarya Agrawal", "Stefan Lee." ],
+      "venue" : "Advances in Neural Information Processing Systems, pages 1541–1551.",
+      "citeRegEx" : "Ramakrishnan et al\\.,? 2018",
+      "shortCiteRegEx" : "Ramakrishnan et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "TransQuest: Translation Quality Estimation with Cross-lingual Transformers",
+      "author" : [ "Tharindu Ranasinghe", "Constantin Orasan", "Ruslan Mitkov." ],
+      "venue" : "Proceedings of the 28th International Conference on Computational Linguistics, pages 5070–5081, Barcelona,",
+      "citeRegEx" : "Ranasinghe et al\\.,? 2020",
+      "shortCiteRegEx" : "Ranasinghe et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "An Overview of Multi-Task Learning in Deep Neural Networks",
+      "author" : [ "Sebastian Ruder." ],
+      "venue" : "arXiv.",
+      "citeRegEx" : "Ruder.,? 2017",
+      "shortCiteRegEx" : "Ruder.",
+      "year" : 2017
+    }, {
+      "title" : "Neural Transfer Learning for Natural Language Processing",
+      "author" : [ "Sebastian Ruder." ],
+      "venue" : "Ph.D. thesis, National University of Ireland, Galway.",
+      "citeRegEx" : "Ruder.,? 2019",
+      "shortCiteRegEx" : "Ruder.",
+      "year" : 2019
+    }, {
+      "title" : "WikiMatrix: Mining 135M Parallel Sentences in 1620 Language Pairs from Wikipedia",
+      "author" : [ "Holger Schwenk", "Vishrav Chaudhary", "Shuo Sun", "Hongyu Gong", "Francisco Guzmán." ],
+      "venue" : "Proceedings of the 16th Conference of the European Chapter of",
+      "citeRegEx" : "Schwenk et al\\.,? 2021",
+      "shortCiteRegEx" : "Schwenk et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Findings of the WMT 2020 Shared Task on Quality Estimation",
+      "author" : [ "Lucia Specia", "Frédéric Blain", "Marina Fomicheva", "Erick Fonseca", "Vishrav Chaudhary", "Francisco Guzmán", "André F T Martins." ],
+      "venue" : "Proceedings of the 5th Conference on Machine Translation",
+      "citeRegEx" : "Specia et al\\.,? 2020",
+      "shortCiteRegEx" : "Specia et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Quality Estimation for Machine Translation",
+      "author" : [ "Lucia Specia", "Carolina Scarton", "Gustavo Henrique Paetzold." ],
+      "venue" : "Synthesis Lectures on Human Language Technologies, 11(1).",
+      "citeRegEx" : "Specia et al\\.,? 2018",
+      "shortCiteRegEx" : "Specia et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Are we Estimating or Guesstimating Translation Quality",
+      "author" : [ "Shuo Sun", "Francisco Guzmán", "Lucia Specia" ],
+      "venue" : "In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Sun et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Ł ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Alibaba Submission for WMT18 Quality Estimation Task",
+      "author" : [ "Jiayi Wang", "Kai Fan", "Bo Li", "Fengming Zhou", "Boxing Chen", "Yangbin Shi", "Luo Si." ],
+      "venue" : "Proceedings of the Third Conference on Machine Translation: Shared Task Papers, pages 809–815,",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Adaptive Knowledge Sharing in MultiTask Learning: Improving Low-Resource Neural Machine Translation",
+      "author" : [ "Poorya Zaremoodi", "Wray Buntine", "Gholamreza Haffari." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Zaremoodi et al\\.,? 2018",
+      "shortCiteRegEx" : "Zaremoodi et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 20,
+      "context" : "a tendency to assign high quality scores to translations that are fluent and grammatical, even though they do not resemble the actual meaning of the source (Sun et al., 2020).",
+      "startOffset" : 156,
+      "endOffset" : 174
+    }, {
+      "referenceID" : 5,
+      "context" : "We work with the recently published multilingual QE dataset MLQE-PE (Fomicheva et al., 2020), allowing us to test the generalisability of our approaches across different languages and quality scores.",
+      "startOffset" : 68,
+      "endOffset" : 92
+    }, {
+      "referenceID" : 21,
+      "context" : "ral architectures such as RNNs and Transformers (Vaswani et al., 2017), which accelerated the developments in the field by reducing the work of manual feature engineering and improving contextual representations (Kim et al.",
+      "startOffset" : 48,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2017), which accelerated the developments in the field by reducing the work of manual feature engineering and improving contextual representations (Kim et al., 2017; Wang et al., 2018; Fan et al., 2019).",
+      "startOffset" : 149,
+      "endOffset" : 204
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2017), which accelerated the developments in the field by reducing the work of manual feature engineering and improving contextual representations (Kim et al., 2017; Wang et al., 2018; Fan et al., 2019).",
+      "startOffset" : 149,
+      "endOffset" : 204
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2017), which accelerated the developments in the field by reducing the work of manual feature engineering and improving contextual representations (Kim et al., 2017; Wang et al., 2018; Fan et al., 2019).",
+      "startOffset" : 149,
+      "endOffset" : 204
+    }, {
+      "referenceID" : 3,
+      "context" : "It builds upon XLM-R, a popular pretrained cross-lingual language model with a good ability to generalise to low-resource languages (Conneau et al., 2020).",
+      "startOffset" : 132,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 18,
+      "context" : "MonoTransQuest achieved the best results for sentence-level direct assessment score prediction in the WMT 2020 shared task on QE (Specia et al., 2020).",
+      "startOffset" : 129,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 12,
+      "context" : "the tendency to predict the quality of a translation based on just the target sentence (Poliak et al., 2018).",
+      "startOffset" : 87,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 5,
+      "context" : "Following their work, in an attempt to reduce statistical artifacts, MLQE-PE (Fomicheva et al., 2020) – a new QE dataset diversifying the topics",
+      "startOffset" : 77,
+      "endOffset" : 101
+    }, {
+      "referenceID" : 15,
+      "context" : "The auxiliary tasks can either be related to the main task or adversarial (Ruder, 2017).",
+      "startOffset" : 74,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 2,
+      "context" : "Related Tasks: In settings where the data is limited, noisy or high-dimensional, using additional tasks is a way of introducing an inductive bias that prevents the model from overfitting to noise (Caruana, 1997).",
+      "startOffset" : 196,
+      "endOffset" : 211
+    }, {
+      "referenceID" : 16,
+      "context" : "might be able to use new features that were learned through an auxiliary task for the main task as well (Ruder, 2019).",
+      "startOffset" : 104,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 11,
+      "context" : "MT models, for example, have been shown to benefit from auxiliary tasks such as named entity recognition, part-of-speech tagging and dependency parsing (Niehues and Cho, 2017; Kiperwasser and Ballesteros, 2018).",
+      "startOffset" : 152,
+      "endOffset" : 210
+    }, {
+      "referenceID" : 9,
+      "context" : "MT models, for example, have been shown to benefit from auxiliary tasks such as named entity recognition, part-of-speech tagging and dependency parsing (Niehues and Cho, 2017; Kiperwasser and Ballesteros, 2018).",
+      "startOffset" : 152,
+      "endOffset" : 210
+    }, {
+      "referenceID" : 0,
+      "context" : "More recently, it has been successfully used to reduce partial input biases in different fields of NLP, such as natural language inference (NLI) (Belinkov et al., 2019; Stacey et al., 2020) and visual question answering (VQA) (Ramakrishnan et al.",
+      "startOffset" : 145,
+      "endOffset" : 189
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2020) and visual question answering (VQA) (Ramakrishnan et al., 2018).",
+      "startOffset" : 44,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 5,
+      "context" : "We work with the MLQE-PE dataset (Fomicheva et al., 2020) which was specifically designed for",
+      "startOffset" : 33,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 18,
+      "context" : "Published in 2020, it formed the basis for the WMT 2020 and 2021 shared tasks on Quality Estimation (Specia et al., 2020).",
+      "startOffset" : 100,
+      "endOffset" : 121
+    }, {
+      "referenceID" : 18,
+      "context" : "This has also been observed in the QE shared task findings (Specia et al., 2020).",
+      "startOffset" : 59,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 18,
+      "context" : "One particularity of the RO-EN dataset is the high abundance of fluent, but clearly inadequate translations and hallucinations which require both the source and translation to be detected (Specia et al., 2020).",
+      "startOffset" : 188,
+      "endOffset" : 209
+    }, {
+      "referenceID" : 17,
+      "context" : "We choose WikiMatrix (Schwenk et al., 2021), a large parallel sentence corpus based on Wikipedia articles, as data source for the experiments.",
+      "startOffset" : 21,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 9,
+      "context" : "For example, one could vary the amount of training per task or even learn the training schedule as a parameter which adapts dynamically during the training process (Kiperwasser and Ballesteros, 2018; Zaremoodi et al., 2018).",
+      "startOffset" : 164,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 23,
+      "context" : "For example, one could vary the amount of training per task or even learn the training schedule as a parameter which adapts dynamically during the training process (Kiperwasser and Ballesteros, 2018; Zaremoodi et al., 2018).",
+      "startOffset" : 164,
+      "endOffset" : 223
+    } ],
+    "year" : 0,
+    "abstractText" : "Machine Translation Quality Estimation (QE) aims to build predictive models to assess the quality of machine-generated translations in the absence of reference translations. While state-of-the-art QE models have been shown to achieve good results, they over-rely on features that do not have a causal impact on the quality of a translation. In particular, there appears to be a partial input bias, i.e., a tendency to assign high-quality scores to translations that are fluent and grammatically correct, even though they do not preserve the meaning of the source. We analyse the partial input bias in further detail and evaluate four approaches to use auxiliary tasks for bias mitigation. Two approaches use additional data to inform and support the main task, while the other two are adversarial, actively discouraging the model from learning the bias. We compare the methods with respect to their ability to reduce the partial input bias while maintaining the overall performance. We find that training a multitask architecture with an auxiliary binary classification task that utilises additional augmented data best achieves the desired effects and generalises well to different languages and quality metrics.",
+    "creator" : null
+  }
+}

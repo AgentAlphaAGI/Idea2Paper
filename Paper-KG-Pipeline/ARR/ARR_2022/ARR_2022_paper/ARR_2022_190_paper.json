@@ -1,0 +1,656 @@
+{
+  "name" : "ARR_2022_190_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Saliency as Evidence: Event Detection with Trigger Saliency Attribution",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Event detection (ED), the first and a crucial step of event extraction, aims to identify events of certain types in texts (Ahn, 2006; Nguyen and Grishman, 2015; Mitamura et al., 2017). Previous methods to ED typically see no difference between event types and devise a single model to address them all (Ji and Grishman, 2008; Li et al., 2013; Chen et al., 2015; Lin et al., 2020). However, such approaches indeed produce quite skewed performance on different types. Tasking the ACE benchmark as an example, we note the state-of-the-art ED model (Wadden et al., 2019) can strike 90% in F1 for the type DIVORCE, yet only 50% for the type STARTPOSITION; it is more surprising that the training set of DIVORCE is 8 times smaller than that of START-POSITION. Finding the causes underlying the skewed performance is crucial to the robust-\nness of an ED model; however, this problem is still understudied in current research.\nThis study takes a fresh look at the problem by attributing the skewed performance to the contextual patterns of events. Consider two typical cases of DIVORCE and START-POSITION shown in Figure 1. Intuitively, they have distinct patterns: the DIVORCE event is more trigger-dependent, because the trigger word (divorced) is very indicative of the event’s occurrence; by contrast, the STARTPOSITION event is more context-dependent — the event semantic is primarily expressed by contexts rather than the trigger (become), which is a merely light verb. We hypothesize an ED model performs poorly on context-dependent types because capturing context semantics is challenging (Lu et al., 2019; Liu et al., 2020). With the above intuitions, two questions rise: (i) Can we estimate an event’s pattern quantitatively? (ii)) How to robustify an ED model by characterizing such patterns?\nWe introduce a brandy new concept called trigger saliency attribution that can explicitly quantify an event’s contextual pattern. As shown in Figure 2, to determine how much an event depends on triggers/contexts, the key notion is to measure the trigger’s contribution to expressing overall the event semantic. To this end, we first assign each sentence a global event label that represents the overall event semantic. Then, inspired by the feature attribution method (Simonyan et al., 2014; Sundararajan et al., 2017), we regard each word as a feature and compute its saliency value (i.e., contribution) for\npredicting the global event label. Finally, by examining the ground-truth trigger’s saliency value, we can determine how much an event depends on triggers or contexts: a higher value, for example, indicates that the trigger contributes more to the event, implying the event is more trigger-dependent.\nWe also develop a new training mechanism based on trigger saliency attribution, which uses saliency as evidence to enhance learning. Our method is simple yet effective — instead of using a single model to detect all event types, we group event types with similar patterns together (assessed by trigger saliency attribution) and develop separate models for each group. This strategy enables different models to capture distinct patterns. The model for context-dependent types, for example, can focus on mining contextual information for learning. Furthermore, we augment the above framework with two saliency-exploration strategy, which can explicitly integrate saliency information into learning and produce improved performance particularly for context-dependent types (§ 6.2).\nWe have conducted extensive experiments on two ED benchmarks (i.e., ACE 2005 (LDC, 2005) and MAVEN (Wang et al., 2020)) to verify the effectiveness of our approach. From the results: (i) Our trigger saliency attribution method does capture the underlying pattern and can well explain the skewed performance, obtaining Spearman’s correlation coefficients of 0.72 and 0.61 with per-type F1 on ACE 2005 and MAVEN respectively; (ii) Our new training regime based on saliency demonstrates improved results on the two benchmarks. On ACE 2005, for example, it produces a 2% absolute gain in F1 over methods training different event types jointly. Finally, we compare and emphasize several significant aspects (e.g., linguistic and lexical patterns) of trigger-dependent and contextdependent event types, and our work may inspire future research into their differences.\nTo summarize, our contributions are three-fold:\n• We investigate the causes of an ED model’s skewed performance and develop a new concept called trigger saliency attribution, which can explicitly assess the underlying pattern of events. As a seminal study, our results may inspire further research into this problem.\n• We propose a new training mechanism for ED based on trigger saliency attribution, which achieves promising results on two bench-\nmarks, particularly when dealing with contextdependent event types.\n• We highlight many distinct patterns of triggerdependent and context-dependent event types, and our findings suggest that the traditional “one model fits all types” paradigm may need to be revised."
+    }, {
+      "heading" : "2 Background and Related Work",
+      "text" : "Event Detection. ED is a critical subtask of event extraction that seeks to locate event instances in text, which has received a lot of attention from researchers. Traditional methods for ED typically use fine-grained features (Ahn, 2006; Ji and Grishman, 2008; Liao and Grishman, 2010; Hong et al., 2011; Li et al., 2013), whereas newer methods rely on neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Feng et al., 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al., 2018; Lai et al., 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al., 2020) to boost learning. However, most methods recognize no distinction between event types and train a single model to identify all event types, resulting in rather skewed performance on different event types. Two seminal works (Lu et al., 2019; Liu et al., 2020) have observed the comparatively poor performance on context-dependent texts and offered a better context-exploration strategy to improve training. Nonetheless, they are in a position to improve performance rather than investigate the root causes.\nOur approach, on the other hand, takes a fresh look at the issue and aims to define the underlying patterns of events for learning.\nFeature Attribution. The goal of feature attribution (FA) is to assess how important an input feature for model prediction, which has sparked a lot of interest in interpreting model decisions (Simonyan et al., 2014; Sundararajan et al., 2017). Formally, suppose we have an input vector x = (x1, x2, ..., xn) ∈Rn and a functionF : Rn→ [0, 1] representing a model. The attribution value of x, with respect to the output F(x), is defined as a vector AF (x) = (a1, a2, ..., an) ∈ Rn, where ai measures the contribution of xi to F(x). The existing FA methods are classified as gradient-based methods, which consider the gradient of the output to the input as the attribution value (Simonyan et al., 2014; Springenberg et al., 2015), and reference-based methods, which consider the difference between the model’s output and some “reference\" output, in terms of the difference between the input and some “reference\" input, as the attribution value (Ribeiro et al., 2016; Sundararajan et al., 2017). FA have been used to interpret model predictions in applications including image classification (Simonyan et al., 2014), machine translation (Ding et al., 2017), text classification (Chen et al., 2018), and others (Bastings and Filippova, 2020). To the best of our knowledge, this is the first work introducing FA to ED for quantifying the underlying event patterns.\nIntegrated Gradient. Integrated Gradient (Sundararajan et al., 2017) is a specific (referencebased) FA method that views the feature attribution value as the accumulated gradient along the line between the model’s input x and a reference input x′, which denotes the lack of a feature1. Particularly, the attribution value of xi (i.e., the ith dimension of x) with respect to an output F (x) is defined as:\nai = (xi − x′i)× ∫ 1 α=0 ∂F(x′ + α× (x− x′)) ∂xi dα (1)\nwhere ∂F(x)∂xi indicates the gradient of F(x) to xi. In our approach, we prefer Integrated Gradient to other FA methods due to its computing efficiency and effectiveness in addressing a wide range of text based tasks (Sundararajan et al., 2017; Liu and Avci, 2019; Bastings and Filippova, 2020).\n1In text related tasks, x′ is usually set as a sequence of embedding vectors with all zero values (Wallace et al., 2019).\nAlgorithm 1: Trigger Saliency Attribution Input :Training set D; a re-defined event type set T\n1 . Train a sentence-level classifier on D 2 for each training instance s ∈ D do 3 . Conduct sentence-level classifcation on s; 4 for each word wi ∈ s and each type T ∈ T do 5 . Evalaute word-level saliency with Eq. (4); 6 end for 7 end for 8 for each event type T ∈ T do 9 . Evaluate type-level saliency with Eq. (5);\n10 end for"
+    }, {
+      "heading" : "3 Trigger Saliency Attribution",
+      "text" : "Algorithm 1 provides an overview of our trigger saliency attribution method, which consists of three major steps: (i) sentence-level event classification, (ii) word-level saliency estimation, and (iii) typelevel saliency estimation. Let s = [w1, w2, · · · , wN ] be a sentence of N words, and the ED task corresponds to predicting an event label sequence Ys = [y1, y2, · · · , yN ], where yi ∈ T ∪ {O} indicates the event label of wi, T is a set containing all pre-defined event types, and O is a “null type” denoting no-trigger words.\nSentence-Level Event Classification. We start by giving s a sentence-level event label Gs, which represents the overall event semantic. Let the label be Gs = [g1, g2, ..., g|T |] ∈ R|T |, where gi ∈ {0, 1} indicates whether a trigger of the ith event type is contained by s (gi=1) or not (gi=0). Following that, we construct a sentence-level event classifier and aim to learn a mapping from s to Gs. Particularly, we devise a BERT based sentence classifier (Devlin et al., 2019) and adopt a multi-label binary crossentropy loss for optimization:\nL(Gs;Xs) = − 1\n|T | |T |∑ i=1 gi · log(osi )+(1−gi) · log(1−osi )\n(2)\nwhereXs is the input embedding of s in BERT, os ∈ R|T | indicates the logits vector computed by the classier, and osi denotes the i th element of os.\nWord-Level Saliency Estimation. Based on the sentence-level classifier, we next use Integrated Gradient (Sundararajan et al., 2017) to calculate the contribution (i.e., saliency value) of each word to the prediction. We utilize the loss function as the desired model (Wallace et al., 2019), and calculate the saliency of wi, more accurately, its BERT\nS2: He become the first minister to England.\n1w 2w 3w 4w 5w\nTrigger Saliency Attribution Value\n6w 7w\nevent trigger\nTraining Data\nrepresentation xi ∈Xs, regarding the loss by:\nαwi = (xi − x ′ i)×∫ 1\nα=0\n∂L(Gs;X ′ + α× (Xs −X ′)) ∂xi dα (3)\nwhereX ′ is a sequence of all-zero vectors (serving as a reference input), andx′i denotes the i\nth element in X ′. We then normalize αwi as a scalar value αwi with a sentence-wise normalization:\nαwi = e ‖αwi‖2/ ∑N n=1 e‖αwn‖2 (4)\nwhere ‖‖ denotes the L2 norm. In actuality, we may not be concerned with a word’s saliency to the general event semantic Gs, but rather with a specific event type T ∈ T . To this end, we replace Gs with the one-hot representation of T in Equation (3) for evaluation. Finally, we represent the word-level saliency of wi with respect to the event type T by α (T ) wi , and we suppose α (T ) wi = 0 if the sentence does not describe any event of type T .\nType-Level Saliency Estimation. Based on the word-level saliency, we measure the type-level trigger saliency value (regarding an event type T ) as:\nSL(T ) =\n∑ (s,Ys) ∑ w∈{wi|yi=T} α (T ) w\n#of training examples of typeT (5)\nwhere (s, Ys) ranges over each training instance; {wi|yi = T} is a set containing all of the triggers of type T in s. The type-level saliency vale SL(T ) indicates how trigger-dependent or contextdependent an event type T is, and it has been shown to correlate strongly with the per-type model performance (§ 6.1)."
+    }, {
+      "heading" : "4 Saliency Enhanced ED",
+      "text" : "Based on trigger saliency attribution, we devise a new training paradigm for ED, which can distinguish event types with similar patterns for learning and achieves promising results. The overview is shown in Figure 3, and the technical details follow.\nEvent Type Division. Based on type-level saliency estimation, we divide all event types into a trigger-dependent set Ttrigger = {T |SL(T ) ≥ λ} and a context-dependent set Tcontext = {T |SL(T ) < λ}. The threshold λ is empirically determined as the median of all per-type trigger saliency values, implying that the event types are evenly divided into two sets2.\nSaliency-Enriched Event Detector. Following that, we create separate ED models for Ttrigger and Tcontext. Each model is implemented using the BERT architecture (Devlin et al., 2019), and given a sentence s, it performs a word-by-word classification over BERT’s output to generate a label sequence: Ỹs = (ỹ1, ỹ2, · · · , ỹN ), with ỹi being the predicted event label for wi. Based on the different characteristics of trigger-dependent and context-dependent types, we devise different saliency-exploration methods to boost learning. (i) Word Saliency Embeddings. Given that trigger-dependent types often have indicative triggers, we build a mechanism called word saliency embeddings (WSEs) in the model for Ttrigger to capture such regularities. Specifically, we first quantify each word’s saliency value3 as 0 or 1 based\n2We have tried using more than two sets for division in our pilot experiments, but the results were negative.\n3To prevent label leaking, at the testing stage we use pre-\non λ, i.e., the threshold we used previously for distinguishing event types, and then use a separate embedding vector to distinguish 0 and 1, similar to word embeddings. Such embeddings are incorporated into the model4 to capture a regularity that words with high saliency values are more likely to be triggers. Note WSEs are also incorporated in the model for the Tcontext, which on the other hand seeks to learn the opposite regularity that words with high saliency values may not be triggers. (ii) Saliency as Context Evidence. In the event detector for Tcontext, we also devise a regime for interpreting salient information as context evidence for reasoning. Consider the previous example S2. Our method identifies the context words “US minister” as the most salient words (with saliency values larger than λ) expressing the overall event semantic. Here we regard salient contexts as supplementary evidence and concatenate them with the sentence for learning, as shown in the bottom of Figure 3. Compared with WSEs, this method can additional capture the lexical semantics of the salient words, which has been shown to considerably aid in the recognition of context-dependent event types (§ 7).\nModel Ensemble. In the testing stage, we combine the results of two models to make a final prediction. If ambiguous cases occur, i.e., the two ED models predict different event types for the same word, we use the type with a higher probability as the result. We use cross-entropy loss for optimization. For example, the model for Ttrigger is trained by minimizing the following loss:\nL = − ∑\n(s,Ys) ∑ (wi,yi)∈(s,Ys)\nlogP (yi|wi) (6)\nwhere (s, Ys) refers to each training instance; (wi, yi\n5) ranges over each pair of word and its groundtruth event label; P (yi|wi) denotes the conditional probability that the model predicts yi for wi. We use Adam (Kingma and Ba, 2015) with default hyper-parameters for parameter update."
+    }, {
+      "heading" : "5 Experimental Setups",
+      "text" : "Datasets. We conduct experiments on ACE 2005 (LDC, 2005) and MAVEN (Wang et al., 2020). ACE 2005 defines 33 event types and contains 599\ndicted labels rather than ground-truth labels for attribution. 4Because combining external embeddings with BERT remains difficult, we alter the segmentation embeddings in BERT to WSEs, motivated by (Wu et al., 2019).\n5Note in the event detector for Ttrigger, we should consider yi as O for yi ∈ Tcontext.\nDataset # Type Split # Sen. # Tok. # Trig.\ndocuments. We adopt a common split for evaluation following previous works (Li et al., 2013; Wadden et al., 2019). MAVEN is a newly released corpus defining 168 more fine-grained event types (Wang et al., 2020). Because the MAVEN test set is not publicly available and our study is concerned with per-type performance, we instead use the MAVEN development set for assessment and divide the original MAVEN training set as 9:1 for training and validating. Table 1 displays the comprehensive data statistics for the two datasets.\nEvaluation Metrics. We adopt the following metrics to evaluate our model: (i) Spearman’s rank correlation coefficient, which can determine the statistical dependency between two ranked variable sequences. The metric is defined as ρ = 1− 6 ∑ d2i\nn(n2−1) ,\nwhere di is the difference between the ith pair of ranked variables, and n is the sequence length. We use it to measure how well our trigger saliency attribution results correlate with per-type model performance. (ii) Precision (P), Recall (R) and (Micro) F1, which are widely used to assess the overall performance of an ED model. (iii) Macro F1, the arithmetic mean of class-wise F1-scores, which will be low for models that only perform well on common types but badly on rare types.\nImplementations. In our trigger saliency attribution method, the sentence-level classifier is built on the BERT-base. The batch size is set to 20, and the learning rate is set to 1e-5. After 5 epochs, it achieves 74.8% in F1 on the ACE 2005 development set, matching the state-of-the-art performance (Liu et al., 2019). As for the two ED models, we consider BERT-base architectures. The batch size is set to 20, chosen from [1, 5, 10, 20, 30]. The learning rate is set to 1e-5, chosen from a range from 1e-3 to 1e-6. The dimension of word saliency embeddings is empirically set to 100. To allow for further investigation, we have made our code\npublicly available at http://anomynous."
+    }, {
+      "heading" : "6 Experimental Results",
+      "text" : ""
+    }, {
+      "heading" : "6.1 Results of Correlation Measurement",
+      "text" : "Table 2 shows the Spearman’s rank correlation between per-type F1 and four criteria: 1) the number of training instances (regarding an event type); 2) trigger variance, defined as the ratio of the number of unique event triggers to the total number of event triggers (regarding an event type); 3) trigger attention value, which corresponds to the groundtruth trigger’s attention value in the BERT model; 4) trigger saliency attribution (our method). We use a state-of-the-art ED model (Wadden et al., 2019) and perform a 5-run average on the development set to obtain the per-type F1 score.\nAccording to the results, our trigger saliency attribution approach correlates the best with model performance, yielding a score as high as 0.72 and 0.61 in Spearman’s ρ correlation. This suggests that our method can well explain the skewed performance. Our other findings are interesting: (i) Surprisingly, the number of training examples shows a negligible correlation (ρ = 0.06 and 0.09) with per-type F1. This implies that simply collecting more training data may not be an effective way to improve an ED model. (ii) The trigger variance metric demonstrates a moderate association (ρ = 0.25 and 0,26), indicating that the diversity of event triggers is a factor influencing model performance. (iii) The trigger attention value also shows a poor association, which may be another proof that attention is not explainable (Jain and Wallace, 2019).\nLastly, Figure 4 visualizes correlations between per-type F1 and the number of training instances and our trigger saliency attribution method. In addition to noting that our method adequately explains the per-type F1-score, we find that λ = 0.25 may be a good threshold for distinguishing between triggerdependent and context-dependent event types."
+    }, {
+      "heading" : "6.2 Results of Saliency Enhanced ED",
+      "text" : "To test the efficacy of our saliency enhanced ED model: 1) For ACE 2005, we compare our model with (i) DYGIE++ (Wadden et al., 2019), which uses a graph view to learn context features; (ii) TriggerQA (Du and Cardie, 2020), which uses a question answering formulation for the task; (iii) OneIE (Lin et al., 2020), which adopts cross-sentence features for the task. Because pre-processing has a significant impact on the results (Orr et al., 2018), to ensure a fair comparison, we only consider models using the same pre-processing steps as in (Wadden et al., 2019). 2) For MAVEN, we use the BERT+CRF proposed in the original work (Wang et al., 2020) for comparison. As a baseline, we also construct a model called BERTEns, which ensembles two BERT models similar to ours but does not differentiate event types. We refer to our approach that merely separates event types for learning (without saliency-exploration strategies) as SaliencyED (SL), and our full approach as SaliencyED (Full). Table 3 displays performances of different models.\nThe results have confirmed our approach’s effectiveness. Particularly: (i) our full model achieves the best Micro F1 score (75.8% and 67.1%) on ACE 2005 and MAVEN without the use of sophisticated architectures or external resources, as DYGIE++ and OneIE do. (ii) Impressively, with the identical architectures, our full model SaliencyED (Full) outperforms BERTEns by 2.8% and 1.7% in F1 on the two datasets, respectively; SaliencyED\n(SL), which only differentiates event types for training, outperforms BERTEns by 1.6% in F1. This emphasizes the significance of identifying event patterns for ED. (iii) Our method gives the best Macro F1 on two datasets, indicating that it performs well on both common and rare event types.\nTable 4 shows the performance breakdown for trigger-dependent (TD) and context-dependent (CD) types. According to the results, different models consistently produce good performance on TD types but low performance on CD types, implying that the patterns found by our trigger saliency attribution method are reasonable. When comparing SaliencyED (SL) and SaliencyED (Full), we see that the saliency-exploring method is more effective on CD types (+2.3% in F1) than on TD types (+0.3% in F1). This makes sense because detecting context-dependent events relies significantly on context reasoning, and our method can just use important contexts as evidence to improve learning."
+    }, {
+      "heading" : "7 Discussion",
+      "text" : "Ablation Study. We undertake an ablation study in Table 5 to investigate different model components, using the more challenging contextdependent (CD) types as an example. In the variant models, +WSE and +Evidence denote supplementing SaliencyED (SL) with word saliency embeddings and context evidence, respectively. +MaskAtt is an approach for calculating attention that masks the word itself, which can drive the model to focus more on contexts for learning; +Gold Argument is an oracle method that uses gold event arguments as evidence for learning. Based on the results, +Evidence outperforms +WSE and +MaskAtt, indicating its efficacy. Interestingly,\n+MaskAtt also boosts performance, implying that the contexts of CD events do carry important information for asserting the event. Finally, the superior performance of +Gold Arguments implies that finding indicative evidence (e.g., event arguments) is the key factor boosting learning on CD types.\nImpact of Event Type Division. We use our event type division method as a baseline and compare it to three other event type division strategies: 1) at random; 2) based on the amount of training instances; 3) based on development set performance. According to the results, the first two strategies decrease performance by 1.27% and 1.41% in Micro F1 on ACE, and 1.53% and 1.40% on MAVEN, which suggests that an inappropriate separation of event types impairs learning. The third strategy based on development performance improves learning (+0.8%/+1.1% on ACE/MAVEN), but it is still inferior to our approach. An explanation is that the final model performance is the product of a combination of factors, and thus categorizing event types based on development set performance may not assure that event types with similar patterns are grouped together, resulting in inferior results.\nDistinctions in TD/CD Types. We use ACE 2005 as a case to highlight the distinct characteristics between TD and CD types. Figure 5 (Left) depicts the top k accuracy (hit@k) in the case where the most salient word in a sentence appears to be an event trigger; Figure 5 (Right) depicts the performance drop in an adversarial attack in which the gold event triggers are masked for sentencelevel event type classification. The CD and TD types exhibit opposing behaviors: TD types display excellent H@k accuracy but a significant performance loss in adversarial attack, whereas CD types exhibit the opposite tendency. This implies that the CD and TD types respectively rely on triggers and contexts. Figure 6 shows a comparison of the number of event arguments for TD and CD types. Clearly, CD types have a larger number of event arguments than TD types. This is also another indication that CD types rely on contexts — they require more arguments to convey an event.\nLinguistic/Lexical Insights. Table 6 give typical TD and CD types on ACE 2005 (Please refer to Appendixes for the full set). Intuitively, the TD types appear to be finer-grained and concrete, whereas the CD types appear to be coarser-grained and abstract. For example, we may further subdivide a CD type TRANSFER_MONEY into finergrained ones like LOAN and PURCHASE. We provide linguistic/lexical insights by comparing the hierarchy levels of TD/CD types on WordNet (Miller,\n1994). Accordingly, triggers of TD types are at the lower level of WordNet, with an average of 5.6 hypernyms; yet CD type triggers are at a higher level of WordNet, with 2.3 hypernyms. This finding supports our intuition that TD types are more concrete whereas CD types are more abstract.\nCase Visualization. Figure 7 depicts the saliency map of several cases. Accordingly, event triggers of TD types do usually have large saliency values. For example, case 2) is the instance of DIVORCE with the lowest trigger saliency value, which is still as high as 0.34. In contrast, event triggers of CD types typically have low saliency values. For example, case 4) and 6) show random instances of TRANSFER-MONEY and TRANSPORT, where the trigger saliency values are only 0.01."
+    }, {
+      "heading" : "8 Conclusion",
+      "text" : "In this study, we analyze the origins of an ED model’s skewed performance and introduce a new notion called trigger saliency attribution to quantify the pattern of events. We devise a new training paradigm for ED that can distinguish between trigger-dependent and context-dependent types for learning, yielding promising results on two benchmarks. We also examine the differences between the two types extensively, and our work may promote future research on this problem. In the future, we would apply our method to other tasks (e.g., relation extraction) where contextual patterns matter."
+    }, {
+      "heading" : "A The Full Event Types and Their Saliency Values",
+      "text" : "We provide the full set of event types in ACE (LDC, 2005) and MAVEN (Wang et al., 2020) and their saliency values evaluated by our method.\nTrigger-Dependent Types Context-Dependent Types Divorce 0.434 Demonstrate 0.239 Trial_Hearing 0.354 Attack 0.236 Fine 0.349 Phone_Write 0.234 Injure 0.308 End_Position 0.198 Be_Born 0.306 Start_Position 0.196 Elect 0.304 Transfer_Ownership 0.181 Sentence 0.304 Execute 0.178 Die 0.304 Meet 0.178 Marry 0.301 Transport 0.156 Appeal 0.294 End_Org 0.155 Declare_Bankruptcy 0.293 Transfer_Money 0.155 Charge_Indict 0.274 Merge_Org 0.150 Sue 0.273 Acquit 0.142 Arrest_Jail 0.256 Extradite 0.134 Convict 0.255 Nominate 0.131 Release_Parole 0.241 Pardon 0.128\nStart_Org 0.127"
+    } ],
+    "references" : [ {
+      "title" : "The stages of event extraction",
+      "author" : [ "David Ahn." ],
+      "venue" : "Proceedings of the Workshop on Annotating and Reasoning about Time and Events, pages 1–8, Sydney, Australia. Association for Computational Linguistics.",
+      "citeRegEx" : "Ahn.,? 2006",
+      "shortCiteRegEx" : "Ahn.",
+      "year" : 2006
+    }, {
+      "title" : "The elephant in the interpretability room: Why use attention as explanation when we have saliency methods",
+      "author" : [ "Jasmijn Bastings", "Katja Filippova" ],
+      "venue" : "In Proceedings of the Third BlackboxNLP Workshop on Analyzing and Interpreting Neural Networks",
+      "citeRegEx" : "Bastings and Filippova.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Bastings and Filippova.",
+      "year" : 2020
+    }, {
+      "title" : "Learning to explain: An information-theoretic perspective on model interpretation",
+      "author" : [ "Jianbo Chen", "Le Song", "Martin Wainwright", "Michael Jordan." ],
+      "venue" : "Proceedings of the 35th International Conference on Machine Learning, volume 80 of",
+      "citeRegEx" : "Chen et al\\.,? 2018",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Honey or poison? solving the trigger curse in few-shot event detection via causal intervention",
+      "author" : [ "Jiawei Chen", "Hongyu Lin", "Xianpei Han", "Le Sun." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages",
+      "citeRegEx" : "Chen et al\\.,? 2021",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Event extraction via dynamic multipooling convolutional neural networks",
+      "author" : [ "Yubo Chen", "Liheng Xu", "Kang Liu", "Daojian Zeng", "Jun Zhao." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th Interna-",
+      "citeRegEx" : "Chen et al\\.,? 2015",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Visualizing and understanding neural machine translation",
+      "author" : [ "Yanzhuo Ding", "Yang Liu", "Huanbo Luan", "Maosong Sun." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1150–",
+      "citeRegEx" : "Ding et al\\.,? 2017",
+      "shortCiteRegEx" : "Ding et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Event extraction by answering (almost) natural questions",
+      "author" : [ "Xinya Du", "Claire Cardie." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Du and Cardie.,? 2020",
+      "shortCiteRegEx" : "Du and Cardie.",
+      "year" : 2020
+    }, {
+      "title" : "A languageindependent neural network for event detection",
+      "author" : [ "Xiaocheng Feng", "Lifu Huang", "Duyu Tang", "Heng Ji", "Bing Qin", "Ting Liu." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2:",
+      "citeRegEx" : "Feng et al\\.,? 2016",
+      "shortCiteRegEx" : "Feng et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Using cross-entity inference to improve event extraction",
+      "author" : [ "Yu Hong", "Jianfeng Zhang", "Bin Ma", "Jianmin Yao", "Guodong Zhou", "Qiaoming Zhu." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human",
+      "citeRegEx" : "Hong et al\\.,? 2011",
+      "shortCiteRegEx" : "Hong et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Attention is not Explanation",
+      "author" : [ "Sarthak Jain", "Byron C. Wallace." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Pa-",
+      "citeRegEx" : "Jain and Wallace.,? 2019",
+      "shortCiteRegEx" : "Jain and Wallace.",
+      "year" : 2019
+    }, {
+      "title" : "Refining event extraction through cross-document inference",
+      "author" : [ "Heng Ji", "Ralph Grishman." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Ji and Grishman.,? 2008",
+      "shortCiteRegEx" : "Ji and Grishman.",
+      "year" : 2008
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Learning prototype representations across few-shot tasks for event detection",
+      "author" : [ "Viet Lai", "Franck Dernoncourt", "Thien Huu Nguyen." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 5270–5277, Online",
+      "citeRegEx" : "Lai et al\\.,? 2021",
+      "shortCiteRegEx" : "Lai et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Event detection: Gate diversity and syntactic importance scores for graph convolution neural networks",
+      "author" : [ "Viet Dac Lai", "Tuan Ngo Nguyen", "Thien Huu Nguyen." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language",
+      "citeRegEx" : "Lai et al\\.,? 2020",
+      "shortCiteRegEx" : "Lai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Joint event extraction via structured prediction with global features",
+      "author" : [ "Qi Li", "Heng Ji", "Liang Huang." ],
+      "venue" : "Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 73–82, Sofia, Bulgaria.",
+      "citeRegEx" : "Li et al\\.,? 2013",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Treasures outside contexts: Improving event detection via global statistics",
+      "author" : [ "Rui Li", "Wenlin Zhao", "Cheng Yang", "Sen Su." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 2625–2635, Online and",
+      "citeRegEx" : "Li et al\\.,? 2021",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Using document level cross-event inference to improve event extraction",
+      "author" : [ "Shasha Liao", "Ralph Grishman." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Liao and Grishman.,? 2010",
+      "shortCiteRegEx" : "Liao and Grishman.",
+      "year" : 2010
+    }, {
+      "title" : "A joint neural model for information extraction with global features",
+      "author" : [ "Ying Lin", "Heng Ji", "Fei Huang", "Lingfei Wu." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7999–8009, Online. Association for",
+      "citeRegEx" : "Lin et al\\.,? 2020",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Incorporating priors with feature attribution on text classification",
+      "author" : [ "Frederick Liu", "Besim Avci." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 6274–6283, Florence, Italy. Association for Compu-",
+      "citeRegEx" : "Liu and Avci.,? 2019",
+      "shortCiteRegEx" : "Liu and Avci.",
+      "year" : 2019
+    }, {
+      "title" : "How does context matter? on the robustness of event detection with contextselective mask generalization",
+      "author" : [ "Jian Liu", "Yubo Chen", "Kang Liu", "Yantao Jia", "Zhicheng Sheng." ],
+      "venue" : "Findings of the Association for Computational Linguistics: EMNLP",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Event detection without triggers",
+      "author" : [ "Shulin Liu", "Yang Li", "Feng Zhang", "Tao Yang", "Xinpeng Zhou." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies,",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Jointly multiple events extraction via attentionbased graph information aggregation",
+      "author" : [ "Xiao Liu", "Zhunchen Luo", "Heyan Huang." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 1247–1256,",
+      "citeRegEx" : "Liu et al\\.,? 2018",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Distilling discrimination and generalization knowledge for event detection via deltarepresentation learning",
+      "author" : [ "Yaojie Lu", "Hongyu Lin", "Xianpei Han", "Le Sun." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computa-",
+      "citeRegEx" : "Lu et al\\.,? 2019",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "WordNet: A lexical database for English",
+      "author" : [ "George A. Miller." ],
+      "venue" : "Human Language Technology: Proceedings of a Workshop held at Plainsboro, New Jersey, March 8-11, 1994.",
+      "citeRegEx" : "Miller.,? 1994",
+      "shortCiteRegEx" : "Miller.",
+      "year" : 1994
+    }, {
+      "title" : "Events detection, coreference and sequencing: What’s next? overview of the tac kbp 2017 event track",
+      "author" : [ "T. Mitamura", "Zhengzhong Liu", "E. Hovy." ],
+      "venue" : "Theory and Applications of Categories.",
+      "citeRegEx" : "Mitamura et al\\.,? 2017",
+      "shortCiteRegEx" : "Mitamura et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Event detection and domain adaptation with convolutional neural networks",
+      "author" : [ "Thien Huu Nguyen", "Ralph Grishman." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th International Joint Conference",
+      "citeRegEx" : "Nguyen and Grishman.,? 2015",
+      "shortCiteRegEx" : "Nguyen and Grishman.",
+      "year" : 2015
+    }, {
+      "title" : "One for all: Neural joint modeling of entities and events",
+      "author" : [ "Trung Minh Nguyen", "Thien Huu Nguyen." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, 33(01):6851–6858.",
+      "citeRegEx" : "Nguyen and Nguyen.,? 2019",
+      "shortCiteRegEx" : "Nguyen and Nguyen.",
+      "year" : 2019
+    }, {
+      "title" : "Event detection with neural networks: A rigorous empirical evaluation",
+      "author" : [ "Walker Orr", "Prasad Tadepalli", "Xiaoli Fern." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 999–1004, Brussels, Bel-",
+      "citeRegEx" : "Orr et al\\.,? 2018",
+      "shortCiteRegEx" : "Orr et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Modeling document-level context for event detection via important context selection",
+      "author" : [ "Amir Pouran Ben Veyseh", "Minh Van Nguyen", "Nghia Ngo Trung", "Bonan Min", "Thien Huu Nguyen." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Meth-",
+      "citeRegEx" : "Veyseh et al\\.,? 2021",
+      "shortCiteRegEx" : "Veyseh et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "why should i trust you?\": Explaining the predictions of any classifier",
+      "author" : [ "Marco Tulio Ribeiro", "Sameer Singh", "Carlos Guestrin." ],
+      "venue" : "Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, KDD",
+      "citeRegEx" : "Ribeiro et al\\.,? 2016",
+      "shortCiteRegEx" : "Ribeiro et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Deep inside convolutional networks: Visualising image classification models and saliency maps",
+      "author" : [ "Karen Simonyan", "Andrea Vedaldi", "Andrew Zisserman." ],
+      "venue" : "Workshop at International Conference on Learning Representations.",
+      "citeRegEx" : "Simonyan et al\\.,? 2014",
+      "shortCiteRegEx" : "Simonyan et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Striving for simplicity: The all convolutional net",
+      "author" : [ "J.T. Springenberg", "A. Dosovitskiy", "T. Brox", "M. Riedmiller." ],
+      "venue" : "ICLR (workshop track).",
+      "citeRegEx" : "Springenberg et al\\.,? 2015",
+      "shortCiteRegEx" : "Springenberg et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Axiomatic attribution for deep networks",
+      "author" : [ "Mukund Sundararajan", "Ankur Taly", "Qiqi Yan." ],
+      "venue" : "Proceedings of the 34th International Conference on Machine Learning, volume 70 of Proceedings of Machine Learning Research, pages 3319–3328, In-",
+      "citeRegEx" : "Sundararajan et al\\.,? 2017",
+      "shortCiteRegEx" : "Sundararajan et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Improving event detection via open-domain trigger knowledge",
+      "author" : [ "Meihan Tong", "Bin Xu", "Shuai Wang", "Yixin Cao", "Lei Hou", "Juanzi Li", "Jun Xie." ],
+      "venue" : "10",
+      "citeRegEx" : "Tong et al\\.,? 2020",
+      "shortCiteRegEx" : "Tong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Entity, relation, and event extraction with contextualized span representations",
+      "author" : [ "David Wadden", "Ulme Wennberg", "Yi Luan", "Hannaneh Hajishirzi." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the",
+      "citeRegEx" : "Wadden et al\\.,? 2019",
+      "shortCiteRegEx" : "Wadden et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "AllenNLP interpret: A framework for explaining predictions of NLP models",
+      "author" : [ "Eric Wallace", "Jens Tuyls", "Junlin Wang", "Sanjay Subramanian", "Matt Gardner", "Sameer Singh." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natu-",
+      "citeRegEx" : "Wallace et al\\.,? 2019",
+      "shortCiteRegEx" : "Wallace et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "MAVEN: A Massive General Domain Event Detection Dataset",
+      "author" : [ "Xiaozhi Wang", "Ziqi Wang", "Xu Han", "Wangyi Jiang", "Rong Han", "Zhiyuan Liu", "Juanzi Li", "Peng Li", "Yankai Lin", "Jie Zhou." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Conditional bert contextual augmentation",
+      "author" : [ "Xing Wu", "Shangwen Lv", "Liangjun Zang", "Jizhong Han", "Songlin Hu." ],
+      "venue" : "International Conference on Computational Science, pages 84–95. Springer. 11",
+      "citeRegEx" : "Wu et al\\.,? 2019",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 0,
+      "context" : "Event detection (ED), the first and a crucial step of event extraction, aims to identify events of certain types in texts (Ahn, 2006; Nguyen and Grishman, 2015; Mitamura et al., 2017).",
+      "startOffset" : 122,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 26,
+      "context" : "Event detection (ED), the first and a crucial step of event extraction, aims to identify events of certain types in texts (Ahn, 2006; Nguyen and Grishman, 2015; Mitamura et al., 2017).",
+      "startOffset" : 122,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 25,
+      "context" : "Event detection (ED), the first and a crucial step of event extraction, aims to identify events of certain types in texts (Ahn, 2006; Nguyen and Grishman, 2015; Mitamura et al., 2017).",
+      "startOffset" : 122,
+      "endOffset" : 183
+    }, {
+      "referenceID" : 11,
+      "context" : "Previous methods to ED typically see no difference between event types and devise a single model to address them all (Ji and Grishman, 2008; Li et al., 2013; Chen et al., 2015; Lin et al., 2020).",
+      "startOffset" : 117,
+      "endOffset" : 194
+    }, {
+      "referenceID" : 15,
+      "context" : "Previous methods to ED typically see no difference between event types and devise a single model to address them all (Ji and Grishman, 2008; Li et al., 2013; Chen et al., 2015; Lin et al., 2020).",
+      "startOffset" : 117,
+      "endOffset" : 194
+    }, {
+      "referenceID" : 4,
+      "context" : "Previous methods to ED typically see no difference between event types and devise a single model to address them all (Ji and Grishman, 2008; Li et al., 2013; Chen et al., 2015; Lin et al., 2020).",
+      "startOffset" : 117,
+      "endOffset" : 194
+    }, {
+      "referenceID" : 18,
+      "context" : "Previous methods to ED typically see no difference between event types and devise a single model to address them all (Ji and Grishman, 2008; Li et al., 2013; Chen et al., 2015; Lin et al., 2020).",
+      "startOffset" : 117,
+      "endOffset" : 194
+    }, {
+      "referenceID" : 35,
+      "context" : "Tasking the ACE benchmark as an example, we note the state-of-the-art ED model (Wadden et al., 2019) can strike 90% in F1 for the type DIVORCE, yet only 50% for the type STARTPOSITION; it is more surprising that the training set of DIVORCE is 8 times smaller than that of START-POSITION.",
+      "startOffset" : 79,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 23,
+      "context" : "We hypothesize an ED model performs poorly on context-dependent types because capturing context semantics is challenging (Lu et al., 2019; Liu et al., 2020).",
+      "startOffset" : 121,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 20,
+      "context" : "We hypothesize an ED model performs poorly on context-dependent types because capturing context semantics is challenging (Lu et al., 2019; Liu et al., 2020).",
+      "startOffset" : 121,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 31,
+      "context" : "Then, inspired by the feature attribution method (Simonyan et al., 2014; Sundararajan et al., 2017), we regard each word as a feature and compute its saliency value (i.",
+      "startOffset" : 49,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 33,
+      "context" : "Then, inspired by the feature attribution method (Simonyan et al., 2014; Sundararajan et al., 2017), we regard each word as a feature and compute its saliency value (i.",
+      "startOffset" : 49,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 37,
+      "context" : ", ACE 2005 (LDC, 2005) and MAVEN (Wang et al., 2020)) to verify the effectiveness of our approach.",
+      "startOffset" : 33,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 0,
+      "context" : "Traditional methods for ED typically use fine-grained features (Ahn, 2006; Ji and Grishman, 2008; Liao and Grishman, 2010; Hong et al., 2011; Li et al., 2013), whereas newer methods rely on neural networks (Chen et al.",
+      "startOffset" : 63,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 11,
+      "context" : "Traditional methods for ED typically use fine-grained features (Ahn, 2006; Ji and Grishman, 2008; Liao and Grishman, 2010; Hong et al., 2011; Li et al., 2013), whereas newer methods rely on neural networks (Chen et al.",
+      "startOffset" : 63,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 17,
+      "context" : "Traditional methods for ED typically use fine-grained features (Ahn, 2006; Ji and Grishman, 2008; Liao and Grishman, 2010; Hong et al., 2011; Li et al., 2013), whereas newer methods rely on neural networks (Chen et al.",
+      "startOffset" : 63,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 9,
+      "context" : "Traditional methods for ED typically use fine-grained features (Ahn, 2006; Ji and Grishman, 2008; Liao and Grishman, 2010; Hong et al., 2011; Li et al., 2013), whereas newer methods rely on neural networks (Chen et al.",
+      "startOffset" : 63,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 15,
+      "context" : "Traditional methods for ED typically use fine-grained features (Ahn, 2006; Ji and Grishman, 2008; Liao and Grishman, 2010; Hong et al., 2011; Li et al., 2013), whereas newer methods rely on neural networks (Chen et al.",
+      "startOffset" : 63,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2013), whereas newer methods rely on neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Feng et al., 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al.",
+      "startOffset" : 55,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2013), whereas newer methods rely on neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Feng et al., 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al.",
+      "startOffset" : 55,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2013), whereas newer methods rely on neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Feng et al., 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al.",
+      "startOffset" : 55,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2013), whereas newer methods rely on neural networks (Chen et al., 2015; Nguyen and Grishman, 2015; Feng et al., 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al.",
+      "startOffset" : 55,
+      "endOffset" : 145
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al., 2018; Lai et al., 2020), document-level cues (Wadden et al.",
+      "startOffset" : 91,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 14,
+      "context" : ", 2016; Nguyen and Nguyen, 2019), which have investigated the use of syntactic information (Liu et al., 2018; Lai et al., 2020), document-level cues (Wadden et al.",
+      "startOffset" : 91,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 35,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2020), document-level cues (Wadden et al., 2019; Lin et al., 2020; Du and Cardie, 2020; Liu et al., 2020; Lai et al., 2021; Pouran Ben Veyseh et al., 2021; Li et al., 2021; Chen et al., 2021), and external supervision (Tong et al.",
+      "startOffset" : 29,
+      "endOffset" : 193
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2021), and external supervision (Tong et al., 2020) to boost learning.",
+      "startOffset" : 34,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 23,
+      "context" : "Two seminal works (Lu et al., 2019; Liu et al., 2020) have observed the comparatively poor performance on context-dependent texts and offered a better context-exploration strategy to improve training.",
+      "startOffset" : 18,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 20,
+      "context" : "Two seminal works (Lu et al., 2019; Liu et al., 2020) have observed the comparatively poor performance on context-dependent texts and offered a better context-exploration strategy to improve training.",
+      "startOffset" : 18,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 31,
+      "context" : "The goal of feature attribution (FA) is to assess how important an input feature for model prediction, which has sparked a lot of interest in interpreting model decisions (Simonyan et al., 2014; Sundararajan et al., 2017).",
+      "startOffset" : 171,
+      "endOffset" : 221
+    }, {
+      "referenceID" : 33,
+      "context" : "The goal of feature attribution (FA) is to assess how important an input feature for model prediction, which has sparked a lot of interest in interpreting model decisions (Simonyan et al., 2014; Sundararajan et al., 2017).",
+      "startOffset" : 171,
+      "endOffset" : 221
+    }, {
+      "referenceID" : 31,
+      "context" : "The existing FA methods are classified as gradient-based methods, which consider the gradient of the output to the input as the attribution value (Simonyan et al., 2014; Springenberg et al., 2015), and reference-based methods, which consider the difference between the model’s output and some “reference\" output, in terms of the difference between the input and some “reference\" input, as the attribution value (Ribeiro et al.",
+      "startOffset" : 146,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 32,
+      "context" : "The existing FA methods are classified as gradient-based methods, which consider the gradient of the output to the input as the attribution value (Simonyan et al., 2014; Springenberg et al., 2015), and reference-based methods, which consider the difference between the model’s output and some “reference\" output, in terms of the difference between the input and some “reference\" input, as the attribution value (Ribeiro et al.",
+      "startOffset" : 146,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2015), and reference-based methods, which consider the difference between the model’s output and some “reference\" output, in terms of the difference between the input and some “reference\" input, as the attribution value (Ribeiro et al., 2016; Sundararajan et al., 2017).",
+      "startOffset" : 222,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2015), and reference-based methods, which consider the difference between the model’s output and some “reference\" output, in terms of the difference between the input and some “reference\" input, as the attribution value (Ribeiro et al., 2016; Sundararajan et al., 2017).",
+      "startOffset" : 222,
+      "endOffset" : 271
+    }, {
+      "referenceID" : 31,
+      "context" : "FA have been used to interpret model predictions in applications including image classification (Simonyan et al., 2014), machine translation (Ding et al.",
+      "startOffset" : 96,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2014), machine translation (Ding et al., 2017), text classification (Chen et al.",
+      "startOffset" : 29,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2017), text classification (Chen et al., 2018), and others (Bastings and Filippova, 2020).",
+      "startOffset" : 29,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 33,
+      "context" : "Integrated Gradient (Sundararajan et al., 2017) is a specific (referencebased) FA method that views the feature attribution value as the accumulated gradient along the line between the model’s input x and a reference input x′, which denotes the lack of a feature1.",
+      "startOffset" : 20,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 33,
+      "context" : "In our approach, we prefer Integrated Gradient to other FA methods due to its computing efficiency and effectiveness in addressing a wide range of text based tasks (Sundararajan et al., 2017; Liu and Avci, 2019; Bastings and Filippova, 2020).",
+      "startOffset" : 164,
+      "endOffset" : 241
+    }, {
+      "referenceID" : 19,
+      "context" : "In our approach, we prefer Integrated Gradient to other FA methods due to its computing efficiency and effectiveness in addressing a wide range of text based tasks (Sundararajan et al., 2017; Liu and Avci, 2019; Bastings and Filippova, 2020).",
+      "startOffset" : 164,
+      "endOffset" : 241
+    }, {
+      "referenceID" : 1,
+      "context" : "In our approach, we prefer Integrated Gradient to other FA methods due to its computing efficiency and effectiveness in addressing a wide range of text based tasks (Sundararajan et al., 2017; Liu and Avci, 2019; Bastings and Filippova, 2020).",
+      "startOffset" : 164,
+      "endOffset" : 241
+    }, {
+      "referenceID" : 36,
+      "context" : "In text related tasks, x′ is usually set as a sequence of embedding vectors with all zero values (Wallace et al., 2019).",
+      "startOffset" : 97,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 5,
+      "context" : "Particularly, we devise a BERT based sentence classifier (Devlin et al., 2019) and adopt a multi-label binary crossentropy loss for optimization:",
+      "startOffset" : 57,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 33,
+      "context" : "Based on the sentence-level classifier, we next use Integrated Gradient (Sundararajan et al., 2017) to calculate the contribution (i.",
+      "startOffset" : 72,
+      "endOffset" : 99
+    }, {
+      "referenceID" : 36,
+      "context" : "We utilize the loss function as the desired model (Wallace et al., 2019), and calculate the saliency of wi, more accurately, its BERT",
+      "startOffset" : 50,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 5,
+      "context" : "Each model is implemented using the BERT architecture (Devlin et al., 2019), and given a sentence s, it performs a word-by-word classification over BERT’s output to generate a label sequence: Ỹs = (ỹ1, ỹ2, · · · , ỹN ), with ỹi being the predicted event label for wi.",
+      "startOffset" : 54,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 12,
+      "context" : "We use Adam (Kingma and Ba, 2015) with default hyper-parameters for parameter update.",
+      "startOffset" : 12,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 37,
+      "context" : "We conduct experiments on ACE 2005 (LDC, 2005) and MAVEN (Wang et al., 2020).",
+      "startOffset" : 57,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 38,
+      "context" : "(4)Because combining external embeddings with BERT remains difficult, we alter the segmentation embeddings in BERT to WSEs, motivated by (Wu et al., 2019).",
+      "startOffset" : 137,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 15,
+      "context" : "We adopt a common split for evaluation following previous works (Li et al., 2013; Wadden et al., 2019).",
+      "startOffset" : 64,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 35,
+      "context" : "We adopt a common split for evaluation following previous works (Li et al., 2013; Wadden et al., 2019).",
+      "startOffset" : 64,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 37,
+      "context" : "MAVEN is a newly released corpus defining 168 more fine-grained event types (Wang et al., 2020).",
+      "startOffset" : 76,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 21,
+      "context" : "8% in F1 on the ACE 2005 development set, matching the state-of-the-art performance (Liu et al., 2019).",
+      "startOffset" : 84,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 35,
+      "context" : "We use a state-of-the-art ED model (Wadden et al., 2019) and perform a 5-run average on the development set to obtain the per-type F1 score.",
+      "startOffset" : 35,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 10,
+      "context" : "(iii) The trigger attention value also shows a poor association, which may be another proof that attention is not explainable (Jain and Wallace, 2019).",
+      "startOffset" : 126,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 35,
+      "context" : "To test the efficacy of our saliency enhanced ED model: 1) For ACE 2005, we compare our model with (i) DYGIE++ (Wadden et al., 2019), which uses a graph view to learn context features; (ii) TriggerQA (Du and Cardie, 2020), which uses a question answering formulation for the task; (iii) OneIE (Lin et al.",
+      "startOffset" : 111,
+      "endOffset" : 132
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2019), which uses a graph view to learn context features; (ii) TriggerQA (Du and Cardie, 2020), which uses a question answering formulation for the task; (iii) OneIE (Lin et al.",
+      "startOffset" : 75,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2019), which uses a graph view to learn context features; (ii) TriggerQA (Du and Cardie, 2020), which uses a question answering formulation for the task; (iii) OneIE (Lin et al., 2020), which adopts cross-sentence features for the task.",
+      "startOffset" : 168,
+      "endOffset" : 186
+    }, {
+      "referenceID" : 28,
+      "context" : "Because pre-processing has a significant impact on the results (Orr et al., 2018), to ensure a fair comparison, we only consider models",
+      "startOffset" : 63,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 35,
+      "context" : "using the same pre-processing steps as in (Wadden et al., 2019).",
+      "startOffset" : 42,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 37,
+      "context" : "2) For MAVEN, we use the BERT+CRF proposed in the original work (Wang et al., 2020) for comparison.",
+      "startOffset" : 64,
+      "endOffset" : 83
+    } ],
+    "year" : 0,
+    "abstractText" : "Event detection (ED) is a critical subtask of event extraction that seeks to identify event triggers of certain types in texts. Despite significant advances in ED, existing methods typically follow a “one model fits all types” approach, which sees no differences between event types and often results in a quite skewed performance. Finding the causes of skewed performance is crucial for the robustness of an ED model, but to date there has been little exploration of this problem. This research examines the issue in depth and presents a new concept termed trigger salience attribution, which can explicitly quantify the underlying patterns of events. On this foundation, we develop a new training mechanism for ED, which can distinguish between triggerdependent and context-dependent types and achieve promising performance on two benchmarks. Finally, by highlighting many distinct characteristics of trigger-dependent and context-dependent types, our work may promote more research into this problem.",
+    "creator" : null
+  }
+}

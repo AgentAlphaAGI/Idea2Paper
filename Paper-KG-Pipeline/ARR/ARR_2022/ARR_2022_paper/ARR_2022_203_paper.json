@@ -1,0 +1,358 @@
+{
+  "name" : "ARR_2022_203_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "A Flexible Multi-Task Model for BERT Serving",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "In this work we explore the strategies of BERT (Devlin et al., 2019) serving for multiple tasks under the following two constraints: 1) Memory and computational resources are limited. On edge devices such as mobile phones, this is usually a hard constraint. On local GPU stations and Cloud-based servers, this constraint is not as hard but it is still desirable to reduce the computation overhead to cut the serving cost. 2) The tasks are expected to be modular and are subject to frequent updates. When one task is updated, the system should to be able to quickly adapt to the task modification such that the other tasks are not affected. This is a typical situation for applications (e.g. AI assistant) under iterative and incremental development.\nIn principle, there are two strategies of BERT serving: single-task serving and multi-task serving. In single-task serving, one independent single-task model is trained and deployed for each task. Typically, those models are obtained by fine-tuning a copy of the pre-trained BERT and are completely\ndifferent from each other. Single-task serving has the advantage of being flexible and modular as there is no dependency between the task models. The downside is its inefficiency in terms of both memory usage and computation, as neither parameters nor computation are shared or reused across the tasks. In multi-task serving, one single multi-task model is trained and deployed for all tasks. This model is typically trained with multi-task learning (MTL) (Caruana, 1997; Ruder, 2017). Compared to its single-task counterpart, multi-task serving is much more computationally efficient and incurs much less memory usage thanks to its sharing mechanism. However, it has the disadvantage in that any modification made to one task usually affect the other tasks.\nThe main contribution of this work is the proposition of a framework for BERT serving that simultaneously achieves the flexibility of single-task serving and the efficiency of multi-task serving. Our method is based on the idea of partial finetuning, i.e. only fine-tuning some topmost layers of BERT depending on the task and keeping the remaining bottom layers frozen. The fine-tuned layers are task-specific, which can be updated on a per-task basis. The frozen layers at the bottom, which plays the role of a feature extractor, can be shared across the tasks."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "The standard practice of using BERT is fine-tuning, i.e. the entirety of the model parameters is adjusted on the training corpus of the downstream task, so that the model is adapted to that specific task (Devlin et al., 2019). There is also an alternative feature-based approach, used by ELMo (Peters et al., 2018). In the latter approach, the pre-trained model is regarded as a feature extractor with frozen parameters. During the learning of a downstream task, one feeds a fixed or learnable combination of the model’s intermediate representations as input to\nthe task-specific module, and only the parameters of the latter will be updated. It has been shown that the fine-tuning approach is generally superior to the feature-based approach for BERT in terms of task performance (Devlin et al., 2019; Peters et al., 2019).\nA natural middle ground between these two approaches is partial fine-tuning, i.e. only fine-tuning some topmost layers of BERT while keeping the remaining bottom layers frozen. This approach has been studied in (Houlsby et al., 2019; Merchant et al., 2020), where the authors observed that finetuning only the top layers can almost achieve the performance of full fine-tuning on several GLUE tasks. The approach of partial fine-tuning essentially regards the bottom layers of BERT as a feature extractor. Freezing weights from bottom layers is a sensible idea as previous studies show that the mid layer representations produced by BERT are most transferrable, whereas the top layers representations are more task-oriented (Wang et al., 2019; Tenney et al., 2019b,a; Liu et al., 2019a; Merchant et al., 2020)."
+    }, {
+      "heading" : "3 Method",
+      "text" : "In what follows, we denote by T the set of all target tasks. We always use the 12-layer version of BERT\nas the pre-trained language model. The proposed framework features a pipeline (Fig. 1) that consists of three steps: 1) Single task partial fine-tuning; 2) Single task knowledge distillation; 3) Model merging. We give details of these steps below."
+    }, {
+      "heading" : "3.1 Single Task Partial Fine-Tuning",
+      "text" : "In the first step, we partial fine-tune for each task an independent copy of BERT. The exact number of layers L to fine-tune is a hyper-parameter and may vary across the tasks. We propose to experiment for each task with different value of L within range Nmin 6 L 6 Nmax, and select the one that gives the best validation performance. The purpose of imposing the search range [Nmin, Nmax] is to guarantee a minimum degree of parameter sharing. In the subsequent experiments on GLUE tasks (see Section 4.3), we set Nmin = 4 and Nmax = 10.\nThis step produces a collection of single-task models as depicted in Fig. 1(a). We shall refer to them single-task teacher models, as they are to be knowledge distilled to further reduce the memory and computation overhead."
+    }, {
+      "heading" : "3.2 Single Task Knowledge Distillation",
+      "text" : "As there is no interaction between the tasks, the process of knowledge distillation (KD) can be carried out separately for each task. In principle any of the existing KD methods for BERT (Wang et al., 2020; Aguilar et al., 2020; Sun et al., 2019a; Jiao et al., 2020; Xu et al., 2020a) suits our needs. In preliminary experiments we found out that as long as the student model is properly initialized, the vanilla knowledge distillation (Hinton et al., 2015) can be as performant as those more sophisticated methods.\nAssume that the teacher model for task τ ∈ T contains L(τ) fine-tuned layers at the top and 12− L(τ) frozen layers at the bottom. Our goal is to compress the former into a smaller l(τ)-layer module. The proposed initialization scheme is very simple: we initialize the student model with the weights from the corresponding layers of the teacher. More precisely, let Ns denote the number of layers (including both frozen and task-specific layers) in the student, where Ns < 12. We propose to initialize the student from the bottommost Ns layers of the teacher. The value of l(τ), i.e. the number of task-specific layers in the student model for task τ , determines the final memory and computation overhead for that task."
+    }, {
+      "heading" : "3.3 Model Merging",
+      "text" : "In the final step, we merge the single-task student models into one multi-task model (Fig. 1(c)) so that the parameters and computations carried out in the frozen layers can be shared. To achieve this, it suffices to load weights from multiple model checkpoints into one computation graph."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section, we compare the performance and efficiency of our model with various baselines on eight GLUE tasks."
+    }, {
+      "heading" : "4.1 Metrics",
+      "text" : "The performance metrics for GLUE tasks is accuracy except for CoLA and STS-B. We use Matthews correlation for CoLA, and Pearson correlation for STS-B.\nTo measure the parameter and computational efficiency, we introduce the total number of transformer layers that are needed to perform inference for all eight tasks. For the models studied in our experiments, the actual memory usage and the computational overhead are approximately linear with respect to this number. It is named “overhead” in the header of Table 2."
+    }, {
+      "heading" : "4.2 Baselines",
+      "text" : "The baseline models/methods can be divided into 4 categories:\nSingle-task without KD. There is only one method in this category, i.e. the standard practice\nof single task full fine-tuning that creates a separate model for each task.\nSingle-task with KD. The methods in this category create a separate model for each task, but a certain knowledge distillation method is applied to compress each task model into a 6-layer one. The KD methods include (Hinton et al., 2015; Xu et al., 2020b; Sanh et al., 2019; Turc et al., 2019; Sun et al., 2019b; Jiao et al., 2020; Wang et al., 2020).\nMulti-task learning. This category includes two versions of MT-DNN (Liu et al., 2019b, 2020), both of which produce one single multi-task model. 1) MT-DNN (full) is jointly trained for all eight tasks. It corresponds to the idea scenario where all tasks are known in advance. 2) MT-DNN (LOO), where “LOO” stands for “leave-one-out”, corresponds to the scenario where one of the eight tasks is not known in advance. The model is jointly pre-trained on the 7 available tasks. Then an output layer for the “unknown” task is trained with the pre-trained weights frozen.\nFlexible multi-task. Our models under various efficiency constraints. Ours (w/o KD) means that no knowledge distillation is applied to the task models. The number of fine-tuned layers for each task is selected according to the criterion described in Section 3.1. Ours (KD-n) means that knowledge distillation is applied such that the student model for each task contains exactly n task-specific layers. For Ours (mixed), we determine the number of task-specific layers for each task based on the marginal benefit (in terms of task performance met-\nric) of adding more layers to the task. More precisely, for each task we keep adding task-specific layers as long as the marginal benefit of doing so is no less than a pre-determined threshold c. In Table 2, we report the result for c = 1.0. Results with other values of c can be found in appendices."
+    }, {
+      "heading" : "4.3 Results",
+      "text" : "The results are summarized in Table 2. From the table it can be seen that the proposed method Ours (mixed) outperforms all KD methods while being more efficient. Compared to the single-task full fine-tuning baseline, our method reduces up to around two thirds of the total overhead while achieves 99.6% of its performance.\nWe observe that MT-DNN (full) achieves the best average performance with the lowest overhead. However, its performance superiority primarily comes from one big boost on a single task (RTE) rather than consistent improvements on all tasks. In fact, we see that MT-DNN (full) suffers performance degradation on QQP and STS-B due to task interference, a known problem for MTL (Caruana, 1997; Bingel and Sogaard, 2017; Alonso and Plank, 2017; Wu et al., 2020). From our perspective, the biggest disadvantage of MT-DNN is that it assumes full knowledge of all target tasks in advance. From the results of MT-DNN (LOO), we observe that MT-DNN has difficulty in han-\ndling new tasks if the model is not allowed to be retrained."
+    }, {
+      "heading" : "4.4 Discussions",
+      "text" : "One major advantage of the proposed architecture is its flexibility. First, different tasks may be fed with representations from different layers of BERT, which encapsulate different levels of linguistic information (Liu et al., 2019a). On QQP we achieve an accuracy of 91.0, outperforming all KD baselines with merely one task-specific layer that is connected to the 2nd layer of BERT. Second, our architecture explicitly allows for allocating uneven resources to different tasks. We have redistributed the resources among the tasks in ours (mixed), resulting in both greater performance and efficiency. Third, our framework does not compromise the modular design of the system. The model can be straightforwardly updated on on a per-task basis."
+    }, {
+      "heading" : "5 Conclusion",
+      "text" : "We have presented our framework that is designed to provide efficient and flexible BERT-based multitask serving. We have demonstrated on eight GLUE datasets that the proposed method achieves both strong performance and efficiency. We will release our code and hope that it can facilitate BERT serving in cost-sensitive applications."
+    } ],
+    "references" : [ {
+      "title" : "Knowledge distillation from internal representations",
+      "author" : [ "Gustavo Aguilar", "Yuan Ling", "Yu Zhang", "Benjamin Yao", "Xing Fan", "Chenlei Guo." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Ap-",
+      "citeRegEx" : "Aguilar et al\\.,? 2020",
+      "shortCiteRegEx" : "Aguilar et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "When is multitask learning effective? semantic sequence prediction under varying data conditions",
+      "author" : [ "Héctor Alonso", "Barbara Plank." ],
+      "venue" : "Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics: Vol-",
+      "citeRegEx" : "Alonso and Plank.,? 2017",
+      "shortCiteRegEx" : "Alonso and Plank.",
+      "year" : 2017
+    }, {
+      "title" : "Identifying beneficial task relations for multi-task learning in deep neural networks",
+      "author" : [ "Joachim Bingel", "Anders Sogaard." ],
+      "venue" : "Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics: Volume 2, Short",
+      "citeRegEx" : "Bingel and Sogaard.,? 2017",
+      "shortCiteRegEx" : "Bingel and Sogaard.",
+      "year" : 2017
+    }, {
+      "title" : "Multitask Learning",
+      "author" : [ "Rich Caruana." ],
+      "venue" : "Machine Learning, 28(1):41–75. 00000.",
+      "citeRegEx" : "Caruana.,? 1997",
+      "shortCiteRegEx" : "Caruana.",
+      "year" : 1997
+    }, {
+      "title" : "BAM! born-again multi-task networks for natural language understanding",
+      "author" : [ "Kevin Clark", "Minh-Thang Luong", "Urvashi Khandelwal", "Christopher D. Manning", "Quoc V. Le." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computa-",
+      "citeRegEx" : "Clark et al\\.,? 2019",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Distilling the knowledge in a neural network",
+      "author" : [ "Geoffrey Hinton", "Oriol Vinyals", "Jeffrey Dean." ],
+      "venue" : "NIPS Deep Learning and Representation Learning Workshop.",
+      "citeRegEx" : "Hinton et al\\.,? 2015",
+      "shortCiteRegEx" : "Hinton et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Parameter-efficient transfer learning for NLP",
+      "author" : [ "Neil Houlsby", "Andrei Giurgiu", "Stanislaw Jastrzebski", "Bruna Morrone", "Quentin De Laroussilhe", "Andrea Gesmundo", "Mona Attariyan", "Sylvain Gelly." ],
+      "venue" : "Proceedings of the 36th International Conference",
+      "citeRegEx" : "Houlsby et al\\.,? 2019",
+      "shortCiteRegEx" : "Houlsby et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Linguistic knowledge and transferability of contextual representations",
+      "author" : [ "Nelson F. Liu", "Matt Gardner", "Yonatan Belinkov", "Matthew E. Peters", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Associ-",
+      "citeRegEx" : "Liu et al\\.,? 2019a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multi-task deep neural networks for natural language understanding",
+      "author" : [ "Xiaodong Liu", "Pengcheng He", "Weizhu Chen", "Jianfeng Gao." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 4487–4496, Flo-",
+      "citeRegEx" : "Liu et al\\.,? 2019b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The Microsoft toolkit of multitask deep neural networks for natural language",
+      "author" : [ "Xiaodong Liu", "Yu Wang", "Jianshu Ji", "Hao Cheng", "Xueyun Zhu", "Emmanuel Awa", "Pengcheng He", "Weizhu Chen", "Hoifung Poon", "Guihong Cao", "Jianfeng Gao" ],
+      "venue" : null,
+      "citeRegEx" : "Liu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "What happens to BERT embeddings during fine-tuning",
+      "author" : [ "Amil Merchant", "Elahe Rahimtoroghi", "Ellie Pavlick", "Ian Tenney" ],
+      "venue" : "In Proceedings of the Third BlackboxNLP Workshop on Analyzing and Interpreting Neural Networks for NLP,",
+      "citeRegEx" : "Merchant et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Merchant et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep contextualized word representations",
+      "author" : [ "Matthew Peters", "Mark Neumann", "Mohit Iyyer", "Matt Gardner", "Christopher Clark", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Associ-",
+      "citeRegEx" : "Peters et al\\.,? 2018",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "To tune or not to tune? adapting pretrained representations to diverse tasks",
+      "author" : [ "Matthew E. Peters", "Sebastian Ruder", "Noah A. Smith." ],
+      "venue" : "Proceedings of the 4th Workshop on Representation Learning for NLP (RepL4NLP-2019), pages 7–14, Flo-",
+      "citeRegEx" : "Peters et al\\.,? 2019",
+      "shortCiteRegEx" : "Peters et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-totext transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J. Liu." ],
+      "venue" : "Journal of Machine Learning Re-",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "An overview of multitask learning in deep neural networks",
+      "author" : [ "Sebastian Ruder." ],
+      "venue" : "CoRR, abs/1706.05098.",
+      "citeRegEx" : "Ruder.,? 2017",
+      "shortCiteRegEx" : "Ruder.",
+      "year" : 2017
+    }, {
+      "title" : "Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "CoRR, abs/1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Patient knowledge distillation for BERT model compression",
+      "author" : [ "Siqi Sun", "Yu Cheng", "Zhe Gan", "Jingjing Liu." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natu-",
+      "citeRegEx" : "Sun et al\\.,? 2019a",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Patient knowledge distillation for BERT model compression",
+      "author" : [ "Siqi Sun", "Yu Cheng", "Zhe Gan", "Jingjing Liu." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natu-",
+      "citeRegEx" : "Sun et al\\.,? 2019b",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "BERT rediscovers the classical NLP pipeline",
+      "author" : [ "Ian Tenney", "Dipanjan Das", "Ellie Pavlick." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 4593– 4601, Florence, Italy. Association for Computational",
+      "citeRegEx" : "Tenney et al\\.,? 2019a",
+      "shortCiteRegEx" : "Tenney et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "What do you learn from context? probing for sentence structure in contextu",
+      "author" : [ "Ian Tenney", "Patrick Xia", "Berlin Chen", "Alex Wang", "Adam Poliak", "R Thomas McCoy", "Najoung Kim", "Benjamin Van Durme", "Sam Bowman", "Dipanjan Das", "Ellie Pavlick" ],
+      "venue" : null,
+      "citeRegEx" : "Tenney et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Tenney et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Well-read students learn better: On the importance of pre-training compact models",
+      "author" : [ "Iulia Turc", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova" ],
+      "venue" : null,
+      "citeRegEx" : "Turc et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Turc et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Minilm: Deep selfattention distillation for task-agnostic compression of pre-trained transformers",
+      "author" : [ "Wenhui Wang", "Furu Wei", "Li Dong", "Hangbo Bao", "Nan Yang", "Ming Zhou." ],
+      "venue" : "Advances in Neural Information Processing Systems 33: Annual Con-",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Understanding and improving information transfer in multi-task learning",
+      "author" : [ "Sen Wu", "Hongyang R Zhang", "Christopher Ré." ],
+      "venue" : "arXiv preprint arXiv:2005.00944.",
+      "citeRegEx" : "Wu et al\\.,? 2020",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BERT-of-theseus: Compressing BERT by progressive module replacing",
+      "author" : [ "Canwen Xu", "Wangchunshu Zhou", "Tao Ge", "Furu Wei", "Ming Zhou." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Xu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BERT-of-theseus: Compressing BERT by progressive module replacing",
+      "author" : [ "Canwen Xu", "Wangchunshu Zhou", "Tao Ge", "Furu Wei", "Ming Zhou." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Xu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 5,
+      "context" : "In this work we explore the strategies of BERT (Devlin et al., 2019) serving for multiple tasks under the following two constraints: 1) Memory and computational resources are limited.",
+      "startOffset" : 47,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 3,
+      "context" : "This model is typically trained with multi-task learning (MTL) (Caruana, 1997; Ruder, 2017).",
+      "startOffset" : 63,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 15,
+      "context" : "This model is typically trained with multi-task learning (MTL) (Caruana, 1997; Ruder, 2017).",
+      "startOffset" : 63,
+      "endOffset" : 91
+    }, {
+      "referenceID" : 5,
+      "context" : "the entirety of the model parameters is adjusted on the training corpus of the downstream task, so that the model is adapted to that specific task (Devlin et al., 2019).",
+      "startOffset" : 147,
+      "endOffset" : 168
+    }, {
+      "referenceID" : 12,
+      "context" : "There is also an alternative feature-based approach, used by ELMo (Peters et al., 2018).",
+      "startOffset" : 66,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 5,
+      "context" : "the feature-based approach for BERT in terms of task performance (Devlin et al., 2019; Peters et al., 2019).",
+      "startOffset" : 65,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 13,
+      "context" : "the feature-based approach for BERT in terms of task performance (Devlin et al., 2019; Peters et al., 2019).",
+      "startOffset" : 65,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 7,
+      "context" : "This approach has been studied in (Houlsby et al., 2019; Merchant et al., 2020), where the authors observed that finetuning only the top layers can almost achieve the performance of full fine-tuning on several GLUE tasks.",
+      "startOffset" : 34,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 11,
+      "context" : "This approach has been studied in (Houlsby et al., 2019; Merchant et al., 2020), where the authors observed that finetuning only the top layers can almost achieve the performance of full fine-tuning on several GLUE tasks.",
+      "startOffset" : 34,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 8,
+      "context" : "Freezing weights from bottom layers is a sensible idea as previous studies show that the mid layer representations produced by BERT are most transferrable, whereas the top layers representations are more task-oriented (Wang et al., 2019; Tenney et al., 2019b,a; Liu et al., 2019a; Merchant et al., 2020).",
+      "startOffset" : 218,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 11,
+      "context" : "Freezing weights from bottom layers is a sensible idea as previous studies show that the mid layer representations produced by BERT are most transferrable, whereas the top layers representations are more task-oriented (Wang et al., 2019; Tenney et al., 2019b,a; Liu et al., 2019a; Merchant et al., 2020).",
+      "startOffset" : 218,
+      "endOffset" : 303
+    }, {
+      "referenceID" : 22,
+      "context" : "In principle any of the existing KD methods for BERT (Wang et al., 2020; Aguilar et al., 2020; Sun et al., 2019a; Jiao et al., 2020; Xu et al., 2020a) suits our needs.",
+      "startOffset" : 53,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 0,
+      "context" : "In principle any of the existing KD methods for BERT (Wang et al., 2020; Aguilar et al., 2020; Sun et al., 2019a; Jiao et al., 2020; Xu et al., 2020a) suits our needs.",
+      "startOffset" : 53,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 17,
+      "context" : "In principle any of the existing KD methods for BERT (Wang et al., 2020; Aguilar et al., 2020; Sun et al., 2019a; Jiao et al., 2020; Xu et al., 2020a) suits our needs.",
+      "startOffset" : 53,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 24,
+      "context" : "In principle any of the existing KD methods for BERT (Wang et al., 2020; Aguilar et al., 2020; Sun et al., 2019a; Jiao et al., 2020; Xu et al., 2020a) suits our needs.",
+      "startOffset" : 53,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 6,
+      "context" : "In preliminary experiments we found out that as long as the student model is properly initialized, the vanilla knowledge distillation (Hinton et al., 2015) can be as performant as those more sophisticated methods.",
+      "startOffset" : 134,
+      "endOffset" : 155
+    }, {
+      "referenceID" : 16,
+      "context" : "Results of [b] are from (Sanh et al., 2019); [c]-[f ] are from (Xu et al.",
+      "startOffset" : 24,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2019); [c]-[f ] are from (Xu et al., 2020b); [g]-[h] are from (Wang et al.",
+      "startOffset" : 27,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 22,
+      "context" : ", 2020b); [g]-[h] are from (Wang et al., 2020); [j]-[k] are reproduced by us with the toolkit from (Liu et al.",
+      "startOffset" : 27,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2020); [j]-[k] are reproduced by us with the toolkit from (Liu et al., 2020).",
+      "startOffset" : 60,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 3,
+      "context" : "In fact, we see that MT-DNN (full) suffers performance degradation on QQP and STS-B due to task interference, a known problem for MTL (Caruana, 1997; Bingel and Sogaard, 2017; Alonso and Plank, 2017; Wu et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 2,
+      "context" : "In fact, we see that MT-DNN (full) suffers performance degradation on QQP and STS-B due to task interference, a known problem for MTL (Caruana, 1997; Bingel and Sogaard, 2017; Alonso and Plank, 2017; Wu et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 1,
+      "context" : "In fact, we see that MT-DNN (full) suffers performance degradation on QQP and STS-B due to task interference, a known problem for MTL (Caruana, 1997; Bingel and Sogaard, 2017; Alonso and Plank, 2017; Wu et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 23,
+      "context" : "In fact, we see that MT-DNN (full) suffers performance degradation on QQP and STS-B due to task interference, a known problem for MTL (Caruana, 1997; Bingel and Sogaard, 2017; Alonso and Plank, 2017; Wu et al., 2020).",
+      "startOffset" : 134,
+      "endOffset" : 216
+    }, {
+      "referenceID" : 8,
+      "context" : "First, different tasks may be fed with representations from different layers of BERT, which encapsulate different levels of linguistic information (Liu et al., 2019a).",
+      "startOffset" : 147,
+      "endOffset" : 166
+    } ],
+    "year" : 0,
+    "abstractText" : "We present an efficient BERT-based multi-task (MT) framework that is particularly suitable for iterative and incremental development of the tasks. The proposed framework is based on the idea of partial fine-tuning, i.e. only finetune some top layers of BERT while keep the other layers frozen. For each task, we train independently a single-task (ST) model using partial fine-tuning. Then we compress the taskspecific layers in each ST model using knowledge distillation. Those compressed ST models are finally merged into one MT model so that the frozen layers of the former are shared across the tasks. We exemplify our approach on eight GLUE tasks, demonstrating that it is able to achieve 99.6% of the performance of the full fine-tuning method, while reducing up to two thirds of its overhead.",
+    "creator" : null
+  }
+}

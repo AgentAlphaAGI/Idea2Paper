@@ -1,0 +1,521 @@
+{
+  "name" : "ACL_2017_440_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Supertagging in lexicalized grammar parsing is known as almost parsing (Bangalore and Joshi, 1999), in that each supertag is syntactically informative and most ambiguities are resolved once a correct supertag is assigned to every word. Recently this property is effectively exploited in A* Combinatory Categorial Grammar (CCG; Steedman (2000)) parsing (Lewis and Steedman, 2014; Lewis et al., 2016), in which the probability of a CCG tree y on a sentence x of length N is the product of the probabilities of supertags (categories) ci (locally factored model):\nP (y|x) = ∏\ni∈[1,N ]\nPtag(ci|x). (1)\nBy not modeling every combinatory rule in a derivation, this formulation enables us to employ efficient A* search (see Section 2), which finds the most probable supertag sequence that can build a well-formed CCG tree.\nAlthough much ambiguity is resolved with this supertagging, some ambiguity still remains. Figure 1 shows an example, where the two CCG\n1 We provide our software as a supplementary material.\nparses are derived from the same supertags. Lewis et al.’s approach to this problem is resorting to some deterministic rule. For example, Lewis et al. (2016) employ the attach low heuristics, which is motivated by the right-branching tendency of English, and always prioritizes (b) for this type of ambiguity. Though for English it empirically works well, an obvious limitation is that it does not always derive the correct parse; consider a phrase “a house in Paris with a garden”, for which the correct parse has the structure corresponding to (a) instead.\nIn this paper, we provide a way to resolve these remaining ambiguities under the locally factored model, by explicitly modeling bilexical dependencies as shown in Figure 1. Our joint model is still locally factored so that an efficient A* search can be applied. The key idea is to predict the head of every word independently as in Eq. 1 with a strong unigram model, for which we utilize the scoring model in the recent successful graph-based dependency parsing on LSTMs (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016). Specif-\nically, we extend the bi-directional LSTM (biLSTM) architecture of Lewis et al. (2016) predicting the supertag of a word to predict the head of it at the same time with a bilinear transformation.\nThe importance of modeling structures beyond supertags is demonstrated in the performance gain in Lee et al. (2016), which adds a recursive component to the model of Eq. 1. Unfortunately, this formulation loses the efficiency of the original one since it needs to compute a recursive neural network every time it searches for a new node. Our model does not resort to the recursive networks while modeling tree structures via dependencies.\nWe also extend the tri-training method of Lewis et al. (2016) to learn our model with dependencies from unlabeled data. On English CCGbank test data, our model with this technique achieves 88.8% and 94.0% in terms of labeled and unlabeled F1, which mark the best scores so far.\nBesides English, we provide experiments on Japanese CCG parsing. Japanese employs freer word order dominated by the case markers and a deterministic rule such as the attach low method may not work well. We show that this is actually the case; our method outperforms the simple application of Lewis et al. (2016) in a large margin, 10.0 points in terms of clause dependency accuracy."
+    }, {
+      "heading" : "2 Background",
+      "text" : "Our approach is build on A* CCG parsing (Section 2.1), which we extend in Section 3 with a head prediction model on bi-LSTMs (Section 2.2)."
+    }, {
+      "heading" : "2.1 Supertag-factored A* CCG Parsing",
+      "text" : "CCG has a nice property that since every category is highly informative about attachment decisions, assigning it to every word (supertagging) determines most of its syntactic structure. Lewis and Steedman (2014) utilize this characteristics of the grammar. Let a CCG tree y be a list of categories ⟨c1, . . . , cN ⟩ and a derivation on it. Their model looks for the most probable y given a sentence x from the set Y (x) of possible CCG trees under the model of Eq. 1:\nŷ = arg max y∈Y (x) ∑ i∈[1,N ] logPtag(ci|x).\nSince this score is factored into each supertag, they call it supertag-factored.\nExact inference of this problem is possible by A* parsing (Klein and D. Manning, 2003), which uses the following two scores on a chart:\nb(Ci,j) = ∑\nck∈ci,j\nlogPtag(ck|x),\na(Ci,j) = ∑\nk∈[1,N ]\\[i,j]\nmax ck\nlogPtag(ck|x),\nwhere Ci,j is a chart item called an edge, which abstracts parses spanning interval [i, j] rooted by category C. The chart maps each edge to the derivation with the highest score, i.e., the Viterbi parse for Ci,j . ci,j is the sequence of categories on such Viterbi parse, and thus b is called the Viterbi inside score, while a is the approximation (upper bound) of the Viterbi outside score.\nA* parsing is a kind of CKY chart parsing augmented with an agenda, a priority queue that keeps the edges to be explored. At every step it pops the edge e with the highest priority b(e) + a(e) and inserts that into the chart, and enqueue any edges that can be built by combining e with other edges in the chart. The algorithm terminates when an edge C1,N is popped from the agenda.\nA* search for this model is quite efficient because both b and a can be obtained from the unigram category distribution on every word, which can be precomputed before search. The heuristics a gives an upperbound on the true Viterbi outside score (i.e., admissible). Along with this the condition that the inside score never decreases by expansion (monotonicity) guarantees that the first found derivation on C1,N is always optimal. a(Ci,j) matches the true outside score if the onebest category assignments on the outside words (argmaxck logPtag(ck|x)) can comprise a wellformed tree with Ci,j , which is generally not true.\nScoring model For modeling Ptag, Lewis and Steedman (2014) use a log-linear model with features from a fixed window context. Lewis et al. (2016) extend this with bi-LSTMs, which encode the complete sentence and capture the long range syntactic information. We base our model on this bi-LSTM architecture, and extend it to modeling a head word at the same time.\nAttachment ambiguity In A* search, an edge with the highest priority b + a is searched first, but as shown in Figure 1 the same categories (with the same priority) may sometimes derive different\ntrees. In Lewis and Steedman (2014), they prioritize the parse with longer dependencies, which they judge with a conversion rule from a CCG tree to a dependency tree (Section 4). Lewis et al. (2016) employ another heuristics prioritizing low attachments of constituencies, but inevitably these heuristics cannot be flawless in any situations. We provide a simple solution to this problem by explicitly modeing bilexical dependencies."
+    }, {
+      "heading" : "2.2 Bi-LSTM Dependency Parsing",
+      "text" : "For modeling dependencies, we borrow the idea from the recent graph-based neural dependency parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016) in which each dependency arc is scored directly on the outputs of bi-LSTMs. Though the model is first-order, bi-LSTMs enable conditioning on the entire sentence and lead to the state-of-the-art performance. Note that this mechanism is similar to modeling of the supertag distribution discussed above, in that for each word the distribution of the head choice is unigram and can be precomputed. As we will see this keeps our joint model still locally factored and A* search tractable. For score calculation, we use an extended bilinear transformation by Dozat and Manning (2016) that models the bias term as well, which they call biaffine."
+    }, {
+      "heading" : "3 Proposed Method",
+      "text" : ""
+    }, {
+      "heading" : "3.1 A* parsing with Supertag and Dependency Factored Model",
+      "text" : "We define a CCG tree y for a sentence x = ⟨xi, . . . , xN ⟩ as a triplet of a list of CCG categories c = ⟨c1, . . . , cN ⟩, dependencies h = ⟨h1, . . . , hN ⟩, and the derivation, where hi is the head index of xi. Our model is defined as follows:\nP (y|x) = ∏\ni∈[1,N ]\nPtag(ci|x) ∏\ni∈[1,N ]\nPdep(hi|x).\n(2)\nThe added term Pdep is a unigram distribution of the head choice.\nA* search is still tractable under this model. The search problem is changed as:\nŷ = arg max y∈Y (x) ( ∑ i∈[1,N ] logPtag(ci|x)\n+ ∑\ni∈[1,N ]\nlogPdep(hi|x) ) ,\nand the inside score is given by:\nb(Ci,j) = ∑\nck∈ci,j\nlogPtag(ck|x) (3)\n+ ∑\nk∈[i,j]\\{root(hCi,j)}\nlogPdep(hk|x),\nwhere hCi,j is a dependency subtree for the Viterbi parse on Ci,j and root(h) returns the root index. We exclude the head score for the subtree root token since it cannot be resolved inside [i, j]. This causes the mismatch between the goal inside score b(C1,N ) and the true model score (log of Eq. 2), which we adjust by adding a special unary rule that is always applied to the popped goal edge C1,N .\nWe can calculate the dependency terms in Eq. 3 on the fly when expanding the chart. Let the current popped edge be Ai,k, which will be combined with Bk,j into Ci,j . The key observation is that only one dependency arc (between root(hAi,k) and root(hBk,j)) is resolved at every combination (see Figure 2). For every rule C → A B we can define the head direction (see Section 4) and Pdep is obtained accordingly. For example, when the right child B becomes the head, b(Ci,j) = b(Ai,k) + b(Bk,j) + logPdep(hl = m|x), where l = root(hAi,k) and m = root(h B k,j) (l < m).\nThe Viterbi outside score is changed as:\na(Ci,j) = ∑\nk∈[1,N ]\\[i,j]\nmax ck\nlogPtag(ck|x)\n+ ∑ k∈L max hk logPdep(hk|x),\nwhere L = [1, N ] \\ [k′|k′ ∈ [i, j], root(hCi,j) ̸= k′]. We regard root(hCi,j) as an outside word since its head is undefined yet. For every outside word we independently assign the weight of its argmax\nhead, which may not comprise a well-formed dependency tree. We initialize the agenda by adding an item for every supertag C and word xi with the score a(Ci,i) = ∑ k∈I\\{i}max logPtag(ck|x) +∑\nk∈I max logPdep(hk|x). Note that the dependency component of it is the same for every word."
+    }, {
+      "heading" : "3.2 Network Architecture",
+      "text" : "Following Lewis et al. (2016) and Dozat and Manning (2016), we model Ptag and Pdep using biLSTMs for exploiting the entire sentence to capture the long range phenomena. See Figure 3 for the overall network architecture, where Ptag and Pdep share the common bi-LSTM hidden vectors.\nFirst we map every word xi to their hidden vector ri with bi-LSTMs. The input to the LSTMs is word embeddings, which we describe in Section 6. We add special start and end tokens to each sentence with the trainable parameters following Lewis et al. (2016). For Pdep, we use the biaffine transformation in Dozat and Manning (2016):\ngdepi = MLP dep child(ri), gdephi = MLP dep head(rhi), Pdep(hi|x) (4)\n∝ exp((gdepi ) TWdepg dep hi +wdepg dep hi ),\nwhere MLP is a multilayered perceptron. Though Lewis et al. (2016) simply use a MLP for mapping ri to Ptag, we additionally utilize the hidden vector of the most probable head hi = argmaxh′i Pdep(h ′ i|x), and apply ri and rhi to a bilinear function:2\ngtagi = MLP tag child(ri), gtaghi = MLP tag head(rhi), (5)\nℓ = (gtagi ) TUtagg tag hi +Wtag [ gtagi gtaghi ] + btag,\nPtag(ci|x) ∝ exp(ℓc),\nwhere Utag is a third order tensor. As in Lewis et al. these values can be precomputed before search, which makes our A* parsing quite efficient."
+    }, {
+      "heading" : "4 CCG to Dependency Conversion",
+      "text" : "Now we describe our conversion rules from a CCG tree to a dependency one, which we use in two purposes: 1) creation of the training data for the de-\n2 This is inspired by the formulation of label prediction in Dozat and Manning (2016).\npendency component of our model; and 2) extraction of a dependency arc at each combinatory rule during A* search (Section 3.1). Lewis and Steedman (2014) describe one way to extract dependencies from the CCG tree (LEWISRULE). Below in addition to this we describe two simpler alternatives (HEADFIRST and HEADFINAL), and see the effects on parsing performance in our experiments (Section 6). See Figure 4 for the overview.\nLEWISRULE This is the same as the conversion rule in Lewis and Steedman (2014). As shown in Figure 4c the output looks a familiar English dependency tree.\nFor forward application and (generalized) forward composition, we define the head to be the left argument of the combinatory rule, unless it matches either X/X or X/(X\\Y ), in which case the right argument is the head. For example, on “Black Monday” in Figure 4a we choose Monday as the head of Black. For the backward rules, the conversions are defined as the reverse of the corresponding forward rules. For other rules, RemovePunctuation (rp) chooses the non punctuation argument as a head, while Conjunction (Φ) chooses the right argument.3\nOne issue when applying this method for ob-\n3When applying LEWISRULE to Japanese, we ignore the identity of the feature values in determining the head argument; In “tabe ta” (eat PAST), the category of auxiliary verb “ta” is Sf1\\Sf2 with f1 ̸= f2, thus Sf1 ̸= Sf2 . Though it is not X\\X , we define “ta” is headed by “tabe”, as removing the feature values, it matches X\\X .\ntaining the training data is that due to the mismatch between the rule set of our CCG parser, for which we follow Lewis and Steedman (2014), and the grammar in English CCGbank (Hockenmaier and Steedman, 2007) we cannot extract dependencies from some of annotated CCG trees.4 For this reason, we instead obtain the training data for this method from the original dependency annotations on CCGbank. Forutnatelly the dependency annotations of CCGbank matches LEWISRULE above in most cases and thus they can be a good approximation to it.\nHEADFINAL Among SOV languages, Japanese is known as a strictly head final language, meaning that the head of every word always follows it. Japanese dependency parsing (Uchimoto et al., 1999; Kudo and Matsumoto, 2002) has exploited this property explicitly by only allowing left-toright dependency arcs. Inspired by this tradition, we try a simple HEADFINAL rule in Japanese CCG parsing, in which we always select the right argument as a head. For example we obtain the head final dependency tree in Figure 4e from the Japanese CCG tree in Figure 4b.\nHEADFIRST We apply the similar idea as HEADFINAL into English. Since English has the opposite, SVO word order, we define the simple “head first” rule, in which the left argument always becomes the head (Figure 4d).\nThough this conversion may look odd at first sight it also has some advantages over LEWIS-\n4 For example, the combinatory rules in Lewis and Steedman (2014) do not contain Nconj → N N in CCGbank. Another difficulty is that in English CCGbank a combinatory rule name is not annotated explicitly.\nRULE. First, since the model with LEWISRULE is trained on the CCGbank dependencies, at inference, occasionally the two components Pdep and Ptag cause some conflicts on their predictions. For example, the true Viterbi parse may have a lower score in terms of dependencies, in which case the parser slows down and may degrade the accuracy. HEADFIRST, in contract, does not suffer from such conflicts. Second, by forcing the direction of arcs, the prediction of heads becomes easier, meaning that the dependency predictions become more reliable. Later we show this is in fact the case for existing dependency parsers (see Section 5), and in practice, we find that this simple conversion rule leads to the higher parsing scores than LEWISRULE on English (Section 6)."
+    }, {
+      "heading" : "5 Tri-training",
+      "text" : "We extend the existing tri-training method to our models and apply it to our English parsers.\nTri-training is one of the semi-supervised methods, in which the outputs of two parsers on unlabeled data are intersected to create (silver) new training data. This method is successfully applied to dependency parsing (Weiss et al., 2015) and CCG supertagging (Lewis et al., 2016).\nWe simply combine the two previous approaches. Lewis et al. (2016) obtain their silver data annotated with the high quality supertags. Since they make this data publicly available 5, we obtain our silver data by assigning dependency structures on top of them.6\n5https://github.com/uwnlp/taggerflow 6We annotate POS tags on this data using Stanford POS\ntagger (Toutanova et al., 2003).\nWe train two very different dependency parsers from the training data extracted from CCGbank Section 02-21. This training data differs depending on our dependency conversion strategy (Section 4). For LEWISRULE, we extract the original dependency annotations of CCGbank. For HEADFIRST, we extract the head first dependencies from the CCG trees. Note that we cannot annotate dependency labels so we assign a dummy “none” label to every arc. The first parser is graph-based RBGParser (Lei et al., 2014) with the default settings except that we train an unlabeled parser and use word embeddings of Turian et al. (2010). The second parser is transition-based lstm-parser (Dyer et al., 2015) with the default parameters.\nOn the development set (Section 00), with LEWISRULE dependencies RBGParser shows 93.8% unlabeled attachment score while that of lstm-parser is 92.5% using gold POS tags. Interestingly, the parsers with HEADFIRST dependencies achive higher scores: 94.9% by RBGParser and 94.6% by lstm-parser, suggesting that HEADFIRST dependencies are more parsable. For both dependencies, we obtain more than 1.7 million sentences on which two parsers agree.\nFollowing Lewis et al. (2016), we include 15 copies of CCGbank training set when using these silver data. Also to make effects of the tritrain samples smaller we multiply their loss by 0.4."
+    }, {
+      "heading" : "6 Experiments",
+      "text" : "We perform experiments on English and Japanese CCGbanks."
+    }, {
+      "heading" : "6.1 English Experimental Settings",
+      "text" : "We follow the standard data splits and use Sections 02-21 for training, Section 00 for development, and Section 23 for final evaluation. We report labeled and unlabeled F1 of the extracted CCG semantic dependencies obtained using generate program supplied with C&C parser.\nFor our models, we adopt the pruning strategies in Lewis and Steedman (2014) and allow at most 50 categories per word, use a variable-width beam with β = 0.00001, and utilize a tag dictionary, which maps frequent words to the possible supertags7. Unless otherwise stated, we only al-\n7We use the same tag dictionary provided with their biLSTM model.\nlow normal form parses (Eisner, 1996; Hockenmaier and Bisk, 2010), choosing the same subset of the constaints as Lewis and Steedman (2014).\nWe use as word representation the concatenatination of word vectors initialized to GloVe8 (Pennington et al., 2014), and randomly initialized prefix and suffix vectors of the length 1 to 4, which is inspired by Lewis et al. (2016). All affixes appearing less than two times in the training data are mapped to “UNK”.\nOther model configurations are: 4-layer biLSTMs with left and right 300-dimensional LSTMs, 1-layer 100-dimensional MLPs with ELU non-linearity (Clevert et al., 2015) for all MLP depchild, MLP dep head, MLP tag child and MLP tag head, and the Adam optimizer with β1 = 0.9, β2 = 0.9, L2 norm (1e−6), and lerning rate decay with the ratio 0.75 for every 2,500 iteration starting from 2e−3, which is shown to be effective for training the biaffine parser (Dozat and Manning, 2016)."
+    }, {
+      "heading" : "6.2 Japanese Experimental Settings",
+      "text" : "We follow the default train/dev/test splits of Japanese CCGbank (Uematsu et al., 2013). For the baselines, we use an existing shift-reduce CCG parser implemented in an NLP tool Jigg9 (Noji and Miyao, 2016), and our implementation of the supertag-factored model using bi-LSTMs.\nFor Japanese, we use as word representation the concatenatination of word vectors initialized to Japanese Wikipedia Entity Vector10, and 100- dimensional vectors computed from randomly initialized 50-dimensional character embeddings through convolution (dos Santos and Zadrozny, 2014). We do not use affix vectors as affixes are less informative in Japanese. All characters appearing less than two times are mapped to “UNK”. We use the same parameter settings as English for bi-LSTMs, MLPs, and optimization.\nOne issue in Japanese experiments is evaluation. The Japanese CCGbank is encoded in a different format than the English bank, and no standalone script for extracting semantic dependencies is available yet. For this reason, we evaluate the parser outputs by converting them to bunsetsu dependencies, the syntactic representation ordinary used in Japanese NLP (Kudo and Matsumoto, 2002). Given a CCG tree, we obtain this by first\n8http://nlp.stanford.edu/projects/glove/ 9https://github.com/mynlp/jigg\n10http://www.cl.ecei.tohoku.ac.jp/∼msuzuki/jawiki vector/\nsegment a sentence into bunsetsu (chunks) using CaboCha11 and extract dependencies that cross a bunsetsu boundary after obtaining the word-level, head final dependencies as in Figure 4b. For example, the sentence in Figure 4e is segmented as “Boku wa | eigo wo | hanashi tai”, from which we extract two dependencies (Boku wa) ← (hanashi tai) and (eigo wo) ← (hanashi tai). We perform this conversion for both gold and output CCG trees and calculate the (unlabeled) attachment accuracy. Though this is imperfect, it can detect important parse errors such as attachment errors and thus can be a good proxy for the performance as a CCG parser."
+    }, {
+      "heading" : "6.3 English Parsing Results",
+      "text" : "Effect of Dependency We first see how the dependency components added in our model affect the performance. Table 1 shows the results on the development set with the several configurations, in which “w/o dep” means discarding the dependency terms of the model and applying the attach low heuristics (Section 1) instead (i.e., a supertagfactored model; Section 2.1). We can see that for\n11http://taku910.github.io/cabocha/\nboth LEWISRULE and HEADFIRST, adding dependency terms improves the performance.\nChoice of Dependency Conversion Rule To our surprise, our simple HEADFIRST strategy always leads to better results than the linguistically motivated LEWISRULE. The absolute improvements by tri-training are equally large (about 1.0 points), suggesting that our model with dependencies can also be benefited from the silver data.\nExcluding Normal Form Constraints One advantage of HEADFIRST is that the direction of arcs is always right, making the structures simpler and more parsable (Section 5). From another viewpoint, this fixed direction means that the constituent structure behind a (head first) dependency tree is unique. Since the constituent structures of CCGbank trees basiclly follow the normal form (NF), we hypothesize that the model learned with HEADFIRST has an ability to force the outputs in NF automatically. We summarize the results without the NF constraints in Table 2, which shows that the above argument is correct; the number of violating NF rules on the outputs of HEADFIRST is much smaller than that of LEWISRULE (89 vs. 283). Interestingly the scores of HEADFIRST slighly increase from the models with NF (e.g., 86.8 vs. 86.6 for CCGbank), suggesting that the NF constraints hinder the search of HEADFIRST models occasionally.\nResults on Test Set Parsing results on the test set (Section 23) are shown in Table 3, where we compare our best-performance HEADFIRST dependency model without NF constraints with the several existing parsers. In CCGbank experiment, our parser shows the better result than all the baseline parsers except C&C with LSTM supertagger (Vaswani et al., 2016). Our parser outper-\nforms EasySRL by 0.5% and our reimplementation of that parser (EasySRL reimpl) by 0.9% in terms of labeled F1. In tri-training experiment, our parser shows much increased performance of 88.8% labeled F1 and 94.0% unlabeled F1, outperforming the current state-of-the-art neuralccg (Lee et al., 2016) that uses recursive neural networks by 0.1 point and 0.3 point in terms of labeled and unlabeled F1. This is the best reported F1 in English CCG parsing.\nEfficiency Comparison We compare the efficiency of our parser with neuralccg and EasySRL reimpl.12 The results are shown in Table 4. Our parser lags behind in the overall parsing speed to neuralccg and EasySRL reimpl. When we go into the details, our supertagger runs slower than those of neuralccg and EasySRL reimpl, while in A* search, our parser processes over 5 times more sentences than neuralccg. The delay in supertagging can be attributed to several factors, in particular, the implementation (Python vs. C++) and the number of parameters, especially the number of bi-LSTM layers (4 vs. 2). We note that there are many implementation differences in our parsers (C++ A* parser with neural network model implemented with Chainer (Tokui et al., 2015)) and neuralccg (Java parser with C++ TensorFlow (Abadi et al., 2015) supertagger and recursive neural model in C++ DyNet (Neubig et al., 2017))13."
+    }, {
+      "heading" : "6.4 Japanese Parsing Result",
+      "text" : "We show the results of the Japanese parsing experiment in Table 5. The simple application of Lewis\n12This experiment is performed on a laptop with 4-thread 2.0 GHz CPU.\n13 There seems to be a room for optimizing our parser’s efficiency. We found that our EasySRL reimpl is slower than the original implementation of the supertag-factored model by Lewis et al. (2016), which neuralccg uses internally.\net al. (2016) (Supertag model) is not effective for Japanese, showing the lowest attachment score of 81.5%. We observe a performance boost with our method, especially with HEADFINAL dependencies, which outperforms the baseline shift-reduce parser by 1.1 points on category assignments and 4.0 points on attachments.\nThe degraded results of the simple application of the supertag-factored model can be attributed to the fact that the structure of a Japanese sentence is still highly ambiguous given the supertags (Figure 5). This is particularly the case in constructions where phrasal adverbial/adnominal modifiers (with the supertag S/S) are involved. The result suggests the importance of modeling dependencies in some languages, at least Japanese."
+    }, {
+      "heading" : "7 Conclusion",
+      "text" : "In this work, we have proposed a new CCG A* parsing method, in which the probability of a CCG tree is decomposed into local factors of the CCG categories and its dependency structure. By explicitly modeling the dependency structure, we do not require any deterministic heuristics to resolve attachment ambiguities, and keep the model factored so that all the probabilities can be precomputed before running the search. Our parser efficiently finds the the optimal parses, achieving the state-of-the-art performance in both English and Japanese parsing."
+    } ],
+    "references" : [ {
+      "title" : "TensorFlow: LargeScale Machine Learning on Heterogeneous Systems. Software available from tensorflow.org",
+      "author" : [ "sudevan", "Fernanda Viégas", "Oriol Vinyals", "Pete Warden", "Martin Wattenberg", "Martin Wicke", "Yuan Yu", "Xiaoqiang Zheng" ],
+      "venue" : null,
+      "citeRegEx" : "sudevan et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "sudevan et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Supertagging: An Approach to Almost Parsing",
+      "author" : [ "Srinivas Bangalore", "Aravind K Joshi." ],
+      "venue" : "Computational linguistics 25(2):237–265.",
+      "citeRegEx" : "Bangalore and Joshi.,? 1999",
+      "shortCiteRegEx" : "Bangalore and Joshi.",
+      "year" : 1999
+    }, {
+      "title" : "WideCoverage Efficient Statistical Parsing with CCG and Log-Linear Models",
+      "author" : [ "Stephen Clark", "James R. Curran." ],
+      "venue" : "Computational Linguistics, Volume 33, Number 4, December 2007 http://aclweb.org/anthology/J07-4004.",
+      "citeRegEx" : "Clark and Curran.,? 2007",
+      "shortCiteRegEx" : "Clark and Curran.",
+      "year" : 2007
+    }, {
+      "title" : "Fast and Accurate Deep Network Learning by Exponential Linear Units (ELUs)",
+      "author" : [ "Djork-Arné Clevert", "Thomas Unterthiner", "Sepp Hochreiter." ],
+      "venue" : "CoRR abs/1511.07289. http://arxiv.org/abs/1511.07289.",
+      "citeRegEx" : "Clevert et al\\.,? 2015",
+      "shortCiteRegEx" : "Clevert et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Learning Character-level Representations for Part-of-Speech Tagging",
+      "author" : [ "Cı́cero Nogueira dos Santos", "Bianca Zadrozny" ],
+      "venue" : null,
+      "citeRegEx" : "Santos and Zadrozny.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Santos and Zadrozny.",
+      "year" : 2014
+    }, {
+      "title" : "Deep Biaffine Attention for Neural Dependency Parsing",
+      "author" : [ "Timothy Dozat", "Christopher D. Manning." ],
+      "venue" : "CoRR abs/1611.01734. http://arxiv.org/abs/1611.01734.",
+      "citeRegEx" : "Dozat and Manning.,? 2016",
+      "shortCiteRegEx" : "Dozat and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "TransitionBased Dependency Parsing with Stack Long ShortTerm Memory",
+      "author" : [ "Chris Dyer", "Miguel Ballesteros", "Wang Ling", "Austin Matthews", "A. Noah Smith." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Lin-",
+      "citeRegEx" : "Dyer et al\\.,? 2015",
+      "shortCiteRegEx" : "Dyer et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Efficient Normal-Form Parsing for Combinatory Categorial Grammar",
+      "author" : [ "Jason Eisner." ],
+      "venue" : "34th Annual Meeting of the Association for Computational Linguistics. http://aclweb.org/anthology/P96-1011.",
+      "citeRegEx" : "Eisner.,? 1996",
+      "shortCiteRegEx" : "Eisner.",
+      "year" : 1996
+    }, {
+      "title" : "Normalform parsing for Combinatory Categorial Grammars with generalized composition and type-raising",
+      "author" : [ "Julia Hockenmaier", "Yonatan Bisk." ],
+      "venue" : "Proceedings of the 23rd International Conference on Computational Linguistics (Coling 2010). Col-",
+      "citeRegEx" : "Hockenmaier and Bisk.,? 2010",
+      "shortCiteRegEx" : "Hockenmaier and Bisk.",
+      "year" : 2010
+    }, {
+      "title" : "Ccgbank: A corpus of ccg derivations and dependency structures extracted from the penn treebank",
+      "author" : [ "Julia Hockenmaier", "Mark Steedman." ],
+      "venue" : "Computational Linguistics 33(3):355–396. http://www.aclweb.org/anthology/J07-3004.",
+      "citeRegEx" : "Hockenmaier and Steedman.,? 2007",
+      "shortCiteRegEx" : "Hockenmaier and Steedman.",
+      "year" : 2007
+    }, {
+      "title" : "Simple and Accurate Dependency Parsing Using Bidirectional LSTM Feature Representations",
+      "author" : [ "Eliyahu Kiperwasser", "Yoav Goldberg." ],
+      "venue" : "Transactions of the Association for Computational Linguistics 4:313–327.",
+      "citeRegEx" : "Kiperwasser and Goldberg.,? 2016",
+      "shortCiteRegEx" : "Kiperwasser and Goldberg.",
+      "year" : 2016
+    }, {
+      "title" : "A* Parsing: Fast Exact Viterbi Parse Selection",
+      "author" : [ "Dan Klein", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 2003 Human Language Technology Conference of the North American Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Klein and Manning.,? 2003",
+      "shortCiteRegEx" : "Klein and Manning.",
+      "year" : 2003
+    }, {
+      "title" : "Japanese Dependency Analysis using Cascaded Chunking",
+      "author" : [ "Taku Kudo", "Yuji Matsumoto." ],
+      "venue" : "Proceedings of the 6th Conference on Natural Language Learning, CoNLL 2002, Held in cooperation with COLING 2002, Taipei, Taiwan,",
+      "citeRegEx" : "Kudo and Matsumoto.,? 2002",
+      "shortCiteRegEx" : "Kudo and Matsumoto.",
+      "year" : 2002
+    }, {
+      "title" : "Global Neural CCG Parsing with Optimality Guarantees",
+      "author" : [ "Kenton Lee", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing. Association for",
+      "citeRegEx" : "Lee et al\\.,? 2016",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Low-Rank Tensors for Scoring Dependency Structures",
+      "author" : [ "Tao Lei", "Yu Xin", "Yuan Zhang", "Regina Barzilay", "Tommi Jaakkola." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Pa-",
+      "citeRegEx" : "Lei et al\\.,? 2014",
+      "shortCiteRegEx" : "Lei et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "LSTM CCG Parsing",
+      "author" : [ "Mike Lewis", "Kenton Lee", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies. Associa-",
+      "citeRegEx" : "Lewis et al\\.,? 2016",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A* CCG Parsing with a Supertag-factored Model",
+      "author" : [ "Mike Lewis", "Mark Steedman." ],
+      "venue" : "Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP). Association for Computational Linguistics, pages 990–",
+      "citeRegEx" : "Lewis and Steedman.,? 2014",
+      "shortCiteRegEx" : "Lewis and Steedman.",
+      "year" : 2014
+    }, {
+      "title" : "Confidential Review Copy",
+      "author" : [ "DISTRIBUTE. Lingpeng Kong", "Adhiguna Kuncoro", "Gaurav Kumar", "Chaitanya Malaviya", "Paul Michel", "Yusuke Oda", "Matthew Richardson", "Naomi Saphra", "Swabha Swayamdipta", "Pengcheng Yin" ],
+      "venue" : "ACL",
+      "citeRegEx" : "Kong et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Kong et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Jigg: A Framework for an Easy Natural Language Processing Pipeline",
+      "author" : [ "Hiroshi Noji", "Yusuke Miyao." ],
+      "venue" : "Proceedings of ACL2016 System Demonstrations. Association for Computational Linguistics, pages 103–108.",
+      "citeRegEx" : "Noji and Miyao.,? 2016",
+      "shortCiteRegEx" : "Noji and Miyao.",
+      "year" : 2016
+    }, {
+      "title" : "GloVe: Global Vectors for Word Representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher D. Manning." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP). pages 1532– 1543. http://www.aclweb.org/anthology/D14-1162.",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "The Syntactic Process",
+      "author" : [ "Mark Steedman." ],
+      "venue" : "The MIT Press.",
+      "citeRegEx" : "Steedman.,? 2000",
+      "shortCiteRegEx" : "Steedman.",
+      "year" : 2000
+    }, {
+      "title" : "Chainer: a Next-Generation Open Source Framework for Deep Learning",
+      "author" : [ "Seiya Tokui", "Kenta Oono", "Shohei Hido", "Justin Clayton." ],
+      "venue" : "Proceedings of Workshop on Machine Learning Systems (LearningSys) in The",
+      "citeRegEx" : "Tokui et al\\.,? 2015",
+      "shortCiteRegEx" : "Tokui et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Feature-rich part-ofspeech tagging with a cyclic dependency network",
+      "author" : [ "Kristina Toutanova", "Dan Klein", "Christopher D. Manning", "Yoram Singer." ],
+      "venue" : "Proceedings of the 2003 Human Language Technology Conference of the North American Chapter",
+      "citeRegEx" : "Toutanova et al\\.,? 2003",
+      "shortCiteRegEx" : "Toutanova et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Word Representations: A Simple and General Method for Semi-Supervised Learning",
+      "author" : [ "Joseph Turian", "Lev-Arie Ratinov", "Yoshua Bengio." ],
+      "venue" : "Proceedings of the 48th Annual Meeting of the Association for Computational Linguistics. Associa-",
+      "citeRegEx" : "Turian et al\\.,? 2010",
+      "shortCiteRegEx" : "Turian et al\\.",
+      "year" : 2010
+    }, {
+      "title" : "Japanese Dependency Structure Analysis Based on Maximum Entropy Models",
+      "author" : [ "Kiyotaka Uchimoto", "Satoshi Sekine", "Hitoshi Isahara." ],
+      "venue" : "Ninth Conference of the European Chapter of the Association for Computational Linguistics.",
+      "citeRegEx" : "Uchimoto et al\\.,? 1999",
+      "shortCiteRegEx" : "Uchimoto et al\\.",
+      "year" : 1999
+    }, {
+      "title" : "Integrating Multiple Dependency Corpora for Inducing Wide-coverage Japanese CCG Resources",
+      "author" : [ "Sumire Uematsu", "Takuya Matsuzaki", "Hiroki Hanaoka", "Yusuke Miyao", "Hideki Mima." ],
+      "venue" : "Proceedings of the 51st Annual Meeting of the",
+      "citeRegEx" : "Uematsu et al\\.,? 2013",
+      "shortCiteRegEx" : "Uematsu et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Supertagging With LSTMs",
+      "author" : [ "Ashish Vaswani", "Yonatan Bisk", "Kenji Sagae", "Ryan Musa." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies. Asso-",
+      "citeRegEx" : "Vaswani et al\\.,? 2016",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Structured Training for Neural Network Transition-Based Parsing",
+      "author" : [ "David Weiss", "Chris Alberti", "Michael Collins", "Slav Petrov." ],
+      "venue" : "Proceedings of the 53rd Annual Meeting of the Association for Computational Linguistics and the 7th In-",
+      "citeRegEx" : "Weiss et al\\.,? 2015",
+      "shortCiteRegEx" : "Weiss et al\\.",
+      "year" : 2015
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 1,
+      "context" : "Supertagging in lexicalized grammar parsing is known as almost parsing (Bangalore and Joshi, 1999), in that each supertag is syntactically informative and most ambiguities are resolved once a correct supertag is assigned to every word.",
+      "startOffset" : 71,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 16,
+      "context" : "Recently this property is effectively exploited in A* Combinatory Categorial Grammar (CCG; Steedman (2000)) parsing (Lewis and Steedman, 2014; Lewis et al., 2016), in which the probability of a CCG tree y on a sentence x of length N is the product of the probabilities of supertags (categories) ci (locally factored model):",
+      "startOffset" : 116,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 15,
+      "context" : "Recently this property is effectively exploited in A* Combinatory Categorial Grammar (CCG; Steedman (2000)) parsing (Lewis and Steedman, 2014; Lewis et al., 2016), in which the probability of a CCG tree y on a sentence x of length N is the product of the probabilities of supertags (categories) ci (locally factored model):",
+      "startOffset" : 116,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 1,
+      "context" : "Supertagging in lexicalized grammar parsing is known as almost parsing (Bangalore and Joshi, 1999), in that each supertag is syntactically informative and most ambiguities are resolved once a correct supertag is assigned to every word. Recently this property is effectively exploited in A* Combinatory Categorial Grammar (CCG; Steedman (2000)) parsing (Lewis and Steedman, 2014; Lewis et al.",
+      "startOffset" : 72,
+      "endOffset" : 343
+    }, {
+      "referenceID" : 15,
+      "context" : "Lewis et al.’s approach to this problem is resorting to some deterministic rule. For example, Lewis et al. (2016) employ the attach low heuristics, which is motivated by the right-branching tendency of English, and always prioritizes (b) for this type of ambiguity.",
+      "startOffset" : 0,
+      "endOffset" : 114
+    }, {
+      "referenceID" : 10,
+      "context" : "1 with a strong unigram model, for which we utilize the scoring model in the recent successful graph-based dependency parsing on LSTMs (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016).",
+      "startOffset" : 135,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 5,
+      "context" : "1 with a strong unigram model, for which we utilize the scoring model in the recent successful graph-based dependency parsing on LSTMs (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016).",
+      "startOffset" : 135,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 15,
+      "context" : "ically, we extend the bi-directional LSTM (biLSTM) architecture of Lewis et al. (2016) predicting the supertag of a word to predict the head of it at the same time with a bilinear transformation.",
+      "startOffset" : 67,
+      "endOffset" : 87
+    }, {
+      "referenceID" : 13,
+      "context" : "The importance of modeling structures beyond supertags is demonstrated in the performance gain in Lee et al. (2016), which adds a recursive component to the model of Eq.",
+      "startOffset" : 98,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 15,
+      "context" : "We also extend the tri-training method of Lewis et al. (2016) to learn our model with dependencies from unlabeled data.",
+      "startOffset" : 42,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 15,
+      "context" : "We show that this is actually the case; our method outperforms the simple application of Lewis et al. (2016) in a large margin, 10.",
+      "startOffset" : 89,
+      "endOffset" : 109
+    }, {
+      "referenceID" : 16,
+      "context" : "Lewis and Steedman (2014) utilize this characteristics of the grammar.",
+      "startOffset" : 0,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 15,
+      "context" : "Scoring model For modeling Ptag, Lewis and Steedman (2014) use a log-linear model with features from a fixed window context.",
+      "startOffset" : 33,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 15,
+      "context" : "Lewis et al. (2016) extend this with bi-LSTMs, which encode the complete sentence and capture the long range syntactic information.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 15,
+      "context" : "In Lewis and Steedman (2014), they prioritize the parse with longer dependencies, which they judge with a conversion rule from a CCG tree to a dependency tree (Section 4).",
+      "startOffset" : 3,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 15,
+      "context" : "Lewis et al. (2016) employ another heuristics prioritizing low attachments of constituencies, but inevitably these heuristics cannot be flawless in any situations.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 10,
+      "context" : "from the recent graph-based neural dependency parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016) in which each dependency arc is scored directly on the outputs of bi-LSTMs.",
+      "startOffset" : 54,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 5,
+      "context" : "from the recent graph-based neural dependency parsing (Kiperwasser and Goldberg, 2016; Dozat and Manning, 2016) in which each dependency arc is scored directly on the outputs of bi-LSTMs.",
+      "startOffset" : 54,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 5,
+      "context" : "For score calculation, we use an extended bilinear transformation by Dozat and Manning (2016) that models the bias term as well, which they call biaffine.",
+      "startOffset" : 69,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 14,
+      "context" : "Following Lewis et al. (2016) and Dozat and Manning (2016), we model Ptag and Pdep using biLSTMs for exploiting the entire sentence to capture the long range phenomena.",
+      "startOffset" : 10,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 5,
+      "context" : "(2016) and Dozat and Manning (2016), we model Ptag and Pdep using biLSTMs for exploiting the entire sentence to capture the long range phenomena.",
+      "startOffset" : 11,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 5,
+      "context" : "(2016) and Dozat and Manning (2016), we model Ptag and Pdep using biLSTMs for exploiting the entire sentence to capture the long range phenomena. See Figure 3 for the overall network architecture, where Ptag and Pdep share the common bi-LSTM hidden vectors. First we map every word xi to their hidden vector ri with bi-LSTMs. The input to the LSTMs is word embeddings, which we describe in Section 6. We add special start and end tokens to each sentence with the trainable parameters following Lewis et al. (2016). For Pdep, we use the biaffine transformation in Dozat and Manning (2016):",
+      "startOffset" : 11,
+      "endOffset" : 514
+    }, {
+      "referenceID" : 15,
+      "context" : "Though Lewis et al. (2016) simply use a MLP for mapping ri to Ptag, we additionally utilize the hidden vector of the most probable head hi = argmaxhi Pdep(h ′ i|x), and apply ri and rhi to a bilinear function:2",
+      "startOffset" : 7,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 5,
+      "context" : "2 This is inspired by the formulation of label prediction in Dozat and Manning (2016). LSTM LSTM LSTM LSTM",
+      "startOffset" : 61,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 16,
+      "context" : "Lewis and Steedman (2014) describe one way to extract dependencies from the CCG tree (LEWISRULE).",
+      "startOffset" : 0,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 16,
+      "context" : "LEWISRULE This is the same as the conversion rule in Lewis and Steedman (2014). As shown in Figure 4c the output looks a familiar English dependency tree.",
+      "startOffset" : 53,
+      "endOffset" : 79
+    }, {
+      "referenceID" : 9,
+      "context" : "taining the training data is that due to the mismatch between the rule set of our CCG parser, for which we follow Lewis and Steedman (2014), and the grammar in English CCGbank (Hockenmaier and Steedman, 2007) we cannot extract dependencies from some of annotated CCG trees.",
+      "startOffset" : 176,
+      "endOffset" : 208
+    }, {
+      "referenceID" : 15,
+      "context" : "taining the training data is that due to the mismatch between the rule set of our CCG parser, for which we follow Lewis and Steedman (2014), and the grammar in English CCGbank (Hockenmaier and Steedman, 2007) we cannot extract dependencies from some of annotated CCG trees.",
+      "startOffset" : 114,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 24,
+      "context" : "Japanese dependency parsing (Uchimoto et al., 1999; Kudo and Matsumoto, 2002) has exploited this property explicitly by only allowing left-toright dependency arcs.",
+      "startOffset" : 28,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 12,
+      "context" : "Japanese dependency parsing (Uchimoto et al., 1999; Kudo and Matsumoto, 2002) has exploited this property explicitly by only allowing left-toright dependency arcs.",
+      "startOffset" : 28,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 16,
+      "context" : "4 For example, the combinatory rules in Lewis and Steedman (2014) do not contain Nconj → N N in CCGbank.",
+      "startOffset" : 40,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 27,
+      "context" : "This method is successfully applied to dependency parsing (Weiss et al., 2015) and CCG supertagging (Lewis et al.",
+      "startOffset" : 58,
+      "endOffset" : 78
+    }, {
+      "referenceID" : 15,
+      "context" : "Lewis et al. (2016) obtain their silver data annotated with the high quality supertags.",
+      "startOffset" : 0,
+      "endOffset" : 20
+    }, {
+      "referenceID" : 22,
+      "context" : "com/uwnlp/taggerflow (6)We annotate POS tags on this data using Stanford POS tagger (Toutanova et al., 2003).",
+      "startOffset" : 84,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 14,
+      "context" : "The first parser is graph-based RBGParser (Lei et al., 2014) with the default settings except that we train an unlabeled parser and use word embeddings of Turian et al.",
+      "startOffset" : 42,
+      "endOffset" : 60
+    }, {
+      "referenceID" : 6,
+      "context" : "The second parser is transition-based lstm-parser (Dyer et al., 2015) with the default parameters.",
+      "startOffset" : 50,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 13,
+      "context" : "The first parser is graph-based RBGParser (Lei et al., 2014) with the default settings except that we train an unlabeled parser and use word embeddings of Turian et al. (2010). The second parser is transition-based lstm-parser (Dyer et al.",
+      "startOffset" : 43,
+      "endOffset" : 176
+    }, {
+      "referenceID" : 15,
+      "context" : "Following Lewis et al. (2016), we include 15 copies of CCGbank training set when using these silver data.",
+      "startOffset" : 10,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 16,
+      "context" : "For our models, we adopt the pruning strategies in Lewis and Steedman (2014) and allow at most 50 categories per word, use a variable-width beam with β = 0.",
+      "startOffset" : 51,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 7,
+      "context" : "low normal form parses (Eisner, 1996; Hockenmaier and Bisk, 2010), choosing the same subset of the constaints as Lewis and Steedman (2014).",
+      "startOffset" : 23,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 8,
+      "context" : "low normal form parses (Eisner, 1996; Hockenmaier and Bisk, 2010), choosing the same subset of the constaints as Lewis and Steedman (2014).",
+      "startOffset" : 23,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 19,
+      "context" : "We use as word representation the concatenatination of word vectors initialized to GloVe8 (Pennington et al., 2014), and randomly initialized prefix and suffix vectors of the length 1 to 4, which is inspired by Lewis et al.",
+      "startOffset" : 90,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2014), and randomly initialized prefix and suffix vectors of the length 1 to 4, which is inspired by Lewis et al. (2016). All affixes appearing less than two times in the training data are mapped to “UNK”.",
+      "startOffset" : 103,
+      "endOffset" : 123
+    }, {
+      "referenceID" : 3,
+      "context" : "Other model configurations are: 4-layer biLSTMs with left and right 300-dimensional LSTMs, 1-layer 100-dimensional MLPs with ELU non-linearity (Clevert et al., 2015) for all MLP dep child, MLP dep head, MLP tag child and MLP tag head, and the Adam optimizer with β1 = 0.",
+      "startOffset" : 143,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 5,
+      "context" : "75 for every 2,500 iteration starting from 2e−3, which is shown to be effective for training the biaffine parser (Dozat and Manning, 2016).",
+      "startOffset" : 113,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 25,
+      "context" : "We follow the default train/dev/test splits of Japanese CCGbank (Uematsu et al., 2013).",
+      "startOffset" : 64,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 18,
+      "context" : "For the baselines, we use an existing shift-reduce CCG parser implemented in an NLP tool Jigg9 (Noji and Miyao, 2016), and our implementation of the supertag-factored model using bi-LSTMs.",
+      "startOffset" : 95,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 12,
+      "context" : "For this reason, we evaluate the parser outputs by converting them to bunsetsu dependencies, the syntactic representation ordinary used in Japanese NLP (Kudo and Matsumoto, 2002).",
+      "startOffset" : 152,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 26,
+      "context" : "In CCGbank experiment, our parser shows the better result than all the baseline parsers except C&C with LSTM supertagger (Vaswani et al., 2016).",
+      "startOffset" : 121,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 13,
+      "context" : "0% unlabeled F1, outperforming the current state-of-the-art neuralccg (Lee et al., 2016) that uses recursive neural networks by 0.",
+      "startOffset" : 70,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 21,
+      "context" : "We note that there are many implementation differences in our parsers (C++ A* parser with neural network model implemented with Chainer (Tokui et al., 2015)) and neuralccg (Java parser with C++ TensorFlow (Abadi et al.",
+      "startOffset" : 136,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 15,
+      "context" : "We found that our EasySRL reimpl is slower than the original implementation of the supertag-factored model by Lewis et al. (2016), which neuralccg uses internally.",
+      "startOffset" : 110,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 15,
+      "context" : "We found that our EasySRL reimpl is slower than the original implementation of the supertag-factored model by Lewis et al. (2016), which neuralccg uses internally. Method Category Bunsetsu Dep. Noji and Miyao (2016) 93.",
+      "startOffset" : 110,
+      "endOffset" : 216
+    } ],
+    "year" : 0,
+    "abstractText" : "We propose a new A* CCG parsing model in which the probability of a tree is decomposed into factors of CCG categories and its dependency structure both defined on bi-directional LSTMs. Our factored model allows the precomputation of all probabilities and runs very efficiently, while modeling sentence structures explicitly via dependencies. Our model achieves the stateof-the-art results on English and Japanese CCG parsing1.",
+    "creator" : null
+  }
+}

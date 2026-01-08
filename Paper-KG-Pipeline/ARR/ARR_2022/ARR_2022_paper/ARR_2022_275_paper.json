@@ -1,0 +1,379 @@
+{
+  "name" : "ARR_2022_275_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Exploring and Adapting Chinese GPT to Pinyin Input Method",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "GPT (Radford et al., 2018, 2019) is a Transformerbased (Vaswani et al., 2017) language model that predicts tokens in an autoregressive manner. With a generic model architecture and the availability of vast web text data, GPT has been successfully developed for English, Chinese (Du, 2019; Zhang et al., 2021b), and many other languages. It shows extraordinary ability to generate fluent sentences and has been successfully applied to a wide range of natural language generation tasks. However, it remains unexplored to what extent GPT handles Chinese pinyin input method1, which is used by hundreds of millions people when they enter Chinese characters on computers and cellphones.\n1https://en.wikipedia.org/wiki/Pinyin_ input_method\nPinyin input method allows users to enter Chinese characters based on their pronunciations. Given a pinyin2 as the input, pinyin input method returns a list of Chinese characters pronounced with that pinyin. Fundamental elements of pinyin include initials (声母) and finals (韵母). In most cases, a Chinese character is spelled with one initial followed by one final. For example, as shown in Table 1, the initial and final for the Chinese character “我 (me)” are w and o, respectively. People may enter perfect pinyin (e.g., “wo men” for “我们”), where initials and finals of all Chinese characters are entered. There are about 420 perfect pinyin in common use. Sometimes, especially when multiple Chinese characters are entered at once, people may use abbreviated pinyin by only entering the initials of characters (e.g., “w m” for “我们”).\nThis work, to the best of our knowledge, is the first one to explore the use of Chinese GPT for pinyin input method. We start by testing the performance of a frozen GPT. In this setting, we fix the parameters of GPT and predict Chinese characters from left to right in an autoregressive manner. At each time step, only characters pronounced with the same pinyin are legitimate candidates to be predicted. We find that, when the input is perfect pinyin, a frozen GPT performs comparably to stateof-the-art systems on the benchmark dataset (Yang et al., 2012). However, when the input is abbreviated pinyin with only initials of characters, the performance of GPT has a drastic drop. A major reason is that an abbreviated pinyin maps to\n2https://en.wikipedia.org/wiki/Pinyin\nmany perfect pinyin. For example, the initial “w” can be the abbreviation for “wo”, “wei”, “wang”, “wai”, “wu”, etc. This would lead to exponentially larger number of legitimate candidates of Chinese characters. We mitigate this problem by incorporating pinyin information from two directions. One is to enrich the input by adding pinyin as additional context. The other is learning over pinyin-constrained vocabulary, which enhances the model’s ability to distinguish between Chinese characters pronounced with the same pinyin.\nTo further facilitate the research on pinyin input method, we construct a new dataset based on the WuDaoCorpora (Yuan et al., 2021). Our dataset includes 270K instances from 15 commonly used news domains. To evaluate towards multiple facets, the dataset covers instances with different numbers of context characters and pinyin. From our experiment results, we have these key findings:\n1. On perfect pinyin, frozen GPT achieves stateof-the-art results.\n2. On abbreviated pinyin, the performance of frozen GPT drops drastically. Context enrichment with pinyin and pinyin-constrained training both improve the performance.\n3. The performance of GPT-based models increases as the context of Chinese characters becomes longer."
+    }, {
+      "heading" : "2 Task",
+      "text" : "The input of pinyin input method includes a sequence of Chinese characters C = {w1, . . . , wn} as the context and a sequence of pinyin P = {pn+1, . . . , pn+k}, where wi ∈ Vw, pn+j ∈ Vp, and Vw and Vp are the vocabularies of words and pinyin, respectively. The output is a sequence of Chinese characters O = {wn+1, . . . , wn+k}, where wn+i ∈ Vw. The number of output characters is the same as the number of pinyin (i.e.,\nk) and each character should be pronounced with the corresponding pinyin. The output sequence is desired to follow the context of Chinese characters to form a coherent sentence. As mentioned earlier in the introduction section, the input pinyin might be perfect (e.g., “wo men”) or abbreviated (e.g., “w m”). Examples of the task are given in Table 2.3 In our definition, one situation is that the context of characters is empty, which corresponds to the scenario that people are entering pinyin at the beginning of a sentence. The other situation is that the context includes real words, which stands for the scenario that people are entering pinyin in the middle of a written sentence.\nIn this paper, we assume that the oracle pinyin segmentation results are provided. Sometimes, a raw pinyin sequence can be mapped to different segmentation results. For example, the raw pinyin input “jianshi” can be segmented as “ji an shi” (“集安市”, a city in the southwestern part of Jilin province, China) or “jian shi” (“见识”, which is translated as “experience” in English). Pinyin segmentation is a subtask (Zhao et al., 2006; Zhou et al., 2007) of pinyin input method, which is well solved with the accuracy of 98% (Zhang et al., 2017). We leave the integration of pinyin segmentation as future work."
+    }, {
+      "heading" : "3 Models",
+      "text" : "In this section, we first introduce standard textbased GPT models adopted in this work (section 3.1). Afterwards, we introduce how to extend GPT models for pinyin input method with enriched pinyin context (section 3.2) and pinyin-constrained training (section 3.3), respectively."
+    }, {
+      "heading" : "3.1 GPT Baselines",
+      "text" : "In this work, we use character-level Chinese GPT as the backbone. We describe character-level GPT\n3People may also input pinyin like “l b y you dian shi”, we leave this as a future work.\nmodels in this subsection. We start with a publicly available character-level GPT (Du, 2019)4, which we call GPT (public). The model has the same configuration as the standard 12-layer GPT5. It is trained on the CLUECorpusSmall dataset of 14GB (Xu et al., 2020), which consists of Chinese news, Wikipedia, online forum message, and consumer comments. We have tried another well known Chinese pretrained language model called CPM (Zhang et al., 2021b), which is trained on 100GB data. The vocabulary of CPM contains both Chinese characters and words.6 We built a baseline with the CPM model of 12 layers7 and forced the generated token to be a Chinese character. However, this baseline does not work well on pinyin input method, partly because our character-level decoding is inconsistent with the way how CPM is trained. It is promising to leverage the advantage of CPM on word-level decoding, and we leave this as a future work.\nTo build a stronger Chinese GPT baseline, we use GPT (public) as the starting point and further pretrain on a 800GB data crawled by us that is composed of news, Wikipedia, and novel texts. The model is trained with a batch size of 2,560 on 32x Tesla V100 GPUs. We adopt the Adam optimizer (Kingma and Ba, 2015) and set the learning rate to 1e-5 with a linear warmup scheduler. We run the warmup process for 10k steps and train 100k steps in total. We call this 12-layer GPT model as GPT (ours).\nTo apply GPT (public) and GPT (ours) to pinyin input method, we use the traditional decoding pipeline of GPT to generate the sequence of Chinese characters in an autoregressive way. After encoding all the context of characters, the model predicts a Chinese character at each time step conditioned on the pinyin. Only Chinese characters pronounced with the same pinyin are legitimate candidates to be predicted. Without further clarification, this strategy is used in all the experiments."
+    }, {
+      "heading" : "3.2 Incorporating Pinyin Context",
+      "text" : "We explore two simple ways to incorporate pinyin information and build two models correspondingly.\n4https://github.com/Morizeyao/ GPT2-Chinese\n5https://huggingface.co/gpt2 6A Chinese word may consist of multiple Chinese characters. For example, the word “我们” (we) includes two characters “我” and “们”.\n7https://github.com/TsinghuaAI/ CPM-1-Distill\nThe first model uses pinyin information horizontally by concatenating pinyin input to the context of characters. The second model incorporates pinyin information vertically by adding a pinyin embedding layer at the bottom of GPT.\nPinyinGPT-Concat In this model, we append a pinyin sequence to the context of Chinese characters. In the inference stage, the input has the form of x = [w1, . . . , wn,[SEP], pn+1, . . . , pn+k, [SEP]], where [SEP] is a special token to separate text and pinyin. The model largely follows the architecture of the standard GPT. Since there is one-one relationship between pinyin tokens and generated Chinese characters (i.e., the pronunciation of wn+j is pn+j), we adjust the absolute positions of the characters to be generated. We assign the position of pn+j to wn+j , expecting the model to learn the alignments between pinyin and target characters.8 We further expand the vocabulary of the word embedding layer by adding pinyin tokens.\nIn the training stage, given an training instance of [w1, . . . , wn,[SEP], pn+1, . . . , pn+k, [SEP], wn+1, . . . , wn+k], the model is trained to minimize the following loss function, where w<n+j stands for the characters before wn+j and p = [pn+1, . . . , pn+k].\nLconcat = − k∑\nj=1\nlog p(wn+j |w<n+j ,p) (1)\nPinyinGPT-Embed The original GPT model includes a word embedding layer and a position embedding layer. In this model, we add a pinyin embedding layer. The basic idea is to provide the model with the pinyin of the character to be generated next. Specifically, the embedding of each character is the sum of the token embedding of the current character, the position embedding of the current character and the pinyin embedding of the next character. When a word (e.g., numbers, punctuations and symbols) has no corresponding pinyin, we use a special token [unk] to represent it instead. The training process is similar with the standard GPT, as shown in Figure 1. The loss function is given as follows.\nLembed = − n+k∑ j=1 log p(wj |w<j ,p<j+1) (2)\n8On abbreviated pinyin, this strategy could bring 0.3 points in terms of P@5.\nIn the inference stage, we transform the input sequence to the same format."
+    }, {
+      "heading" : "3.3 Pinyin-Constrained Training",
+      "text" : "We describe training details in this subsection. In standard GPT, the loss function is computed over the whole vocabulary. However, this is suboptimal for pinyin input method because the major challenge in the inference stage is how to select the best one from characters pronounced with the same pinyin (as described in the end of section 3.1). This leads to inconsistency between training and inference stages. Therefore, in the training stage, the probability of a character is calculated over characters pronounced with the same pinyin, which is formulated as follows.\np(wi) = exp (g(wi))∑\nwj∈Vpi exp (g(wj))\n, (3)\nwhere Vpi is the set of Chinese characters whose pinyin is pi and g is the logit before the softmax layer."
+    }, {
+      "heading" : "4 Experiment",
+      "text" : "In this section, we show the results on pinyin input method over the two settings (i.e., perfect pinyin and abbreviated pinyin)."
+    }, {
+      "heading" : "4.1 Settings",
+      "text" : "We describe the two datasets used in the following experiments and the evaluation metric.\nPD Dataset PD dataset (Yang et al., 2012) is a commonly used benchmark dataset for the evaluation of pinyin input method (Jia and Zhao, 2014; Zhang et al., 2017; Huang et al., 2018; Zhang et al., 2019). The texts in PD are extracted from the People’s Daily9 from 1992 to 1998. It contains 5.04 million segments of consecutive Chinese characters (or Maximum Input Unit in some literature) for training and 2,000 segments for testing. For each test case, the input pinyin are all perfect pinyin and the context is null.\nWD Dataset Since the PD data includes out-ofdate news from 20 years ago and does not support us to study the scenario where the context includes real words, we construct a new dataset called WD. We use the WuDaoCorpora (Yuan et al., 2021) that contains 3TB Chinese corpus collected from 822 million Web pages. Currently, 200GB of the corpus has been made publicly available 10. We randomly select 15 domains from WuDaoCorpora. For each domain, we first use an off-the-shelf Chinese segmentation toolkit (Zhang et al., 2020) to segment\n9http://www.people.com.cn/ 10https://resource.wudaoai.cn/home\nthe documents into sentences. Then we automatically obtain the perfect pinyin and abbreviated pinyin of characters with pinyin converting tools. For each sentence, we randomly choose a context with a range from 0-3, 4-9 and 10+ words. Consecutively, we choose the target to be 1-3, 4-9 or 10+ words, respectively. It’s further required that the target should be continuous characters that each has its own pinyin. We call each context-target length tuple like (4-9, 10+) as an evaluation configuration. For each configuration, we sample 2,000 test cases. In total, there are 9 configurations of 18,000 cases for each domain. The whole dataset consists of 270,000 examples. We investigate extremely long target lengths for the purpose of research that these configurations may not appear in real cases. All the instances in the WD dataset are only used for evaluation.\nEvaluation Metric We use precision at top-K as the evaluation metric, which is widely adopted in the literature (Jia and Zhao, 2014; Zhang et al., 2017, 2019). It measures if the ground truth exists in the top-K generated results. Some existing works also use keystroke-based metrics (Jia and Zhao, 2013; Huang et al., 2015) and human evaluation, which we don’t use in this work because the evaluation process is more complex and timeconsuming.\nOther Settings We train both PinyinGPT models with the training data of GPT (ours). To preprocess the corpus, we use a public library pypinyin11 to get the pinyin of Chinese characters.12 We initialize both PinyinGPT models with GPT (ours). Both models are trained for 100k steps on 32 GPUs of NVIDIA V100 Tensor Core with a bach size of 25,000. The learning rate is 5e-5. We maintain a maximum of 128 tokens for every training example. We use a probability of 50% to sample a target sequence with less than 5 words, otherwise we randomly sample a target sequence with 6 to 25 words. During inference stage, we use beam search with a beam size of 16 for text generation."
+    }, {
+      "heading" : "4.2 Results on Perfect Pinyin",
+      "text" : "We report results on the PD dataset (Yang et al., 2012). We use pinyin-constraint training in all configurations and train PinyinGPT models with\n11https://github.com/mozillazg/ python-pinyin\n12If there are heteronym issues, we further verify them with an online dictionary ZDic (https://www.zdic.net/).\ndifferent pinyin vocabularies for perfect pinyin and abbreviated pinyin, respectively. We compare with the following baselines.\n• Google IME is a commercial Chinese IME which provides a debuggable API.\n• On-OMWA (Zhang et al., 2017) is an online model for word acquisition which adaptively learns new words for Chinese IME.\n• On-P2C (Zhang et al., 2019) is a neural pinyinto-Chinese character conversion model, which is augmented by an online updated vocabulary to support open vocabulary learning.\nIn Table 3, the first group (top) shows the results of the aforementioned baselines, which are directly extracted from On-P2C (Zhang et al., 2019). The bottom group shows the performance of GPT (public) and GPT (ours) with frozen parameters. We can find that GPT (public) achieves comparative performance with existing systems in terms of P@5 and P@10. After being trained with a larger corpus, GPT (ours) surpasses all the baseline models in terms of all metrics. It is worth noting that existing baselines are supervised models that are fine-tuned on training instances. The results demonstrate the effectiveness of GPT models pretrained on vast amount of texts."
+    }, {
+      "heading" : "4.3 Results on Abbreviated Pinyin",
+      "text" : "In this section, we report results for both perfect pinyin and abbreviated pinyin on WD.\nIn Table 4, we list the overall experiment results of two GPT baselines as well as our PinyinGPT models. We have several findings based on the results. First, from each row, we can see that there is a drastic performance drop for all models. The reason is that each abbreviated pinyin can be mapped to a large amount of candidate characters,\nso that the problem is more challenging compared to perfect pinyin. We also believe that the evaluation metric of P@1 might be too strict for abbreviated pinyin because sometimes the top predictions might be correct (as reflected in Figure 3) even though they may be different from the ground truth. Second, adding pinyin information to GPT obtains limited improvement on perfect pinyin, but boosts the abbreviated setting by 5 points on P@5 and 7 points on P@10, respectively. Third, concatenating pinyin context horizontally is better than adding pinyin embedding vertically. Last, fine-tuning all the parameters performs better than keeping the parameters of GPT fixed."
+    }, {
+      "heading" : "4.4 Model Analysis: Ablation Study",
+      "text" : "In this section, we conduct experiments to understand the importance of pinyin context and pinyinconstrained training. Results are given in Figure 2. The baseline model is GPT (ours). The model + Pinyin Context means that we concatenate pinyin context (i.e., PinyinGPT-Concat) and learn over the whole vocabulary. The model + Pinyin Context + PC-LOSS means that we use both pinyin context and pinyin-constrained training. The figure shows that taking pinyin as extra context works well to improve results in terms of P@5 and P@10. When\nthe two components are adopted, the performance is further improved."
+    }, {
+      "heading" : "4.5 Model Analysis: Context-Target Length",
+      "text" : "To analyze how context length and target length affect performance, we aggregate experiment results to form a matrix of accuracy for each configuration in Table 5. Each score is averaged over all the domains. From each column, we can see that longer context benefits both GPT and our model in pinyin input method, which verifies the power of context understanding ability of GPT models. An interesting finding is that, when the context is long\nenough (e.g., 10+), adding pinyin does not help improve the P@1."
+    }, {
+      "heading" : "4.6 Model Analysis: Case Study",
+      "text" : "We list three cases in Figure 3 to compare model outputs produced by GPT (ours) and PinyinGPTConcat. The first case shows that, given perfect pinyin as the input, both GPT (ours) and PinyinGPT-Concat make the correct predictions. In the second case, abbreviated pinyin is given as the input. PinyinGPT-Concat makes the correct prediction while the prediction of GPT (ours) does not fit to the context well. In Case 3, even if PinyinGPTConcat ranks the ground truth as the second best, the top 1 prediction still makes much sense and fit well with the context. In all cases, GPT (ours) usually generate predictions which are grammatically sound but semantically inappropriate."
+    }, {
+      "heading" : "4.7 Model Analysis: Domains",
+      "text" : "In this subsection, we analyze how performance differs with respect to domains. We put the full table over all domains in the Appendix and sample six domains for illustration in Table 6. The table shows that PinyinGPT-Concat achieves consistent improvement over GPT on all domains. We also find that the absolute scores vary a lot across domains. This reflects different predictability for texts on different domains. For example, the P@10 score of the Culture domain is 16 points lower than the Medical domain. In the Medical domain, the texts contain plenty of descriptions of symptoms and instructions of medicines, which are somehow\ncanonically used. While in the Culture domain, the texts are less constrained and have more variations."
+    }, {
+      "heading" : "4.8 Model Analysis: Accuracy versus Latency",
+      "text" : "Considering pinyin input method requires both accuracy and efficiency, we further train a 6-layer GPT to investigate the trade-off. Our 6-layer GPT is directly truncated and initialized from the 12- layer GPT and is continually trained for 50k steps with the same configuration of 12-layer GPT.\nThe evaluation is conducted over the 9 configurations of context-target length and averaged across all domains. Specifically, each configuration is inferred using a data center GPU NVIDIA V100 Tensor Core, and the GPU is fully occupied by one model. The beam size is set to be 16. We report the average inference time in millisecond as well as accuracy in terms of P@K of PinyinGPTConcat. Table 7 is the result for the configuration (4-9, 4-9). The table shows that the inference time of the model with 6-layer transformer is almost 30% faster than that with 12-layer. However, the performance of the 6-layer model drops consistently in the abbreviated setting. We also list the experiment results for all configurations in the Appendix. We recommend readers to select models in a more cost-effective way based on their requirements."
+    }, {
+      "heading" : "5 Related work",
+      "text" : "We describe related works on pinyin input method and pinyin-enhanced pretrained models here.\nPinyin Input Method We describe existing works based on whether the input pinyin is perfect or abbreviated. A majority of existing works focus on perfect pinyin. Traditional models are typically based on statistical language models (Chen and Lee, 2000) and statistical machine translation (Yang et al., 2012). Recent works are usually built with neural network. For example, Moon IME (Huang et al., 2018) integrates attention-based neural network and an information retrieval module. Zhang et al. (2019) improves an LSTMbased encoder-decoder model with online vocabulary adaptation. For abbreviated pinyin, CoCAT (Huang et al., 2015) uses machine translation technology to reduce the number of the typing letters. Huang and Zhao (2018) propose an LSTM-based encoder-decoder approach with the concatenation of context words and abbreviated pinyin as input. Our work differs from existing works in that we are the first one to exploit GPT and verify the pros and cons of GPT in different situations. In addition, there are some works handling pinyin with typing errors. Chen and Lee (2000) investigate a typing model which handles spelling correction in sentence-based pinyin input method. CHIME (Zheng et al., 2011) is a error-tolerant Chinese pinyin input method. It finds similar pinyin which will be further ranked with Chinese specific features. Jia and Zhao (2014) propose a joint graph\nmodel to globally optimize the tasks of pinyin input method and typo correction. We leave errortolerant pinyin input method as a future work.\nPinyin-enhanced Pretrained Models Our methodology also relates to pretrained models that use pinyin information. Sun et al. (2021) propose a general-purpose Chinese BERT with new embedding layers to inject pinyin and glyph information of characters. There are also task-specific BERT models, especially for the task of grammatical error correction since an important type of error is caused by characters pronounced with the same pinyin. Zhang et al. (2021a) add a pinyin embedding layer and learns to predict characters from similarly pronounced candidates. PLOME (Liu et al., 2021) add two embedding layers implemented with two GRU networks to inject both pinyin and shape of characters, respectively. Xu et al. (2021) add a hierarchical encoder to inject the pinyin letters at character and sentence levels, and add a ResNet encoder to use graphic features of character image."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we explore how to adapt pretrained Chinese GPT to pinyin input method. To begin with, we find that a frozen GPT with decoding conditioned on pinyin can reach state-of-the-art performance on perfect pinyin. However, in abbreviated setting, the performance drops by a large gap. Through our experiments, we find that both context enrichment with pinyin and pinyin-constrained training improve the performance. In the future, we would like to investigate more challenging settings including error-tolerant pinyin input method and mixtures of perfect pinyin and abbreviated pinyin."
+    } ],
+    "references" : [ {
+      "title" : "A new statistical approach to Chinese Pinyin input",
+      "author" : [ "Zheng Chen", "Kai-Fu Lee." ],
+      "venue" : "Proceedings of the 38th Annual Meeting of the Association for Computational Linguistics, pages 241–247, Hong Kong. Association for Computational Linguistics.",
+      "citeRegEx" : "Chen and Lee.,? 2000",
+      "shortCiteRegEx" : "Chen and Lee.",
+      "year" : 2000
+    }, {
+      "title" : "Gpt2-chinese: Tools for training gpt2 model in chinese language",
+      "author" : [ "Zeyao Du." ],
+      "venue" : "https://github. com/Morizeyao/GPT2-Chinese.",
+      "citeRegEx" : "Du.,? 2019",
+      "shortCiteRegEx" : "Du.",
+      "year" : 2019
+    }, {
+      "title" : "A new input method for human translators: Integrating machine translation effectively and imperceptibly",
+      "author" : [ "Guoping Huang", "Jiajun Zhang", "Yu Zhou", "Chengqing Zong." ],
+      "venue" : "Proceedings of the 24th International Conference on Artificial Intelli-",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Moon IME: Neural-based Chinese Pinyin aided input method with customizable association",
+      "author" : [ "Yafang Huang", "Zuchao Li", "Zhuosheng Zhang", "Hai Zhao." ],
+      "venue" : "Proceedings of ACL 2018, System Demonstrations, pages 140–145, Melbourne, Australia. As-",
+      "citeRegEx" : "Huang et al\\.,? 2018",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Chinese Pinyin aided IME, input what you have not keystroked yet",
+      "author" : [ "Yafang Huang", "Hai Zhao." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 2923–2929, Brussels, Belgium. Association",
+      "citeRegEx" : "Huang and Zhao.,? 2018",
+      "shortCiteRegEx" : "Huang and Zhao.",
+      "year" : 2018
+    }, {
+      "title" : "KySS 1.0: a framework for automatic evaluation of Chinese input method engines",
+      "author" : [ "Zhongye Jia", "Hai Zhao" ],
+      "venue" : "In Proceedings of the Sixth International Joint Conference on Natural Language Processing,",
+      "citeRegEx" : "Jia and Zhao.,? \\Q2013\\E",
+      "shortCiteRegEx" : "Jia and Zhao.",
+      "year" : 2013
+    }, {
+      "title" : "A joint graph model for Pinyin-to-Chinese conversion with typo correction",
+      "author" : [ "Zhongye Jia", "Hai Zhao." ],
+      "venue" : "Proceedings of the 52nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1512–1523, Baltimore,",
+      "citeRegEx" : "Jia and Zhao.,? 2014",
+      "shortCiteRegEx" : "Jia and Zhao.",
+      "year" : 2014
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "3rd International Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "PLOME: Pre-training with misspelled knowledge for Chinese spelling correction",
+      "author" : [ "Shulin Liu", "Tao Yang", "Tianchi Yue", "Feng Zhang", "Di Wang." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the",
+      "citeRegEx" : "Liu et al\\.,? 2021",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving language understanding by generative pre-training",
+      "author" : [ "Alec Radford", "Karthik Narasimhan", "Tim Salimans", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Language models are unsupervised multitask learners",
+      "author" : [ "Alec Radford", "Jeff Wu", "Rewon Child", "David Luan", "Dario Amodei", "Ilya Sutskever" ],
+      "venue" : null,
+      "citeRegEx" : "Radford et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Radford et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "ChineseBERT: Chinese pretraining enhanced by glyph and Pinyin information",
+      "author" : [ "Zijun Sun", "Xiaoya Li", "Xiaofei Sun", "Yuxian Meng", "Xiang Ao", "Qing He", "Fei Wu", "Jiwei Li." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computa-",
+      "citeRegEx" : "Sun et al\\.,? 2021",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Read, listen, and see: Leveraging multimodal information helps Chinese spell checking",
+      "author" : [ "Heng-Da Xu", "Zhongli Li", "Qingyu Zhou", "Chao Li", "Zizhen Wang", "Yunbo Cao", "Heyan Huang", "XianLing Mao." ],
+      "venue" : "Findings of the Association for Computa-",
+      "citeRegEx" : "Xu et al\\.,? 2021",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Cluecorpus2020: A large-scale chinese corpus for pre-training language model",
+      "author" : [ "Liang Xu", "Xuanwei Zhang", "Qianqian Dong." ],
+      "venue" : "ArXiv, abs/2003.01355.",
+      "citeRegEx" : "Xu et al\\.,? 2020",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards a semantic annotation of English television news - building and evaluating a constraint grammar FrameNet",
+      "author" : [ "Shaohua Yang", "Hai Zhao", "Bao-liang Lu." ],
+      "venue" : "Proceedings of the 26th Pacific Asia Conference on Language, Information, and Compu-",
+      "citeRegEx" : "Yang et al\\.,? 2012",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Wudaocorpora: A super large-scale chinese corpora for pre-training language models",
+      "author" : [ "Sha Yuan", "Hanyu Zhao", "Zhengxiao Du", "Ming Ding", "Xiao Liu", "Yukuo Cen", "Xu Zou", "Zhilin Yang", "Jie Tang." ],
+      "venue" : "AI Open, 2:65–68.",
+      "citeRegEx" : "Yuan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yuan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Correcting Chinese spelling errors with phonetic pre-training",
+      "author" : [ "Ruiqing Zhang", "Chao Pang", "Chuanqiang Zhang", "Shuohuan Wang", "Zhongjun He", "Yu Sun", "Hua Wu", "Haifeng Wang." ],
+      "venue" : "Findings of the Association for Computational Linguistics: ACL-",
+      "citeRegEx" : "Zhang et al\\.,? 2021a",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Tracing a loose wordhood for chinese input method engine",
+      "author" : [ "Xihu Zhang", "Chu Wei", "Hai Zhao." ],
+      "venue" : "CoRR, abs/1712.04158.",
+      "citeRegEx" : "Zhang et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "2021b. Cpm: A large-scale generative chinese pre-trained language model",
+      "author" : [ "Zhengyan Zhang", "Xu Han", "Hao Zhou", "Pei Ke", "Yuxian Gu", "Deming Ye", "Yujia Qin", "Yusheng Su", "Haozhe Ji", "Jian Guan" ],
+      "venue" : "AI Open,",
+      "citeRegEx" : "Zhang et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Open vocabulary learning for neural Chinese Pinyin IME",
+      "author" : [ "Zhuosheng Zhang", "Yafang Huang", "Hai Zhao." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 1584–1594, Florence, Italy. Association for",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An improved Chinese word segmentation system with conditional random field",
+      "author" : [ "Hai Zhao", "Chang-Ning Huang", "Mu Li." ],
+      "venue" : "Proceedings of the Fifth SIGHAN Workshop on Chinese Language Processing, pages 162–165, Sydney, Australia. Association",
+      "citeRegEx" : "Zhao et al\\.,? 2006",
+      "shortCiteRegEx" : "Zhao et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Chime: An efficient error-tolerant chinese pinyin input method",
+      "author" : [ "Yabin Zheng", "Chen Li", "Maosong Sun." ],
+      "venue" : "IJCAI, pages 2551–2556. IJCAI/AAAI.",
+      "citeRegEx" : "Zheng et al\\.,? 2011",
+      "shortCiteRegEx" : "Zheng et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "A segment-based hidden markov model for real-setting pinyin-to-chinese conversion",
+      "author" : [ "Xiaohua Zhou", "Xiaohua Hu", "Xiaodan Zhang", "Xiajiong Shen." ],
+      "venue" : "Proceedings of the Sixteenth ACM Conference on Conference on Information and Knowledge Manage-",
+      "citeRegEx" : "Zhou et al\\.,? 2007",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2007
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 12,
+      "context" : ", 2018, 2019) is a Transformerbased (Vaswani et al., 2017) language model that predicts tokens in an autoregressive manner.",
+      "startOffset" : 36,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 1,
+      "context" : "With a generic model architecture and the availability of vast web text data, GPT has been successfully developed for English, Chinese (Du, 2019; Zhang et al., 2021b), and many other languages.",
+      "startOffset" : 135,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 15,
+      "context" : "We find that, when the input is perfect pinyin, a frozen GPT performs comparably to stateof-the-art systems on the benchmark dataset (Yang et al., 2012).",
+      "startOffset" : 133,
+      "endOffset" : 152
+    }, {
+      "referenceID" : 16,
+      "context" : "To further facilitate the research on pinyin input method, we construct a new dataset based on the WuDaoCorpora (Yuan et al., 2021).",
+      "startOffset" : 112,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 21,
+      "context" : "Pinyin segmentation is a subtask (Zhao et al., 2006; Zhou et al., 2007) of pinyin input method, which is well solved with the accuracy of 98% (Zhang et al.",
+      "startOffset" : 33,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 23,
+      "context" : "Pinyin segmentation is a subtask (Zhao et al., 2006; Zhou et al., 2007) of pinyin input method, which is well solved with the accuracy of 98% (Zhang et al.",
+      "startOffset" : 33,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2007) of pinyin input method, which is well solved with the accuracy of 98% (Zhang et al., 2017).",
+      "startOffset" : 78,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 1,
+      "context" : "We start with a publicly available character-level GPT (Du, 2019)4, which we call GPT (public).",
+      "startOffset" : 55,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 14,
+      "context" : "It is trained on the CLUECorpusSmall dataset of 14GB (Xu et al., 2020), which consists of Chinese news, Wikipedia, online forum message, and consumer comments.",
+      "startOffset" : 53,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 7,
+      "context" : "We adopt the Adam optimizer (Kingma and Ba, 2015) and set the learning rate to 1e-5 with a linear warmup scheduler.",
+      "startOffset" : 28,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 15,
+      "context" : "PD Dataset PD dataset (Yang et al., 2012) is a commonly used benchmark dataset for the evaluation of pinyin input method (Jia and Zhao, 2014; Zhang et al.",
+      "startOffset" : 22,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2012) is a commonly used benchmark dataset for the evaluation of pinyin input method (Jia and Zhao, 2014; Zhang et al., 2017; Huang et al., 2018; Zhang et al., 2019).",
+      "startOffset" : 87,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2012) is a commonly used benchmark dataset for the evaluation of pinyin input method (Jia and Zhao, 2014; Zhang et al., 2017; Huang et al., 2018; Zhang et al., 2019).",
+      "startOffset" : 87,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2012) is a commonly used benchmark dataset for the evaluation of pinyin input method (Jia and Zhao, 2014; Zhang et al., 2017; Huang et al., 2018; Zhang et al., 2019).",
+      "startOffset" : 87,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2012) is a commonly used benchmark dataset for the evaluation of pinyin input method (Jia and Zhao, 2014; Zhang et al., 2017; Huang et al., 2018; Zhang et al., 2019).",
+      "startOffset" : 87,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 16,
+      "context" : "We use the WuDaoCorpora (Yuan et al., 2021) that contains 3TB Chinese corpus collected from 822 million Web pages.",
+      "startOffset" : 24,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 6,
+      "context" : "Evaluation Metric We use precision at top-K as the evaluation metric, which is widely adopted in the literature (Jia and Zhao, 2014; Zhang et al., 2017, 2019).",
+      "startOffset" : 112,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 5,
+      "context" : "Some existing works also use keystroke-based metrics (Jia and Zhao, 2013; Huang et al., 2015) and human evaluation, which we don’t use in this work because the evaluation process is more complex and timeconsuming.",
+      "startOffset" : 53,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 2,
+      "context" : "Some existing works also use keystroke-based metrics (Jia and Zhao, 2013; Huang et al., 2015) and human evaluation, which we don’t use in this work because the evaluation process is more complex and timeconsuming.",
+      "startOffset" : 53,
+      "endOffset" : 93
+    }, {
+      "referenceID" : 15,
+      "context" : "We report results on the PD dataset (Yang et al., 2012).",
+      "startOffset" : 36,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 18,
+      "context" : "• On-OMWA (Zhang et al., 2017) is an online model for word acquisition which adaptively learns new words for Chinese IME.",
+      "startOffset" : 10,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 20,
+      "context" : "• On-P2C (Zhang et al., 2019) is a neural pinyinto-Chinese character conversion model, which is augmented by an online updated vocabulary to support open vocabulary learning.",
+      "startOffset" : 9,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 20,
+      "context" : "In Table 3, the first group (top) shows the results of the aforementioned baselines, which are directly extracted from On-P2C (Zhang et al., 2019).",
+      "startOffset" : 126,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 0,
+      "context" : "Traditional models are typically based on statistical language models (Chen and Lee, 2000) and statistical machine translation (Yang et al.",
+      "startOffset" : 70,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 15,
+      "context" : "Traditional models are typically based on statistical language models (Chen and Lee, 2000) and statistical machine translation (Yang et al., 2012).",
+      "startOffset" : 127,
+      "endOffset" : 146
+    }, {
+      "referenceID" : 3,
+      "context" : "For example, Moon IME (Huang et al., 2018) integrates attention-based neural network and an information retrieval module.",
+      "startOffset" : 22,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 2,
+      "context" : "For abbreviated pinyin, CoCAT (Huang et al., 2015) uses machine translation technology to reduce the number of the typing letters.",
+      "startOffset" : 30,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 22,
+      "context" : "CHIME (Zheng et al., 2011) is a error-tolerant Chinese pinyin input method.",
+      "startOffset" : 6,
+      "endOffset" : 26
+    }, {
+      "referenceID" : 8,
+      "context" : "PLOME (Liu et al., 2021) add two embedding layers implemented with two GRU networks to inject both pinyin and shape of characters, respectively.",
+      "startOffset" : 6,
+      "endOffset" : 24
+    } ],
+    "year" : 0,
+    "abstractText" : "While GPT has become the de-facto method for text generation tasks, its application to pinyin input method remains unexplored. In this work, we make the first exploration to leverage Chinese GPT for pinyin input method. We find that a frozen GPT achieves state-of-the-art performance on perfect pinyin. However, the performance drops dramatically when the input includes abbreviated pinyin. A reason is that an abbreviated pinyin can be mapped to many perfect pinyin, which links to even larger amount of Chinese characters. We mitigate this issue with two strategies, including enriching the context with pinyin and optimizing the training process to help distinguish homophones. To further facilitate the evaluation of pinyin input method, we create a dataset consisting of 270K instances from 15 domains. Results show that our approach improves the performance on abbreviated pinyin across all domains. Model analysis demonstrates that both strategies contribute to the performance boost.",
+    "creator" : null
+  }
+}

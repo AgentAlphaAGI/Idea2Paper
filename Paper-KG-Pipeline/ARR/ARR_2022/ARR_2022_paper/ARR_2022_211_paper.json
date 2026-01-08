@@ -1,0 +1,643 @@
+{
+  "name" : "ARR_2022_211_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Pyramid-BERT: Reducing Complexity via Successive Core-set based Token Selection",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : null,
+      "text" : "Transformer-based language models such as BERT (Devlin et al., 2018) have achieved the state-of-the-art performance on various NLP tasks, but are computationally prohibitive. A recent line of works use various heuristics to successively shorten sequence length while transforming tokens through encoders, in tasks such as classification and ranking that require a single token embedding for prediction. We present a novel solution to this problem, called Pyramid-BERT where we replace previously used heuristics with a coreset based token selection method justified by theoretical results. The core-set based token selection technique allows us to avoid expensive pre-training, gives a space-efficient fine tuning, and thus makes it suitable to handle longer sequence lengths. We provide extensive experiments establishing advantages of pyramid BERT over several baselines and existing works on the GLUE benchmarks and Long Range Arena (Tay et al., 2020) datasets."
+    }, {
+      "heading" : "1 Introduction",
+      "text" : "Transformers (Vaswani et al., 2017) have gradually become a key component for many state-of-theart natural language representation models. A recent Transformer based model BERT (Devlin et al., 2018), and its variations, achieved the state-of-theart results on various natural language processing tasks, including machine translation (Wang et al., 2019a; Liu et al., 2020), question-answering (Devlin et al., 2018; Yang et al., 2019), text classification (Goyal et al., 2020; Xu et al., 2019), semantic role labeling (Strubell et al., 2018), and so on. However, it takes substantial computational resources to pre-train, fine-tune, or infer such models. The complexity of Transformers is mainly due to a pipeline of encoders, each of which contains a multi-head self-attention layer. The self-attention operation scales quadratically with the input sequence length,\nwhich is a bottleneck especially for long-sequence data.\nGiven this challenge, intensive efforts have been focused on compressing and accelerating Transformers to reduce the cost of pre-training and finetuning. This work is particularly inspired by the sequence-level NLP tasks such as text classification and ranking. The state-of-the-art Transformer models for these tasks utilize a single embedding from the top encoder layer, such as the CLS token, for prediction. Under such regime, retaining full-length sequence till the last encoder creates unnecessary complexity. We follow a line of works detailed in Section 2 that aim to gradually reduce the sequence length in the pipeline of encoders. On a high level, the existing works have two components: Select : a mechanism in charge of reducing the sequence length, either by pruning or pooling, Train-Select : a training or fine-tuning procedure dedicated to this mechanism.\nOur main contribution is a novel solution for Select , motivated from the following observation: As we consider the token representations in top layers, they have increasing redundancy among themselves. We provide a quantitative study demonstrating this in Figure 1. A collection of tokens with high redundancy can intuitively be represented by a small core-set, composed of a subset of the tokens. Inspired by this, our solution for Select is based on the idea of core-sets. We provide a theoretically motivated approach that becomes more effective as the redundancy in the representation increases. This concept separates our work from previous art that provide heuristic techniques for sequence length reduction, or approaches that require expensive training. All of these can in fact be shown to fail in toy examples with high redundancy, e.g. the same representation duplicated multiple times.\nFor Train-Select there is some variety in previous art. Some require a full pre-training procedure, and others require a fine-tuning procedure that works\non the full uncompressed model, meaning one that keeps all tokens until the final encoder layer. The high quality of our solution to Select allows us to simply avoid this additional training phase altogether. The result of this simplification is quite impactful. We obtain a speedup and memory reduction not only to the inference but to the training process itself. This makes it possible to use standard hardware (and training scripts) in the training procedure even for very long sequences.\nIn Section 6 we provide an empirical comparison of our technique with SOTA alternatives and show that it is superior in eliminating redundancy among the tokens, and thus greatly improves the final classification accuracy. In particular, our experiments on the GLUE benchmarks show that our method achieves up to 3-3.5X inference speedup while maintaining an accuracy (mean value over all GLUE datasets) drop of 1.5%, whereas the best baseline suffers a 2.5% drop. We show that our method can be combined with long-text Transformers such as Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al., 2020) to further alleviate the quadratic space complexity of the selfattention mechanism. Empirical experiments on the Long Range Arena (LRA) (Tay et al., 2020) show that our model achieves a better trade-off between space complexity reduction and accuracy in comparison to its competitors. In particular, when working with Performers and reducing the space complexity by 70%, while baselines suffer a drop in accuracy of 4% or more, our technique actually improves the accuracy as it acts as a regularizer.\nConcluding, our paper provides a novel, theoretically justified technique for sequence length reduction, achieving a speedup and memory reduction for both training and inference of transformers, while suffering significantly less in terms of predictive performance when compared to other existing techniques. Our methods are vetted via thorough empirical studies comparing it against SOTA methods and examining its different components."
+    }, {
+      "heading" : "2 Related Works",
+      "text" : "There have been a number of interesting attempts, that were aimed at model compression for Transformers, which can be broadly categorized into three directions. The first line of work focus on the redundancy of model parameters. Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019;\nWu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy. In addition, various types of distillation techniques (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2019; Wang et al., 2020b) have been proposed to remove encoders by training a compact Transformer to reproduce the output of a larger one. Other strategies include weight quantization (Bhandare et al., 2019; Zafrir et al., 2019; Shen et al., 2020; Fan et al., 2020) and weight sharing (Dehghani et al., 2018; Lan et al., 2019). The second line of work focus on reducing the quadratic operation of the self-attention matrices. The quadratic time and space complexity of the attention mechanism with respect to the input sequence serves the main efficiency bottleneck of Transformers, and thus is prohibitively expensive for training long-sequence data. One popular approach is to sparsify the self-attention operation by restricting each token to only attend a subset of tokens (Child et al., 2019; Kitaev et al., 2020; Ye et al., 2019; Qiu et al., 2019; Ainslie et al., 2020; Zaheer et al., 2020; Beltagy et al., 2020). In particular, the most recent Big Bird (Zaheer et al., 2020) and Longformer (Beltagy et al., 2020) introduce sparse models which scale linearly with the input sequence. Another popular approach (Wang et al., 2020a; Choromanski et al., 2020) is to approximate the self-attention to reduce its quadratic complexity to linear, where the most recent Performers (Choromanski et al., 2020) provides an unbiased linear estimation of the attention matrices.\nThe third line, which our work lies in, focus on the redundancy in maintaining a full-length sequence of token-level representation across all encoders (Dai et al., 2020; Wu et al., 2021b; Pietruszka et al., 2020; Ye et al., 2021; Kim and Cho, 2020). This work is particularly inspired by the sequence-level NLP tasks such as text classification and ranking, where the state-of-the-art approach utilizes a single embedding from the top encoder layer of a Transformer, such as the CLS token, for prediction. Under such regime, retaining the full-length sequence till the last encoder creates unnecessary complexity. Dai et al. (2020) applied a simplest strided mean pooling to each sliding window of the sequence to gradually compress tokens. The paper proposed a specialized pre-training procedure for this process that achieves a good balance between speedup and accuracy drop. In comparison we aim to avoid the costly pre-training\nstep and focus on a method that requires only a lightweight fine-tuning. Wu et al. (2021b) define a centroid attention operator that given centroids, computes their embeddings via an attention mechanism. These centroids are chosen either as a random subset of the original tokens, or via strided mean pooling. This results in a similar technique to that of Dai et al. (2020), in terms of having a naive sequence length reduction method. Pietruszka et al. (2020) provide a variant of length 2 strided mean pooling where instead of taking the unweighted average of each pair, they provide learnable weights via a differentiable linear function. In our experiment we did not compare our methods with (Wu et al., 2021b; Pietruszka et al., 2020) since both worked on a limited (non-standard) collection of datasets and at the time of writing this paper, did not provide code allowing us to reproduce their result. Since our paper is focused on techniques to select a subset of tokens and these papers use either random sampling or pooling, we do not believe a thorough comparison is required. Ye et al. (2021) proposed a reinforcement-learning based technique to rank the tokens, thereby allowing it to remove the least important ones. This RL policy must be trained in an expensive process that requires the full network structure. Since we focus on methods to improve both training and inference, we do not include it in our experiments. Vision Transformers (Pan et al., 2021; Heo et al., 2021), which apply various types of pooling techniques to reduce input length, is specially designed for image data and thus non-trivial to compare with our method. Goyal et al. (2020) developed an attention based mechanism to progressively eliminate tokens in the intermediate encoders in the fine-tuning, while maintaining the classification accuracy."
+    }, {
+      "heading" : "3 Pyramid BERT",
+      "text" : "Background. A Transformer model, e.g. BERT, takes a sequence of tokens as input for each input sentence. The sequence of tokens consists of a CLS token followed by the tokens generated by tokenizing the input sentence. For batch processing, an appropriate sequence length N is chosen, and shorter input sentences are padded to achieve an uniform length N . The embedding layer E embeds each token into a vector of real numbers of a fixed dimension. For each input sentence, the token embeddings are transformed through a pipeline of encoders and the self-attention mechanism. Each\nencoder takes all the N embeddings as input, and outputs updated N embeddings of the same dimension. The time and space complexity of the self-attention scales quadratically with the input sequence length N .\nMotivation. The state-of-the-art BERT utilizes only the CLS token from the top encoder layer for tasks such as classification and ranking. A natural question is: do we need to propagate all the token embeddings through the entire pipeline of encoders when only the top layer CLS embedding is used for prediction? In general, yes, since the selfattention transforms all the embeddings together, updating each one by capturing information from all the others. However, if two or more tokens are exact duplicates of each other, then one can easily remove the duplicates from the input and modify the self-attention appropriately to get the same CLS embedding at the top layer, and hence the same prediction. This would reduce the number of FLOPs carried out in each self-attention layer.\nIn general, input sentences do not contain duplicate tokens. However, a preliminary study of token embeddings show that as the embeddings propagate through the pipeline of encoders, they become more similar to the CLS token, Figure 1 (top row). A deeper investigation shows that they also become more similar with each other and form clusters among themselves, Figure 1 (bottom row).\nIn this work, we exploit these observations, and present pyramid BERT, a novel BERT architecture, that reduces computational and space complexity of fine-tuning and inference of BERT while incurring minimal performance degradation. The pyramid BERT works for all the downstream tasks that only use the top layer CLS token for prediction, such as classification and ranking.\nArchitecture. The pyramid BERT successively selects subsets of tokens in each encoder layer to propagate them to the next encoder. An illustration of pyramid BERT is shown in Figure 2. It involves two main components over BERT: (a) A sequencelength configuration: a monotonically decreasing sequence ` = (`1, `2, · · · , `L) that specifies the number of tokens to retain in each of the L encoders, for all the input examples. (b) A core-set based token selection methodology which in each j-th encoder, given `j−1 token embeddings from the (j − 1)-th encoder selects a subset of it of size `j to propagate them to the next encoder. Note that the rest of pyramid BERT architecture is same as the BERT, and it has exactly the same number of parameters as the BERT.\nIn Section 4, we provide a theoretical derivation of the core-set based token selection methodology by minimizing an upper bound of successive token selection loss. To computationally perform the core-set based token selection, we provide a greedy k-center algorithm in Section 5.1. In Section 5.2, we present a simple yet effective approach to select the sequence-length configuration ` for a desired time/space complexity reduction."
+    }, {
+      "heading" : "4 Coreset Based Token Selection",
+      "text" : "Problem Definition. We are interested in a C class classification problem defined over a compact space X and a label space Y = {1, 2, · · · , C}. We consider a loss function Lw(·, ·) : X · Y → R which is parametrized over the hypothesis class (w), the parameters of the transformer network (e.g. BERT), and a set of training data points sampled i.i.d. over the space Z = X · Y as {xi, yi}i∈[n] ∼ pZ where [n] = {1, 2, · · · , n}.\nLet T denote a token selection algorithm. For an example input x, let the input and output embeddings of the token selection algorithm T at encoder j be S̃j and Sj respectively. The size of the two sets are |S̃j | = `j−1, and |S| = `j . In particular, at each encoder j, the algorithm T selects `j embeddings of the input set S̃j as the output set Sj , and eliminates the remaining `j−1 - `j embeddings in S̃j . Let S̃ = {S̃j}j∈[L], and S = {Sj}j∈[L]. Given the underlying BERT parameters w, the sequence length configuration `, and the classification loss Lw, pyramid BERT solves the token selection problem by minimizing the population risk as follows:\nmin {S:Sj⊆S̃j ,|Sj |≤`j}j∈[L]\nEx,y∼pZ [ Lw(x, y, S̃,S) ] .\n(1)\nMethod. In order to design an optimal token selection algorithm T , we consider the following upper bound of the token selection loss defined in (1):\nEx,y∼pZ [L(x, y, S̃,S)]︸ ︷︷ ︸ pyramid BERT population risk ≤ 1 n n∑ i=1\nL(xi, yi)︸ ︷︷ ︸ BERT training error +\n∣∣∣∣Ex,y∼pZ [L(x, y, S̃,S]− 1n n∑\ni=1 L(xi, yi, S̃i,Si) ∣∣∣∣︸ ︷︷ ︸\npyramid BERT generalization error\n+ 1\nn n∑ i=1 ∣∣∣∣L(xi, yi)− L(xi, yi, S̃i,Si)∣∣∣∣︸ ︷︷ ︸ pyramid BERT token selection loss . (2)\nFor ease of notation, we write Lw as L. The above bound follows immediately from the triangle inequality. For the first two terms in the above bound: the BERT training error is a constant for fixed parameters w, and the generalization error of models like BERT is known to be small. Therefore, we redefine the token selection problem, Equation 1, to minimize the third term, the pyramid BERT token selection loss\n1\nn n∑ i=1 min {Si:|(Sij)|≤`j} ∣∣∣∣L(xi, yi)− L(xi, yi, S̃i,Si)∣∣∣∣ . (3)\nTo solve Equation 3, we first optimize a slightly different token selection algorithm T ∗ for a model pyramid∗ BERT. In pyramid∗ the embedding sequence length is not reduced across the encoder layers. Let S̃∗j and S ∗ j denote the set of input and\noutput embeddings of T ∗, where the size of the two sets is equal to the input sequence length N , |S̃∗j | = |S∗j | = N . Given an input set S̃∗j in encoder j, the algorithm T ∗ first selects a subset of it of size `j , which is exactly same as Sj selected by T in pyramid BERT. Next, instead of eliminating the remaining N − `j embeddings in S̃∗j as is done by T , the T ∗ replaces them with their nearest embedding in Sj to form the output set S∗j . The unique embeddings of the output set S∗j of pyramid\n∗ BERT are exactly same as the embeddings of output set Sj of pyramid BERT, that is unique(S∗j ) = Sj. We make the following observation.\nRemark 1 A pyramid∗ BERT can be reduced to a pyramid BERT with a weighted self attention network. The weighted self attention network weighs attention scores according to the duplicity of the tokens in the embeddings of pyramid∗ BERT.\nGiven the above remark, we optimize the token selection problem for pyramid∗ BERT. In the theorem below, we give an upper bound for the token selection loss stated in (3) for pyramid∗ BERT.\nTheorem 1 If the classification layer is λCLipschitz, and for all j ∈ [L], the encoder Ej is λj-Lipschitz continuous for all its parameters, and T ∗ is a token selection algorithm such that the unique elements of the output embedding set unique(S∗j ) is a δ-cover of the input embedding set S̃∗j , and the N − `j remaining elements in S̃∗j \\ S∗j are replaced in S∗j by their nearest elements in unique(S∗j ), then for all i such that xi is bounded, the following holds:∣∣∣L(xi, yi)− L(xi, yi, S̃∗i ,S∗i )∣∣∣\n≤ δλC L∑\nj=1\n( (N − `j) L∏ i=j λi ) . (4)\nWe visualize the concept of δ-cover in Figure 3. The set of red points (i.e., token embeddings in our case) with radius δ covers the entire set of points. Theorem 1 suggests that we can bound the token selection loss of algorithm T ∗ for pyramid∗ BERT with the δ-cover core-set token selection. The loss goes to zero as the covering radius δ goes to zero. A proof of the theorem is given in Appendix A.\nFrom Remark 1, the optimal choice of token selection for pyramid BERT is same as the optimal choice of unique tokens selected in pyramid∗ BERT, up to weighing of self-attention. However, in numerical experiments we found that fine-\ntuning pyramid BERT with the core-set based token selection performs better than weighing the self-attention. The δ-cover core-set token selection problem is equivalent to the k-Center problem (also called min-max facility location problem) (Wolf, 2011). We explain how we solve the k-Center problem using a greedy approximation algorithm in §5.1."
+    }, {
+      "heading" : "5 Pyramid BERT: Algorithm",
+      "text" : "Given a pre-trained BERT, we create a fine-tuned pyramid BERT as follows. For the core-set selection module shown in Figure 2, we implement a k-Center-greedy-batch-m algorithm, Section 5.1, to approximately select the core-set of embeddings. We fine-tune all the trainable parameters of the pyramid BERT for different choices of sequencelength configurations `, according to approach given in Section 5.2. We select the optimal configuration ` satisfying the required inference speed-up or the space complexity reduction. The selected optimal choice of ` is kept fixed during inference."
+    }, {
+      "heading" : "5.1 Token Selection Algorithm",
+      "text" : "Algorithm 1: k-Center-greedy-batch-m Data: Input set S̃, the number of centers to add per\niteration m. Result: Output set S, with |S| = k. Initialize S = {CLS embedding} while |S| < k do\nM = {} while |M | ≤ m do\ns = argmaxu∈S̃\\S minv∈S distance(u, v) M = M ∪ {s}\nend S = S ∪M\nend return S\nThe δ-cover core-set problem is equivalent to kCenter problem which is NP-Hard. However, it is possible to obtain a 2×OPT solution of k-Center using a greedy approach (Cook et al., 2009). The\ngreedy approach selects the core-set of size k oneby-one, making it un-parallelizable, and hence runs slow on GPUs. For pyramid BERT, we developed a parallelizable version of this greedy approach, Algorithm 1, which selects m centers at a time."
+    }, {
+      "heading" : "5.2 Sequence-length Configuration",
+      "text" : "For the sequence-length configuration `, we restrict the sequences to be exponentially decaying. Specifically, a valid sequence is determined by two parameters. The target pruning ratio 0 < p < 1, and the index of the layer after which we stop reducing the sequence length 1 ≤ iprune-upto ≤ L. The sequence lengths are defined as\nlj =\n⌈ N · p min(j,iprune-upto) iprune-upto ⌉ , j = 0, 1, · · · , L, (5)\nwhere j = 0 corresponds to the input layer. We found that this strategy provides a good balance between the need to reduce the length quickly while retaining information. It involves hyperparameter tuning with two HPs: p, iprune-upto, and allows for an efficient training procedure. In Appendix C we provide a study comparing this restriction to possible alternatives showing its advantages. In addition we discuss how it compares to recent approaches (Goyal et al., 2020; Ye et al., 2021)."
+    }, {
+      "heading" : "6 Experiments",
+      "text" : "We plug-in our core-set based token selection method and the other competitive methods into encoder layers of a backbone Transformer, and after fine-tuning evaluate their performance on a wide range of natural language classification tasks. Specifically, we conduct the evaluations on two popular benchmarks: (1) the General Language Understanding Evaluation (GLUE) benchmark (Wang et al., 2018), and (2) the Long Rang Arena (LRA), a collection of challenging long range context tasks (Tay et al., 2020). For the backbone Transformer, we choose BERTBase (Devlin et al., 2018) for the GLUE benchmarks, and two state-of-the-art long-text Transformers Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al., 2020) for the LRA. For dataset statistics such as the number of classes and input sequence length, and the details of the backbone Transformers, see Appendix D.\nFor sequence-length configurations, we generate a set F of 30 sequence-length configurations using\nEquation 5, the details of which are listed in Table 9 Appendix D. The high level idea is to cover multiple tradeoffs between efficiency and accuracy.\nFor each token selection method, we show the predictive performance for 1.5X , 2X , 3X , and 3.5X speedup. Similarly, we show the predictive performance for 30% and 70% space complexity reductions of the attention layer. The reason we consider the space reduction for the attention layer alone is that its quadratic complexity serves the main bottleneck for long sequences. For details on how to get the predictive performance at different speedup and mathematical formula for computing speedup and space complexity reduction, see Appendix D."
+    }, {
+      "heading" : "6.1 Baseline Methods",
+      "text" : "We compare our method with following four methods: (1) Attention-select (Att): An attention based mechanism from Goyal et al. (2020). (2) First-kselect (1st): Selects the first k tokens, a strategy often considered with long documents. (3) Inputfirst-k-select (1st-I): Selects the first k tokens, but rather than gradually reducing the sequence length in the encoder layers, performs a single truncation directly on the input. (4) Random-select (Rand): Selects a random subset of tokens.\nFor our core-set based token selection, we try 6 values of m ∈ {1, d0.1ke, d0.2ke, d0.3ke, d0.4ke, (k − 1)} where k = lj , for j = 1, 2, · · · , L. In particular, m = k− 1 selects all k− 1 tokens (centers) in one iteration given the first selected token is always the CLS token. And m = 1 selects one token (center) per iteration which corresponds to the most fine-grained but also the slowest token selection strategy. We denote the strategy of m = k − 1 as Coreset-select-k-1 (CS-k-1), and the others as Coreset-select-x where x ∈ {1, 0.1, 0.2, 0.3, 0.4}. We use Coreset-select-opt (CS-opt) to represent the best value from the Coreset-select-k-1 and Coreset-select-x. In what follows, in tables presenting results we refer to the methods by their shortened (bold) names."
+    }, {
+      "heading" : "6.2 Implementation",
+      "text" : "Hyperparameters. To fairly evaluate our method against the baselines, we use the same set of hyperparameters for all the methods, for a given dataset. For details, see Appendix E.\nRuntime environment. The code for Pyramid-BERT is available as a supplementary ma-\nterial with the submission. The training and inference jobs are run separately on a NVIDIA Tesla V100 GPU machine and a Intel Xeon Platinum 8000 series CPU machine respectively. All the accuracy and speedup scores are averaged over 20 trials."
+    }, {
+      "heading" : "6.3 Results on GLUE benchmarks",
+      "text" : "We first examine the trade-off between accuracy and speedup. The accuracy results for 3X and 1.5X speedup are summarized in Table 1 and 2 respectively. The results for 3.5X and 2X speedup are given in the Table 11 and 12 in Appendix F. We observe that as the speedup increases the gap between our Coreset-select-opt and its competitors becomes large, where for 3X speedup, Coreset-select-opt outperforms the second best method Attention-select by 1% accuracy in average and beats the standard baselines by 2% or more. To better understand the performance of Coreset-select-opt with different values of m, an ablation study is shown in Section 7. For mild speedup of 1.5X , we note that all methods suffer only a small loss in accuracy and our method suffers no loss. A similar situation occurs when viewing the tradeoff between space complexity and accuracy, where we provide results for a memory reduction of 70% and 30% in the Tables 3 and 13 (in § F)"
+    }, {
+      "heading" : "6.4 Results on Long Range Arena",
+      "text" : "We show results on the following three datasets of LRA benchmark: (1) byte-level text classification using real-world data (IMDB), (2) Pathfinder task (long range spatial dependency problem), and (3) image classification on sequences of pixels con-\nverted from CIFAR-10. For baselines, we include First-k-select and Random-select methods, but fail to include Attention-select. Attention-select requires a full attention matrix for selecting tokens which is not available in Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al., 2020). In addition, the Transformers including Big Bird and Performers in LRA have shallow architectures because of no pre-training: the default number of encoders for text classification, path finder, and image classification datasets are four, four, and one, respectively. Thus, we only reduce sequence length in the input layer, which is before the first encoder. For the sequence-length configurations, see Appendix D.2.\nThe results of accuracy scores for space complexity reduction at 70% and 30% are presented in Table 4 and Table 14 (in Appendix F), respectively. The Coreset-select-opt here represents the Coreset-select with m = 1 because of its superior performance over other m ∈ {d0.1ke}, d0.2ke, d0.3ke, d0.4ke}.\nWe observe a similar pattern as discussed in GLUE benchmark evaluations: at high space complexity reduction 70%, Coreset-select-opt significantly outperforms its competitors First-k-select\nand Random-select by 12% and 2.5% in average for Big Bird (12.3% and 5.5% in average for Performers). Moreover, on CIFAR-10, our Coresetselect-opt is even better than the Big Bird and Performers without any sequence reduction with accuracy gain 2.4% and 2.6%, respectively (similarly for Performers on PATHFINDER-32). On the other hand, different from the GLUE evaluations, Coreset-select-k-1 does not show any significant advantages over the baseline methods. Our conjecture is that the input in the LRA datasets contain too many noisy or low level information which is not helpful for predicting the target. For an example, each pixel of an image (CIFAR-10) or a character in the byte-level text classification represents a token as the input. Our Coreset-select based strategy with m = 1 does the most fine-grained token-level selection than its baselines and thus filter out the noisy information. Note, we do not include accuracy and speedup tables because of insignificant gains observed in speedup due to the shallow architectures of Transformers in LRA. Further, for long sequences the issue is typically feasibility due to high memory usage, rather than the long runtime."
+    }, {
+      "heading" : "7 Ablation Studies",
+      "text" : "We conduct four ablation studies to better study pyramid-BERT: (1) Performance comparisons for Coreset-select with different values of m, the number of centers to add per iteration. (2) Justification on the token importance measured by the Coresetselect. The importance score is specifically the order of tokens (centers) added by the Coreset-select strategy. For a batch of sizem tokens that are added at the same time, their importance is determined by\nMNLI_M\nSeq.len.config. CS-1 CS-0.5 CS-k-1\niprune-upto p Acc. Speedup Acc. Speedup Acc. Speedup 1 1.5 78.3 2.5X 77.9 2.9X 77.9 3.6X 2 0.2 81.0 1.9X 80.7 2.3X 80.6 2.6X 3 0.3 82.9 1.7X 82.8 1.9X 82.8 2.1X 4 0.4 83.6 1.7X 83.5 1.7X 83.4 1.8X\nBERTBase 84.0 – 84.0 – 84.0 –\nMNLI_MM\nthe maximum distance between the token and its nearest centers that have already been added. Given a encoder j, we eliminate the k-th most important token for 1 ≤ k ≤ N and compare the classification output with that without any token elimination. (3) Comparison of applying Coreset-select at both fine-tuning and inference versus at only inference to justify the necessity of fine-tuning in selecting tokens. (4) Exploring the position to plug-in the Coreset-select in the encoder. The result for the first ablation study is presented in Table 5 and the results for the others are shown in Appendix B. From Table 5, we can see that Coreset-select with m = 1 gives the best performance but with the smallest speedup for MNLI-M/MM datasets."
+    }, {
+      "heading" : "8 Conclusion",
+      "text" : "We provide a novel, theoretically justified technique for sequence length reduction, named pyramid-BERT, achieving speedup and memory reduction for both training and inference of transformers, while incurring significantly less accuracy drop than competitive methods. The proposed approach can be applied on any Transformer model. Though we show experiments only on classification tasks, our theory and methodology both can be applied for any task that uses only single embedding from the top layer for prediction."
+    }, {
+      "heading" : "A Appendix: Proof of Theorem 1",
+      "text" : "On a high level, theorem follows from the definition of Lipschitz continuity, the definition of the token selection algorithm T ∗ of pyramid∗ BERT, and the fact that the loss function Lw comprises a sequence of encoder layers stacked on top of each other.\nWe introduce two new notations. Let Oj denote the BERT model up to the output of the j-th encoder, and Ej denote the BERT network up to the input of the j-th encoder. Assume that the token selection algorithm T ∗ operates on the embeddings before they are inputted to the encoder.\nFor BERT Ej(x, y) = Oj−1(x, y). For pyramid∗ BERT, due to the token selection algorithm T ∗,∥∥∥∥Ej(x, y, S̃∗,S∗)−Oj−1(x, y, S̃∗,S∗)∥∥∥∥\n≤ δ(N − `j) . (6)\nThe Equation (7) follows immediately from the definition of Lipschitz continuity of the classification layer.∣∣∣L(x, y)− L(x, y, S̃∗,S∗)∣∣∣ ≤ λC\n∥∥∥OL(x, y)−OL(x, y, S̃∗,S∗)∥∥∥ (7) The Equation (8) follows from the Lipschitz continuity of the L-th encoder. The Equation (9) follows from Equation (6). The Equation (10) follows from repeated application of Equation (9) over the encoder layers.\n∥∥∥OL(x, y)−OL(x, y, S̃∗,S∗)∥∥∥ ≤ λL\n∥∥∥EL(x, y)− EL(x, y, S̃∗,S∗)∥∥∥ (8) ≤ λLδ(N − `L)\n+ λL ∥∥∥OL−1(x, y)−OL−1(x, y, S̃∗,S∗)∥∥∥ (9) ≤ λLδ(N − `L) + λLλL−1δ(N − `L−1)\n+ λLλL−1 ∥∥∥OL−2(x, y)−OL−2(x, y, S̃∗,S∗)∥∥∥ ≤ λLδ(N − `L) + λLλL−1δ(N − `L−1)\n+ · · ·+ ( L−1∏\nj=0\nλL−j ) δ(N − `1)\n= δ L∑\nj=1\n( (N − `j) L∏ i=j λi ) (10)\nThe theorem follows by combining Equations (7) and (10)."
+    }, {
+      "heading" : "B Appendix: Ablation Study",
+      "text" : "B.1 Justification on token importance measured by the Coreset-select\nWe conduct a study to validate the importance of tokens measured by our Coreset-select strategy. We consider a trained BERT that has been fine-tuned on a downstream dataset without any sequence length reduction. During inference, given a encoder j and input example consist of a sequence of tokens, we eliminate the k-th most important token measured by the core-set selection method with 1 ≤ k ≤ L, and obtain a classification output (prediction label). The classification outputs for all input examples are then compared with those generated by BERT without any sequence length reduction. The comparison between the two classification outputs is measured by the mutual information (Shannon, 2001). Larger mutual information indicates more similarity between the two classification outputs. The importance score is specifically the order of tokens (centers) added by the core-set selection method. For a batch of size m tokens that are added at the same time, their importance is determined by the maximum distance between the token and its nearest centers that have already been added. The expectation is that the importance of tokens is negatively correlated with the corresponded mutual information. For an example, reducing the least important token for each input example should make the classification outputs have the least difference from those generated without reducing any token, and thus result in the largest mutual information.\nA result on SST-2 dataset is presented in Figure 4. The input sequence length L is set as 64, and thus k ∈ [1, 64]. The encoder index j takes value {1, 3, 6, 9}. Since the target variable of SST-2 is a relatively balanced binary value, the largest mutual information, which corresponds to no difference between the classification outputs, is ln(2) ≈ 0.69. For the token selection method, we choose Coresetselect with m = 1. The pattern shown in the figure aligns with our expectation that the importance of tokens is negatively correlated with the mutual information. Same pattern is observed for Coresetselect-k-1. See Figure 5.\nB.2 Comparison of applying Coreset-select at both fine-tuning and inference versus at only inference\nTable 6 justifies the necessary of fine-tuning in sequence length reduction.\nB.3 The position to insert the Coreset-select method in the encoder\nTwo choices of position have been considered. The first option is to plug-in the token selection method right after the attention layer and before the feedforward network, and the second option is to place it at the end of the encoder. The results is shown in Table 7. The experiment shows that placing the token selection method right after the attention layer gives better performance than placing it at the end of encoder."
+    }, {
+      "heading" : "C Appendix: Evaluation on the Sequence-length Generation Function",
+      "text" : "We note that most recent approaches such as (Goyal et al., 2020; Ye et al., 2021) try to learn a taskdependent sequence-length configuration with a cost of fine-tuning more than twice on the downstream data, where the first fine-tuning trains a full\nmodel without any sequence-length reduction, with additional parameters that often requires delicate tuning. This approach does not help the training process and in fact increase its cost whereas our goal is to improve the training procedure. Furthermore, there is still an amount of HP tuning involved in order to find the right ratio of acceleration (or memory reduction) to accuracy. Our technique involves hyperparameter tuning but with two HPs: p, iprune-upto, and allows for an efficient training procedure.\nWe conduct an experiment to validate the sequence-length generation function, in comparison to a random method that gives configurations for all encoders. Given a dataset we use the retention generation function in Equation 5 and random method to generate a fix number of sequencelength configurations, separately. Then we apply the same core-set based method on the dataset with each sequence-length configuration and compute the statistics of accuracy and speedup for our and random method. We repeat the random method for three times. The number of sequence-length configurations is set as 30, and details of those generated by the Equation 5 is presented in Table 9 in Appendix D.1. The results for SST-2 dataset are shown in Figure 6. We can see that the sequence-length configurations generated by our method provides wider searching range of accuracy and speedups than those generated by the random method."
+    }, {
+      "heading" : "D Appendix: Experiments Setup",
+      "text" : "Data statistics such as the number of classes and input sequence length are specified in Table 9.\nThe details of the backbone Transformer used in GLUE(Wang et al., 2018) and LRA (Tay et al., 2020) are presented as follows: For BERTBase, it was pre-trained on the BooksCorpus and English Wikipedia with L = 12 encoders, A = 12 self-attention heads per encoder and hidden size H = 768. For Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al., 2020), we follow the original implementation in LRA (Tay et al., 2020) that models are fine-tuned from scratched on each task without any pre-training.\nD.1 GLUE Benchmarks\nFor experiments on GLUE benchmarks, the sequence-length configurations F generated by Equation 5 are presented in Table 9. For each dataset and Transformer model with a token selection method, the same set of sequence-length configurations are used.\nFor each sequence-length configuration in F a Transformer with a token selection method is applied at both fine-tuning and inference. Next, for each token selection method we select the accuracy scores when there are speedup 1.5X , 2X , 3X , and 3.5X over the Transformers without any sequence reduction. To get the accuracy score at the exact speedup X , a linear interpolation is used when necessary. However, for objective evaluation we do not extrapolate the results. For details on how to get accuracy scores at different speedup number, see Figure 7 and 8 in Appendix F. Similarly, we select the accuracy scores when the space complexity reductions for the attention layer are 30% and 70%. The reason why we only focus the space reduction for the attention layer is that its quadratic complexity serves the main efficiency bottleneck for Transformers.\nFor Input-first-k-select, since it does not reply on F but different truncated input sequence lengths, we specify its configuration as following: For dataest with N = 256, we try truncated sequence lengths of {240, 224, · · · , 48, 32, 16}. For dataset with N = 120, we try truncated sequence lengths of {112, 96, 80, 64, 48, 32, 16, 8}. And for dataset with N = 64, we try truncated sequence lengths of {48, 32, 16, 8, 4}.\nThe mathematical formulas for speedup and space complexity reduction are presented as below. Consider BERTBase as the backbone Transformer for an example, and denote the BERTBase with a token selection method as BERTToken-select. The speedup is computed as T (BERTBase) / T (BERTToken-select), where T (·) is the time duration in inference. Larger value indi-\ncates higher inference speedup for BERTToken-select over BERTBase. The space complexity reduction for the attention layer is computed as 1 − S(BERTToken-select) / S(BERTBase), where S(·) =∑L\nj=1 l 2 j + ljd, j = 1, 2, · · · , L, and lj and d denotes the number of tokens to select at encoder j and the hidden dimension (dimension of the latent representation), respectively. Larger value indicates higher space complexity reduction for BERTToken-select over BERTBase. For simplicity, the “space complexity reduction\" refers to the reduction for the attention layer in the following discussion.\nD.2 LRA\nWe run a set of sequence-length configurations where the number of tokens to select on the input layer is {d0.1 ·Ne, d0.2 ·Ne, · · · , d0.9 ·Ne} and N is the input sequence length. The Coresetselect-opt here represents the core-set token selection method with m = 1 because we observe it gives the best performance than m ∈ {d0.1 · ke}, d0.2 · ke, d0.3 · ke, d0.4 · ke}. The results of accuracy scores for space complexity reduction at 70% and 30% are presented in Table 4 and 14, respectively. We observe a similar pattern as shown in Section 6.3: at high space complexity reduction 70% in Table 4, Coreset-select-opt significantly outperforms its competitors First-k-select and Random-select by 12% and 2.5% in average for Big Bird (12.3% and 5.5% in average for Performers). Moreover, on CIFAR-10, our Coresetselect-opt is even better than the Big Bird and Performers without any token selection with accuracy gain 2.4% and 2.6%, respectively. Similarly on PATHFINDER-32, the Coreset-select-opt shows 1.5% accuracy gain over the Performers without any token selection. On the other hand, different from Section 6.3, Coreset-select-k-1 does not show any significant advantages over the baseline methods. Our conjecture is that the input in the LRA tasks contain too many noisy or low level information which is not helpful for predicting the target. For an example, each pixel of an image (CIFAR-10) or a character in the byte-level text classification represents a token in the input for the Transformer. Our core-set based strategy, especially with m = 1, does the most fine-grained token-level selection than its baselines and thus filter out the noisy information. At low space complexity reduction 30% in Table 14, the advantages for Coreset-select-opt\nover its baselines becomes smaller, which matches our expectations in the mild sequence-length reduction regime. Note, we do not include accuracy and speedup tables because of insignificant gains observed in speedup due to the shallow architectures of Transformers in LRA and the usage of the slowest coreset based method with m = 1."
+    }, {
+      "heading" : "E Appendix: Hyperparameters",
+      "text" : "To fairly evaluate our method, we do not tune any hyperparameters for both GLUE and LRA benchmarks, i.e., the same set of hyperparameters are used for each dataset across every competing method. For GLUE benchmarks, the learning rate and number of epochs are set as 2e−5 and 3, respectively. The batch size in training is set as 48 for all except MNLI-M/mm and RTE, which are set as 32 and 16, respectively. The batch size in inference is uniformly set as 128. For LRA (Tay et al., 2020), we follow the exact settings for the task-specific hyperparameters and models configurations provided in its official github repository, except reducing the number of encoders in the backbone Transformer (Zaheer et al., 2020; Choromanski et al., 2020) for certain tasks to allow more efficient learning. The details of the hyperparameters and model configurations are presented in Table 10. Note, the learning rate, number of epochs, batch size are all consistent with the default settings in LRA for both Big Birds (Zaheer et al., 2020) and Performers (Choromanski et al., 2020). For the rest of model configurations, see (Tay et al., 2020)."
+    }, {
+      "heading" : "F Appendix: Experimental results",
+      "text" : "First, the GLUE dev performance at 3.5X and 2X speedup are shown in Table 11 and 12. The same conclusion as discussed in Section 6.3 is reached. Similarly, the GLUE dev performance at 30% space complexity reduction is presented in the Table 13.\nSecond, we demonstrate how to generate the accuracy and inference speedup table as shown in Table 1, 2, 11, and 12. A demonstration for dataset SST-2 and MRPC are presented in Figure 7 and 8, respectively. Specifically, for each sequence-length configuration shown in Table 9, we fine-tune a Transformer model with a token selection method on a GLUE train set. Then we compute accuracy score and inference speedup number on its dev set. A scatter plot of accuracy vs. speedup is made where each point corresponds to a sequence-length configuration. Next, among\nthe scatter plot we find a pareto curve where accuracy scores at speedup 1.5X , 2X , 3X , 3.5X are obtained. A linear interpolation is applied based on the pareto curve when necessary. However, we do not extrapolate the results for objective evaluation purpose. For Coreset-select-opt, given a sequence-length configuration we choose the model that has the best accuracy score for m ∈ {d0.1 · ke, d0.2 · ke, d0.3 · ke, d0.4 · ke}.\nThird, For LRA, the results of accuracy scores for space complexity reduction at 30% are presented in Table 14. At low space complexity reduction 30%, the advantages for Coreset-select-opt over its baselines becomes smaller, which matches our expectations in the mild sequence-length reduction regime.\nFourth, the demonstration for token importance measured by the Coreset-select-k-1 is presented in Figure 5."
+    } ],
+    "references" : [ {
+      "title" : "Etc: encoding long and structured data in transformers",
+      "author" : [ "Joshua Ainslie", "Santiago Ontañón", "Chris Alberti", "Philip Pham", "Anirudh Ravula", "Sumit Sanghai." ],
+      "venue" : "arXiv e-prints, pages arXiv–2004.",
+      "citeRegEx" : "Ainslie et al\\.,? 2020",
+      "shortCiteRegEx" : "Ainslie et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Longformer: The long-document transformer",
+      "author" : [ "Iz Beltagy", "Matthew E Peters", "Arman Cohan." ],
+      "venue" : "arXiv preprint arXiv:2004.05150.",
+      "citeRegEx" : "Beltagy et al\\.,? 2020",
+      "shortCiteRegEx" : "Beltagy et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Efficient 8-bit quantization of transformer neural machine language translation model",
+      "author" : [ "Aishwarya Bhandare", "Vamsi Sripathi", "Deepthi Karkada", "Vivek Menon", "Sun Choi", "Kushal Datta", "Vikram Saletore." ],
+      "venue" : "arXiv preprint arXiv:1906.00532.",
+      "citeRegEx" : "Bhandare et al\\.,? 2019",
+      "shortCiteRegEx" : "Bhandare et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Generating long sequences with sparse transformers",
+      "author" : [ "Rewon Child", "Scott Gray", "Alec Radford", "Ilya Sutskever." ],
+      "venue" : "arXiv preprint arXiv:1904.10509.",
+      "citeRegEx" : "Child et al\\.,? 2019",
+      "shortCiteRegEx" : "Child et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Rethinking attention with performers",
+      "author" : [ "Krzysztof Choromanski", "Valerii Likhosherstov", "David Dohan", "Xingyou Song", "Andreea Gane", "Tamas Sarlos", "Peter Hawkins", "Jared Davis", "Afroz Mohiuddin", "Lukasz Kaiser" ],
+      "venue" : "arXiv preprint arXiv:2009.14794",
+      "citeRegEx" : "Choromanski et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Choromanski et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Combinatorial optimization",
+      "author" : [ "William J Cook", "William Cunningham", "William Pulleyblank", "A Schrijver." ],
+      "venue" : "Oberwolfach Reports, 5(4):2875–2942.",
+      "citeRegEx" : "Cook et al\\.,? 2009",
+      "shortCiteRegEx" : "Cook et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Funnel-transformer: Filtering out sequential redundancy for efficient language processing",
+      "author" : [ "Zihang Dai", "Guokun Lai", "Yiming Yang", "Quoc V Le." ],
+      "venue" : "arXiv preprint arXiv:2006.03236.",
+      "citeRegEx" : "Dai et al\\.,? 2020",
+      "shortCiteRegEx" : "Dai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Universal transformers",
+      "author" : [ "Mostafa Dehghani", "Stephan Gouws", "Oriol Vinyals", "Jakob Uszkoreit", "Łukasz Kaiser." ],
+      "venue" : "arXiv preprint arXiv:1807.03819.",
+      "citeRegEx" : "Dehghani et al\\.,? 2018",
+      "shortCiteRegEx" : "Dehghani et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "arXiv preprint arXiv:1810.04805.",
+      "citeRegEx" : "Devlin et al\\.,? 2018",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Reducing transformer depth on demand with structured dropout",
+      "author" : [ "Angela Fan", "Edouard Grave", "Armand Joulin." ],
+      "venue" : "arXiv preprint arXiv:1909.11556.",
+      "citeRegEx" : "Fan et al\\.,? 2019",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Training with quantization noise for extreme model compression",
+      "author" : [ "Angela Fan", "Pierre Stock", "Benjamin Graham", "Edouard Grave", "Rémi Gribonval", "Herve Jegou", "Armand Joulin." ],
+      "venue" : "arXiv preprint arXiv:2004.07320.",
+      "citeRegEx" : "Fan et al\\.,? 2020",
+      "shortCiteRegEx" : "Fan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Power-bert: Accelerating bert inference via progressive word-vector elimination",
+      "author" : [ "Saurabh Goyal", "Anamitra Roy Choudhury", "Saurabh Raje", "Venkatesan Chakaravarthy", "Yogish Sabharwal", "Ashish Verma." ],
+      "venue" : "International Conference on Machine",
+      "citeRegEx" : "Goyal et al\\.,? 2020",
+      "shortCiteRegEx" : "Goyal et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Rethinking spatial dimensions of vision transformers",
+      "author" : [ "Byeongho Heo", "Sangdoo Yun", "Dongyoon Han", "Sanghyuk Chun", "Junsuk Choe", "Seong Joon Oh." ],
+      "venue" : "arXiv preprint arXiv:2103.16302.",
+      "citeRegEx" : "Heo et al\\.,? 2021",
+      "shortCiteRegEx" : "Heo et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Tinybert: Distilling bert for natural language understanding",
+      "author" : [ "Xiaoqi Jiao", "Yichun Yin", "Lifeng Shang", "Xin Jiang", "Xiao Chen", "Linlin Li", "Fang Wang", "Qun Liu." ],
+      "venue" : "arXiv preprint arXiv:1909.10351.",
+      "citeRegEx" : "Jiao et al\\.,? 2019",
+      "shortCiteRegEx" : "Jiao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Lengthadaptive transformer: Train once with length drop, use anytime with search",
+      "author" : [ "Gyuwan Kim", "Kyunghyun Cho." ],
+      "venue" : "arXiv preprint arXiv:2010.07003.",
+      "citeRegEx" : "Kim and Cho.,? 2020",
+      "shortCiteRegEx" : "Kim and Cho.",
+      "year" : 2020
+    }, {
+      "title" : "Reformer: The efficient transformer",
+      "author" : [ "Nikita Kitaev", "Łukasz Kaiser", "Anselm Levskaya." ],
+      "venue" : "arXiv preprint arXiv:2001.04451.",
+      "citeRegEx" : "Kitaev et al\\.,? 2020",
+      "shortCiteRegEx" : "Kitaev et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Albert: A lite bert for self-supervised learning of language representations",
+      "author" : [ "Zhenzhong Lan", "Mingda Chen", "Sebastian Goodman", "Kevin Gimpel", "Piyush Sharma", "Radu Soricut." ],
+      "venue" : "arXiv preprint arXiv:1909.11942.",
+      "citeRegEx" : "Lan et al\\.,? 2019",
+      "shortCiteRegEx" : "Lan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Transactions of the Association for Computational Linguis-",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Pruning a bert-based question answering model",
+      "author" : [ "J Scott McCarley." ],
+      "venue" : "arXiv preprint arXiv:1910.06360, 142.",
+      "citeRegEx" : "McCarley.,? 2019",
+      "shortCiteRegEx" : "McCarley.",
+      "year" : 2019
+    }, {
+      "title" : "Are sixteen heads really better than one? arXiv preprint arXiv:1905.10650",
+      "author" : [ "Paul Michel", "Omer Levy", "Graham Neubig" ],
+      "venue" : null,
+      "citeRegEx" : "Michel et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Michel et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Scalable visual transformers with hierarchical pooling",
+      "author" : [ "Zizheng Pan", "Bohan Zhuang", "Jing Liu", "Haoyu He", "Jianfei Cai." ],
+      "venue" : "arXiv preprint arXiv:2103.10619.",
+      "citeRegEx" : "Pan et al\\.,? 2021",
+      "shortCiteRegEx" : "Pan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Sparsifying transformer models with differentiable representation pooling",
+      "author" : [ "Michał Pietruszka", "Łukasz Borchmann", "Filip Gralinski." ],
+      "venue" : "arXiv eprints, pages arXiv–2009.",
+      "citeRegEx" : "Pietruszka et al\\.,? 2020",
+      "shortCiteRegEx" : "Pietruszka et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Blockwise selfattention for long document understanding",
+      "author" : [ "Jiezhong Qiu", "Hao Ma", "Omer Levy", "Scott Wen-tau Yih", "Sinong Wang", "Jie Tang." ],
+      "venue" : "arXiv preprint arXiv:1911.02972.",
+      "citeRegEx" : "Qiu et al\\.,? 2019",
+      "shortCiteRegEx" : "Qiu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Distilbert, a distilled version of bert: smaller, faster, cheaper and lighter",
+      "author" : [ "Victor Sanh", "Lysandre Debut", "Julien Chaumond", "Thomas Wolf." ],
+      "venue" : "arXiv preprint arXiv:1910.01108.",
+      "citeRegEx" : "Sanh et al\\.,? 2019",
+      "shortCiteRegEx" : "Sanh et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A mathematical theory of communication",
+      "author" : [ "Claude Elwood Shannon." ],
+      "venue" : "ACM SIGMOBILE mobile computing and communications review, 5(1):3–55.",
+      "citeRegEx" : "Shannon.,? 2001",
+      "shortCiteRegEx" : "Shannon.",
+      "year" : 2001
+    }, {
+      "title" : "Q-bert: Hessian based ultra low precision quantization of bert",
+      "author" : [ "Sheng Shen", "Zhen Dong", "Jiayu Ye", "Linjian Ma", "Zhewei Yao", "Amir Gholami", "Michael W Mahoney", "Kurt Keutzer." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, vol-",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Linguistically-informed self-attention for semantic role labeling",
+      "author" : [ "Emma Strubell", "Patrick Verga", "Daniel Andor", "David Weiss", "Andrew McCallum." ],
+      "venue" : "arXiv preprint arXiv:1804.08199.",
+      "citeRegEx" : "Strubell et al\\.,? 2018",
+      "shortCiteRegEx" : "Strubell et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Patient knowledge distillation for bert model compression",
+      "author" : [ "Siqi Sun", "Yu Cheng", "Zhe Gan", "Jingjing Liu." ],
+      "venue" : "arXiv preprint arXiv:1908.09355.",
+      "citeRegEx" : "Sun et al\\.,? 2019",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Long range arena: A benchmark for efficient transformers",
+      "author" : [ "Yi Tay", "Mostafa Dehghani", "Samira Abnar", "Yikang Shen", "Dara Bahri", "Philip Pham", "Jinfeng Rao", "Liu Yang", "Sebastian Ruder", "Donald Metzler." ],
+      "venue" : "arXiv preprint arXiv:2011.04006.",
+      "citeRegEx" : "Tay et al\\.,? 2020",
+      "shortCiteRegEx" : "Tay et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Analyzing multihead self-attention: Specialized heads do the heavy lifting, the rest can be pruned",
+      "author" : [ "Elena Voita", "David Talbot", "Fedor Moiseev", "Rico Sennrich", "Ivan Titov." ],
+      "venue" : "arXiv preprint arXiv:1905.09418.",
+      "citeRegEx" : "Voita et al\\.,? 2019",
+      "shortCiteRegEx" : "Voita et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Glue: A multi-task benchmark and analysis platform for natural language understanding",
+      "author" : [ "Alex Wang", "Amanpreet Singh", "Julian Michael", "Felix Hill", "Omer Levy", "Samuel R Bowman." ],
+      "venue" : "arXiv preprint arXiv:1804.07461.",
+      "citeRegEx" : "Wang et al\\.,? 2018",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Learning deep transformer models for machine translation",
+      "author" : [ "Qiang Wang", "Bei Li", "Tong Xiao", "Jingbo Zhu", "Changliang Li", "Derek F Wong", "Lidia S Chao." ],
+      "venue" : "arXiv preprint arXiv:1906.01787.",
+      "citeRegEx" : "Wang et al\\.,? 2019a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Linformer: Selfattention with linear complexity",
+      "author" : [ "Sinong Wang", "Belinda Z Li", "Madian Khabsa", "Han Fang", "Hao Ma." ],
+      "venue" : "arXiv preprint arXiv:2006.04768.",
+      "citeRegEx" : "Wang et al\\.,? 2020a",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Minilm: Deep self-attention distillation for task-agnostic compression of pre-trained transformers",
+      "author" : [ "Wenhui Wang", "Furu Wei", "Li Dong", "Hangbo Bao", "Nan Yang", "Ming Zhou." ],
+      "venue" : "arXiv preprint arXiv:2002.10957.",
+      "citeRegEx" : "Wang et al\\.,? 2020b",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Structured pruning of large language models",
+      "author" : [ "Ziheng Wang", "Jeremy Wohlwend", "Tao Lei." ],
+      "venue" : "arXiv preprint arXiv:1910.04732.",
+      "citeRegEx" : "Wang et al\\.,? 2019b",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Facility location: concepts, models, algorithms and case studies",
+      "author" : [ "Gert W Wolf." ],
+      "venue" : "series: Contributions to management science: edited by zanjirani farahani, reza and hekmatfar, masoud, heidelberg, germany, physica-verlag, 2009, 549 pp., isbn 978-3-",
+      "citeRegEx" : "Wolf.,? 2011",
+      "shortCiteRegEx" : "Wolf.",
+      "year" : 2011
+    }, {
+      "title" : "Not all attention is all you need",
+      "author" : [ "Hongqiu Wu", "Hai Zhao", "Min Zhang." ],
+      "venue" : "arXiv preprint arXiv:2104.04692.",
+      "citeRegEx" : "Wu et al\\.,? 2021a",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Centroid transformers: Learning to abstract with attention",
+      "author" : [ "Lemeng Wu", "Xingchao Liu", "Qiang Liu." ],
+      "venue" : "arXiv preprint arXiv:2102.08606.",
+      "citeRegEx" : "Wu et al\\.,? 2021b",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bert post-training for review reading comprehension and aspect-based sentiment analysis",
+      "author" : [ "Hu Xu", "Bing Liu", "Lei Shu", "Philip S Yu." ],
+      "venue" : "arXiv preprint arXiv:1904.02232.",
+      "citeRegEx" : "Xu et al\\.,? 2019",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "End-to-end open-domain question answering with bertserini",
+      "author" : [ "Wei Yang", "Yuqing Xie", "Aileen Lin", "Xingyu Li", "Luchen Tan", "Kun Xiong", "Ming Li", "Jimmy Lin." ],
+      "venue" : "arXiv preprint arXiv:1902.01718.",
+      "citeRegEx" : "Yang et al\\.,? 2019",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Tr-bert: Dynamic token reduction for accelerating bert inference",
+      "author" : [ "Deming Ye", "Yankai Lin", "Yufei Huang", "Maosong Sun." ],
+      "venue" : "arXiv preprint arXiv:2105.11618.",
+      "citeRegEx" : "Ye et al\\.,? 2021",
+      "shortCiteRegEx" : "Ye et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Bp-transformer: Modelling long-range context via binary partitioning",
+      "author" : [ "Zihao Ye", "Qipeng Guo", "Quan Gan", "Xipeng Qiu", "Zheng Zhang." ],
+      "venue" : "arXiv preprint arXiv:1911.04070.",
+      "citeRegEx" : "Ye et al\\.,? 2019",
+      "shortCiteRegEx" : "Ye et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Q8bert: Quantized 8bit bert",
+      "author" : [ "Ofir Zafrir", "Guy Boudoukh", "Peter Izsak", "Moshe Wasserblat." ],
+      "venue" : "arXiv preprint arXiv:1910.06188.",
+      "citeRegEx" : "Zafrir et al\\.,? 2019",
+      "shortCiteRegEx" : "Zafrir et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Big bird: Transformers for longer sequences. In NeurIPS",
+      "author" : [ "Manzil Zaheer", "Guru Guruganesh", "Kumar Avinava Dubey", "Joshua Ainslie", "Chris Alberti", "Santiago Ontanon", "Philip Pham", "Anirudh Ravula", "Qifan Wang", "Li Yang" ],
+      "venue" : null,
+      "citeRegEx" : "Zaheer et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Zaheer et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 8,
+      "context" : "Transformer-based language models such as BERT (Devlin et al., 2018) have achieved the state-of-the-art performance on various NLP tasks, but are computationally prohibitive.",
+      "startOffset" : 47,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 28,
+      "context" : "We provide extensive experiments establishing advantages of pyramid BERT over several baselines and existing works on the GLUE benchmarks and Long Range Arena (Tay et al., 2020) datasets.",
+      "startOffset" : 159,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 29,
+      "context" : "Transformers (Vaswani et al., 2017) have gradually become a key component for many state-of-theart natural language representation models.",
+      "startOffset" : 13,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 8,
+      "context" : "A recent Transformer based model BERT (Devlin et al., 2018), and its variations, achieved the state-of-theart results on various natural language processing tasks, including machine translation (Wang et al.",
+      "startOffset" : 38,
+      "endOffset" : 59
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2018), and its variations, achieved the state-of-theart results on various natural language processing tasks, including machine translation (Wang et al., 2019a; Liu et al., 2020), question-answering (Devlin et al.",
+      "startOffset" : 142,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2018), and its variations, achieved the state-of-theart results on various natural language processing tasks, including machine translation (Wang et al., 2019a; Liu et al., 2020), question-answering (Devlin et al.",
+      "startOffset" : 142,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2020), question-answering (Devlin et al., 2018; Yang et al., 2019), text classification (Goyal et al.",
+      "startOffset" : 28,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2020), question-answering (Devlin et al., 2018; Yang et al., 2019), text classification (Goyal et al.",
+      "startOffset" : 28,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 11,
+      "context" : ", 2019), text classification (Goyal et al., 2020; Xu et al., 2019), semantic role labeling (Strubell et al.",
+      "startOffset" : 29,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2019), text classification (Goyal et al., 2020; Xu et al., 2019), semantic role labeling (Strubell et al.",
+      "startOffset" : 29,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 26,
+      "context" : ", 2019), semantic role labeling (Strubell et al., 2018), and so on.",
+      "startOffset" : 32,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 44,
+      "context" : "We show that our method can be combined with long-text Transformers such as Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al.",
+      "startOffset" : 85,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020) and Performers (Choromanski et al., 2020) to further alleviate the quadratic space complexity of the selfattention mechanism.",
+      "startOffset" : 23,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 28,
+      "context" : "Empirical experiments on the Long Range Arena (LRA) (Tay et al., 2020) show that our model achieves a better trade-off between space complexity reduction and accuracy in comparison to its competitors.",
+      "startOffset" : 52,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 18,
+      "context" : "Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019; Wu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy.",
+      "startOffset" : 18,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 19,
+      "context" : "Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019; Wu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy.",
+      "startOffset" : 18,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 30,
+      "context" : "Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019; Wu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy.",
+      "startOffset" : 18,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 35,
+      "context" : "Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019; Wu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy.",
+      "startOffset" : 18,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 9,
+      "context" : "Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019; Wu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy.",
+      "startOffset" : 18,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 37,
+      "context" : "Structure pruning (McCarley, 2019; Michel et al., 2019; Voita et al., 2019; Wang et al., 2019b; Fan et al., 2019; Wu et al., 2021a), which removes coherent groups of weights to preserve the original structure of the network, is one common strategy.",
+      "startOffset" : 18,
+      "endOffset" : 131
+    }, {
+      "referenceID" : 23,
+      "context" : "In addition, various types of distillation techniques (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2019; Wang et al., 2020b) have been proposed to remove encoders by training a compact Transformer to reproduce the",
+      "startOffset" : 54,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 27,
+      "context" : "In addition, various types of distillation techniques (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2019; Wang et al., 2020b) have been proposed to remove encoders by training a compact Transformer to reproduce the",
+      "startOffset" : 54,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 13,
+      "context" : "In addition, various types of distillation techniques (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2019; Wang et al., 2020b) have been proposed to remove encoders by training a compact Transformer to reproduce the",
+      "startOffset" : 54,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 34,
+      "context" : "In addition, various types of distillation techniques (Sanh et al., 2019; Sun et al., 2019; Jiao et al., 2019; Wang et al., 2020b) have been proposed to remove encoders by training a compact Transformer to reproduce the",
+      "startOffset" : 54,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 2,
+      "context" : "Other strategies include weight quantization (Bhandare et al., 2019; Zafrir et al., 2019; Shen et al., 2020; Fan et al., 2020) and weight sharing (Dehghani et al.",
+      "startOffset" : 45,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 43,
+      "context" : "Other strategies include weight quantization (Bhandare et al., 2019; Zafrir et al., 2019; Shen et al., 2020; Fan et al., 2020) and weight sharing (Dehghani et al.",
+      "startOffset" : 45,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 25,
+      "context" : "Other strategies include weight quantization (Bhandare et al., 2019; Zafrir et al., 2019; Shen et al., 2020; Fan et al., 2020) and weight sharing (Dehghani et al.",
+      "startOffset" : 45,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 10,
+      "context" : "Other strategies include weight quantization (Bhandare et al., 2019; Zafrir et al., 2019; Shen et al., 2020; Fan et al., 2020) and weight sharing (Dehghani et al.",
+      "startOffset" : 45,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 44,
+      "context" : "In particular, the most recent Big Bird (Zaheer et al., 2020) and Longformer (Beltagy et al.",
+      "startOffset" : 40,
+      "endOffset" : 61
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2020) and Longformer (Beltagy et al., 2020) introduce sparse models which scale linearly with the input sequence.",
+      "startOffset" : 23,
+      "endOffset" : 45
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020) is to approximate the self-attention to reduce its quadratic complexity to linear, where the most recent Performers (Choromanski et al., 2020) provides an unbiased linear estimation of the attention matrices.",
+      "startOffset" : 124,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 6,
+      "context" : "The third line, which our work lies in, focus on the redundancy in maintaining a full-length sequence of token-level representation across all encoders (Dai et al., 2020; Wu et al., 2021b; Pietruszka et al., 2020; Ye et al., 2021; Kim and Cho, 2020).",
+      "startOffset" : 152,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 38,
+      "context" : "The third line, which our work lies in, focus on the redundancy in maintaining a full-length sequence of token-level representation across all encoders (Dai et al., 2020; Wu et al., 2021b; Pietruszka et al., 2020; Ye et al., 2021; Kim and Cho, 2020).",
+      "startOffset" : 152,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 21,
+      "context" : "The third line, which our work lies in, focus on the redundancy in maintaining a full-length sequence of token-level representation across all encoders (Dai et al., 2020; Wu et al., 2021b; Pietruszka et al., 2020; Ye et al., 2021; Kim and Cho, 2020).",
+      "startOffset" : 152,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 41,
+      "context" : "The third line, which our work lies in, focus on the redundancy in maintaining a full-length sequence of token-level representation across all encoders (Dai et al., 2020; Wu et al., 2021b; Pietruszka et al., 2020; Ye et al., 2021; Kim and Cho, 2020).",
+      "startOffset" : 152,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 14,
+      "context" : "The third line, which our work lies in, focus on the redundancy in maintaining a full-length sequence of token-level representation across all encoders (Dai et al., 2020; Wu et al., 2021b; Pietruszka et al., 2020; Ye et al., 2021; Kim and Cho, 2020).",
+      "startOffset" : 152,
+      "endOffset" : 249
+    }, {
+      "referenceID" : 38,
+      "context" : "In our experiment we did not compare our methods with (Wu et al., 2021b; Pietruszka et al., 2020) since both worked on a limited (non-standard) collection of datasets and at the time of writing this paper, did not provide code allowing us to reproduce their result.",
+      "startOffset" : 54,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 21,
+      "context" : "In our experiment we did not compare our methods with (Wu et al., 2021b; Pietruszka et al., 2020) since both worked on a limited (non-standard) collection of datasets and at the time of writing this paper, did not provide code allowing us to reproduce their result.",
+      "startOffset" : 54,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 20,
+      "context" : "Vision Transformers (Pan et al., 2021; Heo et al., 2021), which apply various types of pooling techniques to reduce input length, is specially designed for image data",
+      "startOffset" : 20,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 12,
+      "context" : "Vision Transformers (Pan et al., 2021; Heo et al., 2021), which apply various types of pooling techniques to reduce input length, is specially designed for image data",
+      "startOffset" : 20,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 36,
+      "context" : "The δ-cover core-set token selection problem is equivalent to the k-Center problem (also called min-max facility location problem) (Wolf, 2011).",
+      "startOffset" : 131,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 5,
+      "context" : "However, it is possible to obtain a 2×OPT solution of k-Center using a greedy approach (Cook et al., 2009).",
+      "startOffset" : 87,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 11,
+      "context" : "In addition we discuss how it compares to recent approaches (Goyal et al., 2020; Ye et al., 2021).",
+      "startOffset" : 60,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 41,
+      "context" : "In addition we discuss how it compares to recent approaches (Goyal et al., 2020; Ye et al., 2021).",
+      "startOffset" : 60,
+      "endOffset" : 97
+    }, {
+      "referenceID" : 31,
+      "context" : "Specifically, we conduct the evaluations on two popular benchmarks: (1) the General Language Understanding Evaluation (GLUE) benchmark (Wang et al., 2018), and (2) the Long Rang Arena (LRA), a collection of challenging long range context tasks (Tay et al.",
+      "startOffset" : 135,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2018), and (2) the Long Rang Arena (LRA), a collection of challenging long range context tasks (Tay et al., 2020).",
+      "startOffset" : 97,
+      "endOffset" : 115
+    }, {
+      "referenceID" : 8,
+      "context" : "For the backbone Transformer, we choose BERTBase (Devlin et al., 2018) for the GLUE benchmarks, and two state-of-the-art long-text Transformers Big Bird (Zaheer et al.",
+      "startOffset" : 49,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 44,
+      "context" : ", 2018) for the GLUE benchmarks, and two state-of-the-art long-text Transformers Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al.",
+      "startOffset" : 90,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020) and Performers (Choromanski et al., 2020) for the LRA.",
+      "startOffset" : 23,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 44,
+      "context" : "available in Big Bird (Zaheer et al., 2020) and Performers (Choromanski et al.",
+      "startOffset" : 22,
+      "endOffset" : 43
+    } ],
+    "year" : 0,
+    "abstractText" : "Transformer-based language models such as BERT (Devlin et al., 2018) have achieved the state-of-the-art performance on various NLP tasks, but are computationally prohibitive. A recent line of works use various heuristics to successively shorten sequence length while transforming tokens through encoders, in tasks such as classification and ranking that require a single token embedding for prediction. We present a novel solution to this problem, called Pyramid-BERT where we replace previously used heuristics with a coreset based token selection method justified by theoretical results. The core-set based token selection technique allows us to avoid expensive pre-training, gives a space-efficient fine tuning, and thus makes it suitable to handle longer sequence lengths. We provide extensive experiments establishing advantages of pyramid BERT over several baselines and existing works on the GLUE benchmarks and Long Range Arena (Tay et al., 2020) datasets.",
+    "creator" : null
+  }
+}

@@ -1,0 +1,772 @@
+{
+  "name" : "COLING_2020_41_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "End to End Chinese Lexical Fusion Recognition with Sememe Knowledge",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al., 2017; Qi et al., 2012; Fei et al., 2019). There are different kinds of coreferences, such as pronoun anaphora and abbreviation (Mitkov, 1998; Ruslan Mitkov, 1999; Muñoz and Montoyo, 2002; Choubey and Huang, 2018). Here we examine the phenomenon of Chinese lexical fusion, where two closely related words in a paragraph are united by a fusion form of the same meaning, and the fusion word can be seen as the coreference of the two separation words. Since the fusion words are always out-of-vocabulary (OOV) words in downstream paragraph-level tasks such as reading comprehension, summarization, machine translation and etc., which can hinder the overall understanding and lead to degraded performance, the new task can offer informative knowledge to these tasks.\nTable 1 shows three examples of Chinese lexical fusion. In the examples, “受访”(accept an interview), “返杭”(returned to Hangzhou) and “降息”(reduce the interest rate) are the fusion words, and their coreferences are “接受(accept)/采访(interview)”, “回到(return)/杭州(Hangzhou)”, and “下调 (reduce)/利 率(interest rate)”, respectively. Each corresponding of the fusion word consists of two separation words.\nBesides, each fusion word character is semantically corresponding to one of the separation words, which can be regarded as fine-grained coreferences. As shown, we have six fine-grained coreferences by the three example fusion words: “受↔接受(accept)”, “访↔采访 (interview)”, “返↔回到(return)”, “杭↔杭 州(Hangzhou)”, “降↔下调 (reduce)” and “息↔利率(interest rate)”.\nLexical fusion is used frequently in the Chinese language. Moreover, the fusion words are usually rarer words compared with their separation words coreferred, which are more difficult to be handled by NLP models(Zhang and Yang, 2018; Gui et al., 2019). Luckily, the meaning of the fusion words can be derived from that of the separation words. Thus recognizing the lexical fusion would be beneficial for downstream paragraph (or document)-level NLP applications such as machine translation, information extraction, summarization, etc.(Li and Yarowsky, 2008; Ferreira et al., 2013; Kundu et al., 2018). For example, for deep semantic parsing or translation, the fusion words “受访”(UNK) can be substituted directly by the separation words “接受”(accept) and “访问”(interview), as the same fusion words are rarely occurred in other paragraphs.\nThe recognition of lexical fusion can be accomplished by two subtasks. Given one paragraph, the fusion words, as well as the separation words should be detected as the first step, which is referred to as mention detection. Second, coreference recognition is performed over the detected mentions, linking each character in the fusion words to their coreferences, respectively. By the second step, full lexical fusion coreferences are also recognized concurrently. The two steps can be conducted jointly in a single end-to-end model (Lee et al., 2017), which helps avoid the error propagation problem, and meanwhile, enable the two subtasks with full interaction.\nIn this paper, we present a competitive end-to-end model for lexical fusion recognition. Contextual BERT representations (Devlin et al., 2019) are adopted as encoder inputs as they have achieved great success in a number of NLP tasks (Tian et al., 2019; Zhou et al., 2019; Xu et al., 2019). For mention detection, a CRF decoder (Huang et al., 2015) is exploited to detect all mention words, including both the fusion and the separation words. Further, we use a BiAffine decoder for coreference recognition (Zhang et al., 2017; Bekoulis et al., 2018), determining a given mention pair either to be a coreference or not.\nSince our task is semantic oriented, we use the sememe knowledge provided in HowNet(Dong and Dong, 2003) to help capturing the semantic similarity between the characters and the separation words. HowNet has achieved success in many Chinese NLP tasks in recent years (Duan et al., 2007; Gu et al., 2018; Ding et al., 2019; Li et al., 2019). Both Chinese characters and words are defined by senses of sememe graphs in it, and we exploit graph attention networks (GAT) (Velickovic et al., 2018) to model the sememe graphs to enhance our encoder.\nFinally, we manually construct a high-quality dataset to evaluate our models. The dataset consists of 7,271 cases of the lexical fusion, which are all exploited as the test instances. To train our proposed models, we construct a pseudo dataset automatically from the web resource. Experimental results show that the auto-constructed training dataset is highly effective for our task. The end-to-end models achieved better performance than the pipeline models, and meanwhile the sememe knowledge can also bring significant improvements for both the pipeline and end-to-end models. Our final model can obtain an F-measure of 79.64% for lexical fusion recognition. Further, we conduct in-depth analysis work to understand the proposed task and our proposed models.\nIn summary, we make the following contributions in this paper:\n(1) We introduce a new task of lexical fusion recognition, providing a gold-standard test dataset and an auto-constructed pseudo training dataset for the task, which can be used as a benchmark for future research.\n(2) We propose a competitive end-to-end model for lexical fusion recognition task, which helps to integrate the mention recognition with coreference identification based on BERT representations.\n(3) We make use of the sememe knowledge from HowNet to help capturing the semantic relevance between the characters in the fusion form and the separation words.\nAll the codes and datasets will be open-sourced at https://github.com/xxx under Apache License 2.0."
+    }, {
+      "heading" : "2 Chinese Lexical Fusion",
+      "text" : "Lexical fusion refers to the phenomenon that a composition word semantically corresponds with related words nearby in the contexts. The composition word can be seen as a compact form of the separation words in the paragraph, where the composition word is referred to as the fusion form of the separation words. The fusion form is often an OOV word, which brings difficulties in understanding of a given paragraph. We can use a tuple to define the phenomenon in a paragraph: 〈wF, wA1, wA2, · · · , wAn〉(n ≥ 2), where wF denotes the fusion word, and wA1, wA2, · · · , wAn are the separation words. We regard the wF as a coreference of wA1, wA2, · · · , wAn. More detailedly, the number n equals to the length of word wF, and the ith character of word wF corresponds to the separation word wAi as one fine-grained coreference. The task is highly semantic-oriented, as all the fine-grained coreferences are semantically related.\nNotice that Chinese lexical fusion has the following attributes, making it different from others:\n(1) Each character of word wF must correspond to one and only one separation word. The one-one mappings (clusters) should be strictly abided by. For example, 〈二圣 (two saints),李治 (Zhi Li),武 则天 (Zetian Wu) 〉 1 is not a lexical fusion phenomenon, because both the two characters “二” (two) and “圣” (saint) can not associate with any of the separations.\n(2) For each fine-grained coreference, the ith character of word wF is mostly borrowed from its separated coreference wAi directly, but it is not always true. A semantically-equaled character could be used as well, which greatly increases the difficulty of Chinese lexical fusion recognition. The given examples in Table 1 demonstrate the rule. As shown, the coreferences “返↔回到(return)”, “降↔下 调 (reduce)” and “息↔利率(interest rate)” are all of these cases.\n(3) The separation words wA1, wA2, · · · , wAn are semantically independent, especially not indicating a single specific entity. Thus the fine-grained coreferences are semantically different in lexical fusion. For example, 〈北大 (Peking University),北京 (Peking),大学 (University) 〉, the semantic meaning of “北京 (Peking)大学 (University)” is inseparable.\n(4) The Chinese lexical fusion phenomenon could be either forward or backward. Table 1 shows two examples of backward references (i.e., “受访↔接受/采访 (accept an interview)” and “返杭↔回 到/杭州 (returned to Hangzhou)”) and one example of forward reference (i.e., “降息↔下调/利率 (reduce the interest rate)”).\nBy the above characters, we can easily differentiate the Chinese lexical fusion with several other closelyrelated linguistic phenomena, as an example, the abbreviation, the illustrated negative examples in item (1) and (3) are both abbreviations.\nFor simplicity, we limit our focus on n = 2 in this work, because this situation occupies over 99% of all the lexical fusion cases according to our preliminary statistics. Thus we can call tuples as triples all though this paper."
+    }, {
+      "heading" : "3 Method",
+      "text" : "We built an end-to-end model for the lexical fusion recognition task. The recognition of lexical fusion consists of two steps. First mention detection is performed to collect all mention words, including the fusion words and their separations. By applying the BIO tagging scheme associating with mention types, this subtask can be converted into a typical sequence labeling task (Ohta et al., 2012; Ma and Hovy, 2016). Second, we conduct pair-wise character-word clustering, obtaining one-one fine-grained coreferences and reformatting them to triples of 〈wF, wA1, wA2〉. The end-to-end model alleviates the problem of error propagation in pipeline methods through a joint way. The model consists of an encoder, a CRF decoder for mention recognition and a biaffine decoder for coreference recognition. Further, we enhance the encoder with sememe knowledge from HowNet.\n1The last two words of the tuple refer to names of two distinguished person."
+    }, {
+      "heading" : "3.1 Basic Model",
+      "text" : "Encoder We exploit the BERT as the basic encoder because it has achieved state-of-the-art performances for a number of NLP tasks (Devlin et al., 2019). Given a paragraph c1 · · · cn the output of BERT is a sequence of contextual representation at the character-level:\nh1 · · ·hn = BERT (c1 · · · cn) (1)\nwhere h1 · · ·hn is our desired representation.\nMention Detection The CRF decoder is exploited to obtain the sequence labeling outputs. First, the encoder outputs h1 · · ·hn are transformed into tag scores at each position:\noi = Whi + b (2)\nwhere W ∈ Rdh×|tags|, |tags| is the number of tag classes. Then for each tag sequence y1 . . . yn, its probability can be computed by:\np(y1 . . . yn) = exp(\n∑ i=1 oi,yi + Tyi,yi−1)\nZ , (3)\nwhere T is a model parameter to indicate output tag transition score and Z is a normalization score. We can use standard Viterbi to obtain the highest-probability tagging sequence.\nCoreference Recognition We take the input character representation h1 · · ·hn obtained by the encoder as well as the output tag sequence y1 . . . yn of mention detection as inputs. For the output tag sequence, we exploit a simple embedding matrix E to convert tags into vectors e1 · · · en. Then we concatenate the two kinds of representations, getting the encoder output z1 · · · zn, where zi = hi ⊕ ei. We treat coreference recognition as a binary classification problem. Given the encoder output z1 · · · zn and two positions i and j, we judge whether the relation between the two characters ci and cj is a coreference or not. For one fine-grained coreference cf and ws, we regard all characters in ws be connected to cf.\nThe score of the binary classification is computed by a simple BiAffine operation,\nsi,j = BiAffine(zi, zj), (4)\nwhere si,j is one two-dim vector. We can refer to (Dozat and Manning, 2017) for the details of the BiAffine operation, which has shown strong capabilities in similar tasks (Zhang et al., 2018).\nTraining For mention detection, the supervised training objective is to minimize the cross-entropy of the gold-standard tagging sequence:\nLmention = − log p(yg1 . . . y g n), (5)\nwhere yg1 . . . y g n is the supervised answer.\nFor coreference recognition, we adopt averaged cross-entropy loss overall input pairs as the training objective: Lcoref = ∑ i∈[1,n],j∈[1,n],i 6=j p(ri,j)\nn ∗ (n− 1) , (6)\nwhere ri,j denotes the ground-truth relation. The probability is computed by:\np(ri,j) = exp(si,j [ri,j ])\nZi,j , (7)\nwhere Zi,j is a normalization factor. We combine losses from the two subtasks together for joint training:\nLjoint = Lmention + αLcoref, (8)\nwhere α is a hyper-parameter to balance the losses of the two subtasks."
+    }, {
+      "heading" : "3.2 Sememe-Enhanced Encoder",
+      "text" : "Sememes and HowNet Sememe is regarded as the minimum semantic unit for the Chinese language, which has been exploited for several semantic-oriented tasks, such as word sense disambiguation, event extraction and relation extraction (Gu et al., 2018; Ding et al., 2019; Li et al., 2019). Our task is also semantic oriented because the lexical fusion and coreference are both semantic related. Thus sememe should be one kind of useful information for our model.\nWe follow the majority of the previous work, extracting sememes for characters from HowNet, a manually-constructed sememe knowledge base. HowNet defines over 118,000 words (including characters) using about 2,000 sememes.2 Figure 2 illustrates the annotations in HowNet. We can see that each word is associated with several senses, and further, each sense is annotated with several sememes, where sememes are organized by graphs.\nSememe to Character Representation For each character ci, we make use of all possible HowNet words covering ci, as shown in Figure 3, and further extract all the included senses by these words. Each sense corresponds to one sememe graph, as shown in Figure 2. The sememe to character representation is obtained by two steps. First, we obtain the sense representation by its sememe graph and the position offset of its source word. Then, we aggregate all sense representations to reach a character-level representation, resulting in the sememe-enhanced encoder.\n2Chinese characters are also basic semantic units for meaning expressing like full words.\nWe use standard GAT to represent the sememe graph. Let sm1 · · · smM denote all the sememes belonging to a given sense sn, and their internal graph structure is denoted by G, after apply the GAT module, we can get:\nhsm1 · · ·hsmM = GAT(esm1 · · · esmM , G), (9)\nwhere e∗ indicates the embedding operation. Further, we obtain the first representation part of sn by averaging over hsm1 · · ·hsmM . The second part is obtained straightforwardly by the embedding of the position offset of the sense’s source word. The position offset is denoted by [s, e], where s and e indicate the relative position of the start and end characters of the source word to the current character, which has been illustrated in Figure 3. We use the position offset as a single unit for embedding. Following, we concatenate the two parts, resulting in the sense representation:\nhsn = ∑m i=1 hsmi M ⊕ e[s,t], (10)\nwhere ⊕ denotes vector concatenation. Finally, we aggregate all sense representations by global attention (Luong et al., 2015) with the guide of the BERT outputs to obtain character-level representations. Let {sn1, · · · , snN} denote the set of sense representations for one character ci, the sememe-enhanced representation for character ci can be computed by:\naj = exp\n( tanh(v[hi ⊕ hsnj ]) )∑N k=1 exp ( tanh(v[hi ⊕ hsnk ])\n) , hsemi =\nN∑ j=1 aj · hsnj , (11)\nwhere v is a model parameter for attention calculation, and hsem1 · · ·hsemn are the desired outputs which is used instead of the BERT outputs h1 · · ·hn for decoder."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Dataset",
+      "text" : "Test Data We build a lexical fusion dataset manually in this work, where the raw corpus is collected from SogouCA (Wang et al., 2008), a news corpus of 18 channels, including domestic, international, sports, social, entertainment, etc. The BRAT Rapid Annotation Tool (Stenetorp et al., 2012) is used for annotation. We label the boundary of mentions in the paragraph, determine their categories (fusion or separation words), link characters in the fusion words to the referred separation words, and finally format the annotation results as triples.\nWe annotate 17,000 paragraphs by five annotators who major in Chinese linguistics. After removing the paragraphs without lexical fusion, the five annotators check the annotations once again to ensure the quality. Finally, 7,271 lexical fusion cases are obtained with 91% consensus.\nPseudo Training Dataset We construct a pseudo lexical fusion corpus to train the models, by making use of an online lexicon where words are offered with explanatory notes.3 For each two-character word, we check if it can be split into two separation words. If successful, we obtain one context-independent triple. Finally, we collect 1,608 well-formed triples of lexical fusions and treat them as seeds to construct pseudo training instances. Note that the fusion words of these triples are currently acceptable and widely used by users, such as “停车(parking vehicles)↔停放(parking)/车辆(vehicle)”. Then, we search for the paragraphs containing all three words of a certain triple, regarding them as valid cases of Chinese lexical fusion(Mintz et al., 2009). Finally, we obtain 11,034 paragraphs, which are divided into training and development sections for model parameter learning and hyper-parameter tuning, respectively.\n3https://cidian.911cha.com/\nTable 2 summarizes the overall data statistics of the training, development and testing sections, including the number of cases (lexical fusion), the averaged paragraph length (by character count) and the number of unique triples, respectively."
+    }, {
+      "heading" : "4.2 Evaluation",
+      "text" : "A triple is regarded as correct if all the three elements are correctly recognized and meanwhile on their exact positions, We calculate triple-level and fine-grained precision (P), recall (R) and F-measure (F) values, and adopt the triple-level values as the major metrics to evaluate the model performance. We also calculate mention-level P, R and F values to evaluate the performance of mention detection."
+    }, {
+      "heading" : "4.3 Settings",
+      "text" : "All the hyper-parameters are determined according to the performance on the development dataset. We exploit the pretrained basic BERT representations as inputs for encoder (Devlin et al., 2019).4 The tag, sememe and position embedding sizes are set to 25, 200 and 12, respectively. The head number of GAT is 3. We exploit dropout with a ration of 0.2 on the encoder outputs to avoid overfitting (Srivastava et al., 2014), and optimize all model parameters (including the BERT part) by standard back-propagation using Adam (Kingma and Ba, 2015) with a learning rate 0.001."
+    }, {
+      "heading" : "4.4 Results",
+      "text" : "Table 3 shows the final results on the test dataset. Aiming to investigate the influence of sememe structure in detail, we construct a pseudo graph structure G′ for comparison where all sememes inside a sense are mutually connected. In addition, we conduct comparisons by using only the sememes from characters (single-character words), in order to explore the effect of the word-level sememe information. Our final model, the end-to-end model with word-level sememe-enhanced encoder joint + GAT(word real), achieves competitive performance, the triple-level F-measure reaches 79.64, which is the best-performance\n4https://github.com/google-research/bert\nmodel, significantly better than the basic model without using the sememe information.5 In addition to the contents of Table 3, we also tried the pipeline approach as a contrast. The triple-level F-measure of pipeline models with or without word-level sememe graph are 78.71% and 74.74%, respectively.\nAccording to the results, our proposed sememe-enhanced encoder is effective, bringing significant improvements over the corresponding basic model. The improvements on the triple-level F-measure is 78.45−76.45 = 2.04. The real sememe graph also gives consistently better performance (i.e., an increase of 0.69 on average) than the pseudo graph. As shown, the word-level sememe structure obtains F-measure improvements of 79.64− 78.49 = 1.15, indicating the usefulness of the word-level information."
+    }, {
+      "heading" : "4.5 Analysis",
+      "text" : "Influence of Lexical Fusion Types We investigate the model performance with respect to different lexical fusion types. We classify the fusion word types by IV/OOV according to the training corpus, and further differentiate a fine-grained coreference by whether the fusion character is borrowed from its separation word (denoted by A) or not (denoted by B). Table 4 shows the results. Our models perform better for the IV categories than the OOV, which confirms with our intuition. In addition, we divide the IV/OOV further into AA and AB categories.6 We can find that AB is much more difficult, obtaining only 41.1 of the F1 score. Further, by examining the overall performance of fine-grained coreference of type A and B, we can see that Type B leads to the low performance mainly. The performance gap between the two types is close to 50 on the F1 score.\nEffect of Sememe Information In order to understand the sememe-enhanced encoder in-depth, we examine the sense-level attention weights by an example. As shown in Figure 4, a fine-grained coreference “降↔下调 (reduce)” is used for illustration, where the three characters “下”(lower), “调”(adjust) and “降”(reduce) are studied. Each character includes a set of senses, which are listed by the squares.7 We can see that senses with shared sememes can mutually enhance their respective attention weights, which is consistent with the goal of coreference recognition. It is difficult to establish such a connection without using sememes.\nImpact of Order of Mentions Figure 5(a) shows the F-measure values according to the relative order of the mentions. Intuitively, the recognition of the forward references is more difficult than that of the backward references. The results confirm our intuition, where the F1 score of backward reference is 4.2 points higher on average. In addition, our final model can improve performance of both types significantly.\n5The p-value is below 0.0001 by using pairwise t-test. 6We ignore the BB categories as the number is below 10. 7Senses with very low weights are filtered.\nImpact of the Separation Word Distance The distance between the two separation words should be an important factor in coreference recognition. Intuitively, as the distance increases, the difficulty should be also increased greatly. Here we conduct analysis to verify this intuition. Figure 5(b) shows the comparison results, which is consistent with our supposition. In addition, we can see that our final end-to-end model behaves much better, with relatively smaller decreases as the distance increases."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Coreference recognition has been investigated extensively in NLP for decades (McCarthy and Lehnert, 1995; Cardie and Wagstaff, 1999; Ng and Cardie, 2002; Elango, 2005). Lexical fusion can be regarded as one kind of coreference, however, it has received little attention in the NLP community.\nOur proposed models are inspired by the work of neural coreference resolution (Fernández-Gallego et al., 2016; Clark and Manning, 2016; Xu et al., 2017; Lee et al., 2017; Zhang et al., 2018). We adapt these models by considering task-specific features of Chinese lexical fusion, for example, enhancing the encoder with a GAT module for structural sememe information.\nAnother most closely-related topic is abbreviation (Zhong, 1985). There have been several studies on abbreviation prediction, recovery and dictionary construction (Sun et al., 2008; Li and Yarowsky, 2008; Liu et al., 2009; Zhang and Sun, 2018). Lexical fusion is different from abbreviation in many points. For example, abbreviation always refers to one inseparable mention, which is not necessary for lexical fusion. Besides, lexical fusion should abide by certain word construction rules, while abbreviation is for free.\nBERT and its variations have achieved the leading performances for GLUE benchmark datasets (Devlin et al., 2019; Liu et al., 2019a; Liu et al., 2019b). For the close tasks such as coreference resolution and relation extraction, BERT representations have also shown competitive results (Joshi et al., 2019; Lin et al., 2019), which inspires our work by using it as basic inputs aiming for competitive performance.\nThe sense and sememe information has been demonstrated effective for several semantic-oriented NLP tasks (Niu et al., 2017; Gu et al., 2018; Zeng et al., 2018; Ding et al., 2019; Qi et al., 2019). HowNet offers a large knowledge base of sememe-based (Dong and Dong, 2003), which has been adopted for sememe extraction. We encode the sememes by the form of a graph naturally to enhance our task encoder."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this work, we introduced the task of lexical fusion recognition in Chinese and then presented an end-to-end model for the new task. BERT representation was exploited as the basic input for the models, and the model is further enhanced with the sememe knowledge from HowNet by graph attention networks. We manually annotated a benchmark dataset for the task, which was used to evaluate the models. Experimental results on the annotated dataset indicate the competitive performance of our final model, and the effectiveness of the joint modeling with the sememe-enhanced encoder. The analysis is further offered to understand the new task and the proposed model in-depth."
+    } ],
+    "references" : [ {
+      "title" : "Joint entity recognition and relation extraction as a multi-head selection problem",
+      "author" : [ "Giannis Bekoulis", "Johannes Deleu", "Thomas Demeester", "Chris Develder." ],
+      "venue" : "Expert Systems with Applications, 114:34–45.",
+      "citeRegEx" : "Bekoulis et al\\.,? 2018",
+      "shortCiteRegEx" : "Bekoulis et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Noun phrase coreference as clustering",
+      "author" : [ "Claire Cardie", "Kiri Wagstaff." ],
+      "venue" : "1999 Joint SIGDAT Conference on Empirical Methods in Natural Language Processing and Very Large Corpora.",
+      "citeRegEx" : "Cardie and Wagstaff.,? 1999",
+      "shortCiteRegEx" : "Cardie and Wagstaff.",
+      "year" : 1999
+    }, {
+      "title" : "Improving event coreference resolution by modeling correlations between event coreference chains and document topic structures",
+      "author" : [ "Prafulla Kumar Choubey", "Ruihong Huang." ],
+      "venue" : "Proceedings of ACL, pages 485–495, Melbourne, Australia, July.",
+      "citeRegEx" : "Choubey and Huang.,? 2018",
+      "shortCiteRegEx" : "Choubey and Huang.",
+      "year" : 2018
+    }, {
+      "title" : "Improving coreference resolution by learning entity-level distributed representations",
+      "author" : [ "Kevin Clark", "Christopher D. Manning." ],
+      "venue" : "Proceedings of ACL, pages 643–653, Berlin, Germany, August.",
+      "citeRegEx" : "Clark and Manning.,? 2016",
+      "shortCiteRegEx" : "Clark and Manning.",
+      "year" : 2016
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of NAACL, pages 4171–4186.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Event detection with trigger-aware lattice neural network",
+      "author" : [ "Ning Ding", "Ziran Li", "Zhiyuan Liu", "Haitao Zheng", "Zibo Lin." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP, pages 347–356, Hong Kong, China, November.",
+      "citeRegEx" : "Ding et al\\.,? 2019",
+      "shortCiteRegEx" : "Ding et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Hownet-a hybrid language and knowledge resource",
+      "author" : [ "Zhendong Dong", "Qiang Dong." ],
+      "venue" : "Proceedings of NLPKE, pages 820–824. IEEE.",
+      "citeRegEx" : "Dong and Dong.,? 2003",
+      "shortCiteRegEx" : "Dong and Dong.",
+      "year" : 2003
+    }, {
+      "title" : "Deep biaffine attention for neural dependency parsing",
+      "author" : [ "Timothy Dozat", "Christopher D. Manning." ],
+      "venue" : "Proceedings of ICLR.",
+      "citeRegEx" : "Dozat and Manning.,? 2017",
+      "shortCiteRegEx" : "Dozat and Manning.",
+      "year" : 2017
+    }, {
+      "title" : "Word sense disambiguation through sememe labeling",
+      "author" : [ "Xiangyu Duan", "Jun Zhao", "Bo Xu." ],
+      "venue" : "Proceedings of IJCAI, pages 1594–1599.",
+      "citeRegEx" : "Duan et al\\.,? 2007",
+      "shortCiteRegEx" : "Duan et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Coreference resolution: A survey",
+      "author" : [ "Pradheep Elango." ],
+      "venue" : "University of Wisconsin, Madison, WI.",
+      "citeRegEx" : "Elango.,? 2005",
+      "shortCiteRegEx" : "Elango.",
+      "year" : 2005
+    }, {
+      "title" : "End-to-end deep reinforcement learning based coreference resolution",
+      "author" : [ "Hongliang Fei", "Xu Li", "Dingcheng Li", "Ping Li." ],
+      "venue" : "Proceedings of ACL, pages 660–665, Florence, Italy, July.",
+      "citeRegEx" : "Fei et al\\.,? 2019",
+      "shortCiteRegEx" : "Fei et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Detection of publicity mentions in broadcast radio: Preliminary results",
+      "author" : [ "Marı́a Pilar Fernández-Gallego", "Álvaro Mesa-Castellanos", "Alicia Lozano-Dı́ez", "Doroteo T. Toledano" ],
+      "venue" : "Advances in Speech and Language Technologies for Iberian Languages,",
+      "citeRegEx" : "Fernández.Gallego et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Fernández.Gallego et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Assessing sentence scoring techniques for extractive text summarization",
+      "author" : [ "Rafael Ferreira", "Luciano de Souza Cabral", "Rafael Dueire Lins", "Gabriel Pereira e Silva", "Fred Freitas", "George DC Cavalcanti", "Rinaldo Lima", "Steven J Simske", "Luciano Favaro." ],
+      "venue" : "Expert systems with applications, 40(14):5755–5764.",
+      "citeRegEx" : "Ferreira et al\\.,? 2013",
+      "shortCiteRegEx" : "Ferreira et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "The representation and processing of coreference in discourse",
+      "author" : [ "Peter C Gordon", "Randall Hendrick." ],
+      "venue" : "Cognitive science, 22(4):389–424.",
+      "citeRegEx" : "Gordon and Hendrick.,? 1998",
+      "shortCiteRegEx" : "Gordon and Hendrick.",
+      "year" : 1998
+    }, {
+      "title" : "Language modeling with sparse product of sememe experts",
+      "author" : [ "Yihong Gu", "Jun Yan", "Hao Zhu", "Zhiyuan Liu", "Ruobing Xie", "Maosong Sun", "Fen Lin", "Leyu Lin." ],
+      "venue" : "Proceedings of EMNLP, pages 4642–4651, Brussels, Belgium, October-November.",
+      "citeRegEx" : "Gu et al\\.,? 2018",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Cnn-based chinese NER with lexicon rethinking",
+      "author" : [ "Tao Gui", "Ruotian Ma", "Qi Zhang", "Lujun Zhao", "Yu-Gang Jiang", "Xuanjing Huang." ],
+      "venue" : "Proceedings of IJCAI, pages 4982–4988.",
+      "citeRegEx" : "Gui et al\\.,? 2019",
+      "shortCiteRegEx" : "Gui et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Bidirectional lstm-crf models for sequence tagging",
+      "author" : [ "Zhiheng Huang", "Wei Xu", "Kai Yu." ],
+      "venue" : "arXiv preprint arXiv:1508.01991.",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "BERT for coreference resolution: Baselines and analysis",
+      "author" : [ "Mandar Joshi", "Omer Levy", "Luke Zettlemoyer", "Daniel Weld." ],
+      "venue" : "Proceedings of EMNLP-IJCNLP, pages 5807–5812, Hong Kong, China, November.",
+      "citeRegEx" : "Joshi et al\\.,? 2019",
+      "shortCiteRegEx" : "Joshi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba." ],
+      "venue" : "Proceedings of ICLR.",
+      "citeRegEx" : "Kingma and Ba.,? 2015",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2015
+    }, {
+      "title" : "Neural cross-lingual coreference resolution and its application to entity linking",
+      "author" : [ "Gourab Kundu", "Avi Sil", "Radu Florian", "Wael Hamza." ],
+      "venue" : "Proceedings of ACL, pages 395–400, Melbourne, Australia, July.",
+      "citeRegEx" : "Kundu et al\\.,? 2018",
+      "shortCiteRegEx" : "Kundu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "End-to-end neural coreference resolution",
+      "author" : [ "Kenton Lee", "Luheng He", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of EMNLP, pages 188–197, Copenhagen, Denmark, September.",
+      "citeRegEx" : "Lee et al\\.,? 2017",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Unsupervised translation induction for Chinese abbreviations using monolingual corpora",
+      "author" : [ "Zhifei Li", "David Yarowsky." ],
+      "venue" : "Proceedings of ACL, pages 425–433, Columbus, Ohio, June.",
+      "citeRegEx" : "Li and Yarowsky.,? 2008",
+      "shortCiteRegEx" : "Li and Yarowsky.",
+      "year" : 2008
+    }, {
+      "title" : "Chinese relation extraction with multigrained information and external linguistic knowledge",
+      "author" : [ "Ziran Li", "Ning Ding", "Zhiyuan Liu", "Haitao Zheng", "Ying Shen." ],
+      "venue" : "Proceedings of ACL, pages 4377–4386, Florence, Italy, July.",
+      "citeRegEx" : "Li et al\\.,? 2019",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A bert-based universal model for both within-and cross-sentence clinical temporal relation extraction",
+      "author" : [ "Chen Lin", "Timothy Miller", "Dmitriy Dligach", "Steven Bethard", "Guergana Savova." ],
+      "venue" : "Proceedings of the 2nd Clinical Natural Language Processing Workshop, pages 65–71.",
+      "citeRegEx" : "Lin et al\\.,? 2019",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Automatic expansion of chinese abbreviations by web mining",
+      "author" : [ "Hui Liu", "Yuquan Chen", "Lei Liu." ],
+      "venue" : "ICAIA, pages 408–416. Springer.",
+      "citeRegEx" : "Liu et al\\.,? 2009",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Multi-task deep neural networks for natural language understanding",
+      "author" : [ "Xiaodong Liu", "Pengcheng He", "Weizhu Chen", "Jianfeng Gao." ],
+      "venue" : "Proceedings of ACL, pages 4487–4496, Florence, Italy, July.",
+      "citeRegEx" : "Liu et al\\.,? 2019a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Roberta: A robustly optimized BERT pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "CoRR, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Effective approaches to attention-based neural machine translation",
+      "author" : [ "Thang Luong", "Hieu Pham", "Christopher D. Manning." ],
+      "venue" : "Proceedings of EMNLP, pages 1412–1421.",
+      "citeRegEx" : "Luong et al\\.,? 2015",
+      "shortCiteRegEx" : "Luong et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "End-to-end sequence labeling via bi-directional lstm-cnns-crf",
+      "author" : [ "Xuezhe Ma", "Eduard H. Hovy." ],
+      "venue" : "Proceedings of ACL.",
+      "citeRegEx" : "Ma and Hovy.,? 2016",
+      "shortCiteRegEx" : "Ma and Hovy.",
+      "year" : 2016
+    }, {
+      "title" : "Using decision trees for coreference resolution",
+      "author" : [ "Joseph F. McCarthy", "Wendy G. Lehnert." ],
+      "venue" : "Proceedings of IJCAI, pages 1050–1055.",
+      "citeRegEx" : "McCarthy and Lehnert.,? 1995",
+      "shortCiteRegEx" : "McCarthy and Lehnert.",
+      "year" : 1995
+    }, {
+      "title" : "Distant supervision for relation extraction without labeled data",
+      "author" : [ "Mike Mintz", "Steven Bills", "Rion Snow", "Dan Jurafsky." ],
+      "venue" : "Proceedings of ACL, pages 1003–1011. Association for Computational Linguistics.",
+      "citeRegEx" : "Mintz et al\\.,? 2009",
+      "shortCiteRegEx" : "Mintz et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "Robust pronoun resolution with limited knowledge",
+      "author" : [ "Ruslan Mitkov." ],
+      "venue" : "Proceedings of ACL, pages 869–875, Montreal, Quebec, Canada, August.",
+      "citeRegEx" : "Mitkov.,? 1998",
+      "shortCiteRegEx" : "Mitkov.",
+      "year" : 1998
+    }, {
+      "title" : "Definite description resolution enrichment with wordnet domain labels",
+      "author" : [ "Rafael Muñoz", "Andrés Montoyo." ],
+      "venue" : "Francisco J. Garijo, José C. Riquelme, and Miguel Toro, editors, IBERAMIA 2002, pages 645–654, Berlin, Heidelberg. Springer Berlin Heidelberg.",
+      "citeRegEx" : "Muñoz and Montoyo.,? 2002",
+      "shortCiteRegEx" : "Muñoz and Montoyo.",
+      "year" : 2002
+    }, {
+      "title" : "Improving machine learning approaches to coreference resolution",
+      "author" : [ "Vincent Ng", "Claire Cardie." ],
+      "venue" : "Proceedings of ACL, pages 104–111, Philadelphia, Pennsylvania, USA, July.",
+      "citeRegEx" : "Ng and Cardie.,? 2002",
+      "shortCiteRegEx" : "Ng and Cardie.",
+      "year" : 2002
+    }, {
+      "title" : "Improved word representation learning with sememes",
+      "author" : [ "Yilin Niu", "Ruobing Xie", "Zhiyuan Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of ACL, volume 1, pages 2049–2058.",
+      "citeRegEx" : "Niu et al\\.,? 2017",
+      "shortCiteRegEx" : "Niu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Open-domain anatomical entity mention detection",
+      "author" : [ "Tomoko Ohta", "Sampo Pyysalo", "Jun’ichi Tsujii", "Sophia Ananiadou" ],
+      "venue" : "In Proceedings of workshop on detecting structure in scholarly discourse,",
+      "citeRegEx" : "Ohta et al\\.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Ohta et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Coreference and meaning",
+      "author" : [ "N Ángel Pinillos." ],
+      "venue" : "Philosophical Studies, 154(2):301–324.",
+      "citeRegEx" : "Pinillos.,? 2011",
+      "shortCiteRegEx" : "Pinillos.",
+      "year" : 2011
+    }, {
+      "title" : "Improve coreference resolution with parameter tunable anaphoricity identification and global optimization",
+      "author" : [ "Shuhan Qi", "Xuan Wang", "Xinxin Li." ],
+      "venue" : "De-Shuang Huang, Yong Gan, Prashan Premaratne, and Kyungsook Han, editors, Bio-Inspired Computing and Applications, pages 307–314, Berlin, Heidelberg. Springer Berlin Heidelberg.",
+      "citeRegEx" : "Qi et al\\.,? 2012",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Modeling semantic compositionality with sememe knowledge",
+      "author" : [ "Fanchao Qi", "Junjie Huang", "Chenghao Yang", "Zhiyuan Liu", "Xiao Chen", "Qun Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of ACL, pages 5706–5715, Florence, Italy, July.",
+      "citeRegEx" : "Qi et al\\.,? 2019",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Dropout: a simple way to prevent neural networks from overfitting",
+      "author" : [ "Nitish Srivastava", "Geoffrey E. Hinton", "Alex Krizhevsky", "Ilya Sutskever", "Ruslan Salakhutdinov." ],
+      "venue" : "Journal of Machine Learning Research, 15(1):1929– 1958.",
+      "citeRegEx" : "Srivastava et al\\.,? 2014",
+      "shortCiteRegEx" : "Srivastava et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Brat: a web-based tool for nlp-assisted text annotation",
+      "author" : [ "Pontus Stenetorp", "Sampo Pyysalo", "Goran Topić", "Tomoko Ohta", "Sophia Ananiadou", "Jun’ichi Tsujii" ],
+      "venue" : "In Proceedings of EACL,",
+      "citeRegEx" : "Stenetorp et al\\.,? \\Q2012\\E",
+      "shortCiteRegEx" : "Stenetorp et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Predicting chinese abbreviations from definitions: An empirical learning approach using support vector regression",
+      "author" : [ "Xu Sun", "Hou-Feng Wang", "Bo Wang." ],
+      "venue" : "Journal of Computer Science and Technology, 23(4):602– 611.",
+      "citeRegEx" : "Sun et al\\.,? 2008",
+      "shortCiteRegEx" : "Sun et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "A chinese event relation extraction model based on bert",
+      "author" : [ "C. Tian", "Y. Zhao", "L. Ren." ],
+      "venue" : "ICAIBD, pages 271–276, May.",
+      "citeRegEx" : "Tian et al\\.,? 2019",
+      "shortCiteRegEx" : "Tian et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Graph attention networks",
+      "author" : [ "Petar Velickovic", "Guillem Cucurull", "Arantxa Casanova", "Adriana Romero", "Pietro Liò", "Yoshua Bengio" ],
+      "venue" : null,
+      "citeRegEx" : "Velickovic et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Velickovic et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Automatic online news issue construction in web environment",
+      "author" : [ "Canhui Wang", "Zhang Min", "Shaoping Ma", "Liyun Ru." ],
+      "venue" : "Proceedings of the 17th International Conference on World Wide Web, WWW 2008, Beijing, China, April 21-25, 2008.",
+      "citeRegEx" : "Wang et al\\.,? 2008",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2008
+    }, {
+      "title" : "A local detection approach for named entity recognition and mention detection",
+      "author" : [ "Mingbin Xu", "Hui Jiang", "Sedtawut Watcharawittayakul." ],
+      "venue" : "Proceedings of ACL, pages 1237–1247, Vancouver, Canada, July.",
+      "citeRegEx" : "Xu et al\\.,? 2017",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "BERT post-training for review reading comprehension and aspect-based sentiment analysis",
+      "author" : [ "Hu Xu", "Bing Liu", "Lei Shu", "Philip Yu." ],
+      "venue" : "Proceedings of NAACL, pages 2324–2335, Minneapolis, Minnesota, June.",
+      "citeRegEx" : "Xu et al\\.,? 2019",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Chinese LIWC lexicon expansion via hierarchical classification of word embeddings with sememe attention",
+      "author" : [ "Xiangkai Zeng", "Cheng Yang", "Cunchao Tu", "Zhiyuan Liu", "Maosong Sun." ],
+      "venue" : "Proceedings of AAAI, pages 5650–5657.",
+      "citeRegEx" : "Zeng et al\\.,? 2018",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A chinese dataset with negative full forms for general abbreviation prediction",
+      "author" : [ "Yi Zhang", "Xu Sun." ],
+      "venue" : "Proceedings of LREC.",
+      "citeRegEx" : "Zhang and Sun.,? 2018",
+      "shortCiteRegEx" : "Zhang and Sun.",
+      "year" : 2018
+    }, {
+      "title" : "Chinese NER using lattice LSTM",
+      "author" : [ "Yue Zhang", "Jie Yang." ],
+      "venue" : "Proceedings of ACL, pages 1554–1564.",
+      "citeRegEx" : "Zhang and Yang.,? 2018",
+      "shortCiteRegEx" : "Zhang and Yang.",
+      "year" : 2018
+    }, {
+      "title" : "Dependency parsing as head selection",
+      "author" : [ "Xingxing Zhang", "Jianpeng Cheng", "Mirella Lapata." ],
+      "venue" : "Proceedings of EACL, pages 665–676, Valencia, Spain, April.",
+      "citeRegEx" : "Zhang et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural coreference resolution with deep biaffine attention by joint mention detection and mention clustering",
+      "author" : [ "Rui Zhang", "Cı́cero Nogueira dos Santos", "Michihiro Yasunaga", "Bing Xiang", "Dragomir R. Radev" ],
+      "venue" : "In Proceedings of ACL,",
+      "citeRegEx" : "Zhang et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The nature, composition and standardization of abbreviations in modern chinese",
+      "author" : [ "Jialing Zhong." ],
+      "venue" : "Journal of Shenzhen University(Humanities & Social Sciences), (Z1):62–70.",
+      "citeRegEx" : "Zhong.,? 1985",
+      "shortCiteRegEx" : "Zhong.",
+      "year" : 1985
+    }, {
+      "title" : "BERT-based lexical substitution",
+      "author" : [ "Wangchunshu Zhou", "Tao Ge", "Ke Xu", "Furu Wei", "Ming Zhou." ],
+      "venue" : "Proceedings of ACL, pages 3368–3373, Florence, Italy, July.",
+      "citeRegEx" : "Zhou et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2019
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 13,
+      "context" : "1 Introduction Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al.",
+      "startOffset" : 65,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 36,
+      "context" : "1 Introduction Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al.",
+      "startOffset" : 65,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 33,
+      "context" : "1 Introduction Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al., 2017; Qi et al., 2012; Fei et al., 2019).",
+      "startOffset" : 221,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 20,
+      "context" : "1 Introduction Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al., 2017; Qi et al., 2012; Fei et al., 2019).",
+      "startOffset" : 221,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 37,
+      "context" : "1 Introduction Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al., 2017; Qi et al., 2012; Fei et al., 2019).",
+      "startOffset" : 221,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 10,
+      "context" : "1 Introduction Coreference is one important topic in linguistics (Gordon and Hendrick, 1998; Pinillos, 2011), and coreference recognition has been extensively researched in the natural language processing (NLP) community (Ng and Cardie, 2002; Lee et al., 2017; Qi et al., 2012; Fei et al., 2019).",
+      "startOffset" : 221,
+      "endOffset" : 295
+    }, {
+      "referenceID" : 31,
+      "context" : "There are different kinds of coreferences, such as pronoun anaphora and abbreviation (Mitkov, 1998; Ruslan Mitkov, 1999; Muñoz and Montoyo, 2002; Choubey and Huang, 2018).",
+      "startOffset" : 85,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 32,
+      "context" : "There are different kinds of coreferences, such as pronoun anaphora and abbreviation (Mitkov, 1998; Ruslan Mitkov, 1999; Muñoz and Montoyo, 2002; Choubey and Huang, 2018).",
+      "startOffset" : 85,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 2,
+      "context" : "There are different kinds of coreferences, such as pronoun anaphora and abbreviation (Mitkov, 1998; Ruslan Mitkov, 1999; Muñoz and Montoyo, 2002; Choubey and Huang, 2018).",
+      "startOffset" : 85,
+      "endOffset" : 170
+    }, {
+      "referenceID" : 49,
+      "context" : "Moreover, the fusion words are usually rarer words compared with their separation words coreferred, which are more difficult to be handled by NLP models(Zhang and Yang, 2018; Gui et al., 2019).",
+      "startOffset" : 152,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 15,
+      "context" : "Moreover, the fusion words are usually rarer words compared with their separation words coreferred, which are more difficult to be handled by NLP models(Zhang and Yang, 2018; Gui et al., 2019).",
+      "startOffset" : 152,
+      "endOffset" : 192
+    }, {
+      "referenceID" : 21,
+      "context" : "Thus recognizing the lexical fusion would be beneficial for downstream paragraph (or document)-level NLP applications such as machine translation, information extraction, summarization, etc.(Li and Yarowsky, 2008; Ferreira et al., 2013; Kundu et al., 2018).",
+      "startOffset" : 190,
+      "endOffset" : 256
+    }, {
+      "referenceID" : 12,
+      "context" : "Thus recognizing the lexical fusion would be beneficial for downstream paragraph (or document)-level NLP applications such as machine translation, information extraction, summarization, etc.(Li and Yarowsky, 2008; Ferreira et al., 2013; Kundu et al., 2018).",
+      "startOffset" : 190,
+      "endOffset" : 256
+    }, {
+      "referenceID" : 19,
+      "context" : "Thus recognizing the lexical fusion would be beneficial for downstream paragraph (or document)-level NLP applications such as machine translation, information extraction, summarization, etc.(Li and Yarowsky, 2008; Ferreira et al., 2013; Kundu et al., 2018).",
+      "startOffset" : 190,
+      "endOffset" : 256
+    }, {
+      "referenceID" : 20,
+      "context" : "The two steps can be conducted jointly in a single end-to-end model (Lee et al., 2017), which helps avoid the error propagation problem, and meanwhile, enable the two subtasks with full interaction.",
+      "startOffset" : 68,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 4,
+      "context" : "Contextual BERT representations (Devlin et al., 2019) are adopted as encoder inputs as they have achieved great success in a number of NLP tasks (Tian et al.",
+      "startOffset" : 32,
+      "endOffset" : 53
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2019) are adopted as encoder inputs as they have achieved great success in a number of NLP tasks (Tian et al., 2019; Zhou et al., 2019; Xu et al., 2019).",
+      "startOffset" : 99,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 53,
+      "context" : ", 2019) are adopted as encoder inputs as they have achieved great success in a number of NLP tasks (Tian et al., 2019; Zhou et al., 2019; Xu et al., 2019).",
+      "startOffset" : 99,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2019) are adopted as encoder inputs as they have achieved great success in a number of NLP tasks (Tian et al., 2019; Zhou et al., 2019; Xu et al., 2019).",
+      "startOffset" : 99,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 16,
+      "context" : "For mention detection, a CRF decoder (Huang et al., 2015) is exploited to detect all mention words, including both the fusion and the separation words.",
+      "startOffset" : 37,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 50,
+      "context" : "Further, we use a BiAffine decoder for coreference recognition (Zhang et al., 2017; Bekoulis et al., 2018), determining a given mention pair either to be a coreference or not.",
+      "startOffset" : 63,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 0,
+      "context" : "Further, we use a BiAffine decoder for coreference recognition (Zhang et al., 2017; Bekoulis et al., 2018), determining a given mention pair either to be a coreference or not.",
+      "startOffset" : 63,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 6,
+      "context" : "Since our task is semantic oriented, we use the sememe knowledge provided in HowNet(Dong and Dong, 2003) to help capturing the semantic similarity between the characters and the separation words.",
+      "startOffset" : 83,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 8,
+      "context" : "HowNet has achieved success in many Chinese NLP tasks in recent years (Duan et al., 2007; Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 70,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 14,
+      "context" : "HowNet has achieved success in many Chinese NLP tasks in recent years (Duan et al., 2007; Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 70,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 5,
+      "context" : "HowNet has achieved success in many Chinese NLP tasks in recent years (Duan et al., 2007; Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 70,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 22,
+      "context" : "HowNet has achieved success in many Chinese NLP tasks in recent years (Duan et al., 2007; Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 70,
+      "endOffset" : 142
+    }, {
+      "referenceID" : 43,
+      "context" : "Both Chinese characters and words are defined by senses of sememe graphs in it, and we exploit graph attention networks (GAT) (Velickovic et al., 2018) to model the sememe graphs to enhance our encoder.",
+      "startOffset" : 126,
+      "endOffset" : 151
+    }, {
+      "referenceID" : 35,
+      "context" : "By applying the BIO tagging scheme associating with mention types, this subtask can be converted into a typical sequence labeling task (Ohta et al., 2012; Ma and Hovy, 2016).",
+      "startOffset" : 135,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 28,
+      "context" : "By applying the BIO tagging scheme associating with mention types, this subtask can be converted into a typical sequence labeling task (Ohta et al., 2012; Ma and Hovy, 2016).",
+      "startOffset" : 135,
+      "endOffset" : 173
+    }, {
+      "referenceID" : 4,
+      "context" : "1 Basic Model Encoder We exploit the BERT as the basic encoder because it has achieved state-of-the-art performances for a number of NLP tasks (Devlin et al., 2019).",
+      "startOffset" : 143,
+      "endOffset" : 164
+    }, {
+      "referenceID" : 7,
+      "context" : "We can refer to (Dozat and Manning, 2017) for the details of the BiAffine operation, which has shown strong capabilities in similar tasks (Zhang et al.",
+      "startOffset" : 16,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 51,
+      "context" : "We can refer to (Dozat and Manning, 2017) for the details of the BiAffine operation, which has shown strong capabilities in similar tasks (Zhang et al., 2018).",
+      "startOffset" : 138,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 14,
+      "context" : "2 Sememe-Enhanced Encoder Sememes and HowNet Sememe is regarded as the minimum semantic unit for the Chinese language, which has been exploited for several semantic-oriented tasks, such as word sense disambiguation, event extraction and relation extraction (Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 257,
+      "endOffset" : 310
+    }, {
+      "referenceID" : 5,
+      "context" : "2 Sememe-Enhanced Encoder Sememes and HowNet Sememe is regarded as the minimum semantic unit for the Chinese language, which has been exploited for several semantic-oriented tasks, such as word sense disambiguation, event extraction and relation extraction (Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 257,
+      "endOffset" : 310
+    }, {
+      "referenceID" : 22,
+      "context" : "2 Sememe-Enhanced Encoder Sememes and HowNet Sememe is regarded as the minimum semantic unit for the Chinese language, which has been exploited for several semantic-oriented tasks, such as word sense disambiguation, event extraction and relation extraction (Gu et al., 2018; Ding et al., 2019; Li et al., 2019).",
+      "startOffset" : 257,
+      "endOffset" : 310
+    }, {
+      "referenceID" : 27,
+      "context" : "Finally, we aggregate all sense representations by global attention (Luong et al., 2015) with the guide of the BERT outputs to obtain character-level representations.",
+      "startOffset" : 68,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 44,
+      "context" : "1 Dataset Test Data We build a lexical fusion dataset manually in this work, where the raw corpus is collected from SogouCA (Wang et al., 2008), a news corpus of 18 channels, including domestic, international, sports, social, entertainment, etc.",
+      "startOffset" : 124,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 40,
+      "context" : "The BRAT Rapid Annotation Tool (Stenetorp et al., 2012) is used for annotation.",
+      "startOffset" : 31,
+      "endOffset" : 55
+    }, {
+      "referenceID" : 30,
+      "context" : "Then, we search for the paragraphs containing all three words of a certain triple, regarding them as valid cases of Chinese lexical fusion(Mintz et al., 2009).",
+      "startOffset" : 138,
+      "endOffset" : 158
+    }, {
+      "referenceID" : 4,
+      "context" : "We exploit the pretrained basic BERT representations as inputs for encoder (Devlin et al., 2019).",
+      "startOffset" : 75,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 39,
+      "context" : "2 on the encoder outputs to avoid overfitting (Srivastava et al., 2014), and optimize all model parameters (including the BERT part) by standard back-propagation using Adam (Kingma and Ba, 2015) with a learning rate 0.",
+      "startOffset" : 46,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2014), and optimize all model parameters (including the BERT part) by standard back-propagation using Adam (Kingma and Ba, 2015) with a learning rate 0.",
+      "startOffset" : 109,
+      "endOffset" : 130
+    }, {
+      "referenceID" : 29,
+      "context" : "Coreference recognition has been investigated extensively in NLP for decades (McCarthy and Lehnert, 1995; Cardie and Wagstaff, 1999; Ng and Cardie, 2002; Elango, 2005).",
+      "startOffset" : 77,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 1,
+      "context" : "Coreference recognition has been investigated extensively in NLP for decades (McCarthy and Lehnert, 1995; Cardie and Wagstaff, 1999; Ng and Cardie, 2002; Elango, 2005).",
+      "startOffset" : 77,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 33,
+      "context" : "Coreference recognition has been investigated extensively in NLP for decades (McCarthy and Lehnert, 1995; Cardie and Wagstaff, 1999; Ng and Cardie, 2002; Elango, 2005).",
+      "startOffset" : 77,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 9,
+      "context" : "Coreference recognition has been investigated extensively in NLP for decades (McCarthy and Lehnert, 1995; Cardie and Wagstaff, 1999; Ng and Cardie, 2002; Elango, 2005).",
+      "startOffset" : 77,
+      "endOffset" : 167
+    }, {
+      "referenceID" : 11,
+      "context" : "Our proposed models are inspired by the work of neural coreference resolution (Fernández-Gallego et al., 2016; Clark and Manning, 2016; Xu et al., 2017; Lee et al., 2017; Zhang et al., 2018).",
+      "startOffset" : 78,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 3,
+      "context" : "Our proposed models are inspired by the work of neural coreference resolution (Fernández-Gallego et al., 2016; Clark and Manning, 2016; Xu et al., 2017; Lee et al., 2017; Zhang et al., 2018).",
+      "startOffset" : 78,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 45,
+      "context" : "Our proposed models are inspired by the work of neural coreference resolution (Fernández-Gallego et al., 2016; Clark and Manning, 2016; Xu et al., 2017; Lee et al., 2017; Zhang et al., 2018).",
+      "startOffset" : 78,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 20,
+      "context" : "Our proposed models are inspired by the work of neural coreference resolution (Fernández-Gallego et al., 2016; Clark and Manning, 2016; Xu et al., 2017; Lee et al., 2017; Zhang et al., 2018).",
+      "startOffset" : 78,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 51,
+      "context" : "Our proposed models are inspired by the work of neural coreference resolution (Fernández-Gallego et al., 2016; Clark and Manning, 2016; Xu et al., 2017; Lee et al., 2017; Zhang et al., 2018).",
+      "startOffset" : 78,
+      "endOffset" : 190
+    }, {
+      "referenceID" : 52,
+      "context" : "Another most closely-related topic is abbreviation (Zhong, 1985).",
+      "startOffset" : 51,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 41,
+      "context" : "There have been several studies on abbreviation prediction, recovery and dictionary construction (Sun et al., 2008; Li and Yarowsky, 2008; Liu et al., 2009; Zhang and Sun, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 21,
+      "context" : "There have been several studies on abbreviation prediction, recovery and dictionary construction (Sun et al., 2008; Li and Yarowsky, 2008; Liu et al., 2009; Zhang and Sun, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 24,
+      "context" : "There have been several studies on abbreviation prediction, recovery and dictionary construction (Sun et al., 2008; Li and Yarowsky, 2008; Liu et al., 2009; Zhang and Sun, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 48,
+      "context" : "There have been several studies on abbreviation prediction, recovery and dictionary construction (Sun et al., 2008; Li and Yarowsky, 2008; Liu et al., 2009; Zhang and Sun, 2018).",
+      "startOffset" : 97,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 4,
+      "context" : "BERT and its variations have achieved the leading performances for GLUE benchmark datasets (Devlin et al., 2019; Liu et al., 2019a; Liu et al., 2019b).",
+      "startOffset" : 91,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 25,
+      "context" : "BERT and its variations have achieved the leading performances for GLUE benchmark datasets (Devlin et al., 2019; Liu et al., 2019a; Liu et al., 2019b).",
+      "startOffset" : 91,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 26,
+      "context" : "BERT and its variations have achieved the leading performances for GLUE benchmark datasets (Devlin et al., 2019; Liu et al., 2019a; Liu et al., 2019b).",
+      "startOffset" : 91,
+      "endOffset" : 150
+    }, {
+      "referenceID" : 17,
+      "context" : "For the close tasks such as coreference resolution and relation extraction, BERT representations have also shown competitive results (Joshi et al., 2019; Lin et al., 2019), which inspires our work by using it as basic inputs aiming for competitive performance.",
+      "startOffset" : 133,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 23,
+      "context" : "For the close tasks such as coreference resolution and relation extraction, BERT representations have also shown competitive results (Joshi et al., 2019; Lin et al., 2019), which inspires our work by using it as basic inputs aiming for competitive performance.",
+      "startOffset" : 133,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 34,
+      "context" : "The sense and sememe information has been demonstrated effective for several semantic-oriented NLP tasks (Niu et al., 2017; Gu et al., 2018; Zeng et al., 2018; Ding et al., 2019; Qi et al., 2019).",
+      "startOffset" : 105,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 14,
+      "context" : "The sense and sememe information has been demonstrated effective for several semantic-oriented NLP tasks (Niu et al., 2017; Gu et al., 2018; Zeng et al., 2018; Ding et al., 2019; Qi et al., 2019).",
+      "startOffset" : 105,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 47,
+      "context" : "The sense and sememe information has been demonstrated effective for several semantic-oriented NLP tasks (Niu et al., 2017; Gu et al., 2018; Zeng et al., 2018; Ding et al., 2019; Qi et al., 2019).",
+      "startOffset" : 105,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 5,
+      "context" : "The sense and sememe information has been demonstrated effective for several semantic-oriented NLP tasks (Niu et al., 2017; Gu et al., 2018; Zeng et al., 2018; Ding et al., 2019; Qi et al., 2019).",
+      "startOffset" : 105,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 38,
+      "context" : "The sense and sememe information has been demonstrated effective for several semantic-oriented NLP tasks (Niu et al., 2017; Gu et al., 2018; Zeng et al., 2018; Ding et al., 2019; Qi et al., 2019).",
+      "startOffset" : 105,
+      "endOffset" : 195
+    }, {
+      "referenceID" : 6,
+      "context" : "HowNet offers a large knowledge base of sememe-based (Dong and Dong, 2003), which has been adopted for sememe extraction.",
+      "startOffset" : 53,
+      "endOffset" : 74
+    } ],
+    "year" : 2020,
+    "abstractText" : "In this paper, we present Chinese lexical fusion recognition, a new task which could be regarded as one kind of coreference recognition. First, we introduce the task in detail, showing the relationship with coreference recognition and differences from the existing tasks. Second, we propose an end-to-end model for the task, handling mentions as well as coreference relationship jointly. The model exploits the state-of-the-art contextualized BERT representations as the encoder, and is further enhanced with the sememe knowledge from HowNet by graph attention networks. We manually annotate a benchmark dataset for the task and then conduct experiments on it. Results demonstrate that our final model is effective and competitive for the task. Detailed analysis is offered for comprehensively understanding the new task and our proposed model.",
+    "creator" : "TeX"
+  }
+}

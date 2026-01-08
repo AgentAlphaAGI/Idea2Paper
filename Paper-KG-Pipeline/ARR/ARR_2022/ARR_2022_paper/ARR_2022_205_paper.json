@@ -1,0 +1,484 @@
+{
+  "name" : "ARR_2022_205_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "GCPG: A General Framework for Controllable Paraphrase Generation",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Paraphrase generation (Madnani and Dorr, 2010) refers to restating a given sentence into an alternative surface form while keeping the semantics unchanged. It is of long-standing interest (McKeown, 1983), with various applications such as question answering (Gan and Ng, 2019), machine translation (Mallinson et al., 2017), and sentence simplification (Martin et al., 2020). However, a sentence\ncan be re-expressed in various surface forms. Lacking control might result in undesirable results (Gu et al., 2019).\nTo obtain desirable surface forms, most recent works focus on controllable paraphrase generation (CPG) by incorporating external conditions. Existing efforts to CPG can be roughly divided into two types: lexically and syntactically CPG. Lexically CPG is concerned with what to say, which generates paraphrases that contain pre-specified keywords. As shown in Figure 1, a lexically CPG model needs to generate a paraphrase that contains the given keyword “showed up”. To achieve it, a sequence-to-sequence model equipped with the copy mechanism is commonly used (Zeng et al., 2019). Different from lexically CPG, syntactically CPG concentrates on how to say it, generating a paraphrase that conforms to the syntax of a given exemplar (i.e., a sentence illustrating certain syntax patterns). Substantial efforts have been made on constructing syntactical features of the given exemplar. For example, Kumar et al. (2020) incorporate a full syntactic tree of the exemplar to guide paraphrasing; Bui et al. (2021) construct a masked template to direct generation by masking words with certain Part-of-Speech (POS) type of exemplar; Chen et al. (2019) directly use the sentential exemplar. Since sentential exemplars are only available for testing, they have to manufacture exemplars for training by replacing certain words from\nthe target sentence. Despite the progress on the two types of conditions individually, what to say and how to say it are both aspects of vital importance for CPG (Kumar et al., 2020). Furthermore, there lacks a unified framework to study the effectiveness of these conditions and their joint utilization.\nTo fill this gap, we propose a General Controllable Paraphrase Generation framework (GCPG) to jointly include both lexically and syntactically CPG in a unified model. The key idea is to reconstruct both lexical and syntactical conditions as text sequences and process them in a text-to-text encoder-decoder paradigm. This also allows GCPG to easily utilize the strong language modeling capacity of pre-trained language models (PLMs), which have demonstrated great potential (Bui et al., 2021) yet rarely been explored under the topic of CPG. For the lexical condition, we concatenate the pre-specified keywords as a sequence while exploring different methods to pre-specify keywords from rule-based to model-based. As for syntactical conditions, we reconstruct commonly used syntactic features as sequences, such as Linearised Constituent Tree (Iyyer et al., 2018) and masked template based on word mask (Bui et al., 2021). Besides the manufactured syntax features, we hypothesize that directly using the exemplar is more effective as it can benefit from the powerful sentence modeling capability of PLMs. To construct the exemplar for training, we propose a novel exemplar construction method as SyntaxSimilarity based Exemplar (SSE). Specifically, we use a sentence that is syntactically similar but lexically different from the target sentence, which is retrieved in a self-constructed exemplar dictionary based on the training set. This is different from existing methods that construct exemplar through modifying target sentences (Chen et al., 2019), alleviating exemplar-side words copying problem (Bui et al., 2021) brought by Chen et al. (2019).\nWe examine GCPG on two popular benchmark datasets. Those discussions include not only performances of different conditions and their combinations, but also the effectiveness of GCPG instantiated by different PLMs. Experiments demonstrate that GCPG consistently shows significant performances when tested by three different methods to pre-specify keywords. For syntactical CPG, GCPG with SSE obtains 13.95/24.31/18.64 ROUGE-1/2/L and 16.38 BLEU-4 over the previous state-of-theart (SOTA) model (Bui et al., 2021). Besides, the\ncombination of lexical and syntactical conditions show encouraging controllability of paraphrase generation in both quantitative and qualitative analysis. The main contributions are as follows:\n• We propose GCPG, a general framework to jointly include both lexically and syntactically controllable paraphrasing. It is simple but effective, enabling flexible combinations of conditions by reconstructing them into text sequences and processing them in a text-to-text encoder-decoder paradigm. Those properties allow GCPG to easily adapt to mainstream pre-trained language models and utilize powerful language modeling capacity, which is rarely explored in CPG.\n• We provide a novel exemplar construction method SSE under the syntactical condition. It allows GCPG to directly model syntax information from natural sentences without any manufactured syntax features, while alleviating the exemplar-side words copying problem."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "In this section, we summarize existing works on syntactically and lexically CPG. Syntactically CPG generates a paraphrase constrained by a prespecified sentence of a certain syntax structure namely exemplar. However, the exemplar is only available during inference, resulting in a key challenge: obtaining manual exemplars for existing paraphrasing training datasets is prohibitively expensive. To address this, some of the previous works construct syntactical features from target sentences during training, such as POS Tagging, Constituent Tree, mask template as illustrated in Table 1. For instance, SCPN (Iyyer et al., 2018) makes the first attempt to introduce Linearised Constituent Tree (LCT) of target sentence into paraphrasing, where LCT is predicted based on predefined parse templates. Similarly, GuiG (Li et al., 2020) proposes two models to expand a partial template LCT and generate paraphrasing, respectively. Different from using LCT, SGCP (Kumar et al., 2020) introduces a graph encoder to encode the Constituent Tree of exemplar as the condition. Besides, masked template replaces several words of the exemplar with a special token to form a template as the condition. For example, BCPG (Liu et al., 2020b) follows BERT (Devlin et al., 2019) to randomly mask exemplar words, ParafraGPT (Bui\net al., 2021) further masks exemplar words with certain POS types. However, Chen et al. (2019) advocate to directly utilize the sentential exemplar (i.e., the sentence) as the condition, because they believe “any syntactically valid sentence is a valid exemplar\". Since exemplar is only available in the testing set, they construct exemplar by replacing words of the target sentence with others that have the same POS type. Besides, lexically CPG constraints paraphrasing with pre-specified keywords, which is rarely explored but undoubtedly indispensable in CPG. Zeng et al. (2019) make the first attempt to integrate keywords with copy mechanism. Despite their progress, existing works only focus on a special condition under either lexically or syntactically CPG. In comparison, GCPG jointly includes lexically and syntactically CPG, flexibly combining conditions in a unified circumstance."
+    }, {
+      "heading" : "3 Methodology",
+      "text" : ""
+    }, {
+      "heading" : "3.1 GCPG Framework",
+      "text" : "Before introducing GCPG, we first give the definition of controllable paraphrase generation with external conditions. Given a source sentence x and a variety of conditions c, the model generates paraphrase y = (y1, y2, ..., yT ) by:\np(y|x, c) = T∏ t=1 p(yt|y<t,x, c; θ), (1)\nwhere θ are the model parameters trained by maximizing the conditional likelihood of outputs in a parallel corpus. Given this definition, the forms of conditions c might be varied, such as pre-defined keywords and Constituent Parse Tree. To uniformly encode these conditions and investigate their effectiveness, we propose a general framework GCPG. GCPG contains a standard encoder-\ndecoder paradigm, which allows any mainstream PLMs to adapt to this task rapidly. Meanwhile, GCPG can flexibly use the combinations of included conditions by concatenating them as one sequence with “[SEP]”. As shown in Figure 2, the source sentence “No one’s home ?” is concatenated with optional sequential conditions by the separator signal “[SEP]”, then fed into the model. Afterward, the model auto-regressively generates “Is anyone home?” as the final result."
+    }, {
+      "heading" : "3.2 Conditions under GCPG",
+      "text" : ""
+    }, {
+      "heading" : "3.2.1 Syntactical Condition",
+      "text" : "Syntactically CPG requests a syntax exemplar to constrain the syntax structure of paraphrase. However, exemplars are only available in the testing set of existing paraphrasing datasets. To train a syntactically CPG model, we construct a syntactical condition based on the target sentences in the training set. During inference, we apply the same strategy to obtain the corresponding syntactical conditions from exemplars in the testing set. We explore four syntactical conditions in this work, as follows: POS Tagging is one of most simple solutions in\nmodeling the syntax structure (Cutting et al., 1992), which could be effectively implemented and show promising performance in various NLP tasks (Yang et al., 2021). We investigate POS Tagging as an independent condition, which is rarely explored in CPG. In detail, we extract POS sequence of target sentence by CoreNLP1 as the condition. To learn these POS signals with PLMs, we regard these POS tokens as special ones and add them into the word vocabulary of PLMs. Constituent Tree is a widely used condition for syntax controlling while paraphrasing. Here, we explore two kinds of LCT, i.e., full-fledged LCT and Truncated LCT. For the full-fledged LCT condition, we extract the complete sequential Constituent Tree from the target sentence for training and exemplar for testing, based on the off-the-shelf tools of CoreNLP. We further explore the Truncated LCT condition, which is the sequence that removing POS-level tokens in full-fledged LCT. Compared with full-fledged LCT, Truncated LCT drastically shortens the input length. Masked Template is first introduced in Liu et al. (2020b), which randomly masks words of the target sentence to form a syntax template as the condition. To verify the effectiveness of this method in GCPG circumstance, we follow the current SOTA Bui et al. (2021) to construct a masked template by substituting all nouns, adjectives, adverbs, and verbs with a special token in the exemplar. Similarly, this strategy is applied to the target sentences during training and the given exemplars during inference. Sentential Exemplar is the most straightforward\n1https://stanfordnlp.github.io/ CoreNLP/index.html\nway for syntactically CPG, which directly uses the sentential exemplar as the condition. In contrast to the above three syntactical conditions, Sentential Exemplar uses natural sentences to represent desirable syntax structure, without introducing any special token which does not appear during PLMs pretraining. We argue that this way can make better use of PLMs. However, the previous method (Chen et al., 2019) suffers from the exemplar-side words copying problem during testing, which might be caused by the noticeable words overlap with the target sentence in constructing sentential exemplar during training. To alleviate this problem, we propose Syntax-Similarity based Exemplar (SSE) to enhance sentential exemplar condition.\nAn overview of our SSE method is demonstrated in Figure 3. To alleviate the exemplar-side words copying issue, the proposed SSE constructs Sentential Exemplar by retrieving a syntactically similar but lexically different sentence for each target sentence during training. To achieve that, we construct an exemplar dictionary that contains the syntactical key-value mapping from the syntax structure k to its corresponding natural sentence v. Each syntactical key k ∈K is a Truncated LCT sequence, and its value is a randomly selected natural sentence that can be assigned to this Truncated LCT sequence. During training, given a data pair 〈x,y〉 and the Truncated LCT s of y, we select a syntactical key k∗ by calculating the syntax edit distance Dsyn between s and each syntactical key in the exemplar dictionary, which can be formulated as:\nk∗ = argmin(Dsyn(s,k))\n= arg min k∈K ( LevEdit(s,k) max(|s|, |k|) ), (2)\nwhere LevEdit(·) denotes the token-level Levenshtein edit distance between two sequences and | · | denotes the token-level length of the sequence. We assign the corresponding sentence v∗, which is related to k∗, as the training exemplar. Lexical Condition Lexically CPG uses prespecified keywords to constrain paraphrasing, which requires a paraphrasing dataset containing 〈sentence, keywords, paraphrase〉 triples. Because the original dataset is formatted as 〈sentence, paraphrase〉, we need to pre-specify keywords for each data item. Following Zeng et al. (2019), we automatically extract keywords from the target sentence as the condition in the training stage. Besides, as also lacking manual keywords for each\ntesting pair, we carry out two strategies for inference. On the one hand, we directly extract keywords from references as conditions following Zeng et al. (2019). On another, a standard sequence-to-sequence model is used to predict target keywords only from source sentences as conditions while testing, as described in Liu et al.(2020a). Specifically, we investigate three representative keyword extraction methods to verify the effectiveness of GCPG, including rule-based TF-IDF, TextRank (Mihalcea and Tarau, 2004), and modelbased KeyBERT (Grootendorst, 2020). Each method filters out the stop words and punctuation, and guarantees the extracted keywords do not appear in the corresponding source sentence. The maximum number of keywords is set to 3. Besides, we use a special token “[NONE]” when there are no keywords extracted."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section, we individually evaluate syntactically and lexically conditions under GCPG, then examine their combinations. Finally, detailed analyses on properties of GCPG are provided. Datasets Following previous works (Kumar et al., 2020; Bui et al., 2021), we evaluate GCPG on two datasets: (1) ParaNMT-small (Chen et al., 2019) is a subset of ParaNMT-50M dataset (Wieting and Gimpel, 2018), which is collected via backtranslation referring to English sentences. It contains 500K training pairs formatted as 〈sentence, paraphrase〉, and 1.3K manually labeled data triples formatted as 〈sentence, exemplar, paraphrase〉 (0.8K for testing and 0.5K for validation). In each triple, exemplar is a sentence that has the same syntax as paraphrase but is semantically different from sentence. (2) QQP-Pos (Kumar et al., 2020) is selected from Quora Question Pairs (QQP) dataset. It contains about 140K training pairs and 3K/3K data triples for testing/validation. The format of dataset is the same as ParaNMT-small."
+    }, {
+      "heading" : "4.1 Syntactically Controllable Paraphrasing",
+      "text" : "We explore four syntactical conditions reconstructed by GCPG on the ParaNMT-small dataset, then compare SSE with baselines on two datasets. Baselines We first choose two direct return-input baselines as dataset quality indicators: (1) Sourceas-Output copies inputs as outputs. (2) Exemplaras-Output regards exemplars as outputs. Next, we evaluate the following text generation models,\nwhile exploring performances of respectively instantiating GCPG with them in § 4.3. (3) Transformer (Vaswani et al., 2017), the conventional version in the original paper. (4) BART (Lewis et al., 2020) has a denoising autoencoder for pretraining sequence-to-sequence models, and BARTlarge2 is used. (5) ProphetNet (Qi et al., 2020) is a pre-training model with a self-supervised objective, and ProphetNet-large is used. Finally, we compare GCPG with mainstream competitive models as follows. (6) SCPN (Iyyer et al., 2018) has two encoders to encode source sentence and LCT separately, then constrain generation with soft attention mechanism3. (7) CGEN (Chen et al., 2019) encodes exemplars into latent vector to guide paraphrasing4. (8) SGCP (Kumar et al., 2020) uses a graph encoder to process the exemplar Constituent Trees as the condition5. (9) ParafraGPT (Bui et al., 2021) masks words with certain POS types in the target sentence as condition, then builds a paraphrasing generator based on a pre-trained GPT2. Syntactical Conditions We first examine conditions with manufactured syntax features, including (10) POS Sequence, (11) LCT-Truncated is the LCT sequence without POS-level information, (12) LCT is the full-fledged Linearised Constituent Tree sequence, and (13) Masked Template. Then, two implementations of SSE are evaluated: (14) SSE-POS Sequence uses POS Sequence to measure syntax similarity, and (15) SSE-LCT-Truncated uses LCTTruncated as measurement. Implementation and Hyper-parameters All GCPG models are instantiated by ProphetNetlarge (Qi et al., 2020), which are implemented with Fairseq6. We employ the original hyper-parameter setting of ProphetNet-large7 to train GCPG. During inference, the beam size and length penalty are set to 4 and 1.2 following Bui et al. (2021). Metrics Following previous works (Iyyer et al., 2018; Bui et al., 2021), we evaluate generating results on six metrics, including BLEU-4 (Papineni et al., 2002), ROUGE-1 (R-1), ROUGE2 (R-2), ROUGE-L (R-L) (Lin, 2004), Meteor (MTR) (Denkowski and Lavie, 2014), and\n2https://github.com/pytorch/fairseq/ tree/master/examples/bart\n3https://github.com/miyyer/scpn 4https://github.com/mingdachen/\nsyntactic-template-generation 5https://github.com/malllabiisc/SGCP 6https://github.com/pytorch/fairseq 7https://github.com/microsoft/ ProphetNet\nBERTScore (BS) (Zhang et al., 2020). Besides, Source-as-Output will also get a high BLEU score and BERTScore, we introduce iBLEU (Sun and Zhou, 2012) for more precise evaluation. As a variant of BLEU, iBLEU considers both fidelity to reference and diversification from input:\niBLEU = αBLEU-R− (1− αBLEU-S) , BLEU-R = BLEU-4 (output, reference),\nBLEU-S = BLEU-4 (output, input),\n(3)\nwhere the constant α is set to 0.7, as in the original paper. Finally, for syntactical condition evaluation, we follow Kumar et al. (2020) to calculate TreeEdit Distance (TED)8 between the Constituency Parse Trees of both output and reference. Results As shown in Table 2, the main conclusions are: (1) SSE consistently and significantly outperforms conditions that constructed with manufactured syntax features (Rows 14-15 vs. Rows\n8We use the evaluation tool implemented by SGCP.\n10-13). (2) GCPG with SSE gets significant improvement over the previous SOTA (Row 15/25 vs. Row 14/24). (3) All syntactical conditions reconstructed in GCPG outperform baselines (Rows 10-15 vs. Rows 6-9), demonstrating the superiority of GCPG paradigm."
+    }, {
+      "heading" : "4.2 Lexically Controllable Paraphrasing",
+      "text" : "As mentioned in § 3.2, we use three different keyword extraction methods to pre-specify keywords and comprehensively evaluate the GCPG: (1) TFIDF (2) TextRank (Mihalcea and Tarau, 2004), and (3) KeyBERT (Grootendorst, 2020). Meanwhile, we follow the implementation settings in § 4.1. Metrics For lexical condition, it should be noted that there is a lack of the explicit request of desirable keywords in the testing set. A generated paraphrase hinted by model predicted keywords might get a low score in BLEU, although humans consider it reasonable. This is because paraphrasing models might focus on keywords that are not\nconsistent with the single reference. Therefore, we evaluate GCPG in three settings. First, following Liu et al.(2020a), we use a keywords prediction model to generate top-k groups of keywords, which are fed into GCPG to generate k paraphrases. Then the sentence that has the highest BLEU with the reference is selected as the final output. k is set to 4 as well as beam size. Note that we use this setting to report the final results unless otherwise specified. Second, we further conduct human evaluations on the keyword condition based on KeyBERT (The details are in § 4.3). We denote it as “GCPG-L (k=1)”. Here “k=1” means GCPG only produces one paraphrase for each input, constrained by the top-1 set of keywords produced by KeyBERT. Third, following Zeng et al. (2019), we directly extract keywords from references as the condition, marked with “(Upper Bound)”. Results As shown in the first five rows of Table 3, KeyBERT outperforms other two keyword extraction methods. Besides, GCPG with keyword condition significantly performs better than GCPG without keyword condition, which verifies the lexically controllable ability of our GCPG."
+    }, {
+      "heading" : "4.3 Combinations",
+      "text" : "We first discuss combinations of lexical and syntactical conditions, and then evaluate GCPG instantiated by different PLMs. To facilitate the description, we define that “GCPG-L” denotes GCPG with the keyword condition extracted by KeyBERT, “GCPG-S” is GCPG with the SSE-LCT-\nTruncated condition, and “GCPG-LS” indicates the combination of conditions in “GCPG-L” and “GCPG-S”. Meanwhile, GCPG is also instantiated by ProphetNet-large.\nMetrics We follow the metrics in § 4.1, yet the automatic evaluations can not fully capture the fluency and the quality of the generation results on CPG. Especially for TED, as the ParaNMT-small contains various noise data points, it is optimistic to assume that the corresponding constituency parse tree could be well aligned (Kumar et al., 2020). Therefore, we conduct human evaluation on both two datasets following Kumar et al.(2020). 100 test samples are randomly selected from each dataset. Then, 5 crowdsource evaluators are shown a source sentence and the corresponding reference, then asked to rate model results in three categories: whether the paraphrase remains loyalty to the source sentence, the fluency of paraphrase, and syntax similarity with gold reference. Scores are ranged from 1 to 4, and the higher score is better.\nResults As shown in Table 3, the main conclusions are: (1) Combinations of lexical and syntactical conditions get consistently further improvements compared with employing lexical condition individually (Rows 6-11 vs. Row 4). (2) GCPG can utilize the strong language modeling capacity of mainstream PLMs and show encouraging performances (Row 12-13 vs. Row 14). Then, we illustrate human evaluations in Table 4. GCPG with lexical condition (GCPG-L (k=1)) outperforms baselines in meaning and fluency, yet poor in syntax similar-\nModel Loyalty Fluency Syntax All\nParaNMT-small\nCGEN 1.47 2.13 1.81 5.41 ParafraGPT 1.86 2.42 2.05 6.33 GCPG-L (k=1) 2.94 3.63 2.29 8.86 GCPG-LS (k=1) 3.09 3.51 2.46 9.06\nQQP-Pos\nity. More importantly, the combination of lexical and syntactical conditions (GCPG-LS (k=1)) shows significantly improvements on all three scores."
+    }, {
+      "heading" : "4.4 Analyses and Discussions",
+      "text" : "We conduct discussions to shed light on other interesting properties of GCPG. For the lack of space, we take discussions with GCPG instantiated by ProphetNet-large. Exemplar-side Words Copying Problem We calculate BLEU-4 between model outputs and exemplars. As shown in Table 5, GCPG with SSE (i.e., GCPG-S) can significantly reduce BLEUExemplar comparing with ParafraGPT, gets 4.69 / 1.14 improvements on two datasets, demonstrating that SSE effectively alleviates this problem. Generating Novel Grams Following Dou et al.(2021), we further investigate generating novel expressions under CPG settings, which is also important for paraphrasing. To address this issue, the number of novel n-grams is counted in the model output. Specifically, these n-grams appear in gold references but not in source sentences. After normalized by the total number of n-grams, we calculate the recall of novel n-grams. It can be seen that GCPG indeed generates novel expressions from Figure 4. The combination version GCPG-LS gets the best result, which means combination of two types of conditions may\nInput Exemplar Reference A powerful restorative energy emerges out of love. There's one thing that makes me feel normal. There is a powerful healing energy that emanates from loving.\nimprove the lexical diversification from the input. Case Studies The qualitative effect of the lexical and syntactical conditions on the model output is also of interest. To intuitively display the effects of conditions, we show some paraphrasing results in Figure 5. In detail, GCPG-L can generate sentence “A powerful healing energy comes out of love.” that contain pre-specified keywords “[healing]\". However, lexical condition provides less information about syntactical controlling. In comparison, GCPG-LS shows better performances on both controllability of lexical items and syntax."
+    }, {
+      "heading" : "5 Conclusions",
+      "text" : "In this paper, we propose a general framework GCPG, enabling flexibly combine lexical and syntactical conditions and exploring their mutual effectiveness. Under GCPG, we provide SSE that allows GCPG to directly model syntax information from natural sentences and better utilize PLMs. As we tentatively give a successful implementation of leveraging two types of conditions in a unified circumstance, such paradigm deserves a closer and more detailed exploration. In the future, we will investigate to uniformly represent these conditions in a more superior way."
+    } ],
+    "references" : [ {
+      "title" : "Generative pre-training for paraphrase generation by representing and predicting spans in exemplars",
+      "author" : [ "References Tien-Cuong Bui", "Van-Duc Le", "Hai-Thien To", "SangKyun Cha." ],
+      "venue" : "IEEE BigComp, pages 83–",
+      "citeRegEx" : "Bui et al\\.,? 2021",
+      "shortCiteRegEx" : "Bui et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Controllable paraphrase generation with a syntactic exemplar",
+      "author" : [ "Mingda Chen", "Qingming Tang", "Sam Wiseman", "Kevin Gimpel." ],
+      "venue" : "ACL, pages 5972–5984. ACL.",
+      "citeRegEx" : "Chen et al\\.,? 2019",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A practical part-of-speech tagger",
+      "author" : [ "Douglass Cutting", "Julian Kupiec", "Jan Pedersen", "Penelope Sibun." ],
+      "venue" : "Third Conference on Applied Natural Language Processing, pages 133–140.",
+      "citeRegEx" : "Cutting et al\\.,? 1992",
+      "shortCiteRegEx" : "Cutting et al\\.",
+      "year" : 1992
+    }, {
+      "title" : "Meteor universal: Language specific translation evaluation for any target language",
+      "author" : [ "Michael J. Denkowski", "Alon Lavie." ],
+      "venue" : "WMT-ACL, pages 376– 380. ACL.",
+      "citeRegEx" : "Denkowski and Lavie.,? 2014",
+      "shortCiteRegEx" : "Denkowski and Lavie.",
+      "year" : 2014
+    }, {
+      "title" : "BERT: pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "NAACL, pages 4171–4186. ACL.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Gsum: A general framework for guided neural abstractive summarization",
+      "author" : [ "Zi-Yi Dou", "Pengfei Liu", "Hiroaki Hayashi", "Zhengbao Jiang", "Graham Neubig." ],
+      "venue" : "NAACL, pages 4830–4842. ACL.",
+      "citeRegEx" : "Dou et al\\.,? 2021",
+      "shortCiteRegEx" : "Dou et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving the robustness of question answering systems to question paraphrasing",
+      "author" : [ "Wee Chung Gan", "Hwee Tou Ng." ],
+      "venue" : "ACL, pages 6065–6075. ACL.",
+      "citeRegEx" : "Gan and Ng.,? 2019",
+      "shortCiteRegEx" : "Gan and Ng.",
+      "year" : 2019
+    }, {
+      "title" : "Keybert: Minimal keyword extraction with bert",
+      "author" : [ "Maarten Grootendorst" ],
+      "venue" : null,
+      "citeRegEx" : "Grootendorst.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Grootendorst.",
+      "year" : 2020
+    }, {
+      "title" : "Extract, transform and filling: A pipeline model for question paraphrasing based on template",
+      "author" : [ "Yunfan Gu", "Yang Yuqiao", "Zhongyu Wei." ],
+      "venue" : "WNUT, pages 109–114.",
+      "citeRegEx" : "Gu et al\\.,? 2019",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Adversarial example generation with syntactically controlled paraphrase networks",
+      "author" : [ "Mohit Iyyer", "John Wieting", "Kevin Gimpel", "Luke Zettlemoyer." ],
+      "venue" : "NAACL, pages 1875–1885. ACL.",
+      "citeRegEx" : "Iyyer et al\\.,? 2018",
+      "shortCiteRegEx" : "Iyyer et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Syntax-guided controlled generation of paraphrases",
+      "author" : [ "Ashutosh Kumar", "Kabir Ahuja", "Raghuram Vadapalli", "Partha P. Talukdar." ],
+      "venue" : "Trans. Assoc. Comput. Linguistics, 8:330–345.",
+      "citeRegEx" : "Kumar et al\\.,? 2020",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BART: denoising sequence-to-sequence pretraining for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Veselin Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Transformer-based neural text generation with syntactic guidance",
+      "author" : [ "Yinghao Li", "Rui Feng", "Isaac Rehg", "Chao Zhang." ],
+      "venue" : "CoRR, abs/2010.01737.",
+      "citeRegEx" : "Li et al\\.,? 2020",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ROUGE: A package for automatic evaluation of summaries",
+      "author" : [ "Chin-Yew Lin." ],
+      "venue" : "Text Summarization Branches Out, pages 74–81, Barcelona, Spain. ACL.",
+      "citeRegEx" : "Lin.,? 2004",
+      "shortCiteRegEx" : "Lin.",
+      "year" : 2004
+    }, {
+      "title" : "Diverse, controllable, and keyphrase-aware: A corpus and method for news multi-headline generation",
+      "author" : [ "Dayiheng Liu", "Yeyun Gong", "Yu Yan", "Jie Fu", "Bo Shao", "Daxin Jiang", "Jiancheng Lv", "Nan Duan." ],
+      "venue" : "EMNLP, pages 6241–6250. ACL.",
+      "citeRegEx" : "Liu et al\\.,? 2020a",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Exploring bilingual parallel corpora for syntactically controllable paraphrase generation",
+      "author" : [ "Mingtong Liu", "Erguang Yang", "Deyi Xiong", "Yujie Zhang", "Chen Sheng", "Changjian Hu", "Jinan Xu", "Yufeng Chen." ],
+      "venue" : "IJCAI, pages 3955–3961. ijcai.org.",
+      "citeRegEx" : "Liu et al\\.,? 2020b",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Generating phrasal and sentential paraphrases: A survey of datadriven methods",
+      "author" : [ "Nitin Madnani", "Bonnie J. Dorr." ],
+      "venue" : "Comput. Linguistics, 36(3):341– 387.",
+      "citeRegEx" : "Madnani and Dorr.,? 2010",
+      "shortCiteRegEx" : "Madnani and Dorr.",
+      "year" : 2010
+    }, {
+      "title" : "Paraphrasing revisited with neural machine translation",
+      "author" : [ "Jonathan Mallinson", "Rico Sennrich", "Mirella Lapata." ],
+      "venue" : "EACL, pages 881–893. ACL.",
+      "citeRegEx" : "Mallinson et al\\.,? 2017",
+      "shortCiteRegEx" : "Mallinson et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Muss: Multilingual unsupervised sentence simplification by mining paraphrases",
+      "author" : [ "Louis Martin", "Angela Fan", "Éric de la Clergerie", "Antoine Bordes", "Benoît Sagot." ],
+      "venue" : "arXiv preprint arXiv:2005.00352.",
+      "citeRegEx" : "Martin et al\\.,? 2020",
+      "shortCiteRegEx" : "Martin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Paraphrasing questions using given and new information",
+      "author" : [ "Kathleen R. McKeown." ],
+      "venue" : "Am. J. Comput. Linguistics, 9(1):1–10.",
+      "citeRegEx" : "McKeown.,? 1983",
+      "shortCiteRegEx" : "McKeown.",
+      "year" : 1983
+    }, {
+      "title" : "Textrank: Bringing order into text",
+      "author" : [ "Rada Mihalcea", "Paul Tarau." ],
+      "venue" : "EMNLP, pages 404–411.",
+      "citeRegEx" : "Mihalcea and Tarau.,? 2004",
+      "shortCiteRegEx" : "Mihalcea and Tarau.",
+      "year" : 2004
+    }, {
+      "title" : "Bleu: a method for automatic evaluation of machine translation",
+      "author" : [ "Kishore Papineni", "Salim Roukos", "Todd Ward", "WeiJing Zhu." ],
+      "venue" : "ACL, pages 311– 318. ACL.",
+      "citeRegEx" : "Papineni et al\\.,? 2002",
+      "shortCiteRegEx" : "Papineni et al\\.",
+      "year" : 2002
+    }, {
+      "title" : "Prophetnet: Predicting future n-gram for sequence-to-sequence pre-training",
+      "author" : [ "Weizhen Qi", "Yu Yan", "Yeyun Gong", "Dayiheng Liu", "Nan Duan", "Jiusheng Chen", "Ruofei Zhang", "Ming Zhou." ],
+      "venue" : "EMNLP, volume EMNLP 2020 of Findings of ACL, pages",
+      "citeRegEx" : "Qi et al\\.,? 2020",
+      "shortCiteRegEx" : "Qi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Joint learning of a dual SMT system for paraphrase generation",
+      "author" : [ "Hong Sun", "Ming Zhou." ],
+      "venue" : "ACL, pages 38–42. ACL.",
+      "citeRegEx" : "Sun and Zhou.,? 2012",
+      "shortCiteRegEx" : "Sun and Zhou.",
+      "year" : 2012
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "NeurIPS, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Paranmt-50m: Pushing the limits of paraphrastic sentence embeddings with millions of machine translations",
+      "author" : [ "John Wieting", "Kevin Gimpel." ],
+      "venue" : "ACL, pages 451–462. Association for Computational Linguistics.",
+      "citeRegEx" : "Wieting and Gimpel.,? 2018",
+      "shortCiteRegEx" : "Wieting and Gimpel.",
+      "year" : 2018
+    }, {
+      "title" : "Pos-constrained parallel decoding for non-autoregressive generation",
+      "author" : [ "Kexin Yang", "Wenqiang Lei", "Dayiheng Liu", "Weizhen Qi", "Jiancheng Lv." ],
+      "venue" : "ACL, pages 5990–6000. ACL.",
+      "citeRegEx" : "Yang et al\\.,? 2021",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "User-oriented paraphrase generation with keywords controlled network",
+      "author" : [ "Daojian Zeng", "Haoran Zhang", "Lingyun Xiang", "Jin Wang", "Guoliang Ji." ],
+      "venue" : "IEEE Access, 7:80542–80551.",
+      "citeRegEx" : "Zeng et al\\.,? 2019",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Bertscore: Evaluating text generation with BERT",
+      "author" : [ "Tianyi Zhang", "Varsha Kishore", "Felix Wu", "Kilian Q. Weinberger", "Yoav Artzi." ],
+      "venue" : "ICLR. OpenReview.net.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 16,
+      "context" : "Paraphrase generation (Madnani and Dorr, 2010) refers to restating a given sentence into an alternative surface form while keeping the semantics unchanged.",
+      "startOffset" : 22,
+      "endOffset" : 46
+    }, {
+      "referenceID" : 19,
+      "context" : "It is of long-standing interest (McKeown, 1983), with various applications such as question answering (Gan and Ng, 2019), machine translation (Mallinson et al.",
+      "startOffset" : 32,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 6,
+      "context" : "It is of long-standing interest (McKeown, 1983), with various applications such as question answering (Gan and Ng, 2019), machine translation (Mallinson et al.",
+      "startOffset" : 102,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 17,
+      "context" : "It is of long-standing interest (McKeown, 1983), with various applications such as question answering (Gan and Ng, 2019), machine translation (Mallinson et al., 2017), and sentence simplification (Martin et al.",
+      "startOffset" : 142,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2017), and sentence simplification (Martin et al., 2020).",
+      "startOffset" : 37,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 8,
+      "context" : "Lacking control might result in undesirable results (Gu et al., 2019).",
+      "startOffset" : 52,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 27,
+      "context" : "To achieve it, a sequence-to-sequence model equipped with the copy mechanism is commonly used (Zeng et al., 2019).",
+      "startOffset" : 94,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 10,
+      "context" : "Despite the progress on the two types of conditions individually, what to say and how to say it are both aspects of vital importance for CPG (Kumar et al., 2020).",
+      "startOffset" : 141,
+      "endOffset" : 161
+    }, {
+      "referenceID" : 0,
+      "context" : "This also allows GCPG to easily utilize the strong language modeling capacity of pre-trained language models (PLMs), which have demonstrated great potential (Bui et al., 2021) yet rarely been explored under the topic of CPG.",
+      "startOffset" : 157,
+      "endOffset" : 175
+    }, {
+      "referenceID" : 9,
+      "context" : "As for syntactical conditions, we reconstruct commonly used syntactic features as sequences, such as Linearised Constituent Tree (Iyyer et al., 2018) and masked template based on word mask (Bui et al.",
+      "startOffset" : 129,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2018) and masked template based on word mask (Bui et al., 2021).",
+      "startOffset" : 47,
+      "endOffset" : 65
+    }, {
+      "referenceID" : 1,
+      "context" : "This is different from existing methods that construct exemplar through modifying target sentences (Chen et al., 2019), alleviating exemplar-side words copying problem (Bui et al.",
+      "startOffset" : 99,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2019), alleviating exemplar-side words copying problem (Bui et al., 2021) brought by Chen et al.",
+      "startOffset" : 57,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 0,
+      "context" : "38 BLEU-4 over the previous state-of-theart (SOTA) model (Bui et al., 2021).",
+      "startOffset" : 57,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 9,
+      "context" : "For instance, SCPN (Iyyer et al., 2018) makes the first attempt to introduce Linearised Constituent Tree (LCT) of target sentence into paraphrasing, where LCT is predicted based on predefined parse templates.",
+      "startOffset" : 19,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 12,
+      "context" : "Similarly, GuiG (Li et al., 2020) proposes two models to expand a partial template LCT and generate paraphrasing, respectively.",
+      "startOffset" : 16,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 10,
+      "context" : "Different from using LCT, SGCP (Kumar et al., 2020) introduces a graph encoder to encode the Constituent Tree of exemplar as the condition.",
+      "startOffset" : 31,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 15,
+      "context" : "For example, BCPG (Liu et al., 2020b) follows BERT (Devlin et al.",
+      "startOffset" : 18,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 4,
+      "context" : ", 2020b) follows BERT (Devlin et al., 2019) to randomly mask exemplar words, ParafraGPT (Bui",
+      "startOffset" : 22,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 2,
+      "context" : "modeling the syntax structure (Cutting et al., 1992), which could be effectively implemented and show promising performance in various NLP tasks (Yang et al.",
+      "startOffset" : 30,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 26,
+      "context" : ", 1992), which could be effectively implemented and show promising performance in various NLP tasks (Yang et al., 2021).",
+      "startOffset" : 100,
+      "endOffset" : 119
+    }, {
+      "referenceID" : 1,
+      "context" : "However, the previous method (Chen et al., 2019) suffers from the exemplar-side words copying problem during testing, which might be caused by the noticeable words overlap with the target sentence in constructing sentential exemplar during training.",
+      "startOffset" : 29,
+      "endOffset" : 48
+    }, {
+      "referenceID" : 20,
+      "context" : "Specifically, we investigate three representative keyword extraction methods to verify the effectiveness of GCPG, including rule-based TF-IDF, TextRank (Mihalcea and Tarau, 2004), and modelbased KeyBERT (Grootendorst, 2020).",
+      "startOffset" : 152,
+      "endOffset" : 178
+    }, {
+      "referenceID" : 7,
+      "context" : "Specifically, we investigate three representative keyword extraction methods to verify the effectiveness of GCPG, including rule-based TF-IDF, TextRank (Mihalcea and Tarau, 2004), and modelbased KeyBERT (Grootendorst, 2020).",
+      "startOffset" : 203,
+      "endOffset" : 223
+    }, {
+      "referenceID" : 10,
+      "context" : "Datasets Following previous works (Kumar et al., 2020; Bui et al., 2021), we evaluate GCPG on two datasets: (1) ParaNMT-small (Chen et al.",
+      "startOffset" : 34,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 0,
+      "context" : "Datasets Following previous works (Kumar et al., 2020; Bui et al., 2021), we evaluate GCPG on two datasets: (1) ParaNMT-small (Chen et al.",
+      "startOffset" : 34,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 1,
+      "context" : ", 2021), we evaluate GCPG on two datasets: (1) ParaNMT-small (Chen et al., 2019) is a subset of ParaNMT-50M dataset (Wieting and Gimpel, 2018), which is collected via backtranslation referring to English sentences.",
+      "startOffset" : 61,
+      "endOffset" : 80
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2019) is a subset of ParaNMT-50M dataset (Wieting and Gimpel, 2018), which is collected via backtranslation referring to English sentences.",
+      "startOffset" : 43,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 10,
+      "context" : "(2) QQP-Pos (Kumar et al., 2020) is selected from Quora Question Pairs (QQP) dataset.",
+      "startOffset" : 12,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 24,
+      "context" : "(3) Transformer (Vaswani et al., 2017), the conventional version in the original paper.",
+      "startOffset" : 16,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 11,
+      "context" : "(4) BART (Lewis et al., 2020) has a denoising autoencoder for pretraining sequence-to-sequence models, and BARTlarge2 is used.",
+      "startOffset" : 9,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 22,
+      "context" : "(5) ProphetNet (Qi et al., 2020) is a pre-training model with a self-supervised objective, and ProphetNet-large is used.",
+      "startOffset" : 15,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 9,
+      "context" : "(6) SCPN (Iyyer et al., 2018) has two encoders to encode source sentence and LCT separately, then constrain generation with soft attention mechanism3.",
+      "startOffset" : 9,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 1,
+      "context" : "(7) CGEN (Chen et al., 2019) encodes exemplars into latent vector to guide paraphrasing4.",
+      "startOffset" : 9,
+      "endOffset" : 28
+    }, {
+      "referenceID" : 10,
+      "context" : "(8) SGCP (Kumar et al., 2020) uses a graph encoder to process the exemplar Constituent Trees as the condition5.",
+      "startOffset" : 9,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 0,
+      "context" : "(9) ParafraGPT (Bui et al., 2021) masks words with certain POS types in the target sentence as condition, then builds a paraphrasing generator based on a pre-trained GPT2.",
+      "startOffset" : 15,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 22,
+      "context" : "Implementation and Hyper-parameters All GCPG models are instantiated by ProphetNetlarge (Qi et al., 2020), which are implemented with Fairseq6.",
+      "startOffset" : 88,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 9,
+      "context" : "Metrics Following previous works (Iyyer et al., 2018; Bui et al., 2021), we evaluate generating results on six metrics, including BLEU-4 (Papineni et al.",
+      "startOffset" : 33,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 0,
+      "context" : "Metrics Following previous works (Iyyer et al., 2018; Bui et al., 2021), we evaluate generating results on six metrics, including BLEU-4 (Papineni et al.",
+      "startOffset" : 33,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 21,
+      "context" : ", 2021), we evaluate generating results on six metrics, including BLEU-4 (Papineni et al., 2002), ROUGE-1 (R-1), ROUGE2 (R-2), ROUGE-L (R-L) (Lin, 2004), Meteor (MTR) (Denkowski and Lavie, 2014), and",
+      "startOffset" : 73,
+      "endOffset" : 96
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2002), ROUGE-1 (R-1), ROUGE2 (R-2), ROUGE-L (R-L) (Lin, 2004), Meteor (MTR) (Denkowski and Lavie, 2014), and",
+      "startOffset" : 52,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2002), ROUGE-1 (R-1), ROUGE2 (R-2), ROUGE-L (R-L) (Lin, 2004), Meteor (MTR) (Denkowski and Lavie, 2014), and",
+      "startOffset" : 78,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 23,
+      "context" : "Besides, Source-as-Output will also get a high BLEU score and BERTScore, we introduce iBLEU (Sun and Zhou, 2012) for more precise evaluation.",
+      "startOffset" : 92,
+      "endOffset" : 112
+    }, {
+      "referenceID" : 20,
+      "context" : "2, we use three different keyword extraction methods to pre-specify keywords and comprehensively evaluate the GCPG: (1) TFIDF (2) TextRank (Mihalcea and Tarau, 2004), and (3) KeyBERT (Grootendorst, 2020).",
+      "startOffset" : 139,
+      "endOffset" : 165
+    }, {
+      "referenceID" : 7,
+      "context" : "2, we use three different keyword extraction methods to pre-specify keywords and comprehensively evaluate the GCPG: (1) TFIDF (2) TextRank (Mihalcea and Tarau, 2004), and (3) KeyBERT (Grootendorst, 2020).",
+      "startOffset" : 183,
+      "endOffset" : 203
+    }, {
+      "referenceID" : 10,
+      "context" : "Especially for TED, as the ParaNMT-small contains various noise data points, it is optimistic to assume that the corresponding constituency parse tree could be well aligned (Kumar et al., 2020).",
+      "startOffset" : 173,
+      "endOffset" : 193
+    } ],
+    "year" : 0,
+    "abstractText" : "Controllable paraphrase generation (CPG) incorporates various external conditions to obtain desirable paraphrases. However, existing works only highlight a special condition under two indispensable aspects of CPG (i.e., lexically and syntactically CPG) individually, lacking a unified circumstance to explore and analyze their effectiveness. In this paper, we propose a general controllable paraphrase generation framework (GCPG), which represents both lexical and syntactical conditions as text sequences and uniformly processes them in an encoder-decoder paradigm. Under GCPG, we reconstruct commonly adopted lexical condition (i.e., Keywords) and syntactical conditions (i.e., Part-Of-Speech sequence, Constituent Tree, Masked Template and Sentential Exemplar) and study the combination of the two types. In particular, for Sentential Exemplar condition, we propose a novel exemplar construction method — Syntax-Similarity based Exemplar (SSE). SSE retrieves a syntactically similar but lexically different sentence as the exemplar for each target sentence, avoiding exemplar-side words copying problem. Extensive experiments demonstrate that GCPG with SSE achieves state-of-the-art performance on two popular benchmarks. In addition, the combination of lexical and syntactical conditions shows the significant controllable ability of paraphrase generation, and these empirical results could provide novel insight to user-oriented paraphrasing.",
+    "creator" : null
+  }
+}

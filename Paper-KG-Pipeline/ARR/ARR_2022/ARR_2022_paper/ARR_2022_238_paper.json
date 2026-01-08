@@ -1,0 +1,693 @@
+{
+  "name" : "ARR_2022_238_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Language-Agnostic Meta-Learning for Low-Resource Text-to-Speech with Articulatory Features",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "The advance of deep learning (Vaswani et al., 2017; Goodfellow et al., 2014) has enabled great improvements in the field of Text-to-Speech (TTS). (Towards-)end-to-end models, such as Tacotron 2 (Wang et al., 2017; Shen et al., 2018), TransformerTTS (Li et al., 2019b), FastSpeech 2 (Ren et al., 2019, 2020), FastPitch (Łańcucki, 2021) and many more famous instances (e.g. Arık et al. (2017) and Prenger et al. (2019)) allow for speech synthesis with unprecedented quality and controllability. The models mentioned here rely on vocoders, such as WaveNet (van den Oord et al., 2016), MelGAN (Kumar et al., 2019), Parallel WaveGAN (Yamamoto et al., 2020) or HiFi-GAN (Kong et al., 2020) to turn the parametric representations that they produce into waveforms. Recently proposed models even include some with the ability to go directly to the waveform from a grapheme or phoneme input sequence, such as EATS (Donahue et al., 2020) or VITS (Kim et al., 2021).\nWhile these methods all perform remarkably well if given enough data, cross-lingual use of data remains a key challenge in TTS. Most modern methods are limited to languages and domains that are rich in resources, which over 6,000 lan-\nguages are not. Attempts at reducing the required resources in a target language by making use of transfer learning from multilingual data have been made by Azizah et al. (2020); Xu et al. (2020); Tu et al. (2019). The mismatch of input spaces however requires complex architectural changes, which limits their ability to be used in conjunction with other modern TTS architectures. Attempts at fixing the issue of having to transfer knowledge from a source to a target by just jointly training on a mixed set of more and less resource rich languages have been made by He et al. (2021); de Korte et al. (2020); Yang and He (2020), which requires complex training procedures. In this work, we will also attempt to transfer knowledge from a set of high resource languages to a low resource language. We fix previous shortcomings by 1) using a linguistically motivated representation of the inputs to such a system (articulatory and phonological features of phonemes) that enables cross-lingual knowledge sharing and 2) applying the model agnostic meta learning (MAML) framework (Finn et al., 2017) to the field of low-resource TTS for the first time.\nUsing articulatory features as inputs for neural TTS has been attempted recently by Staib et al. (2020) and Wells et al. (2021), following the classical approach of Jakobson et al. (1951). Both achieved good results when applying this idea to the codeswitching problem, since unseen phonemes in the input space no longer map to nonsensical positions, as it would be the case for the standard embedding-lookup. Also (Gutkin, 2017) have applied phonological features to low-resource TTS with fair success. They did however rely on supplementary features, such as dependency parsers and morphological analyzers. Furthermore all of their data and models are proprietary and can therefore not be used to compare results to. In this work, we extend the use of articulatory inputs with the MAML framework to enable very simple yet well working low-resource TTS that can be applied\nto almost all modern TTS architectures. We encounter severe instabilities when using MAML on TTS, which make the standard formulation of MAML infeasible to use. Thus we also propose a modification to MAML, which reduces the procedure’s complexity. This allows us to create a set of parameters of a model that can be used to fine-tune to a well working single-language singlespeaker TTS model with as little as 30 minutes of paired training data available and even enables zeroshot adaptation to unseen languages. We evaluate the success of our approach with both automatic measures and human evaluation.\nOur contributions are as follows: 1) We show that it is beneficial to train a TTS model on articulatory features rather than on phoneme-identities, even in the standard single-language high-resource case; 2) We introduce a training procedure that is closely related to MAML which allows training a set of parameters for a TTS model that can be fine-tuned in a low resource scenario; 3) We provide insights on how much data and training time are required to fine-tune a model across different languages and speakers simultaneously using said meta-parameters; 4) We show that the metaparameters can generalize to unseen phonemes and rapidly improve their ability to properly pronounce them when fine-tuning. 1"
+    }, {
+      "heading" : "2 Background and Related Work",
+      "text" : ""
+    }, {
+      "heading" : "2.1 Input Representations",
+      "text" : "Character Embeddings The simplest approach to representing text as input to a TTS is using indexes of graphemes to look up embeddings. This is however prone to mistakes. Taylor and Richmond (2020) bring up the example of coathanger. If the TTS is not aware of the morpheme boundary between the coat and the hang, it will be inclined to produce something like [k2T@InÃ@] rather than the correct [koUthæN@]. Such a representation of the input will be highly language dependent, since special pronunciation rules rarely hold for more than a single language.\nThe textual input can be augmented by adding information, such as morpheme boundaries, intonation phrase boundaries derived from e.g. syntactic parsing as is done in many TTS frontends (Schröder\n1All of our code, as well as the checkpoints for a lowresource fine-tuning capable Tacotron 2 and FastSpeech 2 model will be made publicly available after the anonymity period.\nand Trouvain, 2003; Clark et al., 2007; Ebden and Sproat, 2015), or even the semantic identity of the word a character belongs to, using e.g. BERT embeddings (Hayashi et al., 2019).\nPhoneme Embeddings Rather than looking up embeddings for graphemes, it is often beneficial to use embeddings of phonemes. Phonemizers (Bisani and Ney, 2008; Taylor, 2005; Rao et al., 2015) produce a sequence of phonetic units, which correlate with the segments in the audio much more than raw text. One such standard of phonetic representation which we make use of is the International Phonetic Alphabet (IPA). Using this set of phonetic units alleviates the problems of TTS fine-tuning and transfer-learning to low-resource domains, because the phonetic units should be mostly language independent. Deri and Knight (2016) provide a data driven approach for the grapheme to phoneme conversion task, which performs well on over 500 languages and can be adapted fairly easily to any new low-resource language. There remains however one major challenge: The use of different phoneme sets for each language, leading to completely unseen units in inference or fine-tuning data.\nLatent Representations Li et al. (2019a) claim that multilinguality in speech recognition and TTS can be achieved by changing the input to a latent representation that is trained across languages. While their results seem very promising, their technique needs training data in all languages it should be applied to, which rules out zero-shot settings.\nArticulatory Features We fix the shortcoming of not being able to handle unseen phonemes by specifying phonemes in terms of articulatory features such as position (e.g. frontness of the tongue) and category (e.g. voicedness). We show that systems trained on this input can produce a phoneme given nothing but an articulatory description and thus generalize to unseen phonemes. This makes the transfer of knowledge across languages much simpler. A similar approach for the purpose of handling codeswitching has been done in Staib et al. (2020). Our work builds on top of theirs by extending the idea to transfer learning an entire TTS in a new language with minimal data, making use of meta learning on top of articulatory features."
+    }, {
+      "heading" : "2.2 Model Agnostic Meta Learning (MAML)",
+      "text" : "The goal of MAML (Finn et al., 2017) is to find a set of parameters, that work well as initialization\npoint for multiple tasks, including unseen ones. The procedure consists of an outer loop and an inner loop. The outer loop starts with a set of parameters, which we will call the Meta Model. The inner loop trains task specific copies of the Meta Model for a low amount of steps. Once the inner loop is complete, the loss for each of the models is calculated, summed, and backpropagated to the original Meta Model by unrolling the inner loop. This includes the very costly calculation of second order derivatives. The Meta Model is then updated and the inner loop starts again.\nThis procedure moves the initialization point closer to the optimal configuration for each of the trained tasks, which generalizes to even unseen tasks. Multiple variants of MAML have been suggested that try to fix the high computational cost of the second order derivatives. The simplest one is called first-order MAML and simply applies the gradient of the task specific model at the end of the inner loop directly to the Meta Model. Other variants are described in Antoniou et al. (2018); Rajeswaran et al. (2019)."
+    }, {
+      "heading" : "3 Approach",
+      "text" : ""
+    }, {
+      "heading" : "3.1 System Description",
+      "text" : "For the implementation of our method, we use the open source IMS Toucan speech synthesis toolkit, first introduced in (Lux et al., 2021), which is in turn based on the ESPnet end-to-end speech processing toolkit (Watanabe et al., 2018; Hayashi et al., 2020, 2021). Neekhara et al. (2021) show, that it is beneficial to fine-tune a single-speaker model to a new speaker rather than to train a multispeaker model. Inspired by this, we decided to also use a model that is not conditioned on speakers or on languages rather than a conditioned multispeaker multi-lingual model and fine-tune it on the data from a new speaker in a new language. In preliminary experimentation we got similar results to them within one language, but found their method to not work across languages. In comparison to the fine-tuning of a simple single speaker model, we found training and fine-tuning a model conditioned on language embeddings and speaker embeddings much more difficult to train and much more sensitive to the choice of hyperparameters. Figure 1 shows an overview of our system, underlining how it is not specific to a certain architecture, but could instead be used in conjunction with almost all modern TTS methods.\nTacotron 2 For our implementation of Tacotron 2 (Shen et al., 2018), we make use of the forward attention with transition agent introduced in Zhang et al. (2018), which uses a CTC-like forward variable (Graves et al., 2006) to promote the quick learning of monotonic alignment between text and speech. To further help with this, we make use of the guided attention loss introduced in Tachibana et al. (2018).\nFastSpeech 2 To train the parallel FastSpeech 2 model (Ren et al., 2020), annotations of durations for each phoneme are needed. These also have to be generated for the low-resource fine-tuning data. To that end, we generate alignments using the encoder-decoder attention map of a Tacotron 2 model. Following Kim et al. (2020); Shih et al. (2021); Badlani et al. (2021), we apply the Viterbi algorithm to find the most probable monotonic path through the attention map, which significantly improves the quality of the alignments. This is especially important, because we train our FastSpeech 2 model with pitch and energy labels that are averaged over the duration of each individual phoneme to allow for great controllability during inference, as is introduced by Łańcucki (2021). Incorrect alignments would lead to follow-up errors such as an unnaturally flat prosody. Furthermore, we make use of the conformer block (Gulati et al., 2020) as the encoder and decoder, rather than the standard transformer (Vaswani et al., 2017)."
+    }, {
+      "heading" : "3.2 Articulatory Vectors",
+      "text" : "PanPhon Although the intended use of the PanPhon resource (Mortensen et al., 2016) is named entity recognition, it is a very useful source of linguistic specifications for articulatory TTS. It comes with an open-source tool2 which we use to get numeric vectors for a given phoneme. The vector\n2https://github.com/dmort27/panphon\nencodes one feature per dimension and takes the value of either -1, 0 or 1, putting the features on a scale wherever meaningful. This featureset also includes some phonological features which go beyond simple phonetics, such as whether a phoneme is syllabic.\nPapercup Additionally we make use of the purely articulatory description system of phonemes introduced in Staib et al. (2020), which we will call Papercup features in the following. For the encoding we use one-hot vectors, similar to their implementation. Some of the features, like openness or frontness, should be on a scale rather than one-hot encoded. However since the articulatory vector is fed into a fully connected layer, we leave the reconstruction of this dependency between features for the network to learn."
+    }, {
+      "heading" : "3.3 Language Agnostic Meta Learning",
+      "text" : "We find that the standard implementation of MAML does not work well for the TTS task. The inner loop needs many updates in order to make a significant change to the performance of the task specific model. This is probably due to the TTS task being a one-to-many mapping task, where the loss function of measuring the distance to a spectrogram is not an accurate objective for the TTS. For every text, there are infinitely many spectrograms, which could be considered gold data. Those spectrograms could differ in e.g. the speaker who reads the text and how they read the text. Since there are no conditioning signals, the TTS has to update its parameters towards a certain speaker’s characteristics in general. However because in our case each task is a different language and a different speaker, the training becomes highly unstable. So ideally we would either need to run MAML’s inner loop until convergence, which is generally infeasible, or stabilize the procedure by not allowing the model to adapt further to one task than to the others.\nTo fix this issue, we calculate the Meta Model’s loss on one batch per language. We then sum up the losses, backpropagate and update the Meta Model directly using Adam (Kingma and Ba, 2017). This stabilizes the learning procedure, but still allows the model to update its parameters towards a more universal configuration. Since we have to make this simplification to MAML in order to deal with the different languages as tasks, we call this procedure language agnostic meta learning (LAML). Ultimately, the model should not care about the\nlanguage it is fine-tuned in, since it should be close to a universal representation of an acoustic model. To give an exact notion of our modifications: We simplified equation 1 to equation 2, where opt is a gradient descent update, Bi is a batch sampled from task i, L is an objective function, Θ is the set of parameters from the Meta Model and θi is the set of parameters specific to task i. To the best of our knowledge, we are the first to successfully apply MAML to TTS.\nfor t steps do:\nΘt = opt ( Θt−1,∇\n∑ i L (θi,d, Bi) ) where θi,d=0 = Θt−1 and for d steps do:\nθi,d = opt (θi,d−1,∇L (θi,d−1, Bi))\n(1)\nfor t steps do:\nΘt = opt ( Θt−1,∇\n∑ i L (Θt−1, Bi)\n) (2)"
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section we will go over the experiments we conducted. First we will evaluate the articulatory features on their own in a single language setting using automatic measures. Then we will evaluate the combination of LAML and articulatory features in a cross-lingual setting using both automatic measures and human evaluation.\nIn our experiments we make use of the following datasets: The English Nancy Krebs dataset (16h) from the Blizzard challenge 2011 (WilhelmsTricarico et al., 2011; King and Karaiskos, 2011); The German dataset of the speaker Karlsson (29h) from the HUI-Audio-Corpus-German (Puchtler et al., 2021); The Greek (4h), Spanish (24h), Finnish (11h), Russian (21h), Hungarian (10h), Dutch (14h) and French (19h) subsets of the CSS10 dataset (Park and Mulc, 2019)."
+    }, {
+      "heading" : "4.1 Mono-Lingual Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1.1 Embedding Function Design",
+      "text" : "To explore our first hypothesis, we investigate the capabilities of the articulatory phoneme representations to be used in a standard, single-speaker and single-language TTS system. To compare different ways of embedding the features, we train only the embedding function. As gold data we use the embeddings from a well trained lookup-table based\nTacotron 2 model. In table 1 we show the average distances of all articulatory vectors as projected by the embedding function to their identity based embedding counterpart. The distance d between two embedding vectors A and B is defined in equation 3.\nd = (∑ i |Ai −Bi| ) − ∑ iAi ·Bi√∑ iA 2 i · √∑ iB 2 i\n(3) This distance function is also used as the objective function. The embedding functions are each trained for 3000 epochs using Adam (Kingma and Ba, 2017) with a batchsize of 32. The first column shows the results of the articulatory features being fed into a linear layer that projects them into a 512 dimensional space. The second column shows the results of the articulatory features being fed into a linear layer that projects them into a 100 dimensional space, applies the tanh activation function and then further projects them into a 512 dimensional space. As can be seen from the results, it is beneficial to both concatenate the PanPhon features with the Papercup features despite their overlap and to add a nonlinearity into the embedding function to match the embeddingspace of a well trained Tacotron 2 model. Hence we use this setup in all following experiments."
+    }, {
+      "heading" : "4.1.2 Convergence Time",
+      "text" : "To investigate the impact that the articulatory features have on their own, we train a Tacotron 2 with and without them on the Nancy dataset and compare their training time and final quality. While the model trained on embedding tables shows a clear diagonal alignment of text and spectrogram frames on an unseen test sentence after 2,000 steps, the one trained on articulatory features does so already at 500 steps. This is visualized in figure 2. The decoder of the Tacotron 2 model can only start to learn to decode after the alignment of inputs to outputs is learned. So learning the alignment earlier gives the articulatory model a clear benefit.\nAfter training for 80,000 steps however, our own subjective assessment finds no difference in quality between the two. The earlier convergence of the alignment however shows a possible advantage of using the articulatory features on low-resource tasks, as quicker training progress means that training can be stopped earlier, before overfitting on little data becomes too problematic."
+    }, {
+      "heading" : "4.2 Cross-Lingual Experiments",
+      "text" : "In order to investigate the effectiveness of our proposed language agnostic meta learning procedure, we train a Tacotron 2 model and a FastSpeech 2 model on the full Karlsson dataset as a strong baseline. We also train another Tacotron 2 model and another FastSpeech 2 model on speech in 8 languages with one speaker per language (Nancy dataset and CSS10 dataset) and fine-tune those models on a randomly chosen 30 minute subset from the Karlsson dataset. To our surprise, we did not only match, but even outperform the model trained on 29 hours with the model fine-tuned on just 30 minutes in multiple metrics.\nAs a second baseline we tried to train another meta-checkpoint using the embedding lookup-table approach to also further investigate the effectiveness of the articulatory features. We did however not manage to get such a model to converge to a usable state. This already shows the superiority of the articulatory feature representations for such a multilingual use-case.\nFurthermore we tried to fine-tune the well trained English single speaker models from the first experiment on the 30 minutes of German to have another baseline that can be used to measure the impact of the LAML procedure. This setup however also did not yield any usable results. During the fine-tuning process, the model was capable of speaking German with a strong English accent, yet it did not properly learn to speak in the voice of the target speaker. By the time the model learned to speak in the new speakers voice, it had overfitted the 30 minutes of training data and collapsed, producing no more intelligible speech. We conclude that the method proposed in this paper not only improves on the ability to use cross-lingual data easily, but actually enables it in the first place. Both the articulatory features, as well as the meta learning procedure seem necessary to achieve cross-lingual fine-tuning on low-resource data.\nThe texts we use for the following experiments are disjunct from any training data used. Human speech as gold standard is not used, since we are interested in the difference in performance between the systems, not their absolute performance. The close to state-of-the-art performance of the baselines is considered as given, considering their ideal training conditions and use of proven methods. Furthermore, we chose to use German as our benchmark language over an actual low-resource language, since it is much easier to acquire reliable ratings on intelligibility and naturalness for German, than it would be for an actual low-resource language."
+    }, {
+      "heading" : "4.2.1 Intelligibility",
+      "text" : "To compare intelligibility between our baseline models and our low-resource models, we use the word error rate (WER) of an automatic speech recognition system (ASR) as a proxy. We synthesize 100 sentences of German radio news texts taken from the DIRNDL corpus (Eckart et al., 2012) with each of our baselines and corresponding low-resource systems. Table 2 shows WERs that the German IMS-Speech ASR (Denisov and Vu, 2019) achieves on the synthesized data. For both Tacotron 2 and the FastSpeech 2 based system, the WER of the low-resource model is slightly lower than that of the baseline, thus the low-resource models performed slightly better.\nLooking into the cases where the low-resource system outperformed the baseline, we find codeswitched segments, where the texts contain names\nof Russian cities. Since the pretraining data of the low-resource model includes Russian speech, it seems to have not forgotten entirely about what it has seen in the pretraining phase, which in our interpretation confirms the effectiveness of the LAML against the catastrophic-forgetting problem (French, 1999) of regular pretraining."
+    }, {
+      "heading" : "4.2.2 Naturalness",
+      "text" : "In order to assess the naturalness of the fine-tuned models, we conduct a preference study with 34 native speakers of German. Each participant is shown multiple phonetically balanced samples produced by the Tacotron 2 and FastSpeech 2 models. For every sentence, there is one sample produced by the baseline and one by the low-resource model. The participants are then asked to indicate their subjective overall preference between the two samples. The results for Tacotron 2 are shown in figure 3 (a). The low-resource system was the preferred system in more than half of the cases, with an equal rating taking up more than another third, showing a clear preference for the low-resource model over the baseline. The results for FastSpeech 2, as seen in figure 3 (b), are a lot more balanced. While the baseline is preferred more often than the lowresource variant, it is not the case in the majority of the ratings. In 56% of the cases, the model finetuned on 30 minutes of data was perceived to be as good or better than the model trained on 29 hours from scratch.\nComputational Resources All models were trained on a single NVIDIA A6000 GPU. Training time of the Tacotron Baseline was 2 days. Training time of the FastSpeech Baseline was 1 day. Training time of the meta-checkpoint was 4 days, finetuning to a new model from the meta-checkpoint however only takes 2 hours. The HiFi-GAN vocoder used for the samples in the study and in our own preliminary subjective evaluation took 4 days to train and was not fine-tuned on the unseen data. We did not perform hyperparameter searches and stuck with the suggested default settings for all methods unless specified otherwise, which worked\nsufficiently well, but could surely be improve."
+    }, {
+      "heading" : "5 Further Analysis and Future Work",
+      "text" : "What is the ideal amount of training steps for fine-tuning? To investigate the amount of update steps needed to fully adapt to the new speaker with the added difficulty of learning a new language, we show the cosine similarity of a speaker embedding of the fine-tuned model to that of the ground truth throughout the fine-tuning process in figure 4. The speaker embedding is built according to the ECAPA-TDNN architecture (Desplanques et al., 2020) and provided open source by Speechbrain (Ravanelli et al., 2021). It is trained on Voxceleb 1 and 2 (Nagrani et al., 2017, 2019; Chung et al., 2018) which to the best of our knowledge does not overlap with any of the other training and evaluation data we used. We tried to decrease adaptation time further by incorporating said speaker embedding similarity as an additional objective function, similar to Nachmani et al. (2018), we did however see only marginal improvements in the amount of steps needed at the expense of greatly increased training time.\nCan this setup handle zero-shot phonemes? We show the model’s zero shot capabilities in figure 5. We removed Dutch and Finnish from the training data of the meta-checkpoint and trained another version of it, to be able to see how it handles all of the now completely unseen phonemes specific to German. While their correct position in plot (a) can be considered given, since it shows the articulatory featurespace, their meaningful positions in plot (b) and (c) show that the meta-checkpoint does not just collapse the vector of the unseen phoneme to the one it is most similar to, but actually generalizes. While their pronunciation when produced does not match the correct pronunciation perfectly, it can be understood in the context of a longer sequence. This is congruent with the results of Staib et al. (2020). During the adaptation phase, the pronunciation of the unseen phonemes rapidly matches the correct pronunciation after less than 100 steps.\nDoes this setup learn the difference between language and speaker? When analyzing the finetuned meta-checkpoint, we observed that it seems to link the language of the input to the voice of the speaker. For example when synthesizing an unseen Hungarian text using Tacotron 2, the voice of the synthesis resembles that of the Hungarian female speaker, even though the model has been fine-tuned on the male German speaker and there are no additional conditioning signals. We hypothesize that the LAML procedure induces certain subsets of parameters in the model to be speaker dependent and the encoder of the model priming those parameters purely based on the phoneme sequence. This leads us to believe, that the fine-tuning of all parameters in the model may neither be necessary, nor even the best way of adapting to new data. This also fits the observations of the speaker embedding over\ntime, since the Tacotron model adapts to the new speaker very rapidly. Further investigations into the interactions between parameter groups could allow cutting down the amount of parameters that need to be trained significantly, further reducing the need for training data.\nHow can we bring down FastSpeech 2’s data need further? A similar observation regarding language and speaker can be made with FastSpeech 2, however as could be seen from the experiment on naturalness and the training time, the FastSpeech 2 model can benefit more from additional data and training time. This may come down to its nearly twice as high parameter count. So a more effective fine-tuning strategy, that considers some parameters as constants, could benefit the fine-tuning capabilities of the FastSpeech 2 model greatly.\nDoes this work across language families? One limitation to our findings is that we investigated only the transfer of languages that are related. It is possible that fine-tuning to a language that uses e.g. the lexical tone rather than pitch accents or word accents would require pretraining in more closely related high-resource languages, such as Chinese. However, as Vu and Schultz (2013) find in their analysis of multilingual ASR, the fast adaptation of an acoustic model trained on multiple languages to unseen languages works well, even across different language families. We thus believe that the technique and analysis presented in this paper also holds across language families and types."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we show an approach for training a model in a language for which only 30 minutes of data are available by making use of articulatory features and language agnostic meta learning. The main takeaways from our work are as follows:\nArticulatory Features for TTS Using articulatory features as the input representation to a TTS system enables the use of multilingual data without the need for increased architectural complexity, such as language specific projection spaces. It is furthermore beneficial to use even in singlelanguage scenarios, since the knowledge sharing between phonemes makes the TTS system converge much earlier to an usable state during training.\nMAML on TTS Applying MAML to TTS does not work well. If we however remove the inner loop, we are able to pretrain a low-resource capable checkpoint for TTS. This modification not only makes it work, it also simplifies the formulation.\nZero-shot capabilities The use of articulatory features enables zero-shot inference on unseen phonemes. This is further enhanced by the LAML training procedure. The implications of this are particularly interesting for codeswitching, as Staib et al. (2020); Wells et al. (2021) have pointed out previously. Using these two techniques in conjunction could be used to reduce the problem of codeswitching to a problem of token-wise language identification."
+    } ],
+    "references" : [ {
+      "title" : "How to train your maml",
+      "author" : [ "Antreas Antoniou", "Harrison Edwards", "Amos Storkey." ],
+      "venue" : "arXiv preprint arXiv:1810.09502.",
+      "citeRegEx" : "Antoniou et al\\.,? 2018",
+      "shortCiteRegEx" : "Antoniou et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Deep voice: Real-time neural text-to-speech",
+      "author" : [ "Sercan O. Arık", "Mike Chrzanowski", "Adam Coates", "Gregory Diamos", "Andrew Gibiansky", "Yongguo Kang", "Xian Li", "John Miller", "Andrew Ng", "Jonathan Raiman", "Shubho Sengupta", "Mohammad Shoeybi." ],
+      "venue" : "Pro-",
+      "citeRegEx" : "Arık et al\\.,? 2017",
+      "shortCiteRegEx" : "Arık et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Hierarchical Transfer Learning for Multilingual, Multi-Speaker, and Style Transfer DNN-Based TTS on Low-Resource Languages",
+      "author" : [ "Kurniawati Azizah", "Mirna Adriani", "Wisnu Jatmiko." ],
+      "venue" : "IEEE Access, 8:179798–179812.",
+      "citeRegEx" : "Azizah et al\\.,? 2020",
+      "shortCiteRegEx" : "Azizah et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "One TTS alignment to rule them all",
+      "author" : [ "Rohan Badlani", "Adrian Łancucki", "Kevin J Shih", "Rafael Valle", "Wei Ping", "Bryan Catanzaro." ],
+      "venue" : "arXiv preprint arXiv:2108.10447.",
+      "citeRegEx" : "Badlani et al\\.,? 2021",
+      "shortCiteRegEx" : "Badlani et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Jointsequence models for grapheme-to-phoneme conversion",
+      "author" : [ "Maximilian Bisani", "Hermann Ney." ],
+      "venue" : "Speech communication, 50(5):434–451.",
+      "citeRegEx" : "Bisani and Ney.,? 2008",
+      "shortCiteRegEx" : "Bisani and Ney.",
+      "year" : 2008
+    }, {
+      "title" : "Voxceleb2: Deep speaker recognition",
+      "author" : [ "J.S. Chung", "A. Nagrani", "A. Zisserman." ],
+      "venue" : "INTERSPEECH.",
+      "citeRegEx" : "Chung et al\\.,? 2018",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multisyn: Open-domain unit selection for the festival speech synthesis system",
+      "author" : [ "Robert AJ Clark", "Korin Richmond", "Simon King." ],
+      "venue" : "Speech Communication, 49(4):317–330.",
+      "citeRegEx" : "Clark et al\\.,? 2007",
+      "shortCiteRegEx" : "Clark et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Efficient neural speech synthesis for lowresource languages through multilingual modeling",
+      "author" : [ "Marcel de Korte", "Jaebok Kim", "Esther Klabbers" ],
+      "venue" : null,
+      "citeRegEx" : "Korte et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Korte et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "IMS-speech: A speech to text tool",
+      "author" : [ "Pavel Denisov", "Ngoc Thang Vu." ],
+      "venue" : "Studientexte zur Sprachkommunikation: Elektronische Sprachsignalverarbeitung 2019, pages 170–177.",
+      "citeRegEx" : "Denisov and Vu.,? 2019",
+      "shortCiteRegEx" : "Denisov and Vu.",
+      "year" : 2019
+    }, {
+      "title" : "Grapheme-tophoneme models for (almost) any language",
+      "author" : [ "Aliya Deri", "Kevin Knight." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 399–408.",
+      "citeRegEx" : "Deri and Knight.,? 2016",
+      "shortCiteRegEx" : "Deri and Knight.",
+      "year" : 2016
+    }, {
+      "title" : "ECAPA-TDNN: emphasized channel attention, propagation and aggregation in TDNN based speaker verification",
+      "author" : [ "Brecht Desplanques", "Jenthe Thienpondt", "Kris Demuynck." ],
+      "venue" : "Interspeech 2020, pages 3830–3834. ISCA.",
+      "citeRegEx" : "Desplanques et al\\.,? 2020",
+      "shortCiteRegEx" : "Desplanques et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Endto-end adversarial text-to-speech",
+      "author" : [ "Jeff Donahue", "Sander Dieleman", "Mikołaj Bińkowski", "Erich Elsen", "Karen Simonyan." ],
+      "venue" : "arXiv preprint arXiv:2006.03575.",
+      "citeRegEx" : "Donahue et al\\.,? 2020",
+      "shortCiteRegEx" : "Donahue et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "The kestrel tts text normalization system",
+      "author" : [ "Peter Ebden", "Richard Sproat." ],
+      "venue" : "Natural Language Engineering, 21(3):333–353.",
+      "citeRegEx" : "Ebden and Sproat.,? 2015",
+      "shortCiteRegEx" : "Ebden and Sproat.",
+      "year" : 2015
+    }, {
+      "title" : "A discourse information radio news database for linguistic analysis",
+      "author" : [ "Kerstin Eckart", "Arndt Riester", "Katrin Schweitzer." ],
+      "venue" : "Linked Data in Linguistics, pages 65–76. Springer.",
+      "citeRegEx" : "Eckart et al\\.,? 2012",
+      "shortCiteRegEx" : "Eckart et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks",
+      "author" : [ "Chelsea Finn", "Pieter Abbeel", "Sergey Levine" ],
+      "venue" : null,
+      "citeRegEx" : "Finn et al\\.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Finn et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Catastrophic forgetting in connectionist networks",
+      "author" : [ "Robert M French." ],
+      "venue" : "Trends in cognitive sciences, 3(4):128–135.",
+      "citeRegEx" : "French.,? 1999",
+      "shortCiteRegEx" : "French.",
+      "year" : 1999
+    }, {
+      "title" : "Generative adversarial nets",
+      "author" : [ "Ian Goodfellow", "Jean Pouget-Abadie", "Mehdi Mirza", "Bing Xu", "David Warde-Farley", "Sherjil Ozair", "Aaron Courville", "Yoshua Bengio." ],
+      "venue" : "Advances in neural information processing systems, 27.",
+      "citeRegEx" : "Goodfellow et al\\.,? 2014",
+      "shortCiteRegEx" : "Goodfellow et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Connectionist temporal classification: labelling unsegmented sequence data with recurrent neural networks",
+      "author" : [ "Alex Graves", "Santiago Fernández", "Faustino Gomez", "Jürgen Schmidhuber." ],
+      "venue" : "Proceedings of the 23rd international conference on Machine learning,",
+      "citeRegEx" : "Graves et al\\.,? 2006",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "Conformer: Convolution-augmented transformer for speech recognition",
+      "author" : [ "Anmol Gulati", "James Qin", "Chung-Cheng Chiu", "Niki Parmar", "Yu Zhang", "Jiahui Yu", "Wei Han", "Shibo Wang", "Zhengdong Zhang", "Yonghui Wu" ],
+      "venue" : null,
+      "citeRegEx" : "Gulati et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Gulati et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Uniform multilingual multispeaker acoustic model for statistical parametric speech synthesis of low-resourced languages",
+      "author" : [ "Alexander Gutkin" ],
+      "venue" : null,
+      "citeRegEx" : "Gutkin.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Gutkin.",
+      "year" : 2017
+    }, {
+      "title" : "Pre-trained text embeddings for enhanced text-to-speech synthesis",
+      "author" : [ "Tomoki Hayashi", "Shinji Watanabe", "Tomoki Toda", "Kazuya Takeda", "Shubham Toshniwal", "Karen Livescu." ],
+      "venue" : "INTERSPEECH, pages 4430–4434.",
+      "citeRegEx" : "Hayashi et al\\.,? 2019",
+      "shortCiteRegEx" : "Hayashi et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "ESPnet-TTS: Unified, reproducible, and integratable open source end-to-end text-to-speech toolkit",
+      "author" : [ "Tomoki Hayashi", "Ryuichi Yamamoto", "Katsuki Inoue", "Takenori Yoshimura", "Shinji Watanabe", "Tomoki Toda", "Kazuya Takeda", "Yu Zhang", "Xu Tan." ],
+      "venue" : "In",
+      "citeRegEx" : "Hayashi et al\\.,? 2020",
+      "shortCiteRegEx" : "Hayashi et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ESPnet2TTS: Extending the Edge of TTS Research",
+      "author" : [ "Tomoki Hayashi", "Ryuichi Yamamoto", "Takenori Yoshimura", "Peter Wu", "Jiatong Shi", "Takaaki Saeki", "Yooncheol Ju", "Yusuke Yasuda", "Shinnosuke Takamichi", "Shinji Watanabe." ],
+      "venue" : "arXiv",
+      "citeRegEx" : "Hayashi et al\\.,? 2021",
+      "shortCiteRegEx" : "Hayashi et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Multilingual Byte2Speech Text-To-Speech Models Are Few-shot Spoken Language Learners",
+      "author" : [ "Mutian He", "Jingzhou Yang", "Lei He." ],
+      "venue" : "arXiv preprint arXiv:2103.03541.",
+      "citeRegEx" : "He et al\\.,? 2021",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Preliminaries to speech analysis: The distinctive features and their correlates",
+      "author" : [ "Roman Jakobson", "C Gunnar Fant", "Morris Halle" ],
+      "venue" : null,
+      "citeRegEx" : "Jakobson et al\\.,? \\Q1951\\E",
+      "shortCiteRegEx" : "Jakobson et al\\.",
+      "year" : 1951
+    }, {
+      "title" : "Glow-TTS: A generative flow for text-to-speech via monotonic alignment search",
+      "author" : [ "Jaehyeon Kim", "Sungwon Kim", "Jungil Kong", "Sungroh Yoon." ],
+      "venue" : "arXiv preprint arXiv:2005.11129.",
+      "citeRegEx" : "Kim et al\\.,? 2020",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Conditional variational autoencoder with adversarial learning for end-to-end text-to-speech",
+      "author" : [ "Jaehyeon Kim", "Jungil Kong", "Juhee Son." ],
+      "venue" : "arXiv preprint arXiv:2106.06103.",
+      "citeRegEx" : "Kim et al\\.,? 2021",
+      "shortCiteRegEx" : "Kim et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "The blizzard challenge 2011",
+      "author" : [ "Simon King", "Vasilis Karaiskos." ],
+      "venue" : "Proc. Blizzard Challenge Workshop, volume 2011.",
+      "citeRegEx" : "King and Karaiskos.,? 2011",
+      "shortCiteRegEx" : "King and Karaiskos.",
+      "year" : 2011
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik P. Kingma", "Jimmy Ba" ],
+      "venue" : null,
+      "citeRegEx" : "Kingma and Ba.,? \\Q2017\\E",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2017
+    }, {
+      "title" : "HiFi-GAN: Generative adversarial networks for efficient and high fidelity speech synthesis",
+      "author" : [ "Jungil Kong", "Jaehyeon Kim", "Jaekyoung Bae." ],
+      "venue" : "Advances in Neural Information Processing Systems, 33.",
+      "citeRegEx" : "Kong et al\\.,? 2020",
+      "shortCiteRegEx" : "Kong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "MelGAN: Generative adversarial networks for conditional waveform synthesis",
+      "author" : [ "Kundan Kumar", "Rithesh Kumar", "Thibault de Boissiere", "Lucas Gestin", "Wei Zhen Teoh", "Jose Sotelo", "Alexandre de Brébisson", "Yoshua Bengio", "Aaron C Courville." ],
+      "venue" : "Advances in Neural",
+      "citeRegEx" : "Kumar et al\\.,? 2019",
+      "shortCiteRegEx" : "Kumar et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "FastPitch: Parallel text-tospeech with pitch prediction",
+      "author" : [ "Adrian Łańcucki." ],
+      "venue" : "ICASSP 2021-2021 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 6588–6592. IEEE.",
+      "citeRegEx" : "Łańcucki.,? 2021",
+      "shortCiteRegEx" : "Łańcucki.",
+      "year" : 2021
+    }, {
+      "title" : "Bytes are all you need: Endto-end multilingual speech recognition and synthesis with bytes",
+      "author" : [ "Bo Li", "Yu Zhang", "Tara Sainath", "Yonghui Wu", "William Chan." ],
+      "venue" : "ICASSP 2019-2019 IEEE International Conference on Acoustics, Speech and Signal",
+      "citeRegEx" : "Li et al\\.,? 2019a",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural speech synthesis with transformer network",
+      "author" : [ "Naihan Li", "Shujie Liu", "Yanqing Liu", "Sheng Zhao", "Ming Liu." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 33, pages 6706–6713.",
+      "citeRegEx" : "Li et al\\.,? 2019b",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The IMS Toucan system for the Blizzard Challenge 2021",
+      "author" : [ "Florian Lux", "Julia Koch", "Antje Schweitzer", "Ngoc Thang Vu." ],
+      "venue" : "Proc. Blizzard Challenge Workshop, volume 2021. Speech Synthesis SIG.",
+      "citeRegEx" : "Lux et al\\.,? 2021",
+      "shortCiteRegEx" : "Lux et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Panphon: A resource for mapping IPA segments to articulatory feature vectors",
+      "author" : [ "David R. Mortensen", "Patrick Littell", "Akash Bharadwaj", "Kartik Goyal", "Chris Dyer", "Lori S. Levin." ],
+      "venue" : "Proceedings of COLING 2016, the 26th International Conference on",
+      "citeRegEx" : "Mortensen et al\\.,? 2016",
+      "shortCiteRegEx" : "Mortensen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Fitting new speakers based on a short untranscribed sample",
+      "author" : [ "Eliya Nachmani", "Adam Polyak", "Yaniv Taigman", "Lior Wolf" ],
+      "venue" : null,
+      "citeRegEx" : "Nachmani et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Nachmani et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Voxceleb: a large-scale speaker identification dataset",
+      "author" : [ "A. Nagrani", "J.S. Chung", "A. Zisserman." ],
+      "venue" : "INTERSPEECH.",
+      "citeRegEx" : "Nagrani et al\\.,? 2017",
+      "shortCiteRegEx" : "Nagrani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Voxceleb: Large-scale speaker verification in the wild",
+      "author" : [ "Arsha Nagrani", "Joon Son Chung", "Weidi Xie", "Andrew Zisserman." ],
+      "venue" : "Computer Science and Language.",
+      "citeRegEx" : "Nagrani et al\\.,? 2019",
+      "shortCiteRegEx" : "Nagrani et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Adapting tts models for new speakers using transfer learning",
+      "author" : [ "Paarth Neekhara", "Jason Li", "Boris Ginsburg." ],
+      "venue" : "arXiv preprint arXiv:2110.05798.",
+      "citeRegEx" : "Neekhara et al\\.,? 2021",
+      "shortCiteRegEx" : "Neekhara et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "CSS10: A Collection of Single Speaker Speech Datasets for 10 Languages",
+      "author" : [ "Kyubyong Park", "Thomas Mulc." ],
+      "venue" : "Interspeech.",
+      "citeRegEx" : "Park and Mulc.,? 2019",
+      "shortCiteRegEx" : "Park and Mulc.",
+      "year" : 2019
+    }, {
+      "title" : "WaveGlow: A flow-based generative network for speech synthesis",
+      "author" : [ "Ryan Prenger", "Rafael Valle", "Bryan Catanzaro." ],
+      "venue" : "ICASSP 2019 – 2019 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 3617–3621. IEEE.",
+      "citeRegEx" : "Prenger et al\\.,? 2019",
+      "shortCiteRegEx" : "Prenger et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "HUI-Audio-Corpus-German: A high quality TTS dataset",
+      "author" : [ "Pascal Puchtler", "Johannes Wirth", "René Peinl" ],
+      "venue" : null,
+      "citeRegEx" : "Puchtler et al\\.,? \\Q2021\\E",
+      "shortCiteRegEx" : "Puchtler et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Meta-learning with implicit gradients",
+      "author" : [ "Aravind Rajeswaran", "Chelsea Finn", "Sham M Kakade", "Sergey Levine." ],
+      "venue" : "Proceedings of the 33rd International Conference on Neural Information Processing Systems, pages 113–124.",
+      "citeRegEx" : "Rajeswaran et al\\.,? 2019",
+      "shortCiteRegEx" : "Rajeswaran et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Grapheme-to-phoneme conversion using long short-term memory recurrent neural networks",
+      "author" : [ "Kanishka Rao", "Fuchun Peng", "Haşim Sak", "Françoise Beaufays." ],
+      "venue" : "2015 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),",
+      "citeRegEx" : "Rao et al\\.,? 2015",
+      "shortCiteRegEx" : "Rao et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "SpeechBrain: A general-purpose speech toolkit",
+      "author" : [ "François Grondin", "William Aris", "Hwidong Na", "Yan Gao", "Renato De Mori", "Yoshua Bengio." ],
+      "venue" : "ArXiv:2106.04624.",
+      "citeRegEx" : "Grondin et al\\.,? 2021",
+      "shortCiteRegEx" : "Grondin et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "FastSpeech 2: Fast and high-quality end-to-end text to speech",
+      "author" : [ "Yi Ren", "Chenxu Hu", "Xu Tan", "Tao Qin", "Sheng Zhao", "Zhou Zhao", "Tie-Yan Liu." ],
+      "venue" : "International Conference on Learning Representations.",
+      "citeRegEx" : "Ren et al\\.,? 2020",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "FastSpeech: fast, robust and controllable text to speech",
+      "author" : [ "Yi Ren", "Yangjun Ruan", "Xu Tan", "Tao Qin", "Sheng Zhao", "Zhou Zhao", "Tie-Yan Liu." ],
+      "venue" : "Proceedings of the 33rd International Conference on Neural Information Processing Systems, pages 3171–3180.",
+      "citeRegEx" : "Ren et al\\.,? 2019",
+      "shortCiteRegEx" : "Ren et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "The german text-to-speech synthesis system mary: A tool for research, development and teaching",
+      "author" : [ "Marc Schröder", "Jürgen Trouvain." ],
+      "venue" : "International Journal of Speech Technology, 6(4):365–377.",
+      "citeRegEx" : "Schröder and Trouvain.,? 2003",
+      "shortCiteRegEx" : "Schröder and Trouvain.",
+      "year" : 2003
+    }, {
+      "title" : "Natural TTS synthesis",
+      "author" : [ "Jonathan Shen", "Ruoming Pang", "Ron J. Weiss", "Mike Schuster", "Navdeep Jaitly", "Zongheng Yang", "Zhifeng Chen", "Yu Zhang", "Yuxuan Wang", "RJ Skerry-Ryan", "Rif A. Saurous", "Yannis Agiomyrgiannakis", "Yonghui Wu" ],
+      "venue" : null,
+      "citeRegEx" : "Shen et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "RAD-TTS: Parallel Flow-Based TTS with Robust Alignment Learning and Diverse Synthesis",
+      "author" : [ "Kevin J Shih", "Rafael Valle", "Rohan Badlani", "Adrian Lancucki", "Wei Ping", "Bryan Catanzaro." ],
+      "venue" : "ICML Workshop on Invertible Neural Networks, Normaliz-",
+      "citeRegEx" : "Shih et al\\.,? 2021",
+      "shortCiteRegEx" : "Shih et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Phonological Features for 0-Shot Multilingual Speech Synthesis",
+      "author" : [ "Marlene Staib", "Tian Huey Teh", "Alexandra Torresquintero", "Devang S. Ram Mohan", "Lorenzo Foglianti", "Raphael Lenain", "Jiameng Gao." ],
+      "venue" : "Interspeech 2020.",
+      "citeRegEx" : "Staib et al\\.,? 2020",
+      "shortCiteRegEx" : "Staib et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Efficiently trainable text-to-speech system based on deep convolutional networks with guided attention",
+      "author" : [ "Hideyuki Tachibana", "Katsuya Uenoyama", "Shunsuke Aihara." ],
+      "venue" : "2018 IEEE International Conference on Acoustics, Speech and Signal Processing",
+      "citeRegEx" : "Tachibana et al\\.,? 2018",
+      "shortCiteRegEx" : "Tachibana et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Enhancing sequence-to-sequence text-to-speech with morphology",
+      "author" : [ "Jason Taylor", "Korin Richmond." ],
+      "venue" : "INTERSPEECH, pages 1738–1742.",
+      "citeRegEx" : "Taylor and Richmond.,? 2020",
+      "shortCiteRegEx" : "Taylor and Richmond.",
+      "year" : 2020
+    }, {
+      "title" : "Hidden markov models for grapheme to phoneme conversion",
+      "author" : [ "Paul Taylor." ],
+      "venue" : "Ninth European Conference on Speech Communication and Technology. Citeseer.",
+      "citeRegEx" : "Taylor.,? 2005",
+      "shortCiteRegEx" : "Taylor.",
+      "year" : 2005
+    }, {
+      "title" : "End-to-end Text-to-speech for Low-resource Languages by Cross-Lingual Transfer Learning",
+      "author" : [ "Tao Tu", "Yuan-Jui Chen", "Cheng chieh Yeh", "Hung yi Lee" ],
+      "venue" : null,
+      "citeRegEx" : "Tu et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Tu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "WaveNet: A generative model for raw audio",
+      "author" : [ "Aaron van den Oord", "Sander Dieleman", "Heiga Zen", "Karen Simonyan", "Oriol Vinyals", "Alex Graves", "Nal Kalchbrenner", "Andrew Senior", "Koray Kavukcuoglu" ],
+      "venue" : null,
+      "citeRegEx" : "Oord et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Oord et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in neural information processing systems, pages 5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Multilingual multilayer perceptron for rapid language adaptation between and across language families",
+      "author" : [ "Ngoc Thang Vu", "Tanja Schultz." ],
+      "venue" : "Interspeech, pages 515–519.",
+      "citeRegEx" : "Vu and Schultz.,? 2013",
+      "shortCiteRegEx" : "Vu and Schultz.",
+      "year" : 2013
+    }, {
+      "title" : "ESPnet: End-to-end speech",
+      "author" : [ "Shinji Watanabe", "Takaaki Hori", "Shigeki Karita", "Tomoki Hayashi", "Jiro Nishitoba", "Yuya Unno", "Nelson Enrique Yalta Soplin", "Jahn Heymann", "Matthew Wiesner", "Nanxin Chen", "Adithya Renduchintala", "Tsubasa Ochiai" ],
+      "venue" : null,
+      "citeRegEx" : "Watanabe et al\\.,? \\Q2018\\E",
+      "shortCiteRegEx" : "Watanabe et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "The cstr entry to the blizzard challenge 2021",
+      "author" : [ "Dan Wells", "Pilar Oplustil-Gallegos", "Simon King." ],
+      "venue" : "Proc. Blizzard Challenge Workshop, volume 2021. Speech Synthesis SIG.",
+      "citeRegEx" : "Wells et al\\.,? 2021",
+      "shortCiteRegEx" : "Wells et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "The lessac technologies system for blizzard challenge 2011",
+      "author" : [ "Reiner Wilhelms-Tricarico", "Brian Mottershead", "Rattima Nitisaroj", "Michael Baumgartner", "John Reichenbach", "Gary Marple." ],
+      "venue" : "Blizzard Challenge 2011 Workshop paper. DOI= http://festvox.",
+      "citeRegEx" : "Wilhelms.Tricarico et al\\.,? 2011",
+      "shortCiteRegEx" : "Wilhelms.Tricarico et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "LRSpeech: Extremely LowResource Speech Synthesis and Recognition, page 2802–2812",
+      "author" : [ "Jin Xu", "Xu Tan", "Yi Ren", "Tao Qin", "Jian Li", "Sheng Zhao", "Tie-Yan Liu." ],
+      "venue" : "Association for Computing Machinery, New York, NY, USA.",
+      "citeRegEx" : "Xu et al\\.,? 2020",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Parallel waveGAN: A fast waveform generation model based on generative adversarial networks with multi-resolution spectrogram",
+      "author" : [ "Ryuichi Yamamoto", "Eunwoo Song", "Jae-Min Kim." ],
+      "venue" : "ICASSP 2020 – 2020 IEEE International Conference on Acoustics,",
+      "citeRegEx" : "Yamamoto et al\\.,? 2020",
+      "shortCiteRegEx" : "Yamamoto et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Towards Universal Text-to-Speech",
+      "author" : [ "Jingzhou Yang", "Lei He." ],
+      "venue" : "INTERSPEECH, pages 3171– 3175.",
+      "citeRegEx" : "Yang and He.,? 2020",
+      "shortCiteRegEx" : "Yang and He.",
+      "year" : 2020
+    }, {
+      "title" : "Forward attention in sequence-to-sequence acoustic modeling for speech synthesis",
+      "author" : [ "Jing-Xuan Zhang", "Zhen-Hua Ling", "Li-Rong Dai." ],
+      "venue" : "2018 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 4789–4793.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 57,
+      "context" : "The advance of deep learning (Vaswani et al., 2017; Goodfellow et al., 2014) has enabled great improvements in the field of Text-to-Speech (TTS).",
+      "startOffset" : 29,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 16,
+      "context" : "The advance of deep learning (Vaswani et al., 2017; Goodfellow et al., 2014) has enabled great improvements in the field of Text-to-Speech (TTS).",
+      "startOffset" : 29,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 49,
+      "context" : "(Towards-)end-to-end models, such as Tacotron 2 (Wang et al., 2017; Shen et al., 2018), TransformerTTS (Li et al.",
+      "startOffset" : 48,
+      "endOffset" : 86
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2018), TransformerTTS (Li et al., 2019b), FastSpeech 2 (Ren et al.",
+      "startOffset" : 24,
+      "endOffset" : 42
+    }, {
+      "referenceID" : 31,
+      "context" : ", 2019, 2020), FastPitch (Łańcucki, 2021) and many more famous instances (e.",
+      "startOffset" : 25,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2016), MelGAN (Kumar et al., 2019), Parallel WaveGAN (Yamamoto et al.",
+      "startOffset" : 16,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 63,
+      "context" : ", 2019), Parallel WaveGAN (Yamamoto et al., 2020) or HiFi-GAN (Kong et al.",
+      "startOffset" : 26,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2020) or HiFi-GAN (Kong et al., 2020) to turn the parametric representations that they produce into waveforms.",
+      "startOffset" : 20,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 11,
+      "context" : "Recently proposed models even include some with the ability to go directly to the waveform from a grapheme or phoneme input sequence, such as EATS (Donahue et al., 2020) or VITS (Kim et al.",
+      "startOffset" : 147,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 14,
+      "context" : "We fix previous shortcomings by 1) using a linguistically motivated representation of the inputs to such a system (articulatory and phonological features of phonemes) that enables cross-lingual knowledge sharing and 2) applying the model agnostic meta learning (MAML) framework (Finn et al., 2017) to the field of low-resource TTS for the first time.",
+      "startOffset" : 278,
+      "endOffset" : 297
+    }, {
+      "referenceID" : 19,
+      "context" : "Also (Gutkin, 2017) have applied phonological features to low-resource TTS with fair success.",
+      "startOffset" : 5,
+      "endOffset" : 19
+    }, {
+      "referenceID" : 4,
+      "context" : "Phonemizers (Bisani and Ney, 2008; Taylor, 2005; Rao et al., 2015) produce a sequence of phonetic units, which correlate with the segments in the audio much more than raw text.",
+      "startOffset" : 12,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 54,
+      "context" : "Phonemizers (Bisani and Ney, 2008; Taylor, 2005; Rao et al., 2015) produce a sequence of phonetic units, which correlate with the segments in the audio much more than raw text.",
+      "startOffset" : 12,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 44,
+      "context" : "Phonemizers (Bisani and Ney, 2008; Taylor, 2005; Rao et al., 2015) produce a sequence of phonetic units, which correlate with the segments in the audio much more than raw text.",
+      "startOffset" : 12,
+      "endOffset" : 66
+    }, {
+      "referenceID" : 14,
+      "context" : "The goal of MAML (Finn et al., 2017) is to find a set of parameters, that work well as initialization",
+      "startOffset" : 17,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 34,
+      "context" : "For the implementation of our method, we use the open source IMS Toucan speech synthesis toolkit, first introduced in (Lux et al., 2021), which is in turn based on the ESPnet end-to-end speech processing toolkit (Watanabe et al.",
+      "startOffset" : 118,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 59,
+      "context" : ", 2021), which is in turn based on the ESPnet end-to-end speech processing toolkit (Watanabe et al., 2018; Hayashi et al., 2020, 2021).",
+      "startOffset" : 83,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 49,
+      "context" : "Tacotron 2 For our implementation of Tacotron 2 (Shen et al., 2018), we make use of the forward attention with transition agent introduced in Zhang et al.",
+      "startOffset" : 48,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 17,
+      "context" : "(2018), which uses a CTC-like forward variable (Graves et al., 2006) to promote the quick learning of monotonic alignment between text and speech.",
+      "startOffset" : 47,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 46,
+      "context" : "FastSpeech 2 To train the parallel FastSpeech 2 model (Ren et al., 2020), annotations of durations for each phoneme are needed.",
+      "startOffset" : 54,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 18,
+      "context" : "Furthermore, we make use of the conformer block (Gulati et al., 2020) as the encoder and decoder, rather than the standard transformer (Vaswani et al.",
+      "startOffset" : 48,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 57,
+      "context" : ", 2020) as the encoder and decoder, rather than the standard transformer (Vaswani et al., 2017).",
+      "startOffset" : 73,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 35,
+      "context" : "PanPhon Although the intended use of the PanPhon resource (Mortensen et al., 2016) is named entity recognition, it is a very useful source of linguistic specifications for articulatory TTS.",
+      "startOffset" : 58,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 28,
+      "context" : "We then sum up the losses, backpropagate and update the Meta Model directly using Adam (Kingma and Ba, 2017).",
+      "startOffset" : 87,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 27,
+      "context" : "In our experiments we make use of the following datasets: The English Nancy Krebs dataset (16h) from the Blizzard challenge 2011 (WilhelmsTricarico et al., 2011; King and Karaiskos, 2011); The German dataset of the speaker Karlsson (29h) from the HUI-Audio-Corpus-German (Puchtler et al.",
+      "startOffset" : 129,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 42,
+      "context" : ", 2011; King and Karaiskos, 2011); The German dataset of the speaker Karlsson (29h) from the HUI-Audio-Corpus-German (Puchtler et al., 2021); The Greek (4h), Spanish (24h), Finnish (11h), Russian (21h), Hungarian (10h), Dutch (14h) and French (19h) subsets of the CSS10 dataset (Park and Mulc, 2019).",
+      "startOffset" : 117,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2021); The Greek (4h), Spanish (24h), Finnish (11h), Russian (21h), Hungarian (10h), Dutch (14h) and French (19h) subsets of the CSS10 dataset (Park and Mulc, 2019).",
+      "startOffset" : 145,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 28,
+      "context" : "The embedding functions are each trained for 3000 epochs using Adam (Kingma and Ba, 2017) with a batchsize of 32.",
+      "startOffset" : 68,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 13,
+      "context" : "We synthesize 100 sentences of German radio news texts taken from the DIRNDL corpus (Eckart et al., 2012) with each of our baselines and corresponding low-resource systems.",
+      "startOffset" : 84,
+      "endOffset" : 105
+    }, {
+      "referenceID" : 8,
+      "context" : "Table 2 shows WERs that the German IMS-Speech ASR (Denisov and Vu, 2019) achieves on the synthesized data.",
+      "startOffset" : 50,
+      "endOffset" : 72
+    }, {
+      "referenceID" : 15,
+      "context" : "Since the pretraining data of the low-resource model includes Russian speech, it seems to have not forgotten entirely about what it has seen in the pretraining phase, which in our interpretation confirms the effectiveness of the LAML against the catastrophic-forgetting problem (French, 1999) of regular pretraining.",
+      "startOffset" : 278,
+      "endOffset" : 292
+    }, {
+      "referenceID" : 10,
+      "context" : "The speaker embedding is built according to the ECAPA-TDNN architecture (Desplanques et al., 2020) and provided open source by Speechbrain (Ravanelli et al.",
+      "startOffset" : 72,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 5,
+      "context" : "It is trained on Voxceleb 1 and 2 (Nagrani et al., 2017, 2019; Chung et al., 2018) which to the best of our knowledge does not overlap with any of the other training and evaluation data we used.",
+      "startOffset" : 34,
+      "endOffset" : 82
+    } ],
+    "year" : 0,
+    "abstractText" : "While neural text-to-speech systems perform remarkably well in high-resource scenarios, they cannot be applied to the majority of the over 6,000 spoken languages in the world due to a lack of appropriate training data. In this work, we use embeddings derived from articulatory vectors rather than embeddings derived from phoneme identities to learn phoneme representations that hold across languages. In conjunction with language agnostic meta learning, this enables us to fine-tune a high-quality textto-speech model on just 30 minutes of data in a previously unseen language spoken by a previously unseen speaker.",
+    "creator" : null
+  }
+}

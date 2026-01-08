@@ -1,0 +1,625 @@
+{
+  "name" : "ARR_2022_163_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Sentence-aware Contrastive Learning for Open-Domain Passage Retrieval",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Open-Domain Passage Retrieval (ODPR) has recently attracted the attention of researchers for its wide usage both academically and industrially (Lee et al., 2019; Yang et al., 2017). Provided with an extremely large text corpus that composed of millions of passages, ODPR aims to retrieve a collection of the most relevant passages as the evidences of a given question.\nWith recent success in pretrained language models (PrLMs) like BERT (Devlin et al., 2019), RoBERTa (Liu et al., 2019), dense retrieval techniques have achieved significant better results than traditional lexical based methods, including TFIDF (Ramos et al., 2003) and BM25 (Robertson and Zaragoza, 2009), which totally neglect semantic similarity. Thanks to the Bi-Encoder structure, dense methods (Lee et al., 2019; Guu et al., 2020; Karpukhin et al., 2020) encode the Wikipedia passages and questions separately, and retrieve evidence passages using similarity functions like the\ninner product or cosine similarity. Given that the representations of Wikipedia passages could be precomputed, the retrieval speed of dense approaches could be on par with lexical ones.\nPrevious approaches often pretrain the BiEncoders with a specially designed pretraining objective, Inverse Cloze Task (ICT) (Lee et al., 2019). More recently, DPR (Karpukhin et al., 2020) adopts a simple but effective contrastive learning framework, achieving impressive performance without any pretraining. Concretely, for each question q, several positive passages p+ and hard negative passages p− produced by BM25 are pre-extracted. By feeding the Bi-Encoder with (q, p+, p−) triples, DPR simultaneously maximizes the similarity between the representation of q and corresponding p+, and minimizes the similarity between the representations of q and all p−. Following such contrastive learning framework, many researchers are seeking further improvements for DPR from the perspective of sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al., 2021), or even using knowledge distillation (Izacard and Grave, 2021; Yang et al., 2021).\nHowever, these studies fail to realize that there exist severe drawbacks in the current contrastive learning framework adopted by DPR. Essentially, as illustrated in Figure 1, each passage p is composed of multiple sentences, upon which multiple semantically faraway questions can be derived, which forms a question set Q = {q1, q2, ..., qk}. Under our investigation, such a one-to-many problem is causing severe conflicting problems in the current contrastive learning framework, which we refer to as Contrastive Conflicts. To the best of our knowledge, this is the first work that formally studies the conflicting problems in the contrastive learning framework of dense passage retrieval. Here, we distinguish two kinds of Contrastive Conflicts. • Transitivity of Similarity The goal of the con-\ntrastive learning framework in DPR is to maximize the similarity between the representation of the question and its corresponding gold passage. As illustrated in Figure 2, under Contrastive Conflicts, the current contrastive learning framework will unintendedly maximize the similarity between different question representations derived from the same passage, even if they might be semantically different, which is exactly the cause of low performance on SQuAD (Rajpurkar et al., 2016) for DPR (SQuAD has an average of 2.66 questions per passage). • Multiple References in Large Batch Size According to Karpukhin et al. (2020), the performance of DPR highly benefits from large batch size in the contrastive learning framework. However, under Contrastive Conflicts, one passage could be the positive passage p+ of multiple questions (i.e. the question set Q). Therefore, a large batch size will increase the probability that some questions of Q might occur in the same batch. With the widely adopted in-batch negative technique (Karpukhin et al., 2020; Lee et al., 2021), such p+ will be simultaneously referred to as both the positive sample and the negative sample for every q inQ, which is logically unreasonable.\nSince one-to-many problem is the direct cause of both conflicts, this paper presents a simple but effective strategy that breaks down dense passage representations into contextual sentence level ones, which we refer to as Dense Contextual Sentence Representation (DCSR). Unlike long passages, it is hard to derive semantically faraway questions from one short sentence. Therefore, by modeling ODPR in smaller units like contextual sentences, we fundamentally alleviate Contrastive Conflicts by solving the one-to-many problem. Note that we do not sim-\nply encode each sentence separately. Instead, we encode the passage as a whole and use sentence indicator tokens to acquire the sentence representations within the passage, to preserve the contextual information. We further introduce the in-passage negative sampling strategy, which samples neighboring sentences of the positive one in the same passage to create hard negative samples. Finally, concrete experiments have verified the effectiveness of our proposed method from both retrieval accuracy and transferability, especially on datasets where Contrastive Conflicts are severe. Contributions (i) We investigate the defects of the current contrastive learning framework in training dense passage representation in Open-Domain Passage Retrieval. (ii) To handle Contrastive Conflicts, we propose to index the Wikipedia corpus using contextual sentences instead of passages. We also propose the in-passage negative sampling strategy in training the contextual sentence representations. (iii) Experiments show that our proposed method significantly outperforms original baseline, especially on datasets where Contrastive Conflicts are severe. Extensive experiments also present better transferability of our DCSR, indicating that our method captures the universality of the concerned task datasets."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Open-Domain Passage Retrieval Open-Domain Passage Retrieval has been a hot research topic in recent years. It requires a system to extract evidence passages for a specific question from a large passage corpus like Wikipedia, and is challenging as it requires both high retrieval accuracy and specifically low latency for practical usage. Traditional approaches like TF-IDF (Ramos et al., 2003), BM25 (Robertson and Zaragoza, 2009) retrieve the evidence passages based on the lexical match between questions and passages. Although these lexical approaches meet the requirement of low latency,\nthey fail to capture non-lexical semantic similarity, thus performing unsatisfying on retrieval accuracy.\nWith recent advances of pretrained language models (PrLMs) like BERT (Devlin et al., 2019), RoBERTa (Liu et al., 2019), a series of neural approaches based on cross-encoders are proposed (Vig and Ramea, 2019; Wolf et al., 2019). Although enjoying satisfying retrieval accuracy, the retrieval latency is often hard to tolerate in practical use. More recently, the Bi-Encoder structure has captured the researchers’ attention. With Bi-Encoder, the representations of the corpus at scale can be precomputed, enabling it to meet the requirement of low latency in passage retrieval. Lee et al. (2019) first proposes to pretrain the BiEncoder with Inverse Cloze Task (ICT). Later, DPR (Karpukhin et al., 2020) introduces a contrastive learning framework to train dense passage representation, and has achieved impressive performance on both retrieval accuracy and latency. Based on DPR, many works make further improvements either by introducing better sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al., 2021), or even distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al., 2021).\nOur method follows the contrastive learning research line of ODPR. Different from previous works that focus on either improving the quality of negative sampling or using extra pretraining, we make improvements by directly optimizing the modeling granularity with an elaborately designed contrastive learning training strategy.\nContrastive Learning Contrastive learning recently is attracting researchers’ attention in all area. After witnessing its superiority in Computer Vision tasks (Chen et al., 2020; He et al., 2020), researchers in NLP are also applying this technique (Wu et al., 2020; Karpukhin et al., 2020; Yan et al., 2021; Giorgi et al., 2021; Gao et al., 2021). For the concern of ODPR, the research lines of contrastive learning can be divided into two types: (i) Improving the sampling strategies for positive samples and hard negative samples. According to (Manmatha et al., 2017), the quality of positive samples and negative samples are of vital importance in the contrastive learning framework. Therefore, many researchers seek better sampling strategies to improve the retrieval performance (Xiong et al., 2020). (ii) Improving the contrastive learning framework. DensePhrase (Lee et al., 2021) uses memory bank\nlike MOCO (He et al., 2020) to increase the number of in-batch negative samples without increasing the GPU memory usage, and models retrieval process on the phrase level but not passage level, achieving impressive performance.\nOur proposed method follows the second research line. We investigate a special phenomenon, Contrastive Conflicts in the contrastive learning framework, and experimentally verify the effectiveness of mediating such conflicts by modeling ODPR in a smaller granularity. More similar to our work, Akkalyoncu Yilmaz et al. (2019) also proposes to improve dense passage retrieval based on sentence-level evidences, but their work is not in the research line of contrastive learning, and focuses more on passage re-ranking after retrieval but not retrieval itself."
+    }, {
+      "heading" : "3 Methods",
+      "text" : ""
+    }, {
+      "heading" : "3.1 Contrastive Learning Framework",
+      "text" : "Existing contrastive learning framework aims to maximize the similarity between the representations of each question and its corresponding gold passages.\nSuppose there is a batch of n questions, n corresponding gold passages and in total k hard negative passages. Denote the questions in batch as q1, q2, ..., qn, their corresponding gold passages as gp1, gp2, ..., gpn, and hard negative passages as np1, np2, ..., npk. Two separate PrLMs are first used separately to acquire representations for questions and passages {hq1 , hq2 , ...;hgp1 , hgp2 , ...;hnp1 , hnp2 , ...}. The training objective for each question sample qi of original DPR is shown in Eq (1):\nL (qi, gp1, · · · , gpn, np1, · · · , npk) =\n− log e sim(hqi ,hgpi)∑n\nj=1 e sim(hqi ,hgpj ) + ∑k j=1 e sim(hqi ,hnpj )\n(1) The sim(·) could be any similarity operator that calculates the similarity between the question representation hqi and the passage representation hpj .\nMinimizing the objective in Eq (1) is the same as (i) maximizing the similarity between each hqi and hgpi pair, and (ii) minimizing the similarity between hqi and all other hgpj (i 6= j) and hnpk . As discussed previously, this training paradigm will cause conflicts under current contrastive learning\nframework due to (i) Transitivity of Similarity, and (ii) Multiple References in Large Batch Size."
+    }, {
+      "heading" : "3.2 Dense Contextual Sentence Representation",
+      "text" : "The cause of the Contrastive Conflicts lies in oneto-many problem, that most of the passages are often organized by multiple sentences, while these sentences may not always stick to the same topic, as depicted in Figure 1. Therefore, we propose to model passage retrieval in a smaller granularity, i.e. contextual sentences, to alleviate the occurrence of one-to-many problem.\nSince contextual information is also important in passage retrieval, simply breaking down passages into sentences and encoding them independently is infeasible. Instead, following (Beltagy et al., 2020; Lee et al., 2020; Wu et al., 2021), we insert a special <sent> token at the sentence boundaries in each passage, and encode the passage as a whole to preserve the contextual information, which results in the following format of input for each passage:\n[CLS] <sent> sent1 <sent> sent2 ... [SEP]\nWe then use BERT (Devlin et al., 2019) as encoder to get the contextual sentence representations by these indicator <sent> tokens. For convenience of illustration, taking a give query q into consideration, we denote the corresponding positive passage in the training batch as p+, which consists of several sentences:\nP = {ps−1 , ps−2 , ...ps+i , ...ps−k−1 , ps−k }\nSimilarly, we denote the corresponding BM25 negative passage as:\nN = {ns−1 , ns−2 , ...ns−i , ...ns−k−1 , ns−k }\nHere (∗)−/+ means whether the sentence or passage contains the gold answer. We refine the original contrastive learning framework by creating sentence-aware positive and negative samples. The whole training pipeline is shown in the left part of Figure 3."
+    }, {
+      "heading" : "3.2.1 Positives and Easy Negatives",
+      "text" : "Following Karpukhin et al. (2020), we use BM25 to retrieve hard negative passages for each question. To build a contrastive learning framework based on contextual sentences, we consider the sentence that contains the gold answer as the positive sentence (i.e. ps+i ), and randomly sample several negative sentences (random sentences from N ) from a BM25 random negative passage. Also, following (Karpukhin et al., 2020; Lee et al., 2021), we introduce in-batch negatives as additional easy negatives."
+    }, {
+      "heading" : "3.2.2 In-Passage Negatives",
+      "text" : "To handle the circumstance where multiple semantically faraway questions may be derived from one single passage, we hope to encourage the passage encoder to generate contextual sentence representations as diverse as possible for sentences in the same passage. Noticing that not all the sentences in the passage contain the gold answer and stick to the topic related to the given query, we further introduce in-passage negatives to maximize the difference between contextual sentences representations within the same passage. Concretely, we randomly sample one sentence that does not contain the gold answer (i.e. a random sentence from P/{Ps+i }). Note that a positive passage might not contain such sentence. If it does not exist, this in-passage negative sentence is substituted by an-\nother easy negative sentence from the corresponding BM25 negative passage (a random sentence from N ). These in-passage negatives function as hard negative samples in our contrastive learning framework."
+    }, {
+      "heading" : "3.3 Retrieval",
+      "text" : "For retrieval, we first use FAISS (Johnson et al., 2019) to calculate the matching scores between the question and all the contextual sentence indexes. As one passage has multiple keys in the indexes, we retrieve top 100 × k (k is the average number of sentences per passage) contextual sentences for inference. To change these sentence-level scores into passage-level ones, we adopt a probabilistic design for ranking passages, which we refer to as Score Normalization. Score Normalization After getting the scores for each contextual sentences to each question by FAISS, we first use a Softmax operation to normalize all these similarity scores into probabilities. Suppose one passage P with several sentences s1, s2, ..., sn, and denote the probability for each sentence that contains the answer as ps1 , ps2 , ..., psn , we can calculate the probability that the answer is in passage P by Equation 2.\nHasAns(P) = 1− n∏\ni=1\n(1− psi) (2)\nWe then re-rank all the retrieved passages by HasAns(P), and select the top 100 passages for evaluation in our following experiments."
+    }, {
+      "heading" : "4 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "4.1 Datasets",
+      "text" : "OpenQA Dataset OpenQA (Lee et al., 2019) collects over 21 million 100-token passages from Wikipedia to simulate the open-domain passage corpus. OpenQA also collects question-answer pairs from existing datasets, including SQuAD (Rajpurkar et al., 2016), TriviaQA (Joshi et al., 2017), Natural Questions (Kwiatkowski et al., 2019), WebQuestions (Berant et al., 2013) and TREC (Baudiš and Šedivỳ, 2015).\nWe experiment our proposed method on SQuAD, TriviaQA and NQ. For the previously concerned Contrastive Conflicts problem, we also analyze the existence frequency of the conflicting phenomenon for each dataset. We count the number of questions for each passage, i.e, the times that this pas-\nsage is referred to as the positive sample. The corresponding results are shown in Table 1. From this table, we can see that of all three datasets we choose, SQuAD is most severely affected by the Contrastive Conflicts problem, that many passages occur multiple times as the positive passages for different questions. These statistics are consistent with the fact that DPR performs the worst on SQuAD, while acceptable on Trivia and NQ."
+    }, {
+      "heading" : "4.2 Training and Implementation Details",
+      "text" : "Hyperparameters In our main experiments, we follow the hyperparameter setting in DPR (Karpukhin et al., 2020) to acquire comparable performance, i.e. an initial learning rate of 2e-5 for 40 epochs on each dataset. We use 8 Tesla V100 GPUs to train the Bi-Encoder with a batch size of 16 on each GPU.\nExtra Cost Although we are modeling passage retrieval in a totally different granularity, our method adds little extra computation overhead compared to DPR. For model complexity, our proposed method adopts exactly the same model structure as DPR does, meaning that there are no additional parameters introduced. For training time, the negative sentences in our method are randomly sampled from the negative passage in DPR. Therefore, the extra time burden brought by our method is only caused by the sampling procedure, which is negligible.\nTraining Settings To have a comprehensive comparison with DPR, we train DCSR under three different settings. (i) Single, where each dataset is both trained and evaluated under their own domain. (ii) Multi, where we use a combination of the NQ, Trivia and SQuAD datasets to train a universal BiEncoder, and evaluate its performance on the test sets of all three datasets. (iii) Adversarial Training, which is a simple negative sampling strategy. We first use the original dataset to train a DPR or DCSR checkpoint, and use such checkpoint to acquire semantically hard negative passages from the\nwhole Wikipedia corpus."
+    }, {
+      "heading" : "4.3 Main Results on Passage Retrieval",
+      "text" : "Table 2 shows our main results on OpenQA. For the Single setting, (i) Consistent with the core aim of this paper that our proposed sentence-aware contrastive learning solves Contrastive Conflicts, DCSR achieves significantly better results than DPR especially on the dataset that is severely affected by Contrastive Conflicts. For example, on the SQuAD dataset, our method achieves 10.9% performance gain on the Top-20 metric, and 7.1% performance gain on the Top-100 metric. (ii) For datasets that are less affected by Contrastive Conflicts, like NQ and Trivia, we still achieve slight performance gain on all metrics. For the Multi setting, DPR on Trivia and SQuAD suffers from a significant performance drop compared to Single setting, while our model is only slightly affected. It indicates that our proposed sentence-aware contrastive learning not only solves the Contrastive Conflicts, but also captures the universality of datasets from different domains.\n1Code in https://github.com/facebookresearch/DPR. 2It is an issue that is shared by researchers on github. More discussion about this result will be discussed in Appendix B."
+    }, {
+      "heading" : "4.4 Incorporated with Negative Sampling",
+      "text" : "Different from other frontier researches which mainly devote themselves either to investigating better negative sampling strategies, like ANCE (Xiong et al., 2020), NPRINC (Lu et al., 2020), etc., or to extra pretraining (Sachan et al., 2021), or to distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al., 2021), our proposed method directly optimizes the modeling granularity in DPR. Therefore, our method could be naturally incorporated with these researches and achieve better results further. Due to computational resource limitation, we do not intend to replicate all these methods, but use adversarial training as an example. Following ANCE (Xiong et al., 2020), we conduct experiments on NQ and Trivia to show the compatibility of our method, listed in Table 3. With such a simple negative sampling strategy, our DCSR achieves comparable results with its DPR counterpart."
+    }, {
+      "heading" : "4.5 Ablation Study",
+      "text" : "To illustrate the efficacy of the previously proposed negative sampling strategy, we conduct an ablation study on a subset of OpenQA Wikipedia corpus1. We sample 1/20 of the whole corpus, which results in a collection of 1.05 million passages in total. As reference, we reproduce DPR and also list their results in Table 4. We compare the following negative sampling strategies of our proposed method. + 1 BM25 random In this setting, we randomly sample (i) one gold sentence from the positive passage as the positive sample, and (ii) one negative\n1Because evaluating on the whole Wikipedia corpus takes too much resource and time (over 1 day per experiment per dataset).\nsentence from the negative passage as the negative sample per question.\n+ 2 BM25 random In this setting, we randomly sample (i) one gold sentence from the positive passage as the positive sample, and (ii) two negative sentences from two different negative passages as two negative samples per question.\n+ 1 in-passage & + 1 BM25 random In this setting, we randomly sample (i) one gold sentence from the positive passage as the positive sample, (ii) one negative sentence from the positive passage as the first negative sample, and (iii) one negative sentence from the negative passage as the second negative sample per question.\nAblations of Negative Sampling Strategy The results are shown in Table 4. (i) Under the circumstance where only 1.05 million passages are indexed, variants of our DCSR generally perform significantly better than DPR baseline, especially on NQ dataset (over 1% improvement on both Top-20 and Top-100) and SQuAD dataset (8.0% improvement on Top-20 and 4.9% improvement on Top100), which verifies the effectiveness of solving Contrastive Conflicts. (ii) Further, we found that increasing the number of negative samples helps little, but even introduces slight performance degradation on several metrics. (iii) The in-passage negative sampling strategy consistently helps in boosting the performance of nearly all datasets on all metrics, especially on the SQuAD dataset, which is consistent with our motivation for in-passage negatives, which is to encourage a diverse generation of contextual sentence representations within the same passage in solving the one-to-many problem.\nAblations of Training Data The results are shown in Table 5. (i) We first directly use the augmented adversarial training dataset provided by DPR (marked as DPR-hard) and train our DCSR, having achieved even better results on the NQ dataset. This augmented dataset is sub-optimal\nfor our model, as these hard negative samples are passage-specific, while our model prefers sentencespecific ones. (ii) We then use our previous best DCSR checkpoint to retrieve a set of sentencespecific hard negatives (marked as DCSR-hard) and train a new DCSR, which achieves further performance gain on both metrics on NQ dataset."
+    }, {
+      "heading" : "5 Discussion",
+      "text" : "In this section, we discuss the transferability difference and the influence of Wikipedia corpus size on both DPR and our DCSR. More discussions from different aspects are presented in the Appendices, including (i) Validation accuracy on dev sets in Appendix A, which is also a strong evidence of alleviating Contrastive Conflicts. (ii) Error analysis for SQuAD in Appendix B, which further shows the generalization ability of our method. (iii) Case study in Appendix C, which discusses the future improvement of DCSR."
+    }, {
+      "heading" : "5.1 Transferability",
+      "text" : "To further verify that our learned DCSR is more suitable in Open-Domain Passage Retrieval, especially under the Contrastive Conflicts circumstance, we conduct experiments to test the transferability between DPR and our DCSR. Similarly, instead of running such experiments on the entire Wikipedia corpus, we sample 1/20 of the corpus, which results in a collection of 1.05 million passages in total. We\ntest the transferability result from SQuAD to Trivia and from NQ to Trivia, as compared to Trivia, both SQuAD and NQ suffer more from Contrastive Conflicts. The results are shown in Table 6.\nFrom Table 6, when compared to DPR, our model enjoys significantly better transferability. In both scenarios, DPR shows over 2% performance gap in all metrics of the transferability tests, indicating that our method performs much better in generalization across the datasets. This phenomenon once again confirms our theorem, that by modeling passage retrieval in the granularity of contextual sentences, our DCSR well models the universality across the datasets, and shows much better transferability than DPR."
+    }, {
+      "heading" : "5.2 Corpus Size",
+      "text" : "In our extensive experiments, we further found out that our method can achieve overwhelming better performance than DPR on smaller corpus. In this experiment, we take the first 0.1 million, the first 1.05 million and all passages from the original Wikipedia corpus, and conduct dense retrieval on these three corpora varied in size. The statistic results are shown in Table 7.\nFrom Table 7, first of all, our model achieves better performance than DPR in all settings, where such improvement is more significant in smaller corpus. On the setting where only 0.1 million passages are indexed in the corpus, our model achieves over 2.0% exact improvement on all metrics on both NQ and Trivia. We speculate this is because of the following two strengths of our method. • The alleviation of Contrastive Conflicts, which we have analyzed previously. •Modeling passage retrieval using contextual sentences enables a diverse generation of indexes. Some sentences may not be the core aim of their corresponding passages, but can still be the clue for some questions.\nSecondly, we can discover that the performance gap between DPR and DCSR is decreasing when\nthe size of Wikipedia corpus increases. This is because with the expansion of indexing corpus, many questions that cannot be solved in the small corpus setting may find much more closely related passages in the large corpus setting, which gradually neutralizes the positive effect brought by the second strength of our proposed method discussed above. Still, our model achieves better performance under the full Wikipedia setting on all datasets and all metrics."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we make a thorough analysis on the Contrastive Conflicts issue in the current opendomain passage retrieval. To well address the issue, we propose an enhanced sentence-aware conflict learning method by carefully generating sentenceaware positive and negative samples. We show that the dense contextual sentence representation learned from our proposed method achieves significant performance gain compared to the original baseline, especially on datasets with severe conflicts. Extensive experiments show that our proposed method also enjoys better transferability, and well captures the universality in different datasets."
+    }, {
+      "heading" : "B Error Analysis for SQuAD",
+      "text" : "Although achieving overwhelmingly better performance on SQuAD than DPR, our DCSR on SQuAD still lags far behind its counterparts on NQ or Trivia. Interestingly, we found that the results on SQuAD dev sets are pretty good and comparable to the results on NQ or Trivia. The results of both DPR and DCSR on dev set and test set performance are shown in Table 8.\nBy analyzing the training instances, we observe that there exists a severe distribution bias problem in SQuAD: SQuAD-dev and SQuAD-train share a great number of positive passages. In fact, almost all positive passages in the SQuAD-dev could also be found in SQuAD-train. Of all 7921 questions that have at least one positive passage containing\nthe answer in SQuAD-dev, 7624 (96.25%) of these passages’ titles could be found in the positive passages of SQuAD-train. More surprisingly, 6973 (88.03%) of these passages are shared between SQuAD-train and SQuAD-dev. However, this feature is exactly what SQuAD-test does not have, resulting in relatively poor performance. But again, this phenomenon reveals another strength of our DCSR, that it enjoys better generalization ability than DPR, thus is more robust in practical use."
+    }, {
+      "heading" : "C Case Study",
+      "text" : "To analyze the retrieval performance difference between DPR and DCSR, we especially focus on the different Top 1 predictions on SQuAD. We count the number of winning times for each baseline, where DCSR significantly outperforms DPR (893 vs. 161), shown in Figure 5.\nC.1 DCSR winning cases\nOn the question Who was the NFL Commissioner in early 2012?, the strengths of our DCSR are listed as follows. • Capability of utilizing contextual information. The key phrase 2012 and NFL is faraway from Commisioner Roger Goodell, while our DCSR is still capable of capturing such distant contextual information. • Locating the exact sentence of the answer. This is an obvious feature of DCSR, as we are modeling on the granularity of contextual sentences.\nOn the contrary, due to Contrastive Conflicts, the question encoder of DPR is severely affected that it cannot generate fine-grained question representation. Therefore, on this question, DPR can only find out one key phrase commissioner, falling into a totally wrong prediction.\nC.2 DCSR losing cases\nOn the question Super Bowl 50 decided the NFL champion for what season?, our DCSR has already found a contextual sentence that is very close to the given question, with several key phrases detected. However, this contextual sentence is actually a lowquality index, as it suddenly reaches the end of the passage. This is caused by the brute force segmentation strategy of OpenQA, which focuses on the passage level and restricts the length of each passage to 100. In this paper, we perform sentence split directly on these broken passages, which as a result breaks down many sentences into low-quality indexes, affecting the final retrieval performance. We do not intend to refine the splition strategy to have a fair comparison with DPR, and leave it for\nfuture investigation."
+    } ],
+    "references" : [ {
+      "title" : "Cross-domain modeling of sentence-level evidence for document retrieval",
+      "author" : [ "Zeynep Akkalyoncu Yilmaz", "Wei Yang", "Haotian Zhang", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing",
+      "citeRegEx" : "Yilmaz et al\\.,? 2019",
+      "shortCiteRegEx" : "Yilmaz et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Modeling of the question answering task in the yodaqa system",
+      "author" : [ "Petr Baudiš", "Jan Šedivỳ." ],
+      "venue" : "International Conference of the cross-language evaluation Forum for European languages, pages 222– 228. Springer.",
+      "citeRegEx" : "Baudiš and Šedivỳ.,? 2015",
+      "shortCiteRegEx" : "Baudiš and Šedivỳ.",
+      "year" : 2015
+    }, {
+      "title" : "Longformer: The long-document transformer",
+      "author" : [ "Iz Beltagy", "Matthew E Peters", "Arman Cohan." ],
+      "venue" : "ArXiv preprint, abs/2004.05150.",
+      "citeRegEx" : "Beltagy et al\\.,? 2020",
+      "shortCiteRegEx" : "Beltagy et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Semantic parsing on Freebase from question-answer pairs",
+      "author" : [ "Jonathan Berant", "Andrew Chou", "Roy Frostig", "Percy Liang." ],
+      "venue" : "Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 1533–1544, Seattle, Wash-",
+      "citeRegEx" : "Berant et al\\.,? 2013",
+      "shortCiteRegEx" : "Berant et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey E. Hinton." ],
+      "venue" : "Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020,",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "BERT: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SimCSE: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "DeCLUTR: Deep contrastive learning for unsupervised textual representations",
+      "author" : [ "John Giorgi", "Osvald Nitski", "Bo Wang", "Gary Bader." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th Interna-",
+      "citeRegEx" : "Giorgi et al\\.,? 2021",
+      "shortCiteRegEx" : "Giorgi et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Retrieval augmented language model pre-training",
+      "author" : [ "Kelvin Guu", "Kenton Lee", "Zora Tung", "Panupong Pasupat", "Ming-Wei Chang." ],
+      "venue" : "Proceedings of the 37th International Conference on Ma-",
+      "citeRegEx" : "Guu et al\\.,? 2020",
+      "shortCiteRegEx" : "Guu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Momentum contrast for unsupervised visual representation learning",
+      "author" : [ "Kaiming He", "Haoqi Fan", "Yuxin Wu", "Saining Xie", "Ross B. Girshick." ],
+      "venue" : "2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition, CVPR 2020, Seattle, WA, USA,",
+      "citeRegEx" : "He et al\\.,? 2020",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Distilling knowledge from reader to retriever for question answering",
+      "author" : [ "Gautier Izacard", "Edouard Grave." ],
+      "venue" : "ICLR 2021: The Ninth International Conference on Learning Representations.",
+      "citeRegEx" : "Izacard and Grave.,? 2021",
+      "shortCiteRegEx" : "Izacard and Grave.",
+      "year" : 2021
+    }, {
+      "title" : "Billion-scale similarity search with gpus",
+      "author" : [ "Jeff Johnson", "Matthijs Douze", "Hervé Jégou." ],
+      "venue" : "IEEE Transactions on Big Data.",
+      "citeRegEx" : "Johnson et al\\.,? 2019",
+      "shortCiteRegEx" : "Johnson et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "TriviaQA: A large scale distantly supervised challenge dataset for reading comprehension",
+      "author" : [ "Mandar Joshi", "Eunsol Choi", "Daniel Weld", "Luke Zettlemoyer." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Joshi et al\\.,? 2017",
+      "shortCiteRegEx" : "Joshi et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Dense passage retrieval for open-domain question answering",
+      "author" : [ "Vladimir Karpukhin", "Barlas Oguz", "Sewon Min", "Patrick Lewis", "Ledell Wu", "Sergey Edunov", "Danqi Chen", "Wen-tau Yih." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Nat-",
+      "citeRegEx" : "Karpukhin et al\\.,? 2020",
+      "shortCiteRegEx" : "Karpukhin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Natural questions: A benchmark for question answering research",
+      "author" : [ "Jakob Uszkoreit", "Quoc Le", "Slav Petrov." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 7:452–466.",
+      "citeRegEx" : "Uszkoreit et al\\.,? 2019",
+      "shortCiteRegEx" : "Uszkoreit et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "SLM: Learning a discourse language representation with sentence unshuffling",
+      "author" : [ "Haejun Lee", "Drew A. Hudson", "Kangwook Lee", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Process-",
+      "citeRegEx" : "Lee et al\\.,? 2020",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning dense representations of phrases at scale",
+      "author" : [ "Jinhyuk Lee", "Mujeen Sung", "Jaewoo Kang", "Danqi Chen." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference",
+      "citeRegEx" : "Lee et al\\.,? 2021",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Latent retrieval for weakly supervised open domain question answering",
+      "author" : [ "Kenton Lee", "Ming-Wei Chang", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 6086–6096, Florence,",
+      "citeRegEx" : "Lee et al\\.,? 2019",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Roberta: A robustly optimized bert pretraining approach",
+      "author" : [ "Yinhan Liu", "Myle Ott", "Naman Goyal", "Jingfei Du", "Mandar Joshi", "Danqi Chen", "Omer Levy", "Mike Lewis", "Luke Zettlemoyer", "Veselin Stoyanov." ],
+      "venue" : "ArXiv preprint, abs/1907.11692.",
+      "citeRegEx" : "Liu et al\\.,? 2019",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural passage retrieval with improved negative contrast",
+      "author" : [ "Jing Lu", "Gustavo Hernandez Abrego", "Ji Ma", "Jianmo Ni", "Yinfei Yang." ],
+      "venue" : "ArXiv preprint, abs/2010.12523.",
+      "citeRegEx" : "Lu et al\\.,? 2020",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sampling matters in deep embedding learning",
+      "author" : [ "R. Manmatha", "Chao-Yuan Wu", "Alexander J. Smola", "Philipp Krähenbühl." ],
+      "venue" : "IEEE International Conference on Computer Vision, ICCV 2017, Venice, Italy, October 22-29, 2017, pages 2859–2867. IEEE",
+      "citeRegEx" : "Manmatha et al\\.,? 2017",
+      "shortCiteRegEx" : "Manmatha et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "RocketQA: An optimized training approach to dense passage retrieval for open-domain question answering",
+      "author" : [ "Yingqi Qu", "Yuchen Ding", "Jing Liu", "Kai Liu", "Ruiyang Ren", "Wayne Xin Zhao", "Daxiang Dong", "Hua Wu", "Haifeng Wang." ],
+      "venue" : "Proceed-",
+      "citeRegEx" : "Qu et al\\.,? 2021",
+      "shortCiteRegEx" : "Qu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "SQuAD: 100,000+ questions for machine comprehension of text",
+      "author" : [ "Pranav Rajpurkar", "Jian Zhang", "Konstantin Lopyrev", "Percy Liang." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 2383–2392, Austin,",
+      "citeRegEx" : "Rajpurkar et al\\.,? 2016",
+      "shortCiteRegEx" : "Rajpurkar et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Using tf-idf to determine word relevance in document queries",
+      "author" : [ "Juan Ramos" ],
+      "venue" : "Proceedings of the first instructional conference on machine learning, volume 242, pages 29–48. Citeseer.",
+      "citeRegEx" : "Ramos,? 2003",
+      "shortCiteRegEx" : "Ramos",
+      "year" : 2003
+    }, {
+      "title" : "The probabilistic relevance framework: Bm25 and beyond",
+      "author" : [ "Stephen Robertson", "Hugo Zaragoza." ],
+      "venue" : "Foundations and Trends in Information Retrieval, 3(4):333–389.",
+      "citeRegEx" : "Robertson and Zaragoza.,? 2009",
+      "shortCiteRegEx" : "Robertson and Zaragoza.",
+      "year" : 2009
+    }, {
+      "title" : "End-to-end training of neural retrievers for open-domain question answering",
+      "author" : [ "Devendra Sachan", "Mostofa Patwary", "Mohammad Shoeybi", "Neel Kant", "Wei Ping", "William L. Hamilton", "Bryan Catanzaro." ],
+      "venue" : "Proceedings of the 59th Annual Meet-",
+      "citeRegEx" : "Sachan et al\\.,? 2021",
+      "shortCiteRegEx" : "Sachan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving document representations by generating pseudo query embeddings for dense retrieval",
+      "author" : [ "Hongyin Tang", "Xingwu Sun", "Beihong Jin", "Jingang Wang", "Fuzheng Zhang", "Wei Wu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association",
+      "citeRegEx" : "Tang et al\\.,? 2021",
+      "shortCiteRegEx" : "Tang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Comparison of transfer-learning approaches for response selection in multi-turn conversations",
+      "author" : [ "Jesse Vig", "Kalai Ramea." ],
+      "venue" : "Workshop on DSTC7.",
+      "citeRegEx" : "Vig and Ramea.,? 2019",
+      "shortCiteRegEx" : "Vig and Ramea.",
+      "year" : 2019
+    }, {
+      "title" : "Transfertransfo: A transfer learning approach for neural network based conversational agents",
+      "author" : [ "Thomas Wolf", "Victor Sanh", "Julien Chaumond", "Clement Delangue." ],
+      "venue" : "ArXiv preprint, abs/1901.08149.",
+      "citeRegEx" : "Wolf et al\\.,? 2019",
+      "shortCiteRegEx" : "Wolf et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Graph-free multi-hop reading comprehension: A select-to-guide strategy",
+      "author" : [ "Bohong Wu", "Zhuosheng Zhang", "Hai Zhao." ],
+      "venue" : "ArXiv preprint, abs/2107.11823.",
+      "citeRegEx" : "Wu et al\\.,? 2021",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Clear: Contrastive learning for sentence representation",
+      "author" : [ "Zhuofeng Wu", "Sinong Wang", "Jiatao Gu", "Madian Khabsa", "Fei Sun", "Hao Ma" ],
+      "venue" : null,
+      "citeRegEx" : "Wu et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Approximate nearest neighbor negative contrastive learning for dense text retrieval",
+      "author" : [ "Lee Xiong", "Chenyan Xiong", "Ye Li", "Kwok-Fung Tang", "Jialin Liu", "Paul N Bennett", "Junaid Ahmed", "Arnold Overwijk." ],
+      "venue" : "International Conference on Learning",
+      "citeRegEx" : "Xiong et al\\.,? 2020",
+      "shortCiteRegEx" : "Xiong et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "ConSERT: A contrastive framework for self-supervised sentence representation transfer",
+      "author" : [ "Yuanmeng Yan", "Rumei Li", "Sirui Wang", "Fuzheng Zhang", "Wei Wu", "Weiran Xu." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Anserini: Enabling the use of lucene for information retrieval research",
+      "author" : [ "Peilin Yang", "Hui Fang", "Jimmy Lin." ],
+      "venue" : "Proceedings of the 40th International ACM SIGIR Conference on Research and Development in Information Retrieval, pages 1253–1256.",
+      "citeRegEx" : "Yang et al\\.,? 2017",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Neural retrieval for question answering with cross-attention supervised data augmentation",
+      "author" : [ "Yinfei Yang", "Ning Jin", "Kuo Lin", "Mandy Guo", "Daniel Cer." ],
+      "venue" : "Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Yang et al\\.,? 2021",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2021
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "Open-Domain Passage Retrieval (ODPR) has recently attracted the attention of researchers for its wide usage both academically and industrially (Lee et al., 2019; Yang et al., 2017).",
+      "startOffset" : 143,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 33,
+      "context" : "Open-Domain Passage Retrieval (ODPR) has recently attracted the attention of researchers for its wide usage both academically and industrially (Lee et al., 2019; Yang et al., 2017).",
+      "startOffset" : 143,
+      "endOffset" : 180
+    }, {
+      "referenceID" : 5,
+      "context" : "With recent success in pretrained language models (PrLMs) like BERT (Devlin et al., 2019), RoBERTa (Liu et al.",
+      "startOffset" : 68,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2019), RoBERTa (Liu et al., 2019), dense retrieval techniques have achieved significant better results than traditional lexical based methods, including TFIDF (Ramos et al.",
+      "startOffset" : 17,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2003) and BM25 (Robertson and Zaragoza, 2009), which totally neglect semantic similarity.",
+      "startOffset" : 17,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 17,
+      "context" : "Thanks to the Bi-Encoder structure, dense methods (Lee et al., 2019; Guu et al., 2020; Karpukhin et al., 2020) encode the Wikipedia passages and questions separately, and retrieve evidence passages using similarity functions like the inner product or cosine similarity.",
+      "startOffset" : 50,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 8,
+      "context" : "Thanks to the Bi-Encoder structure, dense methods (Lee et al., 2019; Guu et al., 2020; Karpukhin et al., 2020) encode the Wikipedia passages and questions separately, and retrieve evidence passages using similarity functions like the inner product or cosine similarity.",
+      "startOffset" : 50,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 13,
+      "context" : "Thanks to the Bi-Encoder structure, dense methods (Lee et al., 2019; Guu et al., 2020; Karpukhin et al., 2020) encode the Wikipedia passages and questions separately, and retrieve evidence passages using similarity functions like the inner product or cosine similarity.",
+      "startOffset" : 50,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 17,
+      "context" : "objective, Inverse Cloze Task (ICT) (Lee et al., 2019).",
+      "startOffset" : 36,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 13,
+      "context" : "More recently, DPR (Karpukhin et al., 2020) adopts a simple but effective contrastive learning framework, achieving impressive performance without any pretraining.",
+      "startOffset" : 19,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 31,
+      "context" : "Following such contrastive learning framework, many researchers are seeking further improvements for DPR from the perspective of sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 147,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 19,
+      "context" : "Following such contrastive learning framework, many researchers are seeking further improvements for DPR from the perspective of sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 147,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 26,
+      "context" : "Following such contrastive learning framework, many researchers are seeking further improvements for DPR from the perspective of sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 147,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 21,
+      "context" : "Following such contrastive learning framework, many researchers are seeking further improvements for DPR from the perspective of sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 147,
+      "endOffset" : 220
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2021) or extra pretraining (Sachan et al., 2021), or even using knowledge distillation (Izacard and Grave, 2021; Yang et al.",
+      "startOffset" : 29,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2021), or even using knowledge distillation (Izacard and Grave, 2021; Yang et al., 2021).",
+      "startOffset" : 46,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2021), or even using knowledge distillation (Izacard and Grave, 2021; Yang et al., 2021).",
+      "startOffset" : 46,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 22,
+      "context" : "intendedly maximize the similarity between different question representations derived from the same passage, even if they might be semantically different, which is exactly the cause of low performance on SQuAD (Rajpurkar et al., 2016) for",
+      "startOffset" : 210,
+      "endOffset" : 234
+    }, {
+      "referenceID" : 13,
+      "context" : "With the widely adopted in-batch negative technique (Karpukhin et al., 2020; Lee et al., 2021), such p+ will be simultaneously referred to as both the positive sample and the negative sample for every q inQ, which is logically unreasonable.",
+      "startOffset" : 52,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 16,
+      "context" : "With the widely adopted in-batch negative technique (Karpukhin et al., 2020; Lee et al., 2021), such p+ will be simultaneously referred to as both the positive sample and the negative sample for every q inQ, which is logically unreasonable.",
+      "startOffset" : 52,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 24,
+      "context" : ", 2003), BM25 (Robertson and Zaragoza, 2009) retrieve the evidence passages based on the lexical match between questions and passages.",
+      "startOffset" : 14,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 5,
+      "context" : "With recent advances of pretrained language models (PrLMs) like BERT (Devlin et al., 2019), RoBERTa (Liu et al.",
+      "startOffset" : 69,
+      "endOffset" : 90
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2019), RoBERTa (Liu et al., 2019), a series of neural approaches based on cross-encoders are proposed (Vig and Ramea, 2019; Wolf et al.",
+      "startOffset" : 17,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 27,
+      "context" : ", 2019), a series of neural approaches based on cross-encoders are proposed (Vig and Ramea, 2019; Wolf et al., 2019).",
+      "startOffset" : 76,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2019), a series of neural approaches based on cross-encoders are proposed (Vig and Ramea, 2019; Wolf et al., 2019).",
+      "startOffset" : 76,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 13,
+      "context" : "Later, DPR (Karpukhin et al., 2020) introduces a contrastive learning framework to train dense passage representation, and has achieved impressive performance on both retrieval accuracy and latency.",
+      "startOffset" : 11,
+      "endOffset" : 35
+    }, {
+      "referenceID" : 31,
+      "context" : "Based on DPR, many works make further improvements either by introducing better sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 98,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 19,
+      "context" : "Based on DPR, many works make further improvements either by introducing better sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 98,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 26,
+      "context" : "Based on DPR, many works make further improvements either by introducing better sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 98,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 21,
+      "context" : "Based on DPR, many works make further improvements either by introducing better sampling strategy (Xiong et al., 2020; Lu et al., 2020; Tang et al., 2021; Qu et al., 2021) or extra pretraining (Sachan et al.",
+      "startOffset" : 98,
+      "endOffset" : 171
+    }, {
+      "referenceID" : 25,
+      "context" : ", 2021) or extra pretraining (Sachan et al., 2021), or even distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al.",
+      "startOffset" : 29,
+      "endOffset" : 50
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2021), or even distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al., 2021).",
+      "startOffset" : 58,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2021), or even distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al., 2021).",
+      "startOffset" : 58,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 4,
+      "context" : "After witnessing its superiority in Computer Vision tasks (Chen et al., 2020; He et al., 2020), researchers in NLP are also applying this technique (Wu et al.",
+      "startOffset" : 58,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 9,
+      "context" : "After witnessing its superiority in Computer Vision tasks (Chen et al., 2020; He et al., 2020), researchers in NLP are also applying this technique (Wu et al.",
+      "startOffset" : 58,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2020), researchers in NLP are also applying this technique (Wu et al., 2020; Karpukhin et al., 2020; Yan et al., 2021; Giorgi et al., 2021; Gao et al., 2021).",
+      "startOffset" : 61,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 13,
+      "context" : ", 2020), researchers in NLP are also applying this technique (Wu et al., 2020; Karpukhin et al., 2020; Yan et al., 2021; Giorgi et al., 2021; Gao et al., 2021).",
+      "startOffset" : 61,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2020), researchers in NLP are also applying this technique (Wu et al., 2020; Karpukhin et al., 2020; Yan et al., 2021; Giorgi et al., 2021; Gao et al., 2021).",
+      "startOffset" : 61,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 7,
+      "context" : ", 2020), researchers in NLP are also applying this technique (Wu et al., 2020; Karpukhin et al., 2020; Yan et al., 2021; Giorgi et al., 2021; Gao et al., 2021).",
+      "startOffset" : 61,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2020), researchers in NLP are also applying this technique (Wu et al., 2020; Karpukhin et al., 2020; Yan et al., 2021; Giorgi et al., 2021; Gao et al., 2021).",
+      "startOffset" : 61,
+      "endOffset" : 159
+    }, {
+      "referenceID" : 20,
+      "context" : "According to (Manmatha et al., 2017), the quality of positive samples and negative samples are of vital importance in the contrastive learning framework.",
+      "startOffset" : 13,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 31,
+      "context" : "Therefore, many researchers seek better sampling strategies to improve the retrieval performance (Xiong et al., 2020).",
+      "startOffset" : 97,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 16,
+      "context" : "DensePhrase (Lee et al., 2021) uses memory bank like MOCO (He et al.",
+      "startOffset" : 12,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 9,
+      "context" : ", 2021) uses memory bank like MOCO (He et al., 2020) to increase the number of in-batch negative samples without increasing the GPU memory usage, and models retrieval process on the phrase level but not passage level, achieving impressive performance.",
+      "startOffset" : 35,
+      "endOffset" : 52
+    }, {
+      "referenceID" : 2,
+      "context" : "Instead, following (Beltagy et al., 2020; Lee et al., 2020; Wu et al., 2021), we insert a special <sent> token at the sentence boundaries in each passage, and encode the passage as a whole to preserve the contextual information, which results in the following format of input for each passage:",
+      "startOffset" : 19,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 15,
+      "context" : "Instead, following (Beltagy et al., 2020; Lee et al., 2020; Wu et al., 2021), we insert a special <sent> token at the sentence boundaries in each passage, and encode the passage as a whole to preserve the contextual information, which results in the following format of input for each passage:",
+      "startOffset" : 19,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 29,
+      "context" : "Instead, following (Beltagy et al., 2020; Lee et al., 2020; Wu et al., 2021), we insert a special <sent> token at the sentence boundaries in each passage, and encode the passage as a whole to preserve the contextual information, which results in the following format of input for each passage:",
+      "startOffset" : 19,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 5,
+      "context" : "We then use BERT (Devlin et al., 2019) as encoder to get the contextual sentence representations by these indicator <sent> tokens.",
+      "startOffset" : 17,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 13,
+      "context" : "Also, following (Karpukhin et al., 2020; Lee et al., 2021), we introduce in-batch negatives as additional easy negatives.",
+      "startOffset" : 16,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 16,
+      "context" : "Also, following (Karpukhin et al., 2020; Lee et al., 2021), we introduce in-batch negatives as additional easy negatives.",
+      "startOffset" : 16,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 11,
+      "context" : "For retrieval, we first use FAISS (Johnson et al., 2019) to calculate the matching scores between the question and all the contextual sentence indexes.",
+      "startOffset" : 34,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 17,
+      "context" : "OpenQA Dataset OpenQA (Lee et al., 2019) collects over 21 million 100-token passages from Wikipedia to simulate the open-domain passage corpus.",
+      "startOffset" : 22,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 22,
+      "context" : "OpenQA also collects question-answer pairs from existing datasets, including SQuAD (Rajpurkar et al., 2016), TriviaQA (Joshi et al.",
+      "startOffset" : 83,
+      "endOffset" : 107
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2016), TriviaQA (Joshi et al., 2017), Natural Questions (Kwiatkowski et al.",
+      "startOffset" : 18,
+      "endOffset" : 38
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2019), WebQuestions (Berant et al., 2013) and TREC (Baudiš and Šedivỳ, 2015).",
+      "startOffset" : 22,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 13,
+      "context" : "(Karpukhin et al., 2020) to acquire comparable performance, i.",
+      "startOffset" : 0,
+      "endOffset" : 24
+    }, {
+      "referenceID" : 31,
+      "context" : "Different from other frontier researches which mainly devote themselves either to investigating better negative sampling strategies, like ANCE (Xiong et al., 2020), NPRINC (Lu et al.",
+      "startOffset" : 143,
+      "endOffset" : 163
+    }, {
+      "referenceID" : 25,
+      "context" : ", or to extra pretraining (Sachan et al., 2021), or to distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al.",
+      "startOffset" : 26,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 10,
+      "context" : ", 2021), or to distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al., 2021), our proposed",
+      "startOffset" : 56,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 34,
+      "context" : ", 2021), or to distilling knowledge from cross-encoders (Izacard and Grave, 2021; Yang et al., 2021), our proposed",
+      "startOffset" : 56,
+      "endOffset" : 100
+    }, {
+      "referenceID" : 31,
+      "context" : "Following ANCE (Xiong et al., 2020), we conduct experiments on NQ and Trivia to show the compatibility of our method, listed in Table 3.",
+      "startOffset" : 15,
+      "endOffset" : 35
+    } ],
+    "year" : 0,
+    "abstractText" : "Training dense passage representations via contrastive learning has been shown effective for Open-Domain Passage Retrieval (ODPR). Existing studies focus on further optimizing by improving negative sampling strategy or extra pretraining. However, these studies keep unknown in capturing passage with internal representation conflicts from improper modeling granularity. This work thus presents a refined model on the basis of a smaller granularity, contextual sentences, to alleviate the concerned conflicts. In detail, we introduce an in-passage negative sampling strategy to encourage a diverse generation of sentence representations within the same passage. Experiments on three benchmark datasets verify the efficacy of our method, especially on datasets where conflicts are severe. Extensive experiments further present good transferability of our method across datasets.",
+    "creator" : null
+  }
+}

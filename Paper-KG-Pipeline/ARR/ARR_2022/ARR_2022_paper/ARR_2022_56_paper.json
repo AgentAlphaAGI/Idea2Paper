@@ -1,0 +1,631 @@
+{
+  "name" : "ARR_2022_56_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "UCTopic: Unsupervised Contrastive Learning for Phrase Representations and Topic Mining",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Topic modeling discovers abstract ’topics’ in a collection of documents. A topic is typically modeled as a distribution over terms. Highquality phrase representations help topic models understand phrase semantics in order to find well-separated topics and extract coherent phrases. Some phrase representation methods (Wang et al., 2021; Yu and Dredze, 2015; Zhou et al., 2017) learn context-free representations by unigram embedding combination. Context-free representations tend to extract similar phrases mentions (e.g. “great food” and “good food”, see Section 4.3). Contextaware methods such as DensePhrase (Lee et al.,\n2021) and LUKE (Yamada et al., 2020) need supervision from task-specific datasets or distant annotations with knowledge bases. Manual or distant supervision limits the ability to represent out-ofvocabulary phrases especially for domain-specific datasets. Recently, contrastive learning has shown effectiveness for unsupervised representation learning in visual (Chen et al., 2020) and textual (Gao et al., 2021) domains.\nIn this work, we seek to advance state-of-theart phrase representation methods and demonstrate that a contrastive objective can be extremely effective at learning phrase semantics in sentences. We present UCTOPIC, an Unsupervised Contrastive learning framework for phrase representations and TOPIC mining, which can produce superior phrase embeddings and have topic-specific finetuning for topic mining. To conduct contrastive learning for phrase representations, we first seek to produce contrastive pairs. Existing data augmentation methods for natural language processing (NLP) such as back translation (Xie et al., 2020), synonym replacement (Zhang et al., 2015) and text mix up (Zhang et al., 2018) are not designed for phrase-oriented noise, and thus cannot produce training pairs for phrase representation learning. In UCTOPIC, we propose two assumptions about phrase semantics to obtain contrastive pairs: 1. The phrase semantics are determined by their\ncontext.\n2. Phrases that have the same mentions have the same semantics.\nAs shown in Figure 1, given two sentences that contain the same phrase mentions (e.g., United States), we can mask the phrase mentions and the phrase semantics should stay the same based on assumption (1). Then, the phrase semantics from the two sentences are same as each other given assumption (2). Therefore, we can use the two masked sentences as positive pairs in contrastive learning. The intuition behind the two assumptions is that we expect the phrase representations from different sentences describing the same phrase should group together in the latent space. Masking the phrase mentions forces the model to learn representations from context which prevents overfitting and representation collapse (Gao et al., 2021). Based on the two assumptions, our context-aware phrase representations can be pre-trained on a large corpus via a contrastive objective without supervision.\nFor large-scale pre-training, we follow previous works (Chen et al., 2017; Henderson et al., 2017; Gao et al., 2021) and adopt in-batch negatives for training. However, we find in-batch negatives undermine the representation performance as finetuning (see Table 1). Because the number of topics is usually small in the finetuning dataset, examples in the same batch are likely to have the same topic. Hence, we cannot use in-batch negatives for data-specific finetuning. To solve this problem, we propose cluster-assisted contrastive learning (CCL) which leverages clustering results as pseudo-labels and sample negatives from highly confident examples in clusters. Cluster-assisted negative sampling has two advantages: (1) reducing potential positives from negative sampling compared to in-batch negatives; (2) the clusters are viewed as topics in documents, thus, cluster-assisted contrastive learning is a topic-specific finetuning process which pushes away instances from different topics in the latent space.\nBased on the two assumptions and clusterassisted negative sampling introduced in this paper, we pre-train phrase representations on a large-scale dataset and then finetune on a specific dataset for topic mining in an unsupervised way. In our experiments, we select LUKE (Yamada et al., 2020) as our backbone phrase representation model and pre-train it on Wikipedia 1 English corpus. To evaluate the quality of phrase representations, we\n1https://dumps.wikimedia.org/\nconduct entity clustering on four datasets and find that pre-trained UCTOPIC achieves 53.1% (NMI) improvement compared to LUKE. After learning data-specific features with CCL, UCTOPIC outperforms LUKE by 73.2% (NMI) in average. We perform topical phrase mining on three datasets and comprehensive evaluation indicates UCTOPIC extracts coherent and diverse topical phrases. Overall, our contributions are three-fold: • We propose UCTOPIC which produces supe-\nrior phrase representations by unsupervised contrastive learning based on positive pairs from our phrase-oriented assumptions. • To finetune on topic mining datasets, we propose a cluster-assisted negative sampling method for contrastive learning. This method reduces false negative instances caused by in-batch negatives and further improves phrase representations for topics accordingly. • We conduct extensive experiments on entity type clustering and topic mining. Objective metrics and a user study show that UCTOPIC can largely improve the phrase representations, then extracts more coherent and diverse topical phrases than existing topic mining methods."
+    }, {
+      "heading" : "2 Background",
+      "text" : "In this section, we introduce background knowledge about contrastive learning and our phrase encoder LUKE (Yamada et al., 2020)."
+    }, {
+      "heading" : "2.1 Contrastive Learning",
+      "text" : "Contrastive learning aims to learn effective representations by pulling semantically close neighbors together and pushing apart non-neighbors in the latent space (Hadsell et al., 2006). Assume that we have a contrastive instance {x, x+, x−1 , . . . , x − N−1} including one positive andN−1 negative instances and their representations {h,h+,h−1 , . . . ,h − N−1} from the encoder, we follow the contrastive learning framework (Sohn, 2016; Chen et al., 2020; Gao et al., 2021) and take cross-entropy as our objective function:\nl = − log e sim(h,h+)/τ esim(h,h+)/τ + ∑N−1\ni=1 e sim(h,h−i )/τ\n(1) where τ is a temperature hyperparameter and sim(h1,h2) is the cosine similarity h>1 h2 ‖h1‖·‖h2‖ .\n(a) Pre-training with in-batch negatives (b) Finetuning with cluster-assist negatives"
+    }, {
+      "heading" : "2.2 Phrase Encoder",
+      "text" : "In this paper, our phrase encoder E is transformerbased model LUKE (Yamada et al., 2020). LUKE is a pre-trained language model that can directly output the representations of tokens and spans in sentences. Our phrase instance x = (s, [l, r]) includes a sentence s and a character-level span [l, r] (l and r are left and right boundaries of a phrase). E encodes the phrase x and output the phrase representation h = E(x) = E(s, [l, r]). Although LUKE can output span representations directly, we will show that span representations from LUKE are not able to represent phrases well (see Section 4.2). Different from LUKE, which is trained by predicting entities, UCTOPIC is trained by contrastive learning on phrase contexts. Hence, the phrase presentations from UCTOPIC are context-aware and robust to different domains."
+    }, {
+      "heading" : "3 UCTopic",
+      "text" : "UCTOPIC is an unsupervised contrastive learning method for phrase representations and topic mining. Our goal is to learn a phrase encoder as well as topic representations, so we can represent phrases effectively for general settings and find topics from documents in an unsupervised way. In this section, we introduce UCTOPIC from two aspects: (1) constructing positive pairs for phrases; (2) cluster-assisted contrastive learning."
+    }, {
+      "heading" : "3.1 Positive Instances",
+      "text" : "One critical problem in constrastive learning is to how to construct positive pairs (x, x+). Previous works (Wu et al., 2020; Meng et al., 2021) apply augmentation techniques such as word deletion, reordering, and paraphrasing. However, these\nmethods are not suitable for phrase representation learning. In this paper, we utilize the proposed assumptions introduced in Section 1 to construct positive instances for contrastive learning.\nConsider an example to understand our positive instance generation process: In Figure 2 (a), phrase United States appears in two different sentences “He lived on the east coast of the United States” and “How much does it cost to fly to the United States”. We expect the phrase (United States) representations from the two sentences to be similar to reflect phrase semantics. To encourage the model to learn phrase semantics from context and prevent the model from comparing phrase mentions in contrastive learning, we mask the phrase mentions with [MASK] token. The two masked sentences are used as positive instances. To decrease the inconsistency caused by masking between training and evaluation, in a positive pair, we keep one phrase mention unchanged in probability p.\nFormally, suppose we have phrase instance x = (s, [l, r]) and its positive instance x+ = (s′, [l′, r′]) where s denotes the sentence and [l, r] are left and right boundaries of a phrase in s, we obtain the phrase representations h and h+ by encoder E and apply in-batch negatives for pre-training. The training objective of UCTOPIC becomes:\nl = − log e sim(h,h+)/τ∑N\ni=1 e sim(h,hi)/τ\n, (2)\nfor a mini-batch of N instances, where hi is an instance in a batch."
+    }, {
+      "heading" : "3.2 Cluster-Assisted Contrastive Learning",
+      "text" : "We find that contrastive learning with in-batch negatives on small datasets can undermine the phrase representations (see Section 4.2). Different from pre-training on a large corpus, in-batch negatives usually contain instances that have similar semantics as positives. For example, one document has three topics and our batch size is 32. Thus, some instances in one batch are from the same topic but in-batch method views these instances as negatives with each other. In this case, contrastive learning has noisy training signals and then results in decreasing performance.\nTo reduce the noise in negatives while optimizing phrase representations according to topics in documents, we propose cluster-assisted contrastive learning (CCL). The basic idea is to utilize prior knowledge from pre-trained representations and clustering to reduce the noise existing in the negatives. Specifically, we first find the topics in documents with a clustering algorithm based on pre-trained phrase representations from UCTOPIC. The centroids of clusters are considered as topic representations for phrases. After computing the cosine distance between phrase instances and centroids, we select t percent of instances that are close to centroids and assign pseudo labels to them. Then, the label of a phrase mention pm 2 is determined by the majority vote of instances {xm0 , xm1 , . . . , xmn } that contain pm, where n is the number of sentences assigned pseudo labels. In this way, we get some prior knowledge of phrase mentions for the following contrastive learning. See Figure 2 (b); three phrase mentions (London, James Gunn and Apple) which belong to three different clusters are labeled by different topic categories.\nSuppose we have a topic set C in our documents, with phrases and their pseudo labels, we construct positive pairs (xci , x + ci) by method introduced in Section 3.1 for topic ci where ci ∈ C. To have contrastive instances, we randomly select phrases pmcj and instances x m cj from topic cj as negative instances x−cj in contrastive learning, where cj ∈ C∧cj 6= ci. As shown in Figure 2 (b), we construct positive pairs for phrase London, and use two phrases James Gunn and Apple from the other two clusters to randomly select negative instances. With pseudo labels, our method can avoid instances that have similar semantics as London.\n2phrase mentions are extracted from sentence s, i.e., pm = s[l : r]\nThe training objective of finetuning is:\nl = − log e sim(hci ,h\n+ ci )/τ\nesim(hci ,h + ci )/τ + ∑ cj∈C e sim(hci ,h − cj )/τ .\n(3) As for the masking strategy in pre-training, we conduct masking for all training instances but keep x+ci and x − cj unchanged in probability p.\nTo infer the topic y of phrase instance x, we compute the cosine similarity between phrase representation h and topic representations h̃ci , ci ∈ C. The nearest neighbor topic of x is used as phrase topic. Formally,\ny = argmaxci∈C(sim(h, h̃ci)) (4)"
+    }, {
+      "heading" : "4 Experiments",
+      "text" : "In this section, we evaluate the effectiveness of contrastive learning. We start with entity clustering to compare the phrase representations from different methods. For topic modeling, we evaluate the topical phrases from three aspects and compare UCTOPIC to other topic modeling baselines."
+    }, {
+      "heading" : "4.1 Implementation Details",
+      "text" : "For pre-training, we start from a pretrained LUKEBASE model (Yamada et al., 2020). We follow previous works (Gao et al., 2021; Soares et al., 2019) and two losses are used concurrently: the masked language model loss and the contrastive learning loss with in-batch negatives. To generate the training corpus, we use English Wikipedia and extract text with hyper links as phrases. Phrases have the same entity ids from Wikidata 3 or have the same mentions are considered as the same phrases (i.e., phrases have the same semantics). We enumerate all sentence pairs containing the same phrase as positive pairs in contrastive learning. After processing, the pre-training dataset has 11.6 million sentences and 108.8 million training instances. Our pre-training learning rate is 5e-5, batch size is 100 and our model is optimized by AdamW in 1 epoch. The probability p of keeping phrase mentions unchanged is 0.5 and the temperature τ in the contrastive loss is set to 0.05."
+    }, {
+      "heading" : "4.2 Entity Clustering",
+      "text" : "To test the performance of phrase representations under objective tasks and metrics, we first apply\n3https://www.wikidata.org/\nUCTOPIC on entity clustering and compare to other representation learning methods. Datasets. We conduct entity clustering on four datasets with annotated entities and their semantic categories are from general, review and biomedical domains: (1) CoNLL2003 (Sang and Meulder, 2003) consists of 20,744 sentences extracted from Reuters news articles. We use Person, Location, and Organization entities in our experiments.4 (2) BC5CDR (Li et al., 2016) is the BioCreative V CDR task corpus. It contains 18,307 sentences from PubMed articles, with 15,953 chemical and 13,318 disease entities. (3) MIT Movie (MIT-M) (Liu et al., 2013) contains 12,218 sentences with Title and Person entities. (4) W-NUT 2017 (Derczynski et al., 2017) focuses on identifying unusual entities in the context of emerging discussions and contains 5,690 sentences and six kinds of entities 5. Finetuning Setup. The learning rate for finetuning is 1e-5. We select t (percent of instances) from {5, 10, 20, 50}. The probability p of keeping phrase mentions unchanged and temperature τ in contrastive loss are the same as in pre-training settings. We apply K-Means to get pseudo labels for all experiments. Because UCTOPIC is an unsupervised method, we use all data to finetune and evaluate. All results for finetuning are the best results during training. We follow previous clustering works (Xu et al., 2017; Zhang et al., 2021) and adopt Accuracy (ACC) and Normalized Mutual Information (NMI) to evaluate different approaches. Compared Baseline Methods. To demonstrate the effectiveness of our pre-training method and cluster-assisted contrastive learning (CCL), we compare baseline methods from two aspects: (1) Pre-trained token or phrase representations: • Glove (Pennington et al., 2014). Pre-trained\nword embeddings on 6B tokens and dimension is 300. We use averaging word embeddings as the representations of phrases. • BERT (Devlin et al., 2019). Obtains phrase representations by averaging token representations (BERT-Ave.) or following CGExpan (Zhang et al., 2020) to substitute phrases with the [MASK] token, and use [MASK] representations as phrase embeddings (BERT-MASK). • LUKE (Yamada et al., 2020). Use as back4We do not evaluate on the Misc category because it does not represent a single semantic category. 5corporation, creative work, group, location, person, product\nbone model to show the effectiveness of our contrastive learning for pre-training and finetuning. • DensePhrase (Lee et al., 2021). Pre-trained phrase representation learning in a supervised way for question answering problem. We use a pre-trained model released from the authors to get phrase representations. • Phrase-BERT (Wang et al., 2021). Contextagnostic phrase representations from pretraining. We use a pre-trained model from the authors and get representations by phrase mentions. • Ours w/o CCL. Pre-trained phrase representations of UCTOPIC without cluster-assisted contrastive finetuning.\n(2) Fine-tuning methods based on pre-trained representations of UCTOPIC. • Classifier. We use pseudo labels as supervision\nto train a MLP layer and obtain a classifier of phrase categories. • In-Batch Contrastive Learning. Same as contrastive learning for pre-training which uses inbatch negatives. • Autoencoder. Widely used in previous neural topic and aspect extraction models (He et al., 2017; Iyyer et al., 2016; Tulkens and van Cranenburgh, 2020). We follow ABAE (He et al., 2017) to implement our autoencoder model for phrases.\nExperimental Results. We report evaluation results of entity clustering in Table 1. Overall, UCTOPIC achieves the best results on all datasets and metrics. Specifically, UCTOPIC improves the state-of-the-art method (Phrase-BERT) by 38.2% NMI in average, and outperforms our backbone model (LUKE) by 73.2% NMI.\nWhen we compare different pre-trained representations, we find that our method (Ours w/o CCL) outperforms the other baselines on three datasets except MIT-M. There are two reasons: (1) All words in MIT-M are lower case which is inconsistent with our pretraining dataset. The inconsistency between training and test causes performance to decay. (2) Sentences from MIT-M are usually short (10.16 words in average) compared to other datasets (e.g., 17.9 words in W-NUT2017). UCTOPIC can obtain limited contextual information with short sentences. However, the performance decay caused by the two reasons can be eliminated by our CCL finetuning on dataset since on MIT-M UCTOPIC achieves better results (0.661 NMI) than Phrase-BERT (0.575 NMI) after CCL.\nOn the other hand, compared to other finetuning methods, our CCL finetuning can further improve the pre-trained phrase representations by capturing data-specific features. The improvement is up to 50% NMI on the MIT-M dataset. Ours w/ Class. performs worse than our pre-trained UCTOPIC in most cases which indicates that pseudo labels from clustering are noisy and cannot directly be used as supervision for representation learning. Ours w/ In-B. is similar as Ours w/ Class. which verifies our motivation on using CCL instead of in-batch negatives. An autoencoder can improve pre-trained representations on three datasets but the margins are limited and the performance even drops on W-NUT2017. Compared to other finetuning methods, our CCL finetuning consistently improves pre-trained phrase representations on different domains. Context or Mentions. To investigate the source of UCTOPIC phrase semantics (i.e., phrase mentions or context), we conduct an ablation study on the type of input and compare UCTOPIC to LUKE. To eliminate the influence of repeated phrase mentions\non clustering results, we use only one phrase instance (i.e., sentence and position of a phrase) for each phrase mention. As shown in Table 2, there are three types of inputs: (1) Context+Mention: The same input as experiments in Table 1 including the whole sentence that contains the phrase. (2) Mention: Use only phrase mentions as inputs of the two models. (3) Context: We mask the phrase mentions in sentences and models can only get information from the context. We can see that UCTOPIC gets more information from context (0.43 ACC, 0.16 NMI) than mentions (0.32 ACC, 0.15 NMI). Compared to LUKE, UCTOPIC is more robust to phrase mentions (when predicting on only context, UCTOPIC −3% ACC and −44% NMI vs. LUKE −31% ACC and −67% NMI)."
+    }, {
+      "heading" : "4.3 Topical Phrase Mining",
+      "text" : "In this section, we apply UCTOPIC on topical phrase mining and conduct human evaluation to show our model outperforms previous baselines. Experiment Setup. To find topical phrases in documents, we first extract noun phrases by spaCy 6 noun chunks and remove single pronoun words. Before CCL finetuning, we obtain the number of topics for each dataset by computing the Silhouette Coefficient (Rousseeuw, 1987) (details in Appendix A.1). Then, we conduct CCL on the dataset with the same settings as described in Section 4.2. Finally, after obtaining topic distribution zx ∈ R|C| for a phrase instance x in a sentence, we get context-agnostic phrase topics by using averaged topic distribution zpm = 1n ∑ 1≤i≤n zxmi , where phrase instances {xmi } in different sentences have the same phrase mention pm. The topic of a phrase mention has the highest probability in zpm . Dataset. We conduct topical phrase mining on three datasets from news, review and computer science domains. • Gest. We collect restaurant reviews from Google\nLocal7 and use 100K reviews containing 143,969 sentences for topical phrase mining. • KP20k (Meng et al., 2017) is a collection of titles and abstracts from computer science papers. 500K sentences are used in our experiments. • KPTimes (Gallina et al., 2019) includes news articles from the New York Times from 2006 to 2017 and 10K news articles from the Japan Times. We use 500K sentences for topic mining.\n6https://spacy.io/ 7https://www.google.com/maps\nThe number of topics determined by Silhouette Coefficient is shown in Table 3. Compared Baseline Methods. We compare UCTOPIC against three topic baselines: • Phrase-LDA (Mimno, 2015). LDA model in-\ncorporates phrases by converting phrases into unigrams (e.g., “city view” to “city_view”). • TopMine (El-Kishky et al., 2014). A scalable pipeline that paritions a document into phrases, then uses phrases as constraints to ensure all words are placed in the same topic. • PNTM (Wang et al., 2021). A topic model with Phrase-BERT by using an autoencoder that reconstructs a document representation. The model is the state-of-the-art topic model. We do not include topic models such as LDA (Blei et al., 2003), PD-LDA (Lindsey et al., 2012), TNG (Wang et al., 2007), KERT (Danilevsky et al., 2014) as baselines, because these models are compared in TopMine and PNTM. For Phrase-LDA and PNTM, we use the same phrase list produced by UCTOPIC. TopMine produced phrases by itself.\nTopical Phrase Evaluation. We evaluate the quality of topical phrases from three aspects: (1) topical separation; (2) phrase coherence; (3) phrase informativeness and diversity.\nTo evaluate topical separation, we perform the phrase intrusion task following previous work (ElKishky et al., 2014; Chang et al., 2009). The phrase\nintrusion task involves a set of questions asking humans to discover the ‘intruder’ phrase from other phrases (details in Appendix B.1). Results of the task evaluate how well the phrases are separated by topics. The evaluation results are shown in Figure 3. UCTOPIC outperforms other baselines on three datasets, which means our model can find wellseparated topics in documents.\nTo evaluate phrase coherence in one topic, we follow ABAE (He et al., 2017) and ask annotators to evaluate if the top 50 phrases from one topic are coherent (i.e., most phrases represent the same topic). 3 annotators evaluate four models on Gest and KP20k datasets. Numbers of coherent topics are shown in Table 4. We can see that UCTOPIC, PNTM and TopMine can recognize similar numbers of coherent topics, but the numbers of PhraseLDA are less than the other three models. For a coherent topic, each of the top phrases will be labeled as correct if the phrase reflects the related topic. Same as ABAE, we adopt precision@n to evaluate the results. Figure 4 shows the results; we can see that UCTOPIC substantially outperforms other models and maintain high precision with a large n when the precision of other models decreases.\nFinally, to evaluate phrase informativeness and diversity, we use tf-idf and word diversity (worddiv.) to evaluate the top topical phrases (details in Appendix B.2). Results are shown in table 5. PNTM and UCTOPIC achieve similar tf-idf scores, because the two methods use the same phrase lists extracted from spaCy. UCTOPIC extracts the most diverse phrases in a topic, because our phrase representations are more context-aware. In contrast,\nsince PNTM gets representations dependent on phrase mentions, the phrases from PNTM contain the same words and hence are less diverse. Case Study. We compare top phrases from UCTOPIC, PNTM and TopMine in Section 4.3. From examples, we can see the phrases are consistent with our user study and diversity evaluation. Although the phrases from PNTM are coherent, the diversity of phrases is less than others (e.g., “drinks”, “bar drink”, “just drink” from Gest) because context-agnostic representations let similar phrase mentions group together. The phrases from TopMine are diverse but are not coherent in some cases (e.g., “machine learning” and “support vector machine” in the programming topic). In contrast, UCTOPIC can extract coherent and diverse topical phrases from documents."
+    }, {
+      "heading" : "5 Related Work",
+      "text" : "Many attempts have been made to extract topical phrases via LDA (Blei et al., 2003). Wallach (2006) incorporated a bigram language model into LDA by a hierarchical dirichlet generative probabilistic model to share the topic across each word within a bigram. TNG (Wang et al., 2007) applied additional latent variables and word-specific multinomials to model bi-grams and combined bi-grams to form n-gram phrases. PD-LDA (Lindsey et al., 2012) used a hierarchical Pitman-Yor process to share the same topic among all words in a given n-gram. Danilevsky et al. (2014) ranked the resultant phrases based on four heuristic metrics. TOPMine (El-Kishky et al., 2014) proposed to restrict all constituent terms within a phrase to share the same latent topic and assign a phrase to the topic of its constituent words. Compared to previous topic mining methods, UCTOPIC builds on the success of pre-trained language models and unsupervised contrastive learning on a large-scale dataset. Therefore, UCTOPIC provides high-quality pre-trained\nphrase representations and state-of-the-art finetuning for topic mining.\nEarly works in phrase representation build upon a composition function that combines component word embeddings together into simple phrase embedding. Yu and Dredze (2015) implemented the function by rule-based composition over word vectors. Zhou et al. (2017) applied a pair-wise GRU model and datasets such as PPDB (Pavlick et al., 2015) to learn phrase representations. PhraseBERT (Wang et al., 2021) composed token embeddings from BERT and pretrained on positive instances produced by GPT-2-based diverse paraphrasing model (Krishna et al., 2020). Lee et al. (2021) learned phrase representations from the supervision of reading comprehension tasks and applied representations on open-domain QA. Other works learned phrase embeddings for specific tasks such as semantic parsing (Socher et al., 2011) and machine translation (Bing et al., 2015). In this paper, we present unsupervised contrastive learning method for pre-training phrase representations of general purposes and for finetuning to topicspecific phrase representations."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "In this paper, we propose UCTOPIC, a contrastive learning framework that can effectively learn phrase representations without supervision. To finetune on topic mining datasets, we propose clusterassisted contrastive learning which reduces noise by selecting negatives from clusters. During finetuning, our phrase representations are optimized for topics in the document hence the representations are further improved. We conduct comprehensive experiments on entity clustering and topical phrase mining. Results show that UCTOPIC largely improves phrase representations. Objective metrics and a user study indicate UCTOPIC can extract coherent and diverse topical phrases."
+    }, {
+      "heading" : "7 Ethical Consideration",
+      "text" : "We do not anticipate any major ethical concerns; topic mining is a fundamental problem in natural language processing. A minor consideration is the potential for certain types of hidden biases to be introduced into our results (i.e., performance regressions for some subset of the data in spite of overall performance gains), for example by a biased selection of topical phrases. We did not observe any such issues in our experiments, and indeed these considerations seem low-risk for the specific datasets studied here."
+    }, {
+      "heading" : "A Topical Phrase Mining",
+      "text" : "A.1 Find Numbers of Topics We randomly sample 10K phrases from dataset and apply K-Means clustering on pre-trained UCTOPIC phrase representations with different cluster numbers. We compute Silhouette Coefficient score for different topic numbers and the number with the largest score will be used as the topic number in a dataset."
+    }, {
+      "heading" : "B User Study",
+      "text" : "B.1 Phrase Intrusion In our experiments, each question has 6 phrases and 5 of them are randomly sampled from the top 50 phrases of one topic and the remaining phrase is randomly chosen from another topic (top 50 phrases). Annotators are asked to select the intruder phrase. We sample 50 questions for each method and each dataset (600 questions in total) and shuffle all questions. Because these questions are sampled independently, we asked 4 annotators to answer these questions and each annotator answers 150 questions in average.\nB.2 Phrase Informativeness and Diversity Informative phrases cannot be very common phrases in a corpus (e.g., “good food” in Gest) and we use tf-idf to evaluate the “importance” of a phrase. To eliminate the influence of phrase length, we use averaged word tf-idf in a phrase as the phrase tf-idf. Specifically, tf-idf(p, d) = 1 m ∑ 1≤i≤m tf-idf(w p i ), where d denotes the document and p is the phrase. In our experiments, a document is a sentence is a review.\nFurthermore, we hope that our phrases are diverse enough in a topic instead of expressing the same meaning (e.g., “good food” and “great food”). To evaluate the diversity of the top phrases, we calculate the ratio of distinct words among all words. Formally, given a list of phrases [p1, p2, . . . , pn], we tokenize the phrases into a word list w = [wp11 , w p1 2 , . . . , w pn m ] and w′ is the set of unique words in w. The word diversity is computed by |w′| |w| . We only evaluate coherent topics labeled in phrase coherence and the coherent topics numbers of Phrase-LDA are obviously smaller than others, hence we evaluate the other three models. We compute the tf-idf and word-div. on the top 10 phrases and use the averaged value on topics as final scores."
+    } ],
+    "references" : [ {
+      "title" : "Abstractive multidocument summarization via phrase selection and merging",
+      "author" : [ "Lidong Bing", "Piji Li", "Yi Liao", "Wai Lam", "Weiwei Guo", "Rebecca J. Passonneau." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Bing et al\\.,? 2015",
+      "shortCiteRegEx" : "Bing et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Latent dirichlet allocation",
+      "author" : [ "David M. Blei", "A. Ng", "Michael I. Jordan." ],
+      "venue" : "J. Mach. Learn. Res., 3:993–1022.",
+      "citeRegEx" : "Blei et al\\.,? 2003",
+      "shortCiteRegEx" : "Blei et al\\.",
+      "year" : 2003
+    }, {
+      "title" : "Reading tea leaves: How humans interpret topic models",
+      "author" : [ "Jonathan Chang", "Jordan L. Boyd-Graber", "Sean Gerrish", "Chong Wang", "David M. Blei." ],
+      "venue" : "NIPS.",
+      "citeRegEx" : "Chang et al\\.,? 2009",
+      "shortCiteRegEx" : "Chang et al\\.",
+      "year" : 2009
+    }, {
+      "title" : "A simple framework for contrastive learning of visual representations",
+      "author" : [ "Ting Chen", "Simon Kornblith", "Mohammad Norouzi", "Geoffrey E. Hinton." ],
+      "venue" : "ArXiv, abs/2002.05709.",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "On sampling strategies for neural networkbased collaborative filtering",
+      "author" : [ "Ting Chen", "Yizhou Sun", "Yue Shi", "Liangjie Hong." ],
+      "venue" : "Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining.",
+      "citeRegEx" : "Chen et al\\.,? 2017",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Automatic construction and ranking of topical keyphrases on collections of short documents",
+      "author" : [ "Marina Danilevsky", "Chi Wang", "Nihit Desai", "Xiang Ren", "Jingyi Guo", "Jiawei Han." ],
+      "venue" : "SDM.",
+      "citeRegEx" : "Danilevsky et al\\.,? 2014",
+      "shortCiteRegEx" : "Danilevsky et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Results of the WNUT2017 shared task on novel and emerging entity recognition",
+      "author" : [ "Leon Derczynski", "Eric Nichols", "Marieke van Erp", "Nut Limsopatham." ],
+      "venue" : "Proceedings of the 3rd Workshop on Noisy User-generated Text, pages 140–147, Copenhagen,",
+      "citeRegEx" : "Derczynski et al\\.,? 2017",
+      "shortCiteRegEx" : "Derczynski et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "NAACL.",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Scalable topical phrase mining from text corpora",
+      "author" : [ "Ahmed El-Kishky", "Yanglei Song", "Chi Wang", "Clare R. Voss", "Jiawei Han." ],
+      "venue" : "ArXiv, abs/1406.6312.",
+      "citeRegEx" : "El.Kishky et al\\.,? 2014",
+      "shortCiteRegEx" : "El.Kishky et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Kptimes: A large-scale dataset for keyphrase generation on news documents",
+      "author" : [ "Ygor Gallina", "Florian Boudin", "Béatrice Daille." ],
+      "venue" : "INLG.",
+      "citeRegEx" : "Gallina et al\\.,? 2019",
+      "shortCiteRegEx" : "Gallina et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Simcse: Simple contrastive learning of sentence embeddings",
+      "author" : [ "Tianyu Gao", "Xingcheng Yao", "Danqi Chen." ],
+      "venue" : "ArXiv, abs/2104.08821.",
+      "citeRegEx" : "Gao et al\\.,? 2021",
+      "shortCiteRegEx" : "Gao et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Dimensionality reduction by learning an invariant mapping",
+      "author" : [ "Raia Hadsell", "Sumit Chopra", "Yann LeCun." ],
+      "venue" : "2006 IEEE Computer Society Conference on Computer Vision and Pattern Recognition (CVPR’06), 2:1735–1742.",
+      "citeRegEx" : "Hadsell et al\\.,? 2006",
+      "shortCiteRegEx" : "Hadsell et al\\.",
+      "year" : 2006
+    }, {
+      "title" : "An unsupervised neural attention model for aspect extraction",
+      "author" : [ "Ruidan He", "Wee Sun Lee", "Hwee Tou Ng", "Daniel Dahlmeier." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "He et al\\.,? 2017",
+      "shortCiteRegEx" : "He et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Efficient natural language response suggestion for smart reply",
+      "author" : [ "Matthew Henderson", "Rami Al-Rfou", "Brian Strope", "YunHsuan Sung", "László Lukács", "Ruiqi Guo", "Sanjiv Kumar", "Balint Miklos", "Ray Kurzweil." ],
+      "venue" : "ArXiv, abs/1705.00652.",
+      "citeRegEx" : "Henderson et al\\.,? 2017",
+      "shortCiteRegEx" : "Henderson et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Feuding families and former friends: Unsupervised learning for dynamic fictional relationships",
+      "author" : [ "Mohit Iyyer", "Anupam Guha", "Snigdha Chaturvedi", "Jordan L. Boyd-Graber", "Hal Daumé." ],
+      "venue" : "NAACL.",
+      "citeRegEx" : "Iyyer et al\\.,? 2016",
+      "shortCiteRegEx" : "Iyyer et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Reformulating unsupervised style transfer as paraphrase generation",
+      "author" : [ "Kalpesh Krishna", "John Wieting", "Mohit Iyyer." ],
+      "venue" : "ArXiv, abs/2010.05700.",
+      "citeRegEx" : "Krishna et al\\.,? 2020",
+      "shortCiteRegEx" : "Krishna et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning dense representations of phrases at scale",
+      "author" : [ "Jinhyuk Lee", "Mujeen Sung", "Jaewoo Kang", "Danqi Chen." ],
+      "venue" : "ACL/IJCNLP.",
+      "citeRegEx" : "Lee et al\\.,? 2021",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Biocreative v cdr task corpus: a resource for chemical disease relation extraction",
+      "author" : [ "J. Li", "Yueping Sun", "Robin J. Johnson", "Daniela Sciaky", "Chih-Hsuan Wei", "Robert Leaman", "A.P. Davis", "C. Mattingly", "Thomas C. Wiegers", "Zhiyong Lu." ],
+      "venue" : "Database:",
+      "citeRegEx" : "Li et al\\.,? 2016",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A phrase-discovering topic model using hierarchical pitman-yor processes",
+      "author" : [ "Robert V. Lindsey", "Will Headden", "Michael Stipicevic." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Lindsey et al\\.,? 2012",
+      "shortCiteRegEx" : "Lindsey et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Query understanding enhanced by hierarchical parsing structures",
+      "author" : [ "Jingjing Liu", "Panupong Pasupat", "Yining Wang", "D. Scott Cyphers", "James R. Glass." ],
+      "venue" : "2013 IEEE Workshop on Automatic Speech Recognition and Understanding, pages 72–77.",
+      "citeRegEx" : "Liu et al\\.,? 2013",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Deep keyphrase generation",
+      "author" : [ "Rui Meng", "Sanqiang Zhao", "Shuguang Han", "Daqing He", "Peter Brusilovsky", "Yu Chi." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Meng et al\\.,? 2017",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Coco-lm: Correcting and contrasting text sequences for language model pretraining",
+      "author" : [ "Yu Meng", "Chenyan Xiong", "Payal Bajaj", "Saurabh Tiwary", "Paul N. Bennett", "Jiawei Han", "Xia Song." ],
+      "venue" : "ArXiv, abs/2102.08473.",
+      "citeRegEx" : "Meng et al\\.,? 2021",
+      "shortCiteRegEx" : "Meng et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Using phrases in mallet topic models",
+      "author" : [ "David Mimno." ],
+      "venue" : "http://www.mimno.org/ articles/phrases/.",
+      "citeRegEx" : "Mimno.,? 2015",
+      "shortCiteRegEx" : "Mimno.",
+      "year" : 2015
+    }, {
+      "title" : "Ppdb 2.0: Better paraphrase ranking, finegrained entailment relations, word embeddings, and style classification",
+      "author" : [ "Ellie Pavlick", "Pushpendre Rastogi", "Juri Ganitkevitch", "Benjamin Van Durme", "Chris Callison-Burch" ],
+      "venue" : null,
+      "citeRegEx" : "Pavlick et al\\.,? \\Q2015\\E",
+      "shortCiteRegEx" : "Pavlick et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Glove: Global vectors for word representation",
+      "author" : [ "Jeffrey Pennington", "Richard Socher", "Christopher D. Manning." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Pennington et al\\.,? 2014",
+      "shortCiteRegEx" : "Pennington et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Silhouettes: a graphical aid to the interpretation and validation of cluster analysis",
+      "author" : [ "Peter Rousseeuw." ],
+      "venue" : "Journal of Computational and Applied Mathematics, 20:53–65.",
+      "citeRegEx" : "Rousseeuw.,? 1987",
+      "shortCiteRegEx" : "Rousseeuw.",
+      "year" : 1987
+    }, {
+      "title" : "Introduction to the conll-2003 shared task: Language-independent named entity recognition",
+      "author" : [ "E.T.K. Sang", "F.D. Meulder." ],
+      "venue" : "ArXiv, cs.CL/0306050.",
+      "citeRegEx" : "Sang and Meulder.,? 2003",
+      "shortCiteRegEx" : "Sang and Meulder.",
+      "year" : 2003
+    }, {
+      "title" : "Matching the blanks: Distributional similarity for relation learning",
+      "author" : [ "Livio Baldini Soares", "Nicholas FitzGerald", "Jeffrey Ling", "Tom Kwiatkowski." ],
+      "venue" : "ArXiv, abs/1906.03158.",
+      "citeRegEx" : "Soares et al\\.,? 2019",
+      "shortCiteRegEx" : "Soares et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Parsing natural scenes and natural language with recursive neural networks",
+      "author" : [ "Richard Socher", "Cliff Chiung-Yu Lin", "A. Ng", "Christopher D. Manning." ],
+      "venue" : "ICML.",
+      "citeRegEx" : "Socher et al\\.,? 2011",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Improved deep metric learning with multi-class n-pair loss objective",
+      "author" : [ "Kihyuk Sohn." ],
+      "venue" : "NIPS.",
+      "citeRegEx" : "Sohn.,? 2016",
+      "shortCiteRegEx" : "Sohn.",
+      "year" : 2016
+    }, {
+      "title" : "Embarrassingly simple unsupervised aspect extraction",
+      "author" : [ "Stéphan Tulkens", "Andreas van Cranenburgh." ],
+      "venue" : "ACL.",
+      "citeRegEx" : "Tulkens and Cranenburgh.,? 2020",
+      "shortCiteRegEx" : "Tulkens and Cranenburgh.",
+      "year" : 2020
+    }, {
+      "title" : "Topic modeling: beyond bag-of-words",
+      "author" : [ "Hanna M. Wallach." ],
+      "venue" : "Proceedings of the 23rd international conference on Machine learning.",
+      "citeRegEx" : "Wallach.,? 2006",
+      "shortCiteRegEx" : "Wallach.",
+      "year" : 2006
+    }, {
+      "title" : "Phrase-bert: Improved phrase embeddings from bert with an application to corpus exploration",
+      "author" : [ "Shufan Wang", "Laure Thompson", "Mohit Iyyer." ],
+      "venue" : "ArXiv, abs/2109.06304.",
+      "citeRegEx" : "Wang et al\\.,? 2021",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Topical n-grams: Phrase and topic discovery, with an application to information retrieval",
+      "author" : [ "Xuerui Wang", "Andrew McCallum", "Xing Wei." ],
+      "venue" : "Seventh IEEE International Conference on Data Mining (ICDM 2007), pages 697–702.",
+      "citeRegEx" : "Wang et al\\.,? 2007",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Clear: Contrastive learning for sentence representation",
+      "author" : [ "Zhuofeng Wu", "Sinong Wang", "Jiatao Gu", "Madian Khabsa", "Fei Sun", "Hao Ma." ],
+      "venue" : "ArXiv, abs/2012.15466.",
+      "citeRegEx" : "Wu et al\\.,? 2020",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Unsupervised data augmentation for consistency training",
+      "author" : [ "Qizhe Xie", "Zihang Dai", "Eduard H. Hovy", "Minh-Thang Luong", "Quoc V. Le." ],
+      "venue" : "arXiv: Learning.",
+      "citeRegEx" : "Xie et al\\.,? 2020",
+      "shortCiteRegEx" : "Xie et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Self-taught convolutional neural networks for short text clustering",
+      "author" : [ "Jiaming Xu", "Bo Xu", "Peng Wang", "Suncong Zheng", "Guanhua Tian", "Jun Zhao." ],
+      "venue" : "Neural networks : the official journal of the International Neural Network Society, 88:22–31.",
+      "citeRegEx" : "Xu et al\\.,? 2017",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Luke: Deep contextualized entity representations with entityaware self-attention",
+      "author" : [ "Ikuya Yamada", "Akari Asai", "Hiroyuki Shindo", "Hideaki Takeda", "Yuji Matsumoto." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Yamada et al\\.,? 2020",
+      "shortCiteRegEx" : "Yamada et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning composition models for phrase embeddings",
+      "author" : [ "Mo Yu", "Mark Dredze." ],
+      "venue" : "Transactions of the Association for Computational Linguistics, 3:227– 242.",
+      "citeRegEx" : "Yu and Dredze.,? 2015",
+      "shortCiteRegEx" : "Yu and Dredze.",
+      "year" : 2015
+    }, {
+      "title" : "Supporting clustering with contrastive learning",
+      "author" : [ "Dejiao Zhang", "Feng Nan", "Xiaokai Wei", "Shang-Wen Li", "Henghui Zhu", "Kathleen McKeown", "Ramesh Nallapati", "Andrew O. Arnold", "Bing Xiang." ],
+      "venue" : "NAACL.",
+      "citeRegEx" : "Zhang et al\\.,? 2021",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "mixup: Beyond empirical risk minimization",
+      "author" : [ "Hongyi Zhang", "Moustapha Cissé", "Yann Dauphin", "David Lopez-Paz." ],
+      "venue" : "ArXiv, abs/1710.09412.",
+      "citeRegEx" : "Zhang et al\\.,? 2018",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Jake Zhao", "Yann André LeCun." ],
+      "venue" : "ArXiv, abs/1509.01626.",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Empower entity set expansion via language model probing",
+      "author" : [ "Yunyi Zhang", "Jiaming Shen", "Jingbo Shang", "Jiawei Han." ],
+      "venue" : "ArXiv, abs/2004.13897.",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Learning phrase embeddings from paraphrases with grus",
+      "author" : [ "Zhihao Zhou", "Lifu Huang", "Heng Ji." ],
+      "venue" : "ArXiv, abs/1710.05094.",
+      "citeRegEx" : "Zhou et al\\.,? 2017",
+      "shortCiteRegEx" : "Zhou et al\\.",
+      "year" : 2017
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 32,
+      "context" : "Some phrase representation methods (Wang et al., 2021; Yu and Dredze, 2015; Zhou et al., 2017) learn context-free representations by unigram embedding combination.",
+      "startOffset" : 35,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 38,
+      "context" : "Some phrase representation methods (Wang et al., 2021; Yu and Dredze, 2015; Zhou et al., 2017) learn context-free representations by unigram embedding combination.",
+      "startOffset" : 35,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 43,
+      "context" : "Some phrase representation methods (Wang et al., 2021; Yu and Dredze, 2015; Zhou et al., 2017) learn context-free representations by unigram embedding combination.",
+      "startOffset" : 35,
+      "endOffset" : 94
+    }, {
+      "referenceID" : 37,
+      "context" : "2021) and LUKE (Yamada et al., 2020) need supervision from task-specific datasets or distant anno-",
+      "startOffset" : 15,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 3,
+      "context" : "ing in visual (Chen et al., 2020) and textual (Gao et al.",
+      "startOffset" : 14,
+      "endOffset" : 33
+    }, {
+      "referenceID" : 35,
+      "context" : "Existing data augmentation methods for natural language processing (NLP) such as back translation (Xie et al., 2020), synonym replacement (Zhang et al.",
+      "startOffset" : 98,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 41,
+      "context" : ", 2020), synonym replacement (Zhang et al., 2015) and text mix up (Zhang et al.",
+      "startOffset" : 29,
+      "endOffset" : 49
+    }, {
+      "referenceID" : 40,
+      "context" : ", 2015) and text mix up (Zhang et al., 2018) are not designed for phrase-oriented noise, and thus cannot produce training pairs for phrase representation learning.",
+      "startOffset" : 24,
+      "endOffset" : 44
+    }, {
+      "referenceID" : 10,
+      "context" : "Masking the phrase mentions forces the model to learn representations from context which prevents overfitting and representation collapse (Gao et al., 2021).",
+      "startOffset" : 138,
+      "endOffset" : 156
+    }, {
+      "referenceID" : 4,
+      "context" : "For large-scale pre-training, we follow previous works (Chen et al., 2017; Henderson et al., 2017; Gao et al., 2021) and adopt in-batch negatives for training.",
+      "startOffset" : 55,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 13,
+      "context" : "For large-scale pre-training, we follow previous works (Chen et al., 2017; Henderson et al., 2017; Gao et al., 2021) and adopt in-batch negatives for training.",
+      "startOffset" : 55,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 10,
+      "context" : "For large-scale pre-training, we follow previous works (Chen et al., 2017; Henderson et al., 2017; Gao et al., 2021) and adopt in-batch negatives for training.",
+      "startOffset" : 55,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 37,
+      "context" : "In our experiments, we select LUKE (Yamada et al., 2020) as our backbone phrase representation model and pre-train it on Wikipedia 1 English corpus.",
+      "startOffset" : 35,
+      "endOffset" : 56
+    }, {
+      "referenceID" : 37,
+      "context" : "In this section, we introduce background knowledge about contrastive learning and our phrase encoder LUKE (Yamada et al., 2020).",
+      "startOffset" : 106,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 11,
+      "context" : "Contrastive learning aims to learn effective representations by pulling semantically close neighbors together and pushing apart non-neighbors in the latent space (Hadsell et al., 2006).",
+      "startOffset" : 162,
+      "endOffset" : 184
+    }, {
+      "referenceID" : 29,
+      "context" : ",h − N−1} from the encoder, we follow the contrastive learning framework (Sohn, 2016; Chen et al., 2020; Gao et al., 2021) and take cross-entropy as our objective function:",
+      "startOffset" : 73,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 3,
+      "context" : ",h − N−1} from the encoder, we follow the contrastive learning framework (Sohn, 2016; Chen et al., 2020; Gao et al., 2021) and take cross-entropy as our objective function:",
+      "startOffset" : 73,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 10,
+      "context" : ",h − N−1} from the encoder, we follow the contrastive learning framework (Sohn, 2016; Chen et al., 2020; Gao et al., 2021) and take cross-entropy as our objective function:",
+      "startOffset" : 73,
+      "endOffset" : 122
+    }, {
+      "referenceID" : 37,
+      "context" : "In this paper, our phrase encoder E is transformerbased model LUKE (Yamada et al., 2020).",
+      "startOffset" : 67,
+      "endOffset" : 88
+    }, {
+      "referenceID" : 34,
+      "context" : "Previous works (Wu et al., 2020; Meng et al., 2021) apply augmentation techniques such as word deletion, reordering, and paraphrasing.",
+      "startOffset" : 15,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 21,
+      "context" : "Previous works (Wu et al., 2020; Meng et al., 2021) apply augmentation techniques such as word deletion, reordering, and paraphrasing.",
+      "startOffset" : 15,
+      "endOffset" : 51
+    }, {
+      "referenceID" : 37,
+      "context" : "For pre-training, we start from a pretrained LUKEBASE model (Yamada et al., 2020).",
+      "startOffset" : 60,
+      "endOffset" : 81
+    }, {
+      "referenceID" : 10,
+      "context" : "We follow previous works (Gao et al., 2021; Soares et al., 2019) and two losses are used concurrently: the",
+      "startOffset" : 25,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 27,
+      "context" : "We follow previous works (Gao et al., 2021; Soares et al., 2019) and two losses are used concurrently: the",
+      "startOffset" : 25,
+      "endOffset" : 64
+    }, {
+      "referenceID" : 26,
+      "context" : "We conduct entity clustering on four datasets with annotated entities and their semantic categories are from general, review and biomedical domains: (1) CoNLL2003 (Sang and Meulder, 2003) consists of 20,744 sentences extracted from Reuters news articles.",
+      "startOffset" : 163,
+      "endOffset" : 187
+    }, {
+      "referenceID" : 17,
+      "context" : "4 (2) BC5CDR (Li et al., 2016) is the BioCreative V CDR task corpus.",
+      "startOffset" : 13,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 19,
+      "context" : "(3) MIT Movie (MIT-M) (Liu et al., 2013) contains 12,218 sentences with Title and Person entities.",
+      "startOffset" : 22,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 6,
+      "context" : "(4) W-NUT 2017 (Derczynski et al., 2017) focuses on identifying unusual entities in the context of emerging discussions and contains 5,690 sentences and six kinds of entities 5.",
+      "startOffset" : 15,
+      "endOffset" : 40
+    }, {
+      "referenceID" : 36,
+      "context" : "We follow previous clustering works (Xu et al., 2017; Zhang et al., 2021) and adopt Accuracy (ACC) and Normalized Mutual Information (NMI) to evaluate different approaches.",
+      "startOffset" : 36,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 39,
+      "context" : "We follow previous clustering works (Xu et al., 2017; Zhang et al., 2021) and adopt Accuracy (ACC) and Normalized Mutual Information (NMI) to evaluate different approaches.",
+      "startOffset" : 36,
+      "endOffset" : 73
+    }, {
+      "referenceID" : 24,
+      "context" : "(1) Pre-trained token or phrase representations: • Glove (Pennington et al., 2014).",
+      "startOffset" : 57,
+      "endOffset" : 82
+    }, {
+      "referenceID" : 42,
+      "context" : ") or following CGExpan (Zhang et al., 2020) to substitute phrases with the [MASK] token, and use [MASK] representations as phrase embeddings (BERT-MASK).",
+      "startOffset" : 23,
+      "endOffset" : 43
+    }, {
+      "referenceID" : 12,
+      "context" : "Widely used in previous neural topic and aspect extraction models (He et al., 2017; Iyyer et al., 2016; Tulkens and van Cranenburgh, 2020).",
+      "startOffset" : 66,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 14,
+      "context" : "Widely used in previous neural topic and aspect extraction models (He et al., 2017; Iyyer et al., 2016; Tulkens and van Cranenburgh, 2020).",
+      "startOffset" : 66,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 12,
+      "context" : "We follow ABAE (He et al., 2017) to implement our autoencoder model for phrases.",
+      "startOffset" : 15,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 25,
+      "context" : "Before CCL finetuning, we obtain the number of topics for each dataset by computing the Silhouette Coefficient (Rousseeuw, 1987) (details in Appendix A.",
+      "startOffset" : 111,
+      "endOffset" : 128
+    }, {
+      "referenceID" : 20,
+      "context" : "• KP20k (Meng et al., 2017) is a collection of titles and abstracts from computer science papers.",
+      "startOffset" : 8,
+      "endOffset" : 27
+    }, {
+      "referenceID" : 9,
+      "context" : "• KPTimes (Gallina et al., 2019) includes news articles from the New York Times from 2006 to 2017 and 10K news articles from the Japan Times.",
+      "startOffset" : 10,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 22,
+      "context" : "We compare UCTOPIC against three topic baselines: • Phrase-LDA (Mimno, 2015).",
+      "startOffset" : 63,
+      "endOffset" : 76
+    }, {
+      "referenceID" : 1,
+      "context" : "We do not include topic models such as LDA (Blei et al., 2003), PD-LDA (Lindsey et al.",
+      "startOffset" : 43,
+      "endOffset" : 62
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2012), TNG (Wang et al., 2007), KERT (Danilevsky et al.",
+      "startOffset" : 13,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2007), KERT (Danilevsky et al., 2014) as baselines, because these models are compared in TopMine and PNTM.",
+      "startOffset" : 14,
+      "endOffset" : 39
+    }, {
+      "referenceID" : 2,
+      "context" : "To evaluate topical separation, we perform the phrase intrusion task following previous work (ElKishky et al., 2014; Chang et al., 2009).",
+      "startOffset" : 93,
+      "endOffset" : 136
+    }, {
+      "referenceID" : 12,
+      "context" : "follow ABAE (He et al., 2017) and ask annotators to evaluate if the top 50 phrases from one topic are coherent (i.",
+      "startOffset" : 12,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 1,
+      "context" : "Many attempts have been made to extract topical phrases via LDA (Blei et al., 2003).",
+      "startOffset" : 64,
+      "endOffset" : 83
+    }, {
+      "referenceID" : 33,
+      "context" : "TNG (Wang et al., 2007) applied additional latent variables and word-specific multinomials to model bi-grams and combined bi-grams to form n-gram phrases.",
+      "startOffset" : 4,
+      "endOffset" : 23
+    }, {
+      "referenceID" : 18,
+      "context" : "PD-LDA (Lindsey et al., 2012) used a hierarchical Pitman-Yor process to share the same topic among all words in a given n-gram.",
+      "startOffset" : 7,
+      "endOffset" : 29
+    }, {
+      "referenceID" : 8,
+      "context" : "TOPMine (El-Kishky et al., 2014) proposed to restrict all constituent terms within a phrase to share the same latent topic and assign a phrase to the topic of its constituent words.",
+      "startOffset" : 8,
+      "endOffset" : 32
+    }, {
+      "referenceID" : 23,
+      "context" : "model and datasets such as PPDB (Pavlick et al., 2015) to learn phrase representations.",
+      "startOffset" : 32,
+      "endOffset" : 54
+    }, {
+      "referenceID" : 32,
+      "context" : "PhraseBERT (Wang et al., 2021) composed token embeddings from BERT and pretrained on positive instances produced by GPT-2-based diverse paraphrasing model (Krishna et al.",
+      "startOffset" : 11,
+      "endOffset" : 30
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2021) composed token embeddings from BERT and pretrained on positive instances produced by GPT-2-based diverse paraphrasing model (Krishna et al., 2020).",
+      "startOffset" : 132,
+      "endOffset" : 154
+    }, {
+      "referenceID" : 28,
+      "context" : "Other works learned phrase embeddings for specific tasks such as semantic parsing (Socher et al., 2011) and machine translation (Bing et al.",
+      "startOffset" : 82,
+      "endOffset" : 103
+    } ],
+    "year" : 0,
+    "abstractText" : "High-quality phrase representations are essential to finding topics and related terms in documents (a.k.a. topic mining). Existing phrase representation learning methods either simply combine unigram representations in a contextfree manner or rely on extensive annotations to learn context-aware knowledge. In this paper, we propose UCTOPIC, a novel unsupervised contrastive learning framework for context-aware phrase representations and topic mining. UCTOPIC is pretrained in a large scale to distinguish if the contexts of two phrase mentions have the same semantics. The key to pretraining is positive pair construction from our phrase-oriented assumptions. However, we find traditional in-batch negatives cause performance decay when finetuning on a dataset with small topic numbers. Hence, we propose cluster-assisted contrastive learning (CCL) which largely reduces noisy negatives by selecting negatives from clusters and further improves phrase representations for topics accordingly. UCTOPIC outperforms the state-of-the-art phrase representation model by 38.2% NMI in average on four entity clustering tasks. Comprehensive evaluation on topic mining shows that UCTOPIC can extract coherent and diverse topical phrases.",
+    "creator" : null
+  }
+}

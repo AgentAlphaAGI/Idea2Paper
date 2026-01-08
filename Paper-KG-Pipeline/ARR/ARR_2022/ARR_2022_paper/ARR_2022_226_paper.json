@@ -1,0 +1,226 @@
+{
+  "name" : "ARR_2022_226_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Building Multilingual Machine Translation Systems That Serve Arbitrary XY Translations",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Multilingual Neural Machine Translation (MNMT) has attracted much attention in the machine translation area, enabling one system to serve translation for multiple directions (Zoph and Knight, 2016; Firat et al., 2016). Because the multilingual capability hugely reduces the deployment cost at training and inference, the MNMT has actively been employed as a machine translation system backbone in recent years (Johnson et al., 2017; Hassan et al., 2018).\nMost MNMT systems are trained with multiple English-centric data for both directions (e.g. for English→ {French, Chinese} (EX) and {French, Chinese}→ English (XE)). However, recent work (Gu et al., 2019; Zhang et al., 2020; Yang et al., 2021) pointed out that such MNMT systems severely\nface an off-target translation issue, especially in translations from a non-English language X to another non-English language Y. In Freitag and Firat (2020), the authors have extended data resources with multi-way aligned data and reported that one complete many-to-many MNMT can be fully supervised, achieving competitive translation performance for all XY directions. In our preliminary experiment, we observed that the complete manyto-many training is still as challenging as one-tomany training (Johnson et al., 2017; Wang et al., 2020). The model suffers from handling many diverse languages, in contrast to successful manyto-one translation (Johnson et al., 2017).\nIn this paper, we propose a two-stage training for complete MNMT systems that serve arbitrary XY translations by 1) pretraining a complete multilingual many-to-many model and 2) finetuning the model to effectively transferring knowledge from the complete multilingual training. Considering that MNMT is a multi-task learner of translation task with “multiple languages”, the complete multilingual model learns more diverse and general multilingual representations. We transfer the representations to a specifically targeted task via manyto-one multilingual finetuning, and eventually build multiple many-to-one MNMT models that cover all XY directions. Experimenting on multilingual translation tasks at WMT’21, we have confirmed that our systems show substantial improvement against the conventional bilingual approaches for most directions. Besides that, we discuss our proposal in the light of feasible deployment scenarios and show that the proposed approach also works well in an extremely large-scale data settings and ."
+    }, {
+      "heading" : "2 Two-Stage Training for MNMT Models",
+      "text" : "To support all possible translations with |L| languages (including English), we first train a complete MNMT system on all available parallel data for |L| × (|L| − 1) directions. We assume that\nthere exist data of (|L| − 1) English-centric language pairs and remaining (|L|−1)×(|L|−2)2 nonEnglish-centric language pairs, which lets the system learn multilingual representations across all |L| languages. Usually, the volume of English-centric data is much greater than non-English-centric one. Then, we transfer the multilingual representations by finetuning the system on the training data subset for XL directions (i.e., multilingual many-to-one finetuning). This step leads the decoder towards the specifically targeted language L rather than multiple languages. As a result, we obtain |L| multilingual many-to-one systems to serve all XY translation directions. We experiment with our proposed approach in two different settings using 1) WMT’21 large-scale multilingual translation data with 487M training data, and 2) our in-house production-scale dataset with 3.7B training data."
+    }, {
+      "heading" : "2.1 WMT’21 Multilingual Translation Task",
+      "text" : "We experiment with two small tasks provided at WMT’21 large-scale multilingual translation task1. The tasks provide multilingual multi-way parallel data2 from the Flores 101 data, with (Englishcentric, Non-English-centric)=(321M, 166M) in total. The data size per direction varies in a range\n1https://www.statmt.org/wmt21/largescale-multilingual-translation-task.html\n2The data provided among English (en), 5 Central/East European languages of {Croatian (hr), Hungarian (hu), Estonian (et), Serbian (sr), Macedonian (mk)} for the task 1, and 5 Southeast Asian languages of {Javanese (jv), Indonesian (id), Malay (ms), Tagalog (tl), Tamil (ta)} for the task 2.\nof 0.07M-83.9M. To balance the data distribution across languages (Kudugunta et al., 2019), we upsample the low-resource languages with temperature=5. We append language ID tokens at the end of source sentences to specify a target language (Johnson et al., 2017). We tokenize the data with the SentencePiece (Kudo and Richardson, 2018) and build a shared vocabulary with 64k tokens.\nWe train Transformer models Base and Big (Vaswani et al., 2017) in a complete multilingual many-to-many fashion, respectively. The model parameters are optimized by using RAdam (Liu et al., 2020) with an initial learning rate of 0.025, and warm-up steps of 10k and 30k for the Base and Big model training, respectively. The systems are pretrained on 64 V100 GPUs with a mini-batch size of 3072 tokens and graduation accumulation of 16. After pretraining, the models are finetuned on a subset of XL training data. We tune the model parameters gently on 8 V100 GPUs with the same mini-batch size, graduation accumulations, and the same optimizer with different learning rate scheduling of (init_lr, warm-up steps)=({1e-4, 1e-5, 1e-6}, 8k). The best checkpoints are selected based on development loss. The translations are obtained by a beam search decoding with a beam size of 4, unless otherwise stated.\nBaselines For system comparison, we build two different baselines: 1) a direct bilingual system and 2) a pivot translation system via English (only applicable for non-English XY evaluation). Both are based on the Transformer Base architecture. The\nembedding dimension is set to 256 for jv, ms, ta, and tl, because of the training data scarcity. For the XY pivot translation, a source sentence in language X is translated to English with a beam size of 5 by the XE model, then the best output is translated to the final target language Y by the EY model.\nResults All results on the test sets are displayed in Figure 1, where we report the case-sensitive sacreBLEU score (Post, 2018) for translation accuracy. Our best systems (“BigFT\") are significantly better by ≥ +0.5 sacreBLEU for 83% and 88% directions against the bilingual baselines and the pivot translation baselines, respectively. However, building a larger and larger model is not always feasible. We often have limitations in the computational resources at inference time, which leads to a trade-off problem between the performance and the decoding cost caused by the model architecture. In the following section, we validate our proposed approach in an extremely large-scale data setting and also discuss how we can build lighter MNMT models without the performance loss."
+    }, {
+      "heading" : "2.2 In-house Extremely Large-Scale Setting",
+      "text" : "We validate our proposed approach in an extremely large-scale setting, while briefly touching the following three topics of 1) multi-way multilingual data collection, 2) English-centric vs. multi-centric pretraining for better XY, and 3) a lighter MNMT model that addresses the trade-off issue between performance and latency.\nMultilingual Data Collection We build an extremely large-scale data set using our in-house English-centric data set, consisting of 10 European languages, ranging 19M-187M sentences per language3. From these English-centric data, we extract a multi-way multilingual XY data, by aligning EX and EY data via pivoting English. Specifically, we extracted {de, fr, es, it, pl}-centric data and concatenate them to the existing direct XY data, providing 24M-192M per direction. Similarly as in Section 2.1, we build a shared SentencePiece vocabulary with 128k tokens to address the largescale setting.\nEn-centric vs Multi-centric Pretraining In a large-scale data setting, a question might come\n3This contains available parallel data and back-translated data between English and {German (de), French (fr), Spanish (es), Italian (it), Polish (pl), Greek (el), Dutch (nl), Portuguese (pt), and Romanian (ro)}.\nup which pretrained model provides generalized multilingual representations to achieve better XY translation quality? Considering the dominant text data is usually English, e.g., 70% tasks are English-centric in the WMT’21 News translation task, the model supervised on English-centric corpora might learn representations enough to transfer for XY translations. To investigate the usefulness of the multi-centric data training, we pretrain Transformer Big models with deeper 24-12 layers on the English-centric data and the L-centric data (L={en,de,fr}), individually. After pretraining, we apply the multilingual many-to-one finetuning with a subset of the training data and evaluate each system for the fully supervised XY directions, i.e. xx-{en,de,fr}, and the partially supervised XY directions, i.e. xx-{es,it,pl}. We followed the same training and finetuning settings as described in Section 2.1, unless otherwise stated.\nMNMT with Light Decoder At the practical level, one drawback of the large-scale models would be latency at inference time. This is mostly caused by the high computational cost in the decoder layers due to auto-regressive models and the extra cross-attention network in each block of the decoder. Recent studies (Kasai et al., 2020; Hsu et al., 2020; Li et al., 2021) have experimentally shown that models with a deep encoder and a shallow decoder can address the the issue, without losing much performance. Fortunately, such an architecture also satisfies demands of the many-to-one MNMT training, which requires the encoder networks to be more complex to handle various source languages. To examine the light MNMT model architecture, we train the Transformer Base architecture modified with 9-3 layers (E9D3) in a bilingual setting and compare it with a standard Transformer Base model, with 6-6 layers (E6D6), as a baseline. Additionally, we also report direct XY translation performance, when distilling the best large-scale models alongside the light MNMT models as a student model. More specifically, following Kim and Rush (2016), we train five light MNMT student models (E9D3) that serve many-to-L translations (L={de, fr, es,it,pl}).\nResults Table 1 reports average sacreBLEU scores in the in-house XY test sets. For the xx-{de,fr} directions, the proposed finetuning helps both English-centric and multi-centtric pretrained models to improve the accuracy. Over-\nall, the finetuned multi-centric models achieved the best, largely outperforming the English pivotbased baselines by +2.6 and +2.8 points. The multicentric models surpass the corresponding finetuned English-centric systems with a large margin of +0.9 and +0.8 points. This suggests that, by pretraining a model on more multi-centric data, the model learns better multilinguality to transfer. For the xx-{es,it,pl} directions4, each finetuned system gains similar accuracy improvement, significantly outperforming the conventional baselines.\nFigure 2 shows the effectiveness of our light NMT model architecture for 5 EX directions, reporting the translation performance in sacreBLEU scores and the latency measured on CPUs. Our light NMT model (E9D3) successfully achieves almost 2x speed up, without much drop of the performance for all directions. Employing this light model architecture as a student model, we report the distilled many-to-one model performance in Table 1, measured by sacreBLEU and COMET (Rei et al., 2020) scores. For consistent comparison, we also built English bilingual baselines (E6D6)\n4We note that most are zero-shot directions such as “Greekto-Spanish”\nthat are distilled from the bilingual Teachers then obtained the English pivot-based translation performance. For all xx-{de,fr,es,it,pl} directions, our proposed models show the best performance in both metrics. We also note that, at inference time, our direct XY systems save the decoding cost with 75% against the pivot translation."
+    }, {
+      "heading" : "3 Conclusion",
+      "text" : "This paper proposes a simple but effective twostage training strategy for MNMT systems that serve arbitrary XY translations. To support translations across languages, we first pretrain a complete multilingual many-to-many model, then transfer the representations via finetuning the model in a many-to-one multilingual fashion. In the WMT’21 translation task, we experimentally showed that the proposed approach substantially improve translation accuracy for most XY directions against the strong conventional baselines of bilingual systems and pivot translation systems. We also examined the proposed approach in the extremely large-scale setting, while addressing the practical questions such as multi-way parallel data collection, the usefulness of multilinguality during the pretraining and finetuning, and how to save the decoding cost, achieving the better XY quality."
+    } ],
+    "references" : [ {
+      "title" : "Zero-resource translation with multi-lingual neural machine translation",
+      "author" : [ "Orhan Firat", "Baskaran Sankaran", "Yaser Al-onaizan", "Fatos T. Yarman Vural", "Kyunghyun Cho." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Lan-",
+      "citeRegEx" : "Firat et al\\.,? 2016",
+      "shortCiteRegEx" : "Firat et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Complete multilingual neural machine translation",
+      "author" : [ "Markus Freitag", "Orhan Firat." ],
+      "venue" : "Proceedings of the Fifth Conference on Machine Translation, pages 550–560, Online. Association for Computational Linguistics.",
+      "citeRegEx" : "Freitag and Firat.,? 2020",
+      "shortCiteRegEx" : "Freitag and Firat.",
+      "year" : 2020
+    }, {
+      "title" : "Improved zero-shot neural machine translation via ignoring spurious correlations",
+      "author" : [ "Jiatao Gu", "Yong Wang", "Kyunghyun Cho", "Victor O.K. Li." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages",
+      "citeRegEx" : "Gu et al\\.,? 2019",
+      "shortCiteRegEx" : "Gu et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Achieving human parity on automatic chinese to english news translation",
+      "author" : [ "Wu", "Shuangzhi Wu", "Yingce Xia", "Dongdong Zhang", "Zhirui Zhang", "M. Zhou." ],
+      "venue" : "ArXiv, abs/1803.05567.",
+      "citeRegEx" : "Wu et al\\.,? 2018",
+      "shortCiteRegEx" : "Wu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Efficient inference for neural machine translation",
+      "author" : [ "Yi-Te Hsu", "Sarthak Garg", "Yi-Hsiu Liao", "Ilya Chatsviorkin." ],
+      "venue" : "arXiv preprint arXiv:2010.02416.",
+      "citeRegEx" : "Hsu et al\\.,? 2020",
+      "shortCiteRegEx" : "Hsu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Deep encoder, shallow decoder: Reevaluating the speed-quality tradeoff in machine translation",
+      "author" : [ "Jungo Kasai", "Nikolaos Pappas", "Hao Peng", "James Cross", "Noah A Smith." ],
+      "venue" : "arXiv preprint arXiv:2006.10369.",
+      "citeRegEx" : "Kasai et al\\.,? 2020",
+      "shortCiteRegEx" : "Kasai et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Sequencelevel knowledge distillation",
+      "author" : [ "Yoon Kim", "Alexander M. Rush." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 1317–1327, Austin, Texas. Association for Computational Linguistics.",
+      "citeRegEx" : "Kim and Rush.,? 2016",
+      "shortCiteRegEx" : "Kim and Rush.",
+      "year" : 2016
+    }, {
+      "title" : "SentencePiece: A simple and language independent subword tokenizer and detokenizer for neural text processing",
+      "author" : [ "Taku Kudo", "John Richardson." ],
+      "venue" : "Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing: System",
+      "citeRegEx" : "Kudo and Richardson.,? 2018",
+      "shortCiteRegEx" : "Kudo and Richardson.",
+      "year" : 2018
+    }, {
+      "title" : "Investigating multilingual NMT representations at scale",
+      "author" : [ "Sneha Kudugunta", "Ankur Bapna", "Isaac Caswell", "Orhan Firat." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International",
+      "citeRegEx" : "Kudugunta et al\\.,? 2019",
+      "shortCiteRegEx" : "Kudugunta et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An efficient transformer decoder with compressed sub-layers",
+      "author" : [ "Yanyang Li", "Ye Lin", "Tong Xiao", "Jingbo Zhu." ],
+      "venue" : "arXiv preprint arXiv:2101.00542.",
+      "citeRegEx" : "Li et al\\.,? 2021",
+      "shortCiteRegEx" : "Li et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "On the variance of the adaptive learning rate and beyond",
+      "author" : [ "Liyuan Liu", "Haoming Jiang", "Pengcheng He", "Weizhu Chen", "Xiaodong Liu", "Jianfeng Gao", "Jiawei Han." ],
+      "venue" : "8th International Conference on Learning Representations, ICLR 2020, Addis Ababa,",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "A call for clarity in reporting BLEU scores",
+      "author" : [ "Matt Post." ],
+      "venue" : "Proceedings of the Third Conference on Machine Translation: Research Papers, pages 186– 191, Belgium, Brussels. Association for Computational Linguistics.",
+      "citeRegEx" : "Post.,? 2018",
+      "shortCiteRegEx" : "Post.",
+      "year" : 2018
+    }, {
+      "title" : "COMET: A neural framework for MT evaluation",
+      "author" : [ "Ricardo Rei", "Craig Stewart", "Ana C Farinha", "Alon Lavie." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 2685–2702, Online. Associa-",
+      "citeRegEx" : "Rei et al\\.,? 2020",
+      "shortCiteRegEx" : "Rei et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "L ukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "On negative interference in multilingual models: Findings and a meta-learning treatment",
+      "author" : [ "Zirui Wang", "Zachary C. Lipton", "Yulia Tsvetkov." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Wang et al\\.,? 2020",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Improving multilingual translation by representation and gradient regularization",
+      "author" : [ "Yilin Yang", "Akiko Eriguchi", "Alexandre Muzio", "Prasad Tadepalli", "Stefan Lee", "Hany Hassan." ],
+      "venue" : "Proceedings of the 2021 Conference on Empirical Methods in Natural",
+      "citeRegEx" : "Yang et al\\.,? 2021",
+      "shortCiteRegEx" : "Yang et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Improving massively multilingual neural machine translation and zero-shot translation",
+      "author" : [ "Biao Zhang", "Philip Williams", "Ivan Titov", "Rico Sennrich." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 1628–",
+      "citeRegEx" : "Zhang et al\\.,? 2020",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Multi-source neural translation",
+      "author" : [ "Barret Zoph", "Kevin Knight." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 30–34, San Diego, Cali-",
+      "citeRegEx" : "Zoph and Knight.,? 2016",
+      "shortCiteRegEx" : "Zoph and Knight.",
+      "year" : 2016
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 17,
+      "context" : "Multilingual Neural Machine Translation (MNMT) has attracted much attention in the machine translation area, enabling one system to serve translation for multiple directions (Zoph and Knight, 2016; Firat et al., 2016).",
+      "startOffset" : 174,
+      "endOffset" : 217
+    }, {
+      "referenceID" : 0,
+      "context" : "Multilingual Neural Machine Translation (MNMT) has attracted much attention in the machine translation area, enabling one system to serve translation for multiple directions (Zoph and Knight, 2016; Firat et al., 2016).",
+      "startOffset" : 174,
+      "endOffset" : 217
+    }, {
+      "referenceID" : 2,
+      "context" : "However, recent work (Gu et al., 2019; Zhang et al., 2020; Yang et al., 2021) pointed out that such MNMT systems severely face an off-target translation issue, especially in translations from a non-English language X to another non-English language Y.",
+      "startOffset" : 21,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 16,
+      "context" : "However, recent work (Gu et al., 2019; Zhang et al., 2020; Yang et al., 2021) pointed out that such MNMT systems severely face an off-target translation issue, especially in translations from a non-English language X to another non-English language Y.",
+      "startOffset" : 21,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 15,
+      "context" : "However, recent work (Gu et al., 2019; Zhang et al., 2020; Yang et al., 2021) pointed out that such MNMT systems severely face an off-target translation issue, especially in translations from a non-English language X to another non-English language Y.",
+      "startOffset" : 21,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 8,
+      "context" : "To balance the data distribution across languages (Kudugunta et al., 2019), we upsample the low-resource languages with tempera-",
+      "startOffset" : 50,
+      "endOffset" : 74
+    }, {
+      "referenceID" : 7,
+      "context" : "We tokenize the data with the SentencePiece (Kudo and Richardson, 2018) and build a shared vocabulary with 64k tokens.",
+      "startOffset" : 44,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 13,
+      "context" : "We train Transformer models Base and Big (Vaswani et al., 2017) in a complete multilingual many-to-many fashion, respectively.",
+      "startOffset" : 41,
+      "endOffset" : 63
+    }, {
+      "referenceID" : 10,
+      "context" : "The model parameters are optimized by using RAdam (Liu et al., 2020) with an initial learning",
+      "startOffset" : 50,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 11,
+      "context" : "Results All results on the test sets are displayed in Figure 1, where we report the case-sensitive sacreBLEU score (Post, 2018) for translation accu-",
+      "startOffset" : 115,
+      "endOffset" : 127
+    }, {
+      "referenceID" : 5,
+      "context" : "Recent studies (Kasai et al., 2020; Hsu et al., 2020; Li et al., 2021) have experimentally",
+      "startOffset" : 15,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 4,
+      "context" : "Recent studies (Kasai et al., 2020; Hsu et al., 2020; Li et al., 2021) have experimentally",
+      "startOffset" : 15,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 9,
+      "context" : "Recent studies (Kasai et al., 2020; Hsu et al., 2020; Li et al., 2021) have experimentally",
+      "startOffset" : 15,
+      "endOffset" : 70
+    }, {
+      "referenceID" : 12,
+      "context" : "Employing this light model architecture as a student model, we report the distilled many-to-one model performance in Table 1, measured by sacreBLEU and COMET (Rei et al., 2020) scores.",
+      "startOffset" : 158,
+      "endOffset" : 176
+    } ],
+    "year" : 0,
+    "abstractText" : "Multilingual Neural Machine Translation (MNMT) enables one system to translate sentences from multiple source languages to multiple target languages, greatly reducing deployment costs compared with conventional bilingual systems. The MNMT training benefit, however, is often limited to many-to-one directions. The model suffers from poor performance in one-to-many and zero-shot directions. To address the issue, this paper discusses how to practically build MNMT systems that serve arbitrary XY translation directions while leveraging multilinguality with the two-stage training strategy of pretraining and finetuning. Experimenting in the WMT’21 multilingual translation task, we demonstrate that our systems outperform the conventional baselines of direct bilingual models and pivot translation models for most directions, averagely giving +6.0 and +4.1 BLEU, without the need for architecture change or extra data collection. Moreover, we also examine our proposed approach in an extremely large-scale data setting to accommodate practical deployment scenarios.",
+    "creator" : null
+  }
+}

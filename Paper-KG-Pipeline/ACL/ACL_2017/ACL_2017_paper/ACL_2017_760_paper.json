@@ -1,0 +1,617 @@
+{
+  "name" : "ACL_2017_760_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : null,
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "The last few years have seen much success of applying neural networks to many important applications in natural language processing, e.g., partof-speech tagging, chunking, named entity recognition (Collobert et al., 2011), sentiment analysis (Socher et al., 2011, 2013), document classification (Kim, 2014; Le and Mikolov, 2014; Zhang et al., 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever\net al., 2014; Bahdanau et al., 2014; Sennrich et al., 2015; Wu et al., 2016), conversational/dialogue modeling (Sordoni et al., 2015; Vinyals and Le, 2015; Shang et al., 2015), document summarization (Rush et al., 2015; Nallapati et al., 2016), parsing (Andor et al., 2016) and automatic question answering (Q&A) (Weston et al., 2015; Hermann et al., 2015; Wang and Jiang, 2016; Wang et al., 2016; Trischler et al., 2016; Lee et al., 2016; Seo et al., 2016; Xiong et al., 2016). An important trait of all these models is that they read all the text available to them. While it is essential for certain applications, such as machine translation, this trait also makes it difficult to apply these models to scenarios that have long input text, such as document classification or automatic Q&A.\nIn this paper, we consider the problem of understanding long documents with partial reading, and propose a modification to the basic neural architectures that allows them to read input text nonsequentially. The main benefit of this approach is faster inference because it skips irrelevant information. An unexpected benefit of this approach is that it also helps the models generalize better.\nIn our approach, the model is a recurrent network, which learns to predict the number of jumping steps after it reads one or several input tokens. Such a discrete model is therefore not fully differentiable, but it can be trained by a standard policy gradient algorithm, where the reward can be the accuracy or its proxy during training.\nIn our experiments, we use the basic LSTM recurrent networks (Hochreiter and Schmidhuber, 1997) as the base model and benchmark the proposed algorithm on a range of document classification or reading comprehension tasks, such as Rotten Tomatoes (Pang and Lee, 2005), IMDB (Maas et al., 2011), AG News (Zhang et al., 2015) and Children’s Book Test (Hill et al., 2015). We find that the proposed approach of non-sequential read-\ning speeds up its sequential counterpart by two to six times. Surprisingly, we also observe our model beats the standard LSTM in terms of accuracy.\nIn summary, the main contribution of our work is to design an architecture that learns to read text non-sequentially and show that it is both faster and more accurate in practical applications of text processing. Our model is simple and flexible enough that we anticipate it be able to incorporate to recurrent nets with more sophisticated structures to achieve even better performance in the future."
+    }, {
+      "heading" : "2 Methodology",
+      "text" : "In this section, we introduce the proposed model named LSTM-Jump. We will first describe its main structure followed by the difficulty of estimating part of the model parameters because of non-differentiability. To address this issue, we appeal to a reinforcement learning formulation and adopt a policy gradient method."
+    }, {
+      "heading" : "2.1 Model Overview",
+      "text" : "The main architecture of the proposed model is shown in Figure 1, which is based on an LSTM recurrent neural network. Before training, the number of jumps N allowed, the number of tokens read between every two jumps R and the maximum size of jumping K are chosen ahead of time. While K is a fixed parameter of the model, N and R are hyperparameters that can vary between training and testing. We summarize those notations in Table 2, such that one can refer to when reading the experiment results in Section 3. Also, throughout the paper, we would use d1:p to denote a sequence d1, d2, ..., dp.\nIn the following, we describe in detail how the model operates when processing text. Given a\ntraining example x1:T , the recurrent network will read the embedding of the first R tokens x1:R and output the hidden state. Then this state is used to compute the jumping softmax that determines a distribution over the jumping steps between 1 and K. The model then samples from this distribution a jumping step, which is used to decide the next token to be read into the model. Let κ be the sampled value, then the next starting token is xR+κ. Such process continues until either\na) the jump softmax samples a 0; or b) the number of jumps exceeds N ; or c) the model reaches the last token xT .\nAfter stopping, the latest hidden state is further used for predicting desired targets. How to leverage the hidden state depends on the specifics of the task at hand. For example, in classification problems of Section 3.1, 3.2 and 3.3, it is directly applied to produce a softmax for classification, while in automatic Q&A problem of Section 3.4, it is used to compute the correlation with the candidate answers in order to select the best one. Figure 1 gives an example withK = 5, R = 2 andN = 10 terminating on condition a)."
+    }, {
+      "heading" : "2.2 Training with REINFORCE",
+      "text" : "Our goal for training is to estimate the LSTM and possibly word embedding parameters θm, together with the jumping action parameters θa. Once obtained, they can be used for inference.\nThe estimation of θm is straightforward in the tasks that can be reduced as classification problems (which is exactly what our experiments cover), as the cross entropy objective J1(θm) is differentiable over θm that we can directly apply backpropagation to minimize.\nHowever, the nature of discrete jumping deci-\nsions made at every step makes it difficult to estimate θa, as cross entropy is no longer differentiable over θa. Therefore, we are tempted to formulate it as a reinforcement learning problem and apply policy gradient method to train the model. Specifically, we need to maximize a reward function over θa which can be constructed as follows.\nLet j1:N be the jumping actions sequence during the training with an example x1:T . Suppose hi is a hidden state of the LSTM right before the i-th jump ji,1 then it is a function of j1:i−1 and thus can be denoted as hi(j1:i−1). Now the jump is attained by sampling from the multinomial distribution p(ji|hi(j1:i−1); θa), which is determined by the jump softmax. We can receive a reward R after processing x1:T under the current jumping strategy.2 The reward should be positive if the output is favorable or non-positive otherwise. In our experiments, we choose\nR = { 1 if prediction correct; −1 otherwise.\nThen the objective function of θa we want to maximize is the expected reward under the distribution defined by the current jumping policy, i.e.,\nJ2(θa) = Ep(j1:N ;θa)[R]. (1)\nwhere p(j1:N ; θa) = ∏ i p(j1:i|hi(j1:i−1); θa).\nOptimizing this objective numerically requires computing its gradient, whose exact value is intractable to obtain as the expectation is over high dimensional interaction sequences. By running S examples, an approximated gradient can be computed by the following REINFORCE algorithm (Williams, 1992): ∇θaJ2(θa) = N∑ i=1 Ep(j1:N ;θa)[∇θa log p(j1:i|hi; θa)R]\n≈ 1 S S∑ s=1 N∑ i=1 [∇θa log p(js1:i|hsi ; θa)Rs]\nwhere the superscript s denotes a quantity belonging to the s-th example. Now the term ∇θa log p(j1:i|hi; θa) can be computed by standard backpropagation.\n1The i-th jumping step is usually not xi. 2In the general case, one may receive (discounted) intermediate rewards after each jump. But in our case, we only consider final reward. It is equivalent to a special case that all intermediate rewards are identical and without discount.\nAlthough the above estimation of ∇θaJ2(θa) is unbiased, it may have very high variance. One widely used remedy to reduce the variance is to subtract a baseline value bsi from the reward R\ns, such that the approximated gradient becomes\n∇θaJ2(θa) ≈ 1\nS S∑ s=1 N∑ i=1 [∇θa log p(js1:i|hsi ; θ)(Rs−bsi )]\nIt is shown (Williams, 1992; Zaremba and Sutskever, 2015) that any number bsi will yield an unbiased estimation. Here, we adopt the strategy of Mnih et al. (2014) that bsi = wbh s i + cb and the parameter θb = {wb, cb} is learned by minimizing (Rs− bsi )2. Now the final objective to minimize is J(θm, θa, θb) = J1(θm)−J2(θa)+ S∑ s=1 N∑ i=1 (Rs−bsi )2,\nwhich is fully differentiable and can be solved by standard backpropagation."
+    }, {
+      "heading" : "2.3 Inference",
+      "text" : "During inference, we can either use sampling or greedy evaluation by selecting the most probable jumping step suggested by the jump softmax and follows that path. In the our experiments, we will adopt the sampling scheme."
+    }, {
+      "heading" : "3 Experimental Results",
+      "text" : "In this section, we present our empirical studies to understand the efficiency of the proposed model in reading text. The tasks under experimentation are: synthetic number prediction, sentiment analysis, news topic classification and automatic question answering. Those are representative tasks in text reading involving different sizes of datasets and various levels of text processing, from character to word and to sentence. Table 1 summarizes the statistics of the dataset in our experiments.\nTo exclude the potential impact of advanced models, we restrict our comparison between the vanilla LSTM (Hochreiter and Schmidhuber, 1997) and our model, which is referred to as LSTM-Jump. In a nutshell, we show that, while achieving the same or even better testing accuracy, our model is up to 6 times and 66 times faster than the baseline LSTM model in real and synthetic datasets, respectively, as we are able to selectively skip a large fraction of text.\nIn fact, the proposed model can be readily extended to other recurrent neural networks with sophisticated mechanisms such as attention and/or\nhierarchical structure to achieve higher accuracy than those presented below. However, this is orthogonal to the main focus of this work and would be left as an interesting future work.\nGeneral Experiment Settings We use the Adam optimizer (Kingma and Ba, 2014) with a learning rate of 0.001 in all experiments. We also apply gradient clipping to all the trainable variables with the threshold of 1.0. The dropout rate between the LSTM layers is 0.2 and the embedding dropout rate is 0.1. We repeat the notations N,K,R defined previously in Table 2, such that reader can easily refer to when looking at in Tables 4,5,6,7. While K is fixed during both training and testing, we would fix R and N at training but vary their values during test to see how the change of parameters affects the result. Besides, the reported test time is measured by running one pass of the whole test set and the speedup is over the base LSTM model. The code is written with TensorFlow.3"
+    }, {
+      "heading" : "3.1 Number Prediction with a Synthetic Dataset",
+      "text" : "First of all, we carry out the sanity check of whether LSTM-Jump is indeed able to learn how to jump if a very clear jumping signal is given in the text. The input of the task is a sequence of L positive integers x0:T−1 and the output is simply xx0 . That is, the output is chosen from the input sequence, with index determined by x0 . Here are\n3https://www.tensorflow.org/\ntwo examples to illustrate this idea:\ninput1 : 4, 5, 1, 7, 6, 2. output1 : 6\ninput2 : 2, 4, 9, 4, 5, 6. output2 : 9\nOne can see that a0 is essentially the indicator of how many steps the reading should jump to get the exact output and obviously, the remaining number of the sequence are useless. After reading the first token, a “smart” network should be able to learn from the training examples to jump to the output position, skipping the rest.\nWe generate 1 million training and 10,000 validation examples with the rule above, each with sequence length T = 100. We also impose 1 ≤ x0 < T to ensure the index is valid. We find that directly training the LSTM-Jump with full sequence is unlikely to converge, therefore, we adopt a curriculum training scheme. More specifically, we generate sequences with lengths {10, 20, 30, 40, 50, 60, 70, 80, 90, 100} and train the model starting from the shortest. Whenever the training accuracy reaches a threshold, we shift to longer sequences. The training stops when the validation accuracy is larger than 98%. We also train an LSTM with the same curriculum training scheme to conduct the prediction. All the networks are single layered, with hidden size 512, embedding size 32 and batch size 100. During testing, we generate sequences of lengths 10, 100 and 1000 with the same rule, each having 10,000 examples. As the training size is huge, we do not need to worry about overfitting so dropout is not applied. In fact, we find that the training, validation and testing accuracies are almost the same.\nThe results of LSTM and our method, LSTMJump, are shown in Table 3. The first observation is that LSTM-Jump is faster than LSTM; the longer the sequence is, the more significant speedup LSTM-Jump can gain. This is because LSTMJump is aware of the jumping signal at the first token and hence can directly jump to the output position to make prediction, while LSTM is agnostic to the signal and has to read the whole se-\nquence. Thanks to this fact, the reading speed of LSTM-Jump is hardly affected by the length of sequence, but that of LSTM is linear with respect to length. Besides, LSTM-Jump also outperforms LSTM in terms of test accuracy under all cases. This is not surprising either, as LSTM has to read a large amount of tokens that are potentially not helpful and could interfere with the prediction. In summary, the results indicate LSTM-Jump is able to learn to “jump” when the signal is very clear."
+    }, {
+      "heading" : "3.2 Word Level Sentiment Analysis with Rotten Tomatoes and IMDB datasets",
+      "text" : "As LSTM-Jump has shown great speedups in the synthetic dataset, we would like to understand whether it could carry this benefit to real-world data, where “jumping” signal is not explicit. So in this section, we conduct sentiment analysis on two movie review datasets, both containing equal numbers of positive and negative reviews.\nThe first dataset is Rotten Tomatoes, which contains 10,662 documents. Since there is not a standard split, we randomly select around 80% for training, 10% for validation, and 10% for testing. The average and maximum lengths of the reviews are 22 and 56 words respectively, and we pad each of them to 60. We choose the pre-trained word2vec embeddings4 (Mikolov et al., 2013) as our fixed word embedding that we do not update this matrix during training. Both LSTM-Jump and LSTM contain 2 layers, 256 hidden units and the batch size is 100. As the amount of training data is small, we slightly augment the data by sampling a continuous 50-word sequence in each padded reviews as one training sample. During training, we enforce LSTM-Jump to read 8 tokens before a jump (R = 8), and the maximum skipping to-\n4https://code.google.com/archive/p/ word2vec/\nkens per jump is 10 (K = 10), while the number of jumps allowed is 3 (N = 3).\nThe testing result is reported in Table 4. In a nutshell, LSTM-Jump is always faster than LSTM under different combinations of R and N . At the same time, the accuracy is on par with that of LSTM. In particular, the combination of (R,N) = (7, 4) even achieves slightly better accuracy than LSTM while having a 1.5x speedup.\nThe second dataset of interest is IMDB (Maas et al., 2011),5 which contains 25,000 training and 25,000 testing movie reviews, where the average length of text is 240 words, much longer than that of Rotten Tomatoes. We randomly set aside about 15% of training data as validation set. Both LSTM-Jump and LSTM has one layer and 128 hidden units, and the batch size is 50. Again, we use pretrained word2vec embeddings as initialization but they are updated during training. We either pad a short sequence to 400 words or randomly select a 400-word segment from a long sequence as a training example. The number of tokens read before a jump is set to R = 20, maximum skipping tokens per jump is K = 40 and the maximum number of jumps is N = 5.\nAs Table 5 shows, the result exhibits a similar trend as found in Rotten Tomatoes that LSTM-\n5http://ai.Stanford.edu/amaas/data/ sentiment/index.html\nJump is uniformly faster than LSTM under many settings. The various (R,N) combinations again display the trade-off between efficiency and accuracy. If one cares more about accuracy, then allowing LSTM-Jump to read and jump more times is a good choice. Otherwise, shrinking either one would bring a significant speedup though at the price of losing some accuracy. Nevertheless, the configuration with the highest accuracy still enjoys a 1.6x speedup compared to LSTM. With a slight loss of accuracy, LSTM-Jump can be 2.5x faster ."
+    }, {
+      "heading" : "3.3 Character Level News Article Classification with AG dataset",
+      "text" : "We now present results on testing the character level jumping with a news article classification problem. The data contains four classes of topics (World, Sports, Business, Sci/Tech) from the AG’s news corpus,6 a collection of more than 1 million news articles. The data we use is the subset constructed by Zhang et al. (2015) for classification with character-level convolutional networks. There are 30,000 training and 1900 testing examples for each class respectively, where 15% of training are set aside as validation. The nonspace alphabet under use are:\nabcdefghijklmnopqrstuvwxyz0123456 789-,;.!?:/\\|_@#$%&* +-=<>()[]{}\nSince the vocabulary size is small, we choose 16 as the embedding size. The initialized entries of the embedding matrix are drawn from a uniform distribution in [−0.25, 0.25], which are progressively updated during training. Both LSTM-Jump and LSTM have 1 layer and 64 hidden units and the batch sizes are 20 and 100 respectively. The training sequence is again of length 400 that it is either padded from a short sequence or sampled from a long one. The number of characters read before a jump is R = 30, the maximum span per jump is K = 40 and N = 5 jumps are allowed at training.\nThe result is summarized in Table 6. Not surprisingly, LSTM-Jump outperforms LSTM in terms of both efficiency and accuracy, although the advantage in speedup is not as significant as that in the previous tasks. This is mainly due to the fact that the embedding size and hidden are both much smaller than those used previously, and accordingly the processing of a token is much faster. In that case, other computation overhead such as\n6http://www.di.unipi.it/˜gulli/AG_ corpus_of_news_articles.html\ncalculating and sampling from the jump softmax might become a dominating factor of efficiency. By this cross-tasks comparison, we can see that the larger the recurrent neural network and the embedding are, the more speedup LSTM-Jump can gain, which is also confirmed by the task below."
+    }, {
+      "heading" : "3.4 Sentence Level Automatic Question Answering with Children’s Book Test dataset",
+      "text" : "The last task is automatic question answering, in which we aim to test the sentence level skimming of LSTM-Jump. We benchmark on the data set Children’s Book Test (CBT) (Hill et al., 2015).7 In each document, there are 20 contiguous sentences (context) extracted from a children’s book followed by a query sentence. A word of the query is deleted and the task is to select the best fit for this position from 10 candidates. Originally, there are 4 types of tasks according to the part of speech of the missing word, from which, we choose the most difficult two, i.e., the name entity (NE) and common noun (CN) as our focus, since simple language models can already achieve human-level performance for the rest two types .\nThe models, LSTM or LSTM-Jump, firstly read the whole query, then the context sentences and finally output the predicted word. While LSTM reads everything, our jumping model would decide how many context sentences should skip after reading one sentence. Whenever a model finishes reading, the context and query are encoded in its hidden state ho, and the best answer from the candidate words has the same index that maximizes the following:\nsoftmax(CWho) ∈ R10,\n7http://www.thespermwhale.com/ jaseweston/babi/CBTest.tgz\nwhere C ∈ R10×d is the word embedding matrix of the 10 candidates and W ∈ Rd×hidden size is a trainable weight variable. Using such bilinear form to select answer basically follows the idea of Chen et al. (2016), as it is shown to have good performance. The task is now distilled to a classification problem of 10 classes.\nWe either truncate or pad each context sentence, such that they all have length 20. The same preprocessing is applied to the query sentences except that the length is set 30. For both models, the number of layers is 2, the hidden units are 256 and the batch size is 32. Pretrained word2vec embeddings are again used and they are not adjusted during training. The maximum number of context sentences LSTM-Jump can skip per time is K = 5 while the number of total jumping is limited to N = 5. We let the model jump after reading every sentence, so R = 1 (20 words).\nThe result is reported in Table 7. The performance of LSTM-Jump is superior to LSTM in terms of both accuracy and efficiency under all settings in our experiments. In particular, the fastest LSTM-Jump configuration achieves a remarkable 6x speedup over LSTM, while also having respectively 1.4% and 4.4% higher accuracy in Children’s Book Test - Named Entity and Children’s Book Test - Common Noun.\nThe dominant performance of LSTM-Jump over LSTM might be interpreted as follows. After reading the query, both LSTM and LSTM-Jump know what the question is. However, LSTM still has to process the remaining 20 sentences and thus at the very end of the last sentence, the long dependency between the question and output might become weak that the prediction is hampered. On the contrary, the question can guide LSTM-Jump\non how to read selectively and stop early when the answer is clear. Therefore, when it comes to the output stage, the “memory” is both fresh and uncluttered that a more accurate answer is likely to be picked.\nBelow is an example of how the model reads a test context given a query (bold face sentences are those read by our model in the increasing order). XXXXX is the missing word we want to fill.\n(a) Query: ‘XXXXX! (b) Context: 1. said Big Klaus, and he ran off at once to\nLittle Klaus. 2. ‘Where did you get so much money from?’ 3. ‘Oh, that was from my horse-skin. 4. I sold it yesterday evening.’ 5. ‘That ’s certainly a good price!’ 6. said Big Klaus; and running home in great\nhaste, he took an axe, knocked all his four 7. ‘Skins! 8. skins! 9. Who will buy skins?’\n10. he cried through the streets. 11. All the shoemakers and tanners came running\nto ask him what he wanted for them.’ 12. A bushel of money for each,’ said Big\nKlaus. 13. ‘Are you mad?’ 14. they all exclaimed. 15. ‘Do you think we have money by the bushel?’ 16. ‘Skins! 17. skins! 18. Who will buy skins?’ 19. he cried again, and to all who asked him what\nthey cost, he answered,’ A bushel 20. ‘He is making game of us,’ they said; and the\nshoemakers seized their yard measures and (c) Candidates: Klaus | Skins | game | haste |\nhead | home | horses | money | price| streets (d) Answer: Skins\nThe reading behavior might be interpreted as follows. The model tries to search for clues, and after reading sentence 8, it realizes that the most plausible answer is “Klaus” or “Skins”, as they both appear twice. “Skins” is more likely to be the answer as it is followed by a “!”. The model searches further to see if ”Klaus!” is mentioned somewhere, but it only finds “Klaus” without “!” for the third time. After the last attempt at sentence 14, it is confident about the answer and stops to output with “Skins”."
+    }, {
+      "heading" : "4 Related Work",
+      "text" : "Closely related to our work is the idea of learning visual attention with neural networks (Mnih et al., 2014; Ba et al., 2014; Sermanet et al., 2014), where a recurrent model is used to combine visual evidence at multiple fixations processed by a convolutional neural network. Similar to our approach, the model is trained end-to-end using the REINFORCE algorithm (Williams, 1992). However, a major difference between those work and ours is that we have to sample from discrete jumping distribution, while they can sample from continuous distribution such as Gaussian. The difference is mainly due to the inborn characteristics of text and image. In fact, as pointed out by Mnih et al. (2014), it was difficult to learn policies over more than 25 possible discrete locations.\nThis idea has recently been explored in the context of natural language processing applications, where the main goal is to filter irrelevant content using a small network (Choi et al., 2016). Perhaps most closely related to our work is the concurrent work on learning to reason with reinforcement learning (Shen et al., 2016). The key difference between our work and Shen et al. (2016) is that they focus on early stopping after multiple pass of data to ensure accuracy whereas our method focuses on selective reading with single pass to enable fast processing.\nThe concept of “hard” attention has also used successfully in the context of making neural network predictions more interpretable (Lei et al., 2016). The key difference between our work and Lei et al. (2016)’s method is that our method optimizes for faster inference, and is more dynamic in its jumping. Likewise is the difference between our approach and the “soft” attention approach by (Bahdanau et al., 2014).\nOur method belongs to adaptive computation of neural networks, whose idea is recently explored by (Graves, 2016; Jernite et al., 2016), where different amount of computations are allocated dynamically per time step. The main difference between our method and Graves; Jernite et al.’s methods is that our method can set the amount of computation to be exactly zero for many steps, thereby achieving faster scanning over texts. Even though our method requires policy gradient methods to train, which is a disadvantage compared to (Graves, 2016; Jernite et al., 2016), we do not find training with policy gradient methods prob-\nlematic in our experiments. At the high-level, our model can be viewed as a simplified trainable Turing machine, where the controller can move on the input tape. It is therefore related to the prior work on Neural Turing Machines (Graves et al., 2014) and especially its RL version (Zaremba and Sutskever, 2015). Compared to (Zaremba and Sutskever, 2015), the output tape in our method is more simple and reward signals in our problems are less sparse, which explains why our model is easy to train. It is worth noting that Zaremba and Sutskever report difficulty in using policy gradients to train their model.\nOur method, by skipping irrelevant content, shortens the length of recurrent networks, thereby addressing the vanishing or exploding gradients in them (Hochreiter et al., 2001). The baseline method itself, Long Short Term Memory (Hochreiter and Schmidhuber, 1997), belongs to the same category of methods. In this category, there are several recent methods that try to achieve the same goal, such as having recurrent networks that operate in different frequency (Koutnik et al., 2014) or is organized in a hierarchical fashion (Chan et al., 2015; Chung et al., 2016)."
+    }, {
+      "heading" : "5 Conclusion and Future Work",
+      "text" : "In this paper, we focus on learning how to skim text for fast reading. In particular, we propose a “jumping” model that after reading every few tokens, it decides how many tokens should be skipped by sampling from a softmax. Such jumping behavior is modeled as a discrete decision making process, which can be trained by reinforcement learning algorithm such as REINFORCE. In four different tasks with six datasets, we test the efficiency of the proposed method on various levels of text jumping, from character to to word and to sentence. The results indicate our model is several times faster than, while the accuracy is on par with the baseline LSTM model.\nAs an important future work, we hope to extend our model to a bidirectional jumping network, such that it can jump back and forth and possibly pay more attention to the important part of text. We would also like to incorporate our model with advanced neural networks such as memory network (Weston et al., 2014), and/or with sophisticated mechanisms like attention (Bahdanau et al., 2014), and/or with hierarchical structure (Choi et al., 2016) to build a more accurate model."
+    } ],
+    "references" : [ {
+      "title" : "Globally normalized transition-based neural networks",
+      "author" : [ "Daniel Andor", "Chris Alberti", "David Weiss", "Aliaksei Severyn", "Alessandro Presta", "Kuzman Ganchev", "Slav Petrov", "Michael Collins." ],
+      "venue" : "arXiv preprint arXiv:1603.06042 .",
+      "citeRegEx" : "Andor et al\\.,? 2016",
+      "shortCiteRegEx" : "Andor et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Multiple object recognition with visual attention",
+      "author" : [ "Jimmy Ba", "Volodymyr Mnih", "Koray Kavukcuoglu." ],
+      "venue" : "arXiv preprint arXiv:1412.7755 .",
+      "citeRegEx" : "Ba et al\\.,? 2014",
+      "shortCiteRegEx" : "Ba et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1409.0473 .",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Listen, attend and spell",
+      "author" : [ "William Chan", "Navdeep Jaitly", "Quoc V Le", "Oriol Vinyals." ],
+      "venue" : "arXiv preprint arXiv:1508.01211 .",
+      "citeRegEx" : "Chan et al\\.,? 2015",
+      "shortCiteRegEx" : "Chan et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A thorough examination of the cnn/daily mail reading comprehension task",
+      "author" : [ "Danqi Chen", "Jason Bolton", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics, ACL 2016, Au-",
+      "citeRegEx" : "Chen et al\\.,? 2016",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Hierarchical question answering for long documents",
+      "author" : [ "Eunsol Choi", "Daniel Hewlett", "Alexandre Lacoste", "Illia Polosukhin", "Jakob Uszkoreit", "Jonathan Berant." ],
+      "venue" : "arXiv preprint arXiv:1611.01839 .",
+      "citeRegEx" : "Choi et al\\.,? 2016",
+      "shortCiteRegEx" : "Choi et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Hierarchical multiscale recurrent neural networks",
+      "author" : [ "Junyoung Chung", "Sungjin Ahn", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1609.01704 .",
+      "citeRegEx" : "Chung et al\\.,? 2016",
+      "shortCiteRegEx" : "Chung et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Natural language processing (almost) from scratch",
+      "author" : [ "Ronan Collobert", "Jason Weston", "Léon Bottou", "Michael Karlen", "Koray Kavukcuoglu", "Pavel Kuksa." ],
+      "venue" : "Journal of Machine Learning Research 12(Aug):2493–2537.",
+      "citeRegEx" : "Collobert et al\\.,? 2011",
+      "shortCiteRegEx" : "Collobert et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Semisupervised sequence learning",
+      "author" : [ "Andrew M. Dai", "Quoc V. Le." ],
+      "venue" : "Advances in Neural Information Processing Systems. pages 3079– 3087.",
+      "citeRegEx" : "Dai and Le.,? 2015",
+      "shortCiteRegEx" : "Dai and Le.",
+      "year" : 2015
+    }, {
+      "title" : "Adaptive computation time for recurrent neural networks",
+      "author" : [ "Alex Graves." ],
+      "venue" : "arXiv preprint arXiv:1603.08983 .",
+      "citeRegEx" : "Graves.,? 2016",
+      "shortCiteRegEx" : "Graves.",
+      "year" : 2016
+    }, {
+      "title" : "Neural turing machines",
+      "author" : [ "Alex Graves", "Greg Wayne", "Ivo Danihelka." ],
+      "venue" : "arXiv preprint arXiv:1410.5401 .",
+      "citeRegEx" : "Graves et al\\.,? 2014",
+      "shortCiteRegEx" : "Graves et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Teaching machines to read and comprehend",
+      "author" : [ "Karl Moritz Hermann", "Tomas Kocisky", "Edward Grefenstette", "Lasse Espeholt", "Will Kay", "Mustafa Suleyman", "Phil Blunsom." ],
+      "venue" : "Advances in Neural Information Processing Systems. pages 1693–",
+      "citeRegEx" : "Hermann et al\\.,? 2015",
+      "shortCiteRegEx" : "Hermann et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "The goldilocks principle: Reading children’s books with explicit memory representations",
+      "author" : [ "Felix Hill", "Antoine Bordes", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "arXiv:1511.02301 .",
+      "citeRegEx" : "Hill et al\\.,? 2015",
+      "shortCiteRegEx" : "Hill et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Gradient flow in recurrent nets: the difficulty of learning long-term dependencies",
+      "author" : [ "Sepp Hochreiter", "Yoshua Bengio", "Paolo Frasconi", "Jürgen Schmidhuber." ],
+      "venue" : "S. C. Kremer and J. F. Kolen, editors, A Field Guide to Dynamical Recurrent Neural Net-",
+      "citeRegEx" : "Hochreiter et al\\.,? 2001",
+      "shortCiteRegEx" : "Hochreiter et al\\.",
+      "year" : 2001
+    }, {
+      "title" : "Long short-term memory",
+      "author" : [ "Sepp Hochreiter", "Jürgen Schmidhuber." ],
+      "venue" : "Neural computation 9(8):1735–1780.",
+      "citeRegEx" : "Hochreiter and Schmidhuber.,? 1997",
+      "shortCiteRegEx" : "Hochreiter and Schmidhuber.",
+      "year" : 1997
+    }, {
+      "title" : "Variable computation in recurrent neural networks",
+      "author" : [ "Yacine Jernite", "Edouard Grave", "Armand Joulin", "Tomas Mikolov." ],
+      "venue" : "arXiv preprint arXiv:1611.06188 .",
+      "citeRegEx" : "Jernite et al\\.,? 2016",
+      "shortCiteRegEx" : "Jernite et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Recurrent continuous translation models",
+      "author" : [ "Nal Kalchbrenner", "Phil Blunsom." ],
+      "venue" : "EMNLP.",
+      "citeRegEx" : "Kalchbrenner and Blunsom.,? 2013",
+      "shortCiteRegEx" : "Kalchbrenner and Blunsom.",
+      "year" : 2013
+    }, {
+      "title" : "Convolutional neural networks for sentence classification",
+      "author" : [ "Yoon Kim." ],
+      "venue" : "arXiv preprint arXiv:1408.5882 .",
+      "citeRegEx" : "Kim.,? 2014",
+      "shortCiteRegEx" : "Kim.",
+      "year" : 2014
+    }, {
+      "title" : "Adam: A method for stochastic optimization",
+      "author" : [ "Diederik Kingma", "Jimmy Ba." ],
+      "venue" : "arXiv preprint arXiv:1412.6980 .",
+      "citeRegEx" : "Kingma and Ba.,? 2014",
+      "shortCiteRegEx" : "Kingma and Ba.",
+      "year" : 2014
+    }, {
+      "title" : "A clockwork rnn",
+      "author" : [ "Jan Koutnik", "Klaus Greff", "Faustino Gomez", "Juergen Schmidhuber." ],
+      "venue" : "International Conference on Machine Learning.",
+      "citeRegEx" : "Koutnik et al\\.,? 2014",
+      "shortCiteRegEx" : "Koutnik et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Distributed representations of sentences and documents",
+      "author" : [ "Quoc V. Le", "Tomas Mikolov." ],
+      "venue" : "International Conference on Machine Learning (ICML).",
+      "citeRegEx" : "Le and Mikolov.,? 2014",
+      "shortCiteRegEx" : "Le and Mikolov.",
+      "year" : 2014
+    }, {
+      "title" : "Learning recurrent span representations for extractive question answering",
+      "author" : [ "Kenton Lee", "Tom Kwiatkowski", "Ankur Parikh", "Dipanjan Das." ],
+      "venue" : "arXiv preprint arXiv:1611.01436 .",
+      "citeRegEx" : "Lee et al\\.,? 2016",
+      "shortCiteRegEx" : "Lee et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Rationalizing neural predictions",
+      "author" : [ "Tao Lei", "Regina Barzilay", "Tommi Jaakkola." ],
+      "venue" : "arXiv preprint arXiv:1606.04155 .",
+      "citeRegEx" : "Lei et al\\.,? 2016",
+      "shortCiteRegEx" : "Lei et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Learning word vectors for sentiment analysis",
+      "author" : [ "Andrew L Maas", "Raymond E Daly", "Peter T. Pham", "Dan Huang", "Andrew Y. Ng", "Christopher Potts." ],
+      "venue" : "Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Lan-",
+      "citeRegEx" : "Maas et al\\.,? 2011",
+      "shortCiteRegEx" : "Maas et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Distributed representations of words and phrases and their compositionality",
+      "author" : [ "Tomas Mikolov", "Ilya Sutskever", "Kai Chen", "Greg S Corrado", "Jeff Dean." ],
+      "venue" : "Advances in neural information processing systems. pages 3111–3119.",
+      "citeRegEx" : "Mikolov et al\\.,? 2013",
+      "shortCiteRegEx" : "Mikolov et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "Recurrent models of visual attention",
+      "author" : [ "Volodymyr Mnih", "Nicolas Heess", "Alex Graves" ],
+      "venue" : "In Advances in neural information processing systems",
+      "citeRegEx" : "Mnih et al\\.,? \\Q2014\\E",
+      "shortCiteRegEx" : "Mnih et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Abstractive text summarization using sequence-to-sequence RNNs and beyond",
+      "author" : [ "Ramesh Nallapati", "Bowen Zhou", "Caglar Gulcehre", "Bing Xiang" ],
+      "venue" : "In Conference on Computational Natural Language Learning (CoNLL)",
+      "citeRegEx" : "Nallapati et al\\.,? \\Q2016\\E",
+      "shortCiteRegEx" : "Nallapati et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Seeing stars: Exploiting class relationships for sentiment categorization with respect to rating scales",
+      "author" : [ "Bo Pang", "Lillian Lee." ],
+      "venue" : "Proceedings of the 43rd annual meeting on association for computational linguistics. Association for Computational",
+      "citeRegEx" : "Pang and Lee.,? 2005",
+      "shortCiteRegEx" : "Pang and Lee.",
+      "year" : 2005
+    }, {
+      "title" : "A neural attention model for abstractive sentence summarization",
+      "author" : [ "Alexander M Rush", "Sumit Chopra", "Jason Weston." ],
+      "venue" : "Empirical Methods in Natural Language Processing (EMNLP).",
+      "citeRegEx" : "Rush et al\\.,? 2015",
+      "shortCiteRegEx" : "Rush et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Neural machine translation of rare words with subword units",
+      "author" : [ "Rico Sennrich", "Barry Haddow", "Alexandra Birch." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Sennrich et al\\.,? 2015",
+      "shortCiteRegEx" : "Sennrich et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Bidirectional attention flow for machine comprehension",
+      "author" : [ "Minjoon Seo", "Aniruddha Kembhavi", "Ali Farhadi", "Hannaneh Hajishirzi." ],
+      "venue" : "arXiv preprint arXiv:1611.01603 .",
+      "citeRegEx" : "Seo et al\\.,? 2016",
+      "shortCiteRegEx" : "Seo et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Attention for fine-grained categorization",
+      "author" : [ "Pierre Sermanet", "Andrea Frome", "Esteban Real." ],
+      "venue" : "arXiv preprint arXiv:1412.7054 .",
+      "citeRegEx" : "Sermanet et al\\.,? 2014",
+      "shortCiteRegEx" : "Sermanet et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Neural responding machine for short-text conversation",
+      "author" : [ "Lifeng Shang", "Zhengdong Lu", "Hang Li." ],
+      "venue" : "Annual Meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Shang et al\\.,? 2015",
+      "shortCiteRegEx" : "Shang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Reasonet: Learning to stop reading in machine comprehension",
+      "author" : [ "Yelong Shen", "Po-Sen Huang", "Jianfeng Gao", "Weizhu Chen." ],
+      "venue" : "arXiv preprint arXiv:1609.05284 .",
+      "citeRegEx" : "Shen et al\\.,? 2016",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Semi-supervised recursive autoencoders for predicting sentiment distributions",
+      "author" : [ "Richard Socher", "Jeffrey Pennington", "Eric H. Huang", "Andrew Y. Ng", "Christopher D. Manning." ],
+      "venue" : "Proceedings of the conference on empirical methods in natural lan-",
+      "citeRegEx" : "Socher et al\\.,? 2011",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2011
+    }, {
+      "title" : "Recursive deep models for semantic compositionality over a sentiment treebank",
+      "author" : [ "Richard Socher", "Alex Perelygin", "Jean Y. Wu", "Jason Chuang", "Christopher D. Manning", "Andrew Y. Ng", "Christopher Potts" ],
+      "venue" : null,
+      "citeRegEx" : "Socher et al\\.,? \\Q2013\\E",
+      "shortCiteRegEx" : "Socher et al\\.",
+      "year" : 2013
+    }, {
+      "title" : "A neural network approach to context-sensitive generation of conversational responses",
+      "author" : [ "Alessandro Sordoni", "Michel Galley", "Michael Auli", "Chris Brockett", "Yangfeng Ji", "Margaret Mitchell", "Jian-Yun Nie", "Jianfeng Gao", "Bill Dolan." ],
+      "venue" : "arXiv preprint",
+      "citeRegEx" : "Sordoni et al\\.,? 2015",
+      "shortCiteRegEx" : "Sordoni et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V. Le." ],
+      "venue" : "Advances in neural information processing systems. pages 3104–3112.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "A parallel-hierarchical model for machine comprehension on sparse data",
+      "author" : [ "Adam Trischler", "Zheng Ye", "Xingdi Yuan", "Jing He", "Phillip Bachman", "Kaheer Suleman." ],
+      "venue" : "arXiv preprint arXiv:1603.08884 .",
+      "citeRegEx" : "Trischler et al\\.,? 2016",
+      "shortCiteRegEx" : "Trischler et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "A neural conversational model",
+      "author" : [ "Oriol Vinyals", "Quoc Le." ],
+      "venue" : "arXiv preprint arXiv:1506.05869 .",
+      "citeRegEx" : "Vinyals and Le.,? 2015",
+      "shortCiteRegEx" : "Vinyals and Le.",
+      "year" : 2015
+    }, {
+      "title" : "Machine comprehension using match-lstm and answer pointer",
+      "author" : [ "Shuohang Wang", "Jing Jiang." ],
+      "venue" : "arXiv preprint arXiv:1608.07905 .",
+      "citeRegEx" : "Wang and Jiang.,? 2016",
+      "shortCiteRegEx" : "Wang and Jiang.",
+      "year" : 2016
+    }, {
+      "title" : "Multi-perspective context matching for machine comprehension",
+      "author" : [ "Zhiguo Wang", "Haitao Mi", "Wael Hamza", "Radu Florian." ],
+      "venue" : "arXiv preprint arXiv:1612.04211 .",
+      "citeRegEx" : "Wang et al\\.,? 2016",
+      "shortCiteRegEx" : "Wang et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Towards ai-complete question answering: A set of prerequisite toy tasks",
+      "author" : [ "Jason Weston", "Antoine Bordes", "Sumit Chopra", "Alexander M Rush", "Bart van Merriënboer", "Armand Joulin", "Tomas Mikolov." ],
+      "venue" : "arXiv preprint arXiv:1502.05698 .",
+      "citeRegEx" : "Weston et al\\.,? 2015",
+      "shortCiteRegEx" : "Weston et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "Memory networks",
+      "author" : [ "Jason Weston", "Sumit Chopra", "Antoine Bordes." ],
+      "venue" : "arxiv:1410.3916 .",
+      "citeRegEx" : "Weston et al\\.,? 2014",
+      "shortCiteRegEx" : "Weston et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Simple statistical gradientfollowing algorithms for connectionist reinforcement learning",
+      "author" : [ "Ronald J. Williams." ],
+      "venue" : "Machine Learning 8:229–256.",
+      "citeRegEx" : "Williams.,? 1992",
+      "shortCiteRegEx" : "Williams.",
+      "year" : 1992
+    }, {
+      "title" : "Dynamic coattention networks for question answering",
+      "author" : [ "Caiming Xiong", "Victor Zhong", "Richard Socher." ],
+      "venue" : "arXiv preprint arXiv:1611.01604 .",
+      "citeRegEx" : "Xiong et al\\.,? 2016",
+      "shortCiteRegEx" : "Xiong et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Reinforcement learning neural turing machines-revised",
+      "author" : [ "Wojciech Zaremba", "Ilya Sutskever." ],
+      "venue" : "arXiv preprint arXiv:1505.00521 .",
+      "citeRegEx" : "Zaremba and Sutskever.,? 2015",
+      "shortCiteRegEx" : "Zaremba and Sutskever.",
+      "year" : 2015
+    }, {
+      "title" : "Character-level convolutional networks for text classification",
+      "author" : [ "Xiang Zhang", "Junbo Zhao", "Yann LeCun." ],
+      "venue" : "Advances in neural information processing systems. pages 649–657.",
+      "citeRegEx" : "Zhang et al\\.,? 2015",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2015
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 7,
+      "context" : ", partof-speech tagging, chunking, named entity recognition (Collobert et al., 2011), sentiment analysis (Socher et al.",
+      "startOffset" : 60,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 17,
+      "context" : ", 2011, 2013), document classification (Kim, 2014; Le and Mikolov, 2014; Zhang et al., 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al.",
+      "startOffset" : 39,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 20,
+      "context" : ", 2011, 2013), document classification (Kim, 2014; Le and Mikolov, 2014; Zhang et al., 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al.",
+      "startOffset" : 39,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 47,
+      "context" : ", 2011, 2013), document classification (Kim, 2014; Le and Mikolov, 2014; Zhang et al., 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al.",
+      "startOffset" : 39,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 8,
+      "context" : ", 2011, 2013), document classification (Kim, 2014; Le and Mikolov, 2014; Zhang et al., 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al.",
+      "startOffset" : 39,
+      "endOffset" : 110
+    }, {
+      "referenceID" : 16,
+      "context" : ", 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Bahdanau et al., 2014; Sennrich et al., 2015; Wu et al., 2016), conversational/dialogue modeling (Sordoni et al.",
+      "startOffset" : 47,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 37,
+      "context" : ", 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Bahdanau et al., 2014; Sennrich et al., 2015; Wu et al., 2016), conversational/dialogue modeling (Sordoni et al.",
+      "startOffset" : 47,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Bahdanau et al., 2014; Sennrich et al., 2015; Wu et al., 2016), conversational/dialogue modeling (Sordoni et al.",
+      "startOffset" : 47,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 29,
+      "context" : ", 2015; Dai and Le, 2015), machine translation (Kalchbrenner and Blunsom, 2013; Sutskever et al., 2014; Bahdanau et al., 2014; Sennrich et al., 2015; Wu et al., 2016), conversational/dialogue modeling (Sordoni et al.",
+      "startOffset" : 47,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 36,
+      "context" : ", 2016), conversational/dialogue modeling (Sordoni et al., 2015; Vinyals and Le, 2015; Shang et al., 2015), document summariza-",
+      "startOffset" : 42,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 39,
+      "context" : ", 2016), conversational/dialogue modeling (Sordoni et al., 2015; Vinyals and Le, 2015; Shang et al., 2015), document summariza-",
+      "startOffset" : 42,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 32,
+      "context" : ", 2016), conversational/dialogue modeling (Sordoni et al., 2015; Vinyals and Le, 2015; Shang et al., 2015), document summariza-",
+      "startOffset" : 42,
+      "endOffset" : 106
+    }, {
+      "referenceID" : 0,
+      "context" : ", 2016), parsing (Andor et al., 2016) and automatic question answering (Q&A) (Weston et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 14,
+      "context" : "In our experiments, we use the basic LSTM recurrent networks (Hochreiter and Schmidhuber, 1997) as the base model and benchmark the proposed algorithm on a range of document classification or reading comprehension tasks, such as Rotten Tomatoes (Pang and Lee, 2005), IMDB (Maas et al.",
+      "startOffset" : 61,
+      "endOffset" : 95
+    }, {
+      "referenceID" : 27,
+      "context" : "In our experiments, we use the basic LSTM recurrent networks (Hochreiter and Schmidhuber, 1997) as the base model and benchmark the proposed algorithm on a range of document classification or reading comprehension tasks, such as Rotten Tomatoes (Pang and Lee, 2005), IMDB (Maas et al.",
+      "startOffset" : 245,
+      "endOffset" : 265
+    }, {
+      "referenceID" : 23,
+      "context" : "In our experiments, we use the basic LSTM recurrent networks (Hochreiter and Schmidhuber, 1997) as the base model and benchmark the proposed algorithm on a range of document classification or reading comprehension tasks, such as Rotten Tomatoes (Pang and Lee, 2005), IMDB (Maas et al., 2011), AG News (Zhang et al.",
+      "startOffset" : 272,
+      "endOffset" : 291
+    }, {
+      "referenceID" : 47,
+      "context" : ", 2011), AG News (Zhang et al., 2015) and Children’s Book Test (Hill et al.",
+      "startOffset" : 17,
+      "endOffset" : 37
+    }, {
+      "referenceID" : 44,
+      "context" : "By running S examples, an approximated gradient can be computed by the following REINFORCE algorithm (Williams, 1992):",
+      "startOffset" : 101,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 44,
+      "context" : "It is shown (Williams, 1992; Zaremba and Sutskever, 2015) that any number bi will yield an unbiased estimation.",
+      "startOffset" : 12,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 46,
+      "context" : "It is shown (Williams, 1992; Zaremba and Sutskever, 2015) that any number bi will yield an unbiased estimation.",
+      "startOffset" : 12,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 14,
+      "context" : "To exclude the potential impact of advanced models, we restrict our comparison between the vanilla LSTM (Hochreiter and Schmidhuber, 1997) and our model, which is referred to as LSTM-Jump.",
+      "startOffset" : 104,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 18,
+      "context" : "General Experiment Settings We use the Adam optimizer (Kingma and Ba, 2014) with a",
+      "startOffset" : 54,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 24,
+      "context" : "We choose the pre-trained word2vec embeddings4 (Mikolov et al., 2013) as our fixed word embedding that we do not update this matrix during training.",
+      "startOffset" : 47,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 23,
+      "context" : "The second dataset of interest is IMDB (Maas et al., 2011),5 which contains 25,000 training and",
+      "startOffset" : 39,
+      "endOffset" : 58
+    }, {
+      "referenceID" : 12,
+      "context" : "We benchmark on the data set Children’s Book Test (CBT) (Hill et al., 2015).",
+      "startOffset" : 56,
+      "endOffset" : 75
+    }, {
+      "referenceID" : 25,
+      "context" : "Closely related to our work is the idea of learning visual attention with neural networks (Mnih et al., 2014; Ba et al., 2014; Sermanet et al., 2014), where a recurrent model is used to combine visual evidence at multiple fixations processed by a convolutional neural network.",
+      "startOffset" : 90,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 1,
+      "context" : "Closely related to our work is the idea of learning visual attention with neural networks (Mnih et al., 2014; Ba et al., 2014; Sermanet et al., 2014), where a recurrent model is used to combine visual evidence at multiple fixations processed by a convolutional neural network.",
+      "startOffset" : 90,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 31,
+      "context" : "Closely related to our work is the idea of learning visual attention with neural networks (Mnih et al., 2014; Ba et al., 2014; Sermanet et al., 2014), where a recurrent model is used to combine visual evidence at multiple fixations processed by a convolutional neural network.",
+      "startOffset" : 90,
+      "endOffset" : 149
+    }, {
+      "referenceID" : 44,
+      "context" : "Similar to our approach, the model is trained end-to-end using the REINFORCE algorithm (Williams, 1992).",
+      "startOffset" : 87,
+      "endOffset" : 103
+    }, {
+      "referenceID" : 5,
+      "context" : "text of natural language processing applications, where the main goal is to filter irrelevant content using a small network (Choi et al., 2016).",
+      "startOffset" : 124,
+      "endOffset" : 143
+    }, {
+      "referenceID" : 22,
+      "context" : "successfully in the context of making neural network predictions more interpretable (Lei et al., 2016).",
+      "startOffset" : 84,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 2,
+      "context" : "Likewise is the difference between our approach and the “soft” attention approach by (Bahdanau et al., 2014).",
+      "startOffset" : 85,
+      "endOffset" : 108
+    }, {
+      "referenceID" : 9,
+      "context" : "Our method belongs to adaptive computation of neural networks, whose idea is recently explored by (Graves, 2016; Jernite et al., 2016), where different amount of computations are allocated dynamically per time step.",
+      "startOffset" : 98,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 15,
+      "context" : "Our method belongs to adaptive computation of neural networks, whose idea is recently explored by (Graves, 2016; Jernite et al., 2016), where different amount of computations are allocated dynamically per time step.",
+      "startOffset" : 98,
+      "endOffset" : 134
+    }, {
+      "referenceID" : 9,
+      "context" : "Even though our method requires policy gradient methods to train, which is a disadvantage compared to (Graves, 2016; Jernite et al., 2016), we do not find training with policy gradient methods problematic in our experiments.",
+      "startOffset" : 102,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 15,
+      "context" : "Even though our method requires policy gradient methods to train, which is a disadvantage compared to (Graves, 2016; Jernite et al., 2016), we do not find training with policy gradient methods problematic in our experiments.",
+      "startOffset" : 102,
+      "endOffset" : 138
+    }, {
+      "referenceID" : 10,
+      "context" : "It is therefore related to the prior work on Neural Turing Machines (Graves et al., 2014) and especially its RL version (Zaremba and Sutskever, 2015).",
+      "startOffset" : 68,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 46,
+      "context" : ", 2014) and especially its RL version (Zaremba and Sutskever, 2015).",
+      "startOffset" : 38,
+      "endOffset" : 67
+    }, {
+      "referenceID" : 46,
+      "context" : "Compared to (Zaremba and Sutskever, 2015), the output tape in our method is more simple and reward signals in our problems are less sparse, which explains why our model is easy to train.",
+      "startOffset" : 12,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 14,
+      "context" : "The baseline method itself, Long Short Term Memory (Hochreiter and Schmidhuber, 1997), belongs to the same category of methods.",
+      "startOffset" : 51,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 19,
+      "context" : "goal, such as having recurrent networks that operate in different frequency (Koutnik et al., 2014) or is organized in a hierarchical fashion (Chan et al.",
+      "startOffset" : 76,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2014) or is organized in a hierarchical fashion (Chan et al., 2015; Chung et al., 2016).",
+      "startOffset" : 50,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 6,
+      "context" : ", 2014) or is organized in a hierarchical fashion (Chan et al., 2015; Chung et al., 2016).",
+      "startOffset" : 50,
+      "endOffset" : 89
+    }, {
+      "referenceID" : 43,
+      "context" : "We would also like to incorporate our model with advanced neural networks such as memory network (Weston et al., 2014), and/or with sophisticated mechanisms like attention (Bahdanau et al.",
+      "startOffset" : 97,
+      "endOffset" : 118
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2014), and/or with sophisticated mechanisms like attention (Bahdanau et al., 2014), and/or with hierarchical structure (Choi et al.",
+      "startOffset" : 61,
+      "endOffset" : 84
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2014), and/or with hierarchical structure (Choi et al., 2016) to build a more accurate model.",
+      "startOffset" : 44,
+      "endOffset" : 63
+    } ],
+    "year" : 0,
+    "abstractText" : "Recurrent Neural Networks are showing much promise in many sub-areas of natural language processing, ranging from document classification to machine translation to automatic question answering. Despite their early promise, many recurrent models have to read the whole text sequentially, making it difficult to apply them to long documents. For example, it is difficult to use a recurrent network to read a book and answer questions about it. In this paper, we present an approach of reading text non-sequentially, thereby skipping irrelevant information if needed. The underlying model is a recurrent network that learns how far to jump after reading a few words of the input text. We employ a standard policy gradient method to train the model to make discrete jumping decisions. In our benchmarks on four different tasks, including number prediction, sentiment analysis, news article classification and automatic Q&A, our proposed model, a modified non-sequential LSTM, is up to 6 times faster than the standard sequential LSTM, while maintaining the same or even better accuracy.",
+    "creator" : null
+  }
+}

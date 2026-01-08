@@ -1,0 +1,727 @@
+{
+  "name" : "ARR_2022_138_paper.pdf",
+  "metadata" : {
+    "source" : "CRF",
+    "title" : "Text-to-Table: A New Way of Information Extraction",
+    "authors" : [ ],
+    "emails" : [ ],
+    "sections" : [ {
+      "heading" : "1 Introduction",
+      "text" : "Information extraction (IE) is a task that aims to extract information of interest from text data and represent the extracted information in a structured form. Traditional IE tasks include named entity recognition which recognizes entities and their types (Huang et al., 2015; Ma and Hovy, 2016; Lample et al., 2016; Devlin et al., 2019), relation extraction which identifies the relationships between\nentities (Zheng et al., 2017; Zeng et al., 2018; Luan et al., 2019; Zhong and Chen, 2020), etc. Since the results of IE are structured, they can be easily used by computer systems in different applications such as text mining.\nIn this work, we study IE in a new setting, referred to as text-to-table. First, the system receives a training dataset containing text-table pairs. Each text-table pair contains a text and a table (or tables) representing information extracted from the text. The system learns a model for information extraction. Next, the system employs the learned model to conduct information extraction from a new text and outputs the result in a table (or tables). Figure 1 gives an example of text-to-table, where the input (above) is a report of a basketball game, and the output (below) is two tables summarizing the scores of the teams and players from the input.\nText-to-table is unique compared to the traditional IE approaches. First, it is mainly designed to extract structured data in a complex form from a\nlong text. As in the example in Figure 1, extraction of information is performed from the entire document. The extracted information contains multiple types of scores of teams and players in a basketball game structured in table format. Second, the schemas for extraction are implicitly included in the training data, and there is no need to explicitly define the schemas. This reduces the need for manual efforts for schema design and annotations.\nOur work is inspired by research on the so-called table-to-text (or data-to-text) problem, which is the task of generating a description for a given table. Table-to-text is useful in applications where the content of a table needs to be described in natural language. Thus, text-to-table can be regarded as an inverse problem of table-to-text. However, there are also differences. Most notably, their applications are different. Text-to-table can be applied to document summarization, text mining, etc.\nIn this work, we formalize text-to-table as a sequence-to-sequence (seq2seq) task. More specifically, we translate the text into a sequence representation of a table (or tables), where the schema of the table is implicitly contained in the representation. We also build the seq2seq model on top of a pre-trained language model, which is the stateof-the-art approach for seq2seq tasks (Lewis et al., 2019; Raffel et al., 2020). Although the approach is a natural application of existing technologies, as far as we know, there has been no previous study to investigate to what extent the approach works. We also develop a new method for text-to-table within the seq2seq approach with two additional techniques, table constraint and table relation embeddings. Table constraint controls the creation of rows in a table and table relation embeddings affect the alignments between cells and their row headers and column headers. Both are to make the generated table well-formulated.\nThe approach to IE based on seq2seq has already been proposed. Methods for conducting individual tasks of relation extraction (Zeng et al., 2018; Nayak and Ng, 2020), named entity recognition (Chen and Moschitti, 2018; Yan et al., 2021), and event extraction (Lu et al., 2021) have been developed. Methods for jointly performing multiple tasks of named entity recognition, relation extraction, and event extraction have also been devised (Paolini et al., 2021). Most of the methods exploit suitable pre-trained models such as BERT. However, all the existing methods rely on pre-\ndefined schemas for extraction. Moreover, their models are designed to extract information from short texts, rather than long texts, and extract information with simple structures (such as an entity and its type), rather than information with complicated structures (such as a table).\nWe conduct extensive experiments on four datasets. Results show that the vanilla seq2seq model fine-tuned from BART (Lewis et al., 2019) can outperform the state-of-the-art IE models finetuned from BERT (Devlin et al., 2019; Zhong and Chen, 2020). Furthermore, results show that our proposed approach to text-to-table with the two techniques can further improve the extraction accuracies. We also summarize the challenging issues with the seq2seq approach to text-to-table for future research.\nOur contributions are summarized as follows: 1. We propose the new task of text-to-table for\nIE. We derive four new datasets for the task from existing datasets. 2. We formalize the task as a seq2seq problem and propose a new method within the seq2seq approach using the techniques of table constraint and table relation embeddings. 3. We conduct extensive experiments to verify the effectiveness of the proposed approach."
+    }, {
+      "heading" : "2 Related Work",
+      "text" : "Information Extraction (IE) is a task of extracting information (structured data) from a text (unstructured data). For example, named entity recognition (NER) recognizes entities appearing in a text. Relation extraction (RE) identifies the relationships between entities. Event extraction (EE) discovers events occurring in a text.\nTraditionally, researchers formalize the task as a language understanding problem. The state-ofthe-art methods for NER perform the task on the basis of the pre-trained language model BERT (Devlin et al., 2019). The pipeline approach to RE divides the problem into NER and relation classification, and conducts the two sub-tasks in a sequential manner (Zhong and Chen, 2020), while the end-to-end approach jointly carries out the two sub-tasks (Zheng et al., 2017; Zeng et al., 2018; Luan et al., 2019). The state-of-the-art methods for EE also employ BERT and usually jointly train the models with other tasks such as NER and RE (Wadden et al., 2019; Zhang et al., 2019; Lin et al., 2020). All the methods assume the use of pre-defined\nschemas (e.g., entity types for NER, entity and relation types for RE, and event templates for EE). Besides, most methods are designed for extraction from short texts. Therefore, existing methods for IE cannot be directly applied to text-to-table.\nAnother series of related work is open information extraction (OpenIE), which aims to extract information from texts without relying on explicitly defined schemas (Banko et al., 2007; Wu and Weld, 2010; Mausam et al., 2012; Stanovsky et al., 2018; Zhan and Zhao, 2020). However, OpenIE aims to extract information with simple structures (i.e., relation tuples) from short texts, and the methods in OpenIE cannot be directly applied to text-to-table.\nIE is also conducted at document level, referred to as doc-level IE. For example, some NER methods directly perform NER on a long document (Strubell et al., 2017; Luo et al., 2018), and others encode each sentence in a document, use attention to fuse document-level information, and perform NER on each sentence (Hu et al., 2020; Xu et al., 2018). There are also RE methods that predict the relationships between entities in a document (Yao et al., 2019; Nan et al., 2020a). However, existing doc-level IE approaches usually do not consider extraction of complex relations between many items.\nSequence-to-sequence (seq2seq) is the general problem of transforming one text into another text (Sutskever et al., 2014; Bahdanau et al., 2014), which includes machine translation, text summarization, etc. The use of the pre-trained language models of BART (Lewis et al., 2019) and T5 (Raffel et al., 2020) can significantly boost the performances of seq2seq, such as machine translation (Lewis et al., 2019; Raffel et al., 2020; Liu et al., 2020) and text summarization (Lewis et al., 2019; Raffel et al., 2020; Huang et al., 2020).\nRecently, some researchers also formalize the IE problems as seq2seq, that is, transforming the input text into an internal representation. One advantage is that one can employ a single model to extract multiple types of information. Results show that this approach works better than or equally well as the traditional approach of language understanding, in RE (Zeng et al., 2018; Nayak and Ng, 2020), NER (Chen and Moschitti, 2018; Yan et al., 2021) and EE (Lu et al., 2021). Methods for jointly performing multiple tasks including NER, RE and EE have also been devised (Paolini et al., 2021).\nData-to-text aims to generate natural language\ndescriptions from the input structured data such as sport commentaries (Wiseman et al., 2017). The structured data is usually represented as tables (Wiseman et al., 2017; Thomson et al., 2020; Chen et al., 2020), sets of table cells (Parikh et al., 2020; Bao et al., 2018), semantic representations (Novikova et al., 2017), or sets of relation triples (Gardent et al., 2017; Nan et al., 2020b). The task requires the model to select the salient information from the data, organize it in a logical order, and generate an accurate and fluent natural language description (Wiseman et al., 2017). Data-to-text models usually adopt the encoder-decoder architecture. The encoders are specifically designed to model the input data, such as multi-layer perceptron (Puduppully et al., 2019a,b), recurrent neural network (Juraska et al., 2018; Liu et al., 2018; Shen et al., 2020), graph neural network (Marcheggiani and Perez-Beltrachini, 2018; Koncel-Kedziorski et al., 2019), or Transformer (Gong et al., 2019)."
+    }, {
+      "heading" : "3 Problem Formulation",
+      "text" : "As shown in Figure 1, Text-to-table takes a text as input and produces a table or several tables to summarize the content of the text.\nFormally, the input is a text denoted as x = x1, x2, · · · , x|x|. The output is one table or multiple tables. For simplicity suppose that there is only one table denoted as T . Further suppose that T has nr rows and nc columns. Thus, T contain nr × nc cells, where the cell of row i and column j is a sequence of words ti,j = ti,j,1, ti,j,2, ..., ti,j,|ti,j |.\nThere are three types of table: one that has both column headers and row headers, one that has only column headers, and one that only has row headers. For example, the player table in Figure 1 has both column headers (“Assists”, “Points”, etc) and row headers (“Al Horford”, “Isaish Thomas”, etc). We let t1,j , j = 2, 3, · · · , nc to denote the column headers, let ti,1, i = 2, 3, · · · , nr to denote the row headers, and let t1,j , i = 2, 3, · · · , nr, j = 2, 3, · · · , nc to denote the non-header cells of the table. For example, in the player table in Figure 1, t1,2 = Assists, t2,1 = Al Horford, and t2,2 = 5.\nThe information extracted via text-to-table can be leveraged in many different applications such as document summarization and text mining. For example, in Figure 1, one can quickly obtain the key information of the text by simply looking at the tables summarized from the text.\nThere are differences between text-to-table and\ntraditional IE settings. As can be seen from the example in Figure 1, extraction of information is performed from the entire document. The extracted information (structured data) is in a complex form, specifically multiple types of scores of teams and players in a basketball game. Furthermore, the data-driven approach is taken, and the schemas of the tables do not need to be explicitly defined."
+    }, {
+      "heading" : "4 Our Method",
+      "text" : "We develop a method for text-to-table using the seq2seq approach and the two techniques of table constraint and table relation embeddings."
+    }, {
+      "heading" : "4.1 Vanilla Seq2Seq",
+      "text" : "We formalize text-to-table as a sequence-tosequence (seq2seq) problem (Sutskever et al., 2014; Bahdanau et al., 2014). Specifically, given an input text, we generate a sequence representing the output table (or tables). We introduce two special tokens, a separation token denoted as “〈s〉” and a new-line token denoted as “〈n〉”. For a table t, we represent each row ti with a sequence of cells delimited by separation tokens:\nti = 〈s〉, ti,1, 〈s〉, · · · , 〈s〉, ti,nc , 〈s〉. (1)\nWe represent the entire table with a sequence of rows delimited by new-line tokens:\nt = 〈s〉, t1,1, 〈s〉, · · · , 〈s〉, t1,nc , 〈s〉, 〈n〉, (2) 〈s〉, t2,1, 〈s〉, · · · , 〈s〉, t2,nc , 〈s〉, 〈n〉,\n· · · · · · 〈s〉, tnr,1, 〈s〉, · · · , 〈s〉, tnr,nc , 〈s〉\nFigure 2 shows the sequence of the player table in Figure 1. When there are multiple tables, we create a sequence of tables using the captions of the tables as delimiters.\nLet x = x1, · · · , x|x| and y = y1, · · · , y|y| denote the input and output sequences respectively. In inference, the model generates the output sequence based on the input sequence. The model\nconducts generation in an auto-regressive way, which generates one token at each step based on the tokens it has generated so far. In training, we learn the model based on the text-table pairs {(x1,y1), (x2,y2), · · · , (xn,yn)}. The objective of learning is to minimize the cross-entropy loss.\nWe refer to the method described above as “vanilla seq2seq”. There is no guarantee, however, that the output sequence of vanilla seq2seq represents a well-formulated table. We add a postprocessing step to ensure that the output sequence is a table. The post-processing method takes the first row generated as well-defined, deletes extra cells at the end of the other rows and inserts empty cells at the end of the other rows."
+    }, {
+      "heading" : "4.2 Techniques",
+      "text" : "We develop two techniques to improve table generation, called table constraint and table relation embeddings. We use “our method” to denote the seq2seq approach with these two techniques.1\nTable Constraint Our method exploits a constraint in the decoding process to ensure that the output sequence represents a well-formulated table. Specifically, our method calculates the number of cells in the first row it generates, and then forces the following rows to contain the same number of cells.\nTable Relation Embeddings Our method also incorporates table relation embeddings including row relation embeddings and column relation embeddings into the self-attention of the Transformer decoder. Given a token in a nonheader cell, the row relation embeddings τKr and τVr indicate which row header the token is aligned to, and the column relation embeddings τKc and τ V c indicate which column header the token is aligned to.\n1Our methods is able to generate the output containing multiple tables. This is discussed in Appendix C.\nLet us consider the self-attention function in one block of Transformer decoder: at each position, self-attention only attends to the previous positions. For simplicity, let us only consider one head in the self-attention. At the t-th position, the input of self-attention is the sequence of representations z = (z1, · · · , zt) and the output is the sequence of representations h = (h1, · · · , ht), where zi ∈ Rd and hi ∈ Rd are the representations at the i-th position (i = 1, · · · , t).\nIn a conventional Transformer decoder, selfattention is defined as follows,\nhi =  i∑ j=1 αij(zjW V ) WO, (3) αij =\neeij∑i j=1 e eij , eij = (ziW Q)(zjW K)T√ dk , (4)\ni = 1, · · · , t, j = 1, · · · , i\nwhere WQ,WK ,W V ∈ Rd×dk are the query, key, and value weight matrices respectively, and WO ∈ Rdk×d is the output weight matrix.\nIn our method, self-attention is defined as:\nhi =  i∑ j=1 αij(zjW V + rVij ) WO, (5) αij =\neeij∑i j=1 e eij , eij = (ziW Q)(zjW K + rKij ) T √ dk ,\n(6)\ni = 1, · · · , t, j = 1, · · · , i\nwhere rKij and r V ij are relation vectors representing the relationship between the i-th position and the j-th position.\nThe relation vectors rKij and r V ij are defined as follows. For the token at the i-th position, if the token at the j-th position is a part of its row header, then rKij and r V ij are set to the row relation embeddings τKr and τ V r . Similarly, for the token at the i-th position, if the token at the j-th position is a part of its column header, then rKij and r V ij are set to the column relation embeddings τKc and τ V c . Otherwise, rKij and r V ij are set to 0. In inference, to identify the row header or the column header of a token, we parse the sequence generated so far to create a partial table using the new-line tokens and separation tokens in the sequence. Figure 3 illustrates how relation vectors are constructed."
+    }, {
+      "heading" : "5 Experiments",
+      "text" : ""
+    }, {
+      "heading" : "5.1 Datasets",
+      "text" : "We make use of four existing datasets which are traditionally utilized for data-to-text: Rotowire (Wiseman et al., 2017), E2E (Novikova et al., 2017), WikiTableText (Bao et al., 2018), and WikiBio (Lebret et al., 2016). In each dataset, we filter out the content in the tables that does not appear in the texts. We plan to make the processed datasets publicly available for future research. Table 2 gives the statistics of the Rotowire dataset and Table 1 gives the statistics of the other three datasets.\nRotowire is from the sports domain. Each instance is composed of a text and two tables, where the text is a report of a basketball game and the two tables represent the scores of teams and players respectively (cf., Figure 1). Each table has column headers describing the types of scores, and row headers describing the names of teams or players. The texts are long and may contain irrelevant information such as the performance of players in other games. Therefore, this is a challenging dataset.\nE2E is from the restaurant domain. Each instance is a pair of short text and automatically constructed table, where the text is a description of a restaurant, and the table has two columns with column headers summarizing the characteristics of the restaurant. The tables are automatically constructed, where the texts in the tables are from a limited set and thus are lack of diversity.\nWikiTableText is an open-domain dataset. Each instance includes a text and a table, where the text is a description and the table has a row and two columns with column headers, collected from a Wikipedia infobox. The texts are short and contain information similar to that in the tables.\nWikiBio is extracted from the Wikipedia biography pages. Each instance consists of a text and a table, where the text is the introduction of Wikipedia page2 and the table is from the infobox of Wikipedia page and has two columns with column headers. The input texts are usually long and contain more information than the tables."
+    }, {
+      "heading" : "5.2 Procedure",
+      "text" : "Methods: We conduct experiments with vanilla seq2seq and our method, as well as baselines.\nWe know of no existing method that can be directly employed in text-to-table. For each dataset,\n2The original dataset only uses the first sentence of the introduction. We use the entire introduction.\nwe first define the schemas based on the training data, then use an existing method of relation extraction (RE) or named entity extraction (NER) to extract information, and finally create tables based on the schemas and extracted information. We take it as the baseline for the dataset. No baseline can be applied to all four datasets. For RE, we use PURE, a state-of-the-art method (Zhong and Chen, 2020). For NER, we use BERT (Devlin et al., 2019).\nTraining: For vanilla seq2seq and our method, we adopt Transformer (Vaswani et al., 2017) as the model and fine-tune the models from BARTbase. We also experiment with BART-large. For RE and NER, we fine-tune the models from BERTbase-uncased. All models are trained with Adam optimizer until convergence. Hyper-parameters are shown in Appendix A. For the small datasets of Rotowire and WikiTableText, we run experiments five times with different random seeds and take average of results to reduce variance.\nEvaluation: We evaluate the performance of a method based on the number of correct non-header cells in the tables. To judge whether a cell is correctly generated in the table, we use not only its content but also its row header and column header to ensure that the cell is on the right row and right column. Exact match is used to compare the content of the generated cell and the ground truth. We adopt precision, recall, and F1 score as evaluation measures. We calculate the measures on each generated table and then take the average on all tables. This evaluation assumes that the ordering of rows and columns is not important. We find that this\nassumption is applicable to the four datasets and many real-world scenarios. We also evaluate the percentage of output sequences that cannot represent well-formulated tables, referred to as error rate."
+    }, {
+      "heading" : "5.3 Results on Rotowire",
+      "text" : "Table 3 shows the results on the Rotowire dataset. One can see that in terms of F1 score, our method performs the best followed by vanilla seq2seq, and both outperform the baselines of doc-level RE and sent-level RE. The RE baselines perform quite well, but they heavily rely on rules and cannot beat the seq2seq approach. Among them the doclevel RE performs better than sent-level RE, because some information in Rotowire can only be extracted when cross-sentence context is provided.\nWe implement two baselines of RE, namely doclevel RE and sent-level RE. We take team names, player names, and numbers of scores as entities and take types of scores as relations. Sent-level RE predicts the relations between entities within each sentence. Doc-level RE predicts the relations between entities within a window (the window size is 12 entities) and uses the approximation model proposed by Zhong and Chen (2020) to speed up inference."
+    }, {
+      "heading" : "5.4 Results on E2E, WikiTableText and WikiBio",
+      "text" : "Table 4 shows the results of our method, vanilla seq2seq, and the baseline of NER on E2E, WikiTableText, and WikiBio. Again, the seq2seq approach outperforms the baseline. The NER baseline has slightly higher precision, but the seq2seq approach has significantly higher recall and F1. Our method and vanilla seq2seq are comparable, because the table structures in the three datasets are very simple (there are only two columns in the tables), and the use of the two techniques does not further improve the performances. The NER baseline has high precision but low recall, mainly because NER can only make the right decision when it is clear.\nWe implement the baseline of NER in the following way. We view the non-head cells in the tables as entities and their row headers as entity types. In training, we match the non-head cells into the texts and take them as “entities” in the texts. Only a proportion of the non-header cells can be matched into the texts (85% for E2E, 74% for WikiTableText, and 69% for WikiBio)."
+    }, {
+      "heading" : "5.5 Additional Study",
+      "text" : "We carry out ablation study on our method. Specifically, we exclude pre-trained language model, table constraint (TC) and table relation embeddings (TRE) from our method. Note that our method without TC and TRE is equivalent to vanilla seq2seq. Table 5 gives the results on the four datasets.\nIt can be seen that the use of both TC and TRE can significantly improve the performance on Rotowire, which indicates that our method is particularly effective when the tables are large with many rows and columns. There are not significant improvements on E2E, WikiTableText, and WikiTableText, apparently because formulation of\ntables is easy for the three datasets. Therefore, we conclude that the two techniques of TC and TRE are helpful when the task is difficult.\nThe use of pre-trained language model can boost the performance on all datasets, especially on Rotowire and WikiTableText. This indicates that pretrained language model is particularly helpful when the task is difficult and the size of training data is small.\nWe observe that vanilla seq2seq makes more formatting errors than our method, especially on player tables in Rotowire that have a large number of columns. It indicates that for vanilla seq2seq, it is difficult to keep track of the columns in each row and make alignments with the column headers. In contrast, the two techniques of our method can help effectively cope with the problem. Figure 4 shows a bad case of vanilla seq2seq, where the model correctly infers the column of “assists” but fails to infer the columns of “personal fouls”, “points”, and “total rebounds” for the row of “Rajon Rondo”. In contrast, our method can successfully handle the case, because TC can eliminate the incorrectly formatted output, and TRE can make correct align-\nments with the column headers. We also investigate the effect of the scale of pretrained language model BART. We use both BARTbase and BART-large and conduct fine-tuning on top of them for vanilla seq2seq and our method. Table 6 gives the results on the four datasets. The results show that the use of BART-large can further boost the performances on all four datasets, indicating that it is better to use larger pre-trained models when computation cost is not an issue."
+    }, {
+      "heading" : "5.6 Discussions",
+      "text" : "We analyze the experimental results on the four datasets and identify five challenging issues.\n(1) Text Diversity: Extraction of the same content from different expressions is one challenge. For example, the use of synonyms is very common in Rotowire. The team of “Knicks” is often referred to as “New York”, its home city. Identification of the same entities from different expressions is needed in the task.\n(2) Text Redundancy: There are cases such as those in WikiBio, in which the texts contain much redundant information. This poses a challenge to the text-to-table model to have a strong ability in summarization. It seems that the seq2seq approach works well to some extent but further improvement is undoubtedly necessary.\n(3) Large Table: The tables in Rotowire have large numbers of columns, and the extraction from them is challenging even for our method of using TC and TRE.\n(4) Background Knowledge: WikiTableText and WikiBio are from open domain. Thus, performing text-to-table on such kind of datasets require the use of much background knowledge. A possible way to address this challenge is to use more\npowerful pre-trained language models or external knowledge bases.\n(5) Reasoning: Sometimes the information is not explicitly presented in the text, and reasoning is required to conduct correct extraction. For example, an article in Rotowire reports a game between the two teams “Nets” and “Wizards”. From the sentence: “The Nets seized control of this game from the very start, opening up a 31 - 14 lead after the first quarter”, humans can infer that the point of “Wizards” is 14, which is still difficult for machines."
+    }, {
+      "heading" : "6 Conclusion",
+      "text" : "We propose employing text-to-table as a new way of information extraction (IE), which extracts information of interest from the input text and summarizes the extracted information in tables. The advantage of the approach is that one can easily conduct information extraction from either short texts or long texts to create simple tables or complex tables without explicitly defining the schemas. Text-to-table can be viewed as an inverse problem of table-to-text. We formalize text-to-table as a sequence-to-sequence problem on top of a pretrained model. We further propose an improved method using a seq2seq model and table constraint and table relation embeddings techniques. We conduct experiments on four datasets derived from existing table-to-text datasets. The results demonstrate that our proposed approach outperforms existing methods using conventional IE techniques. We further analyze the challenges of text-to-table for future study. The issues include diversity of text, redundancy of text, large-table, background knowledge, and reasoning."
+    }, {
+      "heading" : "A Hyper-parameters",
+      "text" : "We list the hyper-parameters of the pre-trained models in Table 7. The training hyper-parameters for BART-base model in vanilla seq2seq and our method are listed in Table 8."
+    }, {
+      "heading" : "B Table Constraint Algorithm",
+      "text" : "The pseudo-codes for table constraint are in Algorithm 1."
+    }, {
+      "heading" : "C Our Method with Multiple Tables",
+      "text" : "Our method is able to generate the output containing multiple tables. For example, in Rotowire dataset, the output data contains two tables representing the scores of teams and players respectively. In this section, we illustrate how our method works for Rotowire dataset as a special case.\nTo represent the tables with a sequence, we use captions as delimiters. For Rotowire, as shown in Figure 1, the first table is the team table, and its caption is “Team:”. The second table is the player table, and its caption is “Player:”. Let tteam and tplayer denote the table and player tables respectively. Therefore, the sequence representation is “Team: 〈n〉 tteam 〈n〉 Player: 〈n〉 tplayer”.\nFor table constraint (TC), we only use TC when the seq2seq model is generating a table. When generating a caption, we do not pose any constraints to the decoding process. Since the captions do not start with the separation token 〈s〉, if the current line starts with the separation token 〈s〉, then the model is generating a table. Otherwise, it is generating a caption.\nFor table relation embeddings (TRE), we calculate the relation vectors separately for each table. However, the parameters including the row relation embeddings (i.e., τKr and τ V r ) and the column\nrelation embeddings (i.e., τKc and τ V c ) are shared among the tables."
+    }, {
+      "heading" : "D Evaluation Details",
+      "text" : "To evaluate a text-to-table system, we adopt precision, recall, and F1 score as evaluation measures. We calculate the measures on each generated table and then take the average on all tables.\nSpecifically, we represent each non-header cell as a tuple containing the row header, column header, and cell content. Then, we take the collection of cell tuples in the ground truth table as reference, and calculate the precision, recall, and f1 score of the predicted cell tuples. We use exact match to check whether a predicted non-header cell is correct. A predicted non-header cell will be considered as a true positive only when it is exactly the same as the ground truth, that is, when they have the same row header, cell header, and content. In other words, we use not only its content but also its row header and column header to ensure that the cell is on the right row and right column. A limitation of exact match is that it will fail to consider the cases where the prediction is a synonym of the reference. However, we observe that the row/column names and cell contents in datasets are quite consistent, so such mistakes are uncommon. Therefore, we use exact match for simplicity.\nAs shown in Figure 1, the tables in the dataset contain some empty cells, that is, cells with word sequences of zero length. These cells do not contain actual information and are only used as place-\nAlgorithm 1: Decoding using table constraint. 〈eos〉, 〈s〉, and 〈n〉 denote the end of sentence, separation token, and new-line token respectively. Seq2seq denotes the seq2seq model. Decode denotes the decoding algorithm such as beam search and greedy search. Input: x = [x1, x2, · · · , x|x|] Output: y = [y1, y2, · · · , y|y|]\n1 y← [] 2 3 repeat /* generates the first row: only allows generation of 〈n〉 or 〈eos〉 after 〈s〉 */ 4 p(·)← seq2seq(x, y) 5 if y|y| 6= 〈s〉 then 6 p (〈n〉)← 0, p (〈eos〉)← 0 7 y.append(decode (p)) 8 until y|y| = 〈n〉 or y|y| = 〈eos〉 9 if y|y| = 〈eos〉 then\n10 return y 11 nc ← number of cells of the first row 12 13 repeat /* generates the next rows: each row contains\nexactly nc cells */\n14 repeat /* generates a row */ 15 p(·)← seq2seq(x, y) 16 if current row has nc columns then 17 p(t)← 0, ∀t 6= 〈eos〉 and t 6= 〈n〉"
+    }, {
+      "heading" : "18 else",
+      "text" : "19 p (〈n〉)← 0, p (〈eos〉)← 0 20 y.append(decode (p)) 21 until y|y| = 〈n〉 or y|y| = 〈eos〉 22 if y|y| = 〈eos〉 then 23 return y\nholders. Therefore, for both the golden reference and the prediction, we ignore the empty cells and\nonly take the non-empty cells to calculate the metrics.\nE Information Extraction Baselines\nE.1 Relation Extraction\nTo use relation extraction (RE) as our baseline for Rotowire dataset, we take team names, player names, and numbers of scores as entities and take types of scores as relations. An example relation is shown in Figure 6, which can be represented as a relation tuple (Al Horford, Points, 15). “Al Horford” is the subject entity, “15” is the object entity, and “Points” is one of the pre-defined relation types. There are 38 relations in total.\nTo create synthetic training data, we match the player names, team names and score numbres to the texts. We adapt the rules provided by Wiseman et al. (2017) which is able to conduct fuzzy match.\nE.2 Named Entity Recognition\nWe use named entity recognition (NER) as our baseline for E2E, WikiTableText, and WikiBio datasets. Specifically, since each table is a two-column table with a header column, we consider the row header as entity type and the non-header cells as entity mentions. An example is shown in Figure 5. For the row with a header “name” and a non-header cell “majda vrhnovnik”, we take “majda vrhnovnik” as an entity with the type “name”. Here, “name” is one of the pre-defined entity types. We collect\nall headers in the training set to collect the entity types. We have 7 entity types for E2E, 2262 entity types for WikiTableText, and 2272 entity types for WikiBio.\nTo create synthetic training data, we match the contents of non-header cells to the texts. However, the data is usually paraphrased or even abstracted from the text, so not all non-header cells can be matched to the text. We match 85% non-header cells for E2E, 74% for WikiTable, and 69% for WikiBio."
+    }, {
+      "heading" : "F Detailed Cases for Challenges",
+      "text" : "In this section, we provide cases for the challenges discussed in Section 5.6.\n(1) Text Diversity: Extraction of the same content from different expressions is one challenge. For example, the use of synonyms is very common in Rotowire. Figure 7 illustrates the use of synonyms for the example in Figure 1. The team of\n“Knicks” is often referred to as “New York”, its home city. Similarly, “Celtics” is often referred to as “Boston”, its home city. Identification of the same entities from different expressions is needed in the task.\n(2) Text Redundancy: There are cases such as those in WikiBio, in which the texts contain much redundant information. An example is shown in Figure 8, where only the highlighted information is captured in the output table. Other information such as the experience of Philippe Adnot is redundant. This poses a challenge to the text-to-table model to have a strong ability in summarization. It seems that the seq2seq approach works well to\nsome extent but further improvement is undoubtedly necessary.\n(3) Large Table: The tables in Rotowire have large numbers of columns, so extraction from them is challenging even for our method of using TC and TRE. As presented in Table 2, team tables have 2.71 rows and 4.84 columns on average, and player tables have 7.26 rows and 8.75 columns on average. An example is shown in Figure 9, where the team table has 3 rows and 4 columns, and the player table has 8 rows and 8 columns.\n(4) Background Knowledge: WikiTableText and WikiBio are from open domain. Thus, performing text-to-table on such kind of datasets require\nthe use of much background knowledge. Also in Figure 8, the extraction system should have background knowledge about the French political system in order to extract information about the constituency of Philippe Adnot. A possible way to address this challenge is to use more powerful pretrained language models or external knowledge bases.\n(5) Reasoning: Sometimes the information is not explicitly presented in the text, and reasoning is required to conduct correct extraction. For example, as shown in Figure 10, an article in Rotowire reports a game between the two teams “Nets” and “Wizards”. From the sentence: “The Nets seized control of this game from the very start, opening up a 31 - 14 lead after the first quarter”, humans can infer that the point of “Wizards” is 14, which is still difficult for machines."
+    } ],
+    "references" : [ {
+      "title" : "Neural machine translation by jointly learning to align and translate",
+      "author" : [ "Dzmitry Bahdanau", "Kyunghyun Cho", "Yoshua Bengio." ],
+      "venue" : "arXiv preprint arXiv:1409.0473.",
+      "citeRegEx" : "Bahdanau et al\\.,? 2014",
+      "shortCiteRegEx" : "Bahdanau et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Open information extraction from the web",
+      "author" : [ "Michele Banko", "Michael J. Cafarella", "Stephen Soderland", "Matthew Broadhead", "Oren Etzioni." ],
+      "venue" : "IJCAI 2007, Proceedings of the 20th International Joint Conference on Artificial Intelligence, Hyderabad, In-",
+      "citeRegEx" : "Banko et al\\.,? 2007",
+      "shortCiteRegEx" : "Banko et al\\.",
+      "year" : 2007
+    }, {
+      "title" : "Tableto-text: Describing table region with natural language",
+      "author" : [ "Junwei Bao", "Duyu Tang", "Nan Duan", "Zhao Yan", "Yuanhua Lv", "Ming Zhou", "Tiejun Zhao." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 32.",
+      "citeRegEx" : "Bao et al\\.,? 2018",
+      "shortCiteRegEx" : "Bao et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Learning to progressively recognize new named entities with sequence to sequence models",
+      "author" : [ "Lingzhen Chen", "Alessandro Moschitti." ],
+      "venue" : "Proceedings of the 27th International Conference on Computational Linguistics, pages 2181–2191.",
+      "citeRegEx" : "Chen and Moschitti.,? 2018",
+      "shortCiteRegEx" : "Chen and Moschitti.",
+      "year" : 2018
+    }, {
+      "title" : "Logical natural language generation from open-domain tables",
+      "author" : [ "Wenhu Chen", "Jianshu Chen", "Yu Su", "Zhiyu Chen", "William Yang Wang." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7929–",
+      "citeRegEx" : "Chen et al\\.,? 2020",
+      "shortCiteRegEx" : "Chen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bert: Pre-training of deep bidirectional transformers for language understanding",
+      "author" : [ "Jacob Devlin", "Ming-Wei Chang", "Kenton Lee", "Kristina Toutanova." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Association for",
+      "citeRegEx" : "Devlin et al\\.,? 2019",
+      "shortCiteRegEx" : "Devlin et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Creating training corpora for nlg micro-planning",
+      "author" : [ "Claire Gardent", "Anastasia Shimorina", "Shashi Narayan", "Laura Perez-Beltrachini." ],
+      "venue" : "55th annual meeting of the Association for Computational Linguistics (ACL).",
+      "citeRegEx" : "Gardent et al\\.,? 2017",
+      "shortCiteRegEx" : "Gardent et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Enhanced transformer model for data-to-text generation",
+      "author" : [ "Li Gong", "Josep M Crego", "Jean Senellart." ],
+      "venue" : "Proceedings of the 3rd Workshop on Neural Generation and Translation, pages 148–156.",
+      "citeRegEx" : "Gong et al\\.,? 2019",
+      "shortCiteRegEx" : "Gong et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Leveraging multi-token entities in document-level named entity recognition",
+      "author" : [ "Anwen Hu", "Zhicheng Dou", "Jian-Yun Nie", "JiRong Wen." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 34, pages 7961–7968.",
+      "citeRegEx" : "Hu et al\\.,? 2020",
+      "shortCiteRegEx" : "Hu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "What have we achieved on text summarization",
+      "author" : [ "Dandan Huang", "Leyang Cui", "Sen Yang", "Guangsheng Bao", "Kun Wang", "Jun Xie", "Yue Zhang" ],
+      "venue" : "In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),",
+      "citeRegEx" : "Huang et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Bidirectional lstm-crf models for sequence tagging",
+      "author" : [ "Zhiheng Huang", "Wei Xu", "Kai Yu." ],
+      "venue" : "arXiv preprint arXiv:1508.01991.",
+      "citeRegEx" : "Huang et al\\.,? 2015",
+      "shortCiteRegEx" : "Huang et al\\.",
+      "year" : 2015
+    }, {
+      "title" : "A deep ensemble model with slot alignment for sequence-to-sequence natural language generation",
+      "author" : [ "Juraj Juraska", "Panagiotis Karagiannis", "Kevin Bowden", "Marilyn Walker." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the",
+      "citeRegEx" : "Juraska et al\\.,? 2018",
+      "shortCiteRegEx" : "Juraska et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Text generation from knowledge graphs with graph transformers",
+      "author" : [ "Rik Koncel-Kedziorski", "Dhanush Bekal", "Yi Luan", "Mirella Lapata", "Hannaneh Hajishirzi." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Associ-",
+      "citeRegEx" : "Koncel.Kedziorski et al\\.,? 2019",
+      "shortCiteRegEx" : "Koncel.Kedziorski et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Neural architectures for named entity recognition",
+      "author" : [ "Guillaume Lample", "Miguel Ballesteros", "Sandeep Subramanian", "Kazuya Kawakami", "Chris Dyer." ],
+      "venue" : "Proceedings of the 2016 Conference of the North American Chapter of the Association for Computa-",
+      "citeRegEx" : "Lample et al\\.,? 2016",
+      "shortCiteRegEx" : "Lample et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Neural text generation from structured data with application to the biography domain",
+      "author" : [ "Rémi Lebret", "David Grangier", "Michael Auli." ],
+      "venue" : "Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pages 1203–1213.",
+      "citeRegEx" : "Lebret et al\\.,? 2016",
+      "shortCiteRegEx" : "Lebret et al\\.",
+      "year" : 2016
+    }, {
+      "title" : "Bart: Denoising sequence-to-sequence pre-training for natural language",
+      "author" : [ "Mike Lewis", "Yinhan Liu", "Naman Goyal", "Marjan Ghazvininejad", "Abdelrahman Mohamed", "Omer Levy", "Ves Stoyanov", "Luke Zettlemoyer" ],
+      "venue" : null,
+      "citeRegEx" : "Lewis et al\\.,? \\Q2019\\E",
+      "shortCiteRegEx" : "Lewis et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "A joint neural model for information extraction with global features",
+      "author" : [ "Ying Lin", "Heng Ji", "Fei Huang", "Lingfei Wu." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7999–8009.",
+      "citeRegEx" : "Lin et al\\.,? 2020",
+      "shortCiteRegEx" : "Lin et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Table-to-text generation by structure-aware seq2seq learning",
+      "author" : [ "Tianyu Liu", "Kexiang Wang", "Lei Sha", "Baobao Chang", "Zhifang Sui." ],
+      "venue" : "Thirty-Second AAAI Conference on Artificial Intelligence.",
+      "citeRegEx" : "Liu et al\\.,? 2018",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Multilingual denoising pre-training for neural machine translation",
+      "author" : [ "Yinhan Liu", "Jiatao Gu", "Naman Goyal", "Xian Li", "Sergey Edunov", "Marjan Ghazvininejad", "Mike Lewis", "Luke Zettlemoyer." ],
+      "venue" : "Transactions of the Association for Computational Linguis-",
+      "citeRegEx" : "Liu et al\\.,? 2020",
+      "shortCiteRegEx" : "Liu et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Text2event: Controllable sequence-tostructure generation for end-to-end event extraction",
+      "author" : [ "Yaojie Lu", "Hongyu Lin", "Jin Xu", "Xianpei Han", "Jialong Tang", "Annan Li", "Le Sun", "Meng Liao", "Shaoyi Chen." ],
+      "venue" : "arXiv preprint arXiv:2106.09232.",
+      "citeRegEx" : "Lu et al\\.,? 2021",
+      "shortCiteRegEx" : "Lu et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "A general framework for information extraction using dynamic span graphs",
+      "author" : [ "Yi Luan", "Dave Wadden", "Luheng He", "Amy Shah", "Mari Ostendorf", "Hannaneh Hajishirzi." ],
+      "venue" : "Proceedings of the 2019 Conference of the North American Chapter of the Asso-",
+      "citeRegEx" : "Luan et al\\.,? 2019",
+      "shortCiteRegEx" : "Luan et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "An attention-based bilstm-crf approach to documentlevel chemical named entity recognition",
+      "author" : [ "Ling Luo", "Zhihao Yang", "Pei Yang", "Yin Zhang", "Lei Wang", "Hongfei Lin", "Jian Wang." ],
+      "venue" : "Bioinformatics, 34(8):1381–1388.",
+      "citeRegEx" : "Luo et al\\.,? 2018",
+      "shortCiteRegEx" : "Luo et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "End-to-end sequence labeling via bi-directional lstm-cnns-crf",
+      "author" : [ "Xuezhe Ma", "Eduard Hovy." ],
+      "venue" : "Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1064–1074.",
+      "citeRegEx" : "Ma and Hovy.,? 2016",
+      "shortCiteRegEx" : "Ma and Hovy.",
+      "year" : 2016
+    }, {
+      "title" : "Deep graph convolutional encoders for structured data to text generation",
+      "author" : [ "Diego Marcheggiani", "Laura Perez-Beltrachini." ],
+      "venue" : "Proceedings of the 11th International Conference on Natural Language Generation, pages 1–9.",
+      "citeRegEx" : "Marcheggiani and Perez.Beltrachini.,? 2018",
+      "shortCiteRegEx" : "Marcheggiani and Perez.Beltrachini.",
+      "year" : 2018
+    }, {
+      "title" : "Open language learning for information extraction",
+      "author" : [ "Mausam", "Michael Schmitz", "Stephen Soderland", "Robert Bart", "Oren Etzioni." ],
+      "venue" : "Proceedings of the 2012 Joint Conference on Empirical Methods in Natural Language Processing and Computational",
+      "citeRegEx" : "Mausam et al\\.,? 2012",
+      "shortCiteRegEx" : "Mausam et al\\.",
+      "year" : 2012
+    }, {
+      "title" : "Reasoning with latent structure refinement for document-level relation extraction",
+      "author" : [ "Guoshun Nan", "Zhijiang Guo", "Ivan Sekulic", "Wei Lu." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 1546–1557.",
+      "citeRegEx" : "Nan et al\\.,? 2020a",
+      "shortCiteRegEx" : "Nan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "2020b. Dart: Open-domain structured data record to text generation",
+      "author" : [ "Linyong Nan", "Dragomir Radev", "Rui Zhang", "Amrit Rau", "Abhinand Sivaprasad", "Chiachun Hsieh", "Xiangru Tang", "Aadit Vyas", "Neha Verma", "Pranav Krishna" ],
+      "venue" : null,
+      "citeRegEx" : "Nan et al\\.,? \\Q2020\\E",
+      "shortCiteRegEx" : "Nan et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Effective modeling of encoder-decoder architecture for joint entity and relation extraction",
+      "author" : [ "Tapas Nayak", "Hwee Tou Ng." ],
+      "venue" : "Proceedings of the AAAI Conference on Artificial Intelligence, volume 34, pages 8528–8535.",
+      "citeRegEx" : "Nayak and Ng.,? 2020",
+      "shortCiteRegEx" : "Nayak and Ng.",
+      "year" : 2020
+    }, {
+      "title" : "The e2e dataset: New challenges for end-toend generation",
+      "author" : [ "Jekaterina Novikova", "Ondřej Dušek", "Verena Rieser." ],
+      "venue" : "Proceedings of the 18th Annual SIGdial Meeting on Discourse and Dialogue, pages 201–206.",
+      "citeRegEx" : "Novikova et al\\.,? 2017",
+      "shortCiteRegEx" : "Novikova et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Structured prediction as translation between augmented natural languages",
+      "author" : [ "Soatto." ],
+      "venue" : "arXiv preprint arXiv:2101.05779.",
+      "citeRegEx" : "Soatto.,? 2021",
+      "shortCiteRegEx" : "Soatto.",
+      "year" : 2021
+    }, {
+      "title" : "Totto: A controlled table-totext generation dataset",
+      "author" : [ "Ankur Parikh", "Xuezhi Wang", "Sebastian Gehrmann", "Manaal Faruqui", "Bhuwan Dhingra", "Diyi Yang", "Dipanjan Das." ],
+      "venue" : "Proceedings of the 2020 Conference on Empirical Methods in Natural Lan-",
+      "citeRegEx" : "Parikh et al\\.,? 2020",
+      "shortCiteRegEx" : "Parikh et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Data-to-text generation with content selection and planning",
+      "author" : [ "Ratish Puduppully", "Li Dong", "Mirella Lapata." ],
+      "venue" : "Proceedings of the AAAI conference on artificial intelligence, volume 33, pages 6908–6915.",
+      "citeRegEx" : "Puduppully et al\\.,? 2019a",
+      "shortCiteRegEx" : "Puduppully et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Data-to-text generation with entity modeling",
+      "author" : [ "Ratish Puduppully", "Li Dong", "Mirella Lapata." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 2023–2035.",
+      "citeRegEx" : "Puduppully et al\\.,? 2019b",
+      "shortCiteRegEx" : "Puduppully et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Exploring the limits of transfer learning with a unified text-to-text transformer",
+      "author" : [ "Colin Raffel", "Noam Shazeer", "Adam Roberts", "Katherine Lee", "Sharan Narang", "Michael Matena", "Yanqi Zhou", "Wei Li", "Peter J Liu." ],
+      "venue" : "Journal of Machine Learning Research,",
+      "citeRegEx" : "Raffel et al\\.,? 2020",
+      "shortCiteRegEx" : "Raffel et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Neural data-to-text generation via jointly learning the segmentation and correspondence",
+      "author" : [ "Xiaoyu Shen", "Ernie Chang", "Hui Su", "Cheng Niu", "Dietrich Klakow." ],
+      "venue" : "Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics,",
+      "citeRegEx" : "Shen et al\\.,? 2020",
+      "shortCiteRegEx" : "Shen et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Supervised open information extraction",
+      "author" : [ "Gabriel Stanovsky", "Julian Michael", "Luke Zettlemoyer", "Ido Dagan." ],
+      "venue" : "Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human",
+      "citeRegEx" : "Stanovsky et al\\.,? 2018",
+      "shortCiteRegEx" : "Stanovsky et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Fast and accurate entity recognition with iterated dilated convolutions",
+      "author" : [ "Emma Strubell", "Patrick Verga", "David Belanger", "Andrew McCallum." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages",
+      "citeRegEx" : "Strubell et al\\.,? 2017",
+      "shortCiteRegEx" : "Strubell et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Sequence to sequence learning with neural networks",
+      "author" : [ "Ilya Sutskever", "Oriol Vinyals", "Quoc V Le." ],
+      "venue" : "Advances in Neural Information Processing Systems, 27:3104–3112.",
+      "citeRegEx" : "Sutskever et al\\.,? 2014",
+      "shortCiteRegEx" : "Sutskever et al\\.",
+      "year" : 2014
+    }, {
+      "title" : "Sportsett: Basketball-a robust and maintainable data-set for natural language generation",
+      "author" : [ "Craig Thomson", "Ehud Reiter", "Somayajulu Sripada." ],
+      "venue" : "Proceedings of the Workshop on Intelligent Information Processing and Natural Language Generation,",
+      "citeRegEx" : "Thomson et al\\.,? 2020",
+      "shortCiteRegEx" : "Thomson et al\\.",
+      "year" : 2020
+    }, {
+      "title" : "Attention is all you need",
+      "author" : [ "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit", "Llion Jones", "Aidan N Gomez", "Łukasz Kaiser", "Illia Polosukhin." ],
+      "venue" : "Advances in Neural Information Processing Systems, 30:5998–6008.",
+      "citeRegEx" : "Vaswani et al\\.,? 2017",
+      "shortCiteRegEx" : "Vaswani et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Entity, relation, and event extraction with contextualized span representations",
+      "author" : [ "David Wadden", "Ulme Wennberg", "Yi Luan", "Hannaneh Hajishirzi." ],
+      "venue" : "Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the",
+      "citeRegEx" : "Wadden et al\\.,? 2019",
+      "shortCiteRegEx" : "Wadden et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Challenges in data-to-document generation",
+      "author" : [ "Sam Wiseman", "Stuart M Shieber", "Alexander M Rush." ],
+      "venue" : "Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing, pages 2253–2263.",
+      "citeRegEx" : "Wiseman et al\\.,? 2017",
+      "shortCiteRegEx" : "Wiseman et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "Open information extraction using wikipedia",
+      "author" : [ "Fei Wu", "Daniel S. Weld." ],
+      "venue" : "ACL 2010, Proceedings of the 48th Annual Meeting of the Association for Computational Linguistics, July 11-16, 2010, Uppsala, Sweden, pages 118–127. The Asso-",
+      "citeRegEx" : "Wu and Weld.,? 2010",
+      "shortCiteRegEx" : "Wu and Weld.",
+      "year" : 2010
+    }, {
+      "title" : "Improving clinical named entity recognition with global neural attention",
+      "author" : [ "Guohai Xu", "Chengyu Wang", "Xiaofeng He." ],
+      "venue" : "Asia-Pacific Web (APWeb) and Web-Age Information Management (WAIM) Joint International Conference on Web and",
+      "citeRegEx" : "Xu et al\\.,? 2018",
+      "shortCiteRegEx" : "Xu et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "A unified generative framework for various ner subtasks",
+      "author" : [ "Hang Yan", "Tao Gui", "Junqi Dai", "Qipeng Guo", "Zheng Zhang", "Xipeng Qiu." ],
+      "venue" : "arXiv preprint arXiv:2106.01223.",
+      "citeRegEx" : "Yan et al\\.,? 2021",
+      "shortCiteRegEx" : "Yan et al\\.",
+      "year" : 2021
+    }, {
+      "title" : "Docred: A large-scale document-level relation extraction dataset",
+      "author" : [ "Yuan Yao", "Deming Ye", "Peng Li", "Xu Han", "Yankai Lin", "Zhenghao Liu", "Zhiyuan Liu", "Lixin Huang", "Jie Zhou", "Maosong Sun." ],
+      "venue" : "Proceedings of the 57th Annual Meeting of the Associa-",
+      "citeRegEx" : "Yao et al\\.,? 2019",
+      "shortCiteRegEx" : "Yao et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Extracting relational facts by an end-to-end neural model with copy mechanism",
+      "author" : [ "Xiangrong Zeng", "Daojian Zeng", "Shizhu He", "Kang Liu", "Jun Zhao." ],
+      "venue" : "Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume",
+      "citeRegEx" : "Zeng et al\\.,? 2018",
+      "shortCiteRegEx" : "Zeng et al\\.",
+      "year" : 2018
+    }, {
+      "title" : "Span model for open information extraction on accurate corpus",
+      "author" : [ "Junlang Zhan", "Hai Zhao." ],
+      "venue" : "The Thirty-Fourth AAAI Conference on Artificial Intelligence, AAAI 2020, The Thirty-Second Innovative Applications of Artificial Intelligence Confer-",
+      "citeRegEx" : "Zhan and Zhao.,? 2020",
+      "shortCiteRegEx" : "Zhan and Zhao.",
+      "year" : 2020
+    }, {
+      "title" : "Joint entity and event extraction with generative adversarial imitation learning",
+      "author" : [ "Tongtao Zhang", "Heng Ji", "Avirup Sil." ],
+      "venue" : "Data Intelligence, 1(2):99– 120.",
+      "citeRegEx" : "Zhang et al\\.,? 2019",
+      "shortCiteRegEx" : "Zhang et al\\.",
+      "year" : 2019
+    }, {
+      "title" : "Joint extraction of entities and relations based on a novel tagging scheme",
+      "author" : [ "Suncong Zheng", "Feng Wang", "Hongyun Bao", "Yuexing Hao", "Peng Zhou", "Bo Xu." ],
+      "venue" : "Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics",
+      "citeRegEx" : "Zheng et al\\.,? 2017",
+      "shortCiteRegEx" : "Zheng et al\\.",
+      "year" : 2017
+    }, {
+      "title" : "A frustratingly easy approach for joint entity and relation extraction",
+      "author" : [ "Zexuan Zhong", "Danqi Chen." ],
+      "venue" : "arXiv preprint arXiv:2010.12812.",
+      "citeRegEx" : "Zhong and Chen.,? 2020",
+      "shortCiteRegEx" : "Zhong and Chen.",
+      "year" : 2020
+    } ],
+    "referenceMentions" : [ {
+      "referenceID" : 10,
+      "context" : "Traditional IE tasks include named entity recognition which recognizes entities and their types (Huang et al., 2015; Ma and Hovy, 2016; Lample et al., 2016; Devlin et al., 2019), relation extraction which identifies the relationships between Figure 1: An example of text-to-table from the Rotowire dataset.",
+      "startOffset" : 96,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 22,
+      "context" : "Traditional IE tasks include named entity recognition which recognizes entities and their types (Huang et al., 2015; Ma and Hovy, 2016; Lample et al., 2016; Devlin et al., 2019), relation extraction which identifies the relationships between Figure 1: An example of text-to-table from the Rotowire dataset.",
+      "startOffset" : 96,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 13,
+      "context" : "Traditional IE tasks include named entity recognition which recognizes entities and their types (Huang et al., 2015; Ma and Hovy, 2016; Lample et al., 2016; Devlin et al., 2019), relation extraction which identifies the relationships between Figure 1: An example of text-to-table from the Rotowire dataset.",
+      "startOffset" : 96,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 5,
+      "context" : "Traditional IE tasks include named entity recognition which recognizes entities and their types (Huang et al., 2015; Ma and Hovy, 2016; Lample et al., 2016; Devlin et al., 2019), relation extraction which identifies the relationships between Figure 1: An example of text-to-table from the Rotowire dataset.",
+      "startOffset" : 96,
+      "endOffset" : 177
+    }, {
+      "referenceID" : 15,
+      "context" : "We also build the seq2seq model on top of a pre-trained language model, which is the stateof-the-art approach for seq2seq tasks (Lewis et al., 2019; Raffel et al., 2020).",
+      "startOffset" : 128,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 33,
+      "context" : "We also build the seq2seq model on top of a pre-trained language model, which is the stateof-the-art approach for seq2seq tasks (Lewis et al., 2019; Raffel et al., 2020).",
+      "startOffset" : 128,
+      "endOffset" : 169
+    }, {
+      "referenceID" : 46,
+      "context" : "Methods for conducting individual tasks of relation extraction (Zeng et al., 2018; Nayak and Ng, 2020), named entity recognition (Chen and Moschitti, 2018; Yan et al.",
+      "startOffset" : 63,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 27,
+      "context" : "Methods for conducting individual tasks of relation extraction (Zeng et al., 2018; Nayak and Ng, 2020), named entity recognition (Chen and Moschitti, 2018; Yan et al.",
+      "startOffset" : 63,
+      "endOffset" : 102
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2018; Nayak and Ng, 2020), named entity recognition (Chen and Moschitti, 2018; Yan et al., 2021), and event extraction (Lu et al.",
+      "startOffset" : 54,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 44,
+      "context" : ", 2018; Nayak and Ng, 2020), named entity recognition (Chen and Moschitti, 2018; Yan et al., 2021), and event extraction (Lu et al.",
+      "startOffset" : 54,
+      "endOffset" : 98
+    }, {
+      "referenceID" : 19,
+      "context" : ", 2021), and event extraction (Lu et al., 2021) have been developed.",
+      "startOffset" : 30,
+      "endOffset" : 47
+    }, {
+      "referenceID" : 15,
+      "context" : "Results show that the vanilla seq2seq model fine-tuned from BART (Lewis et al., 2019) can outperform the state-of-the-art IE models finetuned from BERT (Devlin et al.",
+      "startOffset" : 65,
+      "endOffset" : 85
+    }, {
+      "referenceID" : 5,
+      "context" : ", 2019) can outperform the state-of-the-art IE models finetuned from BERT (Devlin et al., 2019; Zhong and Chen, 2020).",
+      "startOffset" : 74,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 50,
+      "context" : ", 2019) can outperform the state-of-the-art IE models finetuned from BERT (Devlin et al., 2019; Zhong and Chen, 2020).",
+      "startOffset" : 74,
+      "endOffset" : 117
+    }, {
+      "referenceID" : 5,
+      "context" : "The state-ofthe-art methods for NER perform the task on the basis of the pre-trained language model BERT (Devlin et al., 2019).",
+      "startOffset" : 105,
+      "endOffset" : 126
+    }, {
+      "referenceID" : 50,
+      "context" : "The pipeline approach to RE divides the problem into NER and relation classification, and conducts the two sub-tasks in a sequential manner (Zhong and Chen, 2020), while the end-to-end approach jointly carries out the two sub-tasks (Zheng et al.",
+      "startOffset" : 140,
+      "endOffset" : 162
+    }, {
+      "referenceID" : 49,
+      "context" : "The pipeline approach to RE divides the problem into NER and relation classification, and conducts the two sub-tasks in a sequential manner (Zhong and Chen, 2020), while the end-to-end approach jointly carries out the two sub-tasks (Zheng et al., 2017; Zeng et al., 2018; Luan et al., 2019).",
+      "startOffset" : 232,
+      "endOffset" : 290
+    }, {
+      "referenceID" : 46,
+      "context" : "The pipeline approach to RE divides the problem into NER and relation classification, and conducts the two sub-tasks in a sequential manner (Zhong and Chen, 2020), while the end-to-end approach jointly carries out the two sub-tasks (Zheng et al., 2017; Zeng et al., 2018; Luan et al., 2019).",
+      "startOffset" : 232,
+      "endOffset" : 290
+    }, {
+      "referenceID" : 20,
+      "context" : "The pipeline approach to RE divides the problem into NER and relation classification, and conducts the two sub-tasks in a sequential manner (Zhong and Chen, 2020), while the end-to-end approach jointly carries out the two sub-tasks (Zheng et al., 2017; Zeng et al., 2018; Luan et al., 2019).",
+      "startOffset" : 232,
+      "endOffset" : 290
+    }, {
+      "referenceID" : 40,
+      "context" : "The state-of-the-art methods for EE also employ BERT and usually jointly train the models with other tasks such as NER and RE (Wadden et al., 2019; Zhang et al., 2019; Lin et al., 2020).",
+      "startOffset" : 126,
+      "endOffset" : 185
+    }, {
+      "referenceID" : 48,
+      "context" : "The state-of-the-art methods for EE also employ BERT and usually jointly train the models with other tasks such as NER and RE (Wadden et al., 2019; Zhang et al., 2019; Lin et al., 2020).",
+      "startOffset" : 126,
+      "endOffset" : 185
+    }, {
+      "referenceID" : 16,
+      "context" : "The state-of-the-art methods for EE also employ BERT and usually jointly train the models with other tasks such as NER and RE (Wadden et al., 2019; Zhang et al., 2019; Lin et al., 2020).",
+      "startOffset" : 126,
+      "endOffset" : 185
+    }, {
+      "referenceID" : 1,
+      "context" : "Another series of related work is open information extraction (OpenIE), which aims to extract information from texts without relying on explicitly defined schemas (Banko et al., 2007; Wu and Weld, 2010; Mausam et al., 2012; Stanovsky et al., 2018; Zhan and Zhao, 2020).",
+      "startOffset" : 163,
+      "endOffset" : 268
+    }, {
+      "referenceID" : 42,
+      "context" : "Another series of related work is open information extraction (OpenIE), which aims to extract information from texts without relying on explicitly defined schemas (Banko et al., 2007; Wu and Weld, 2010; Mausam et al., 2012; Stanovsky et al., 2018; Zhan and Zhao, 2020).",
+      "startOffset" : 163,
+      "endOffset" : 268
+    }, {
+      "referenceID" : 24,
+      "context" : "Another series of related work is open information extraction (OpenIE), which aims to extract information from texts without relying on explicitly defined schemas (Banko et al., 2007; Wu and Weld, 2010; Mausam et al., 2012; Stanovsky et al., 2018; Zhan and Zhao, 2020).",
+      "startOffset" : 163,
+      "endOffset" : 268
+    }, {
+      "referenceID" : 35,
+      "context" : "Another series of related work is open information extraction (OpenIE), which aims to extract information from texts without relying on explicitly defined schemas (Banko et al., 2007; Wu and Weld, 2010; Mausam et al., 2012; Stanovsky et al., 2018; Zhan and Zhao, 2020).",
+      "startOffset" : 163,
+      "endOffset" : 268
+    }, {
+      "referenceID" : 47,
+      "context" : "Another series of related work is open information extraction (OpenIE), which aims to extract information from texts without relying on explicitly defined schemas (Banko et al., 2007; Wu and Weld, 2010; Mausam et al., 2012; Stanovsky et al., 2018; Zhan and Zhao, 2020).",
+      "startOffset" : 163,
+      "endOffset" : 268
+    }, {
+      "referenceID" : 36,
+      "context" : "For example, some NER methods directly perform NER on a long document (Strubell et al., 2017; Luo et al., 2018), and others encode each sentence in a document, use",
+      "startOffset" : 70,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 21,
+      "context" : "For example, some NER methods directly perform NER on a long document (Strubell et al., 2017; Luo et al., 2018), and others encode each sentence in a document, use",
+      "startOffset" : 70,
+      "endOffset" : 111
+    }, {
+      "referenceID" : 8,
+      "context" : "attention to fuse document-level information, and perform NER on each sentence (Hu et al., 2020; Xu et al., 2018).",
+      "startOffset" : 79,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 43,
+      "context" : "attention to fuse document-level information, and perform NER on each sentence (Hu et al., 2020; Xu et al., 2018).",
+      "startOffset" : 79,
+      "endOffset" : 113
+    }, {
+      "referenceID" : 45,
+      "context" : "There are also RE methods that predict the relationships between entities in a document (Yao et al., 2019; Nan et al., 2020a).",
+      "startOffset" : 88,
+      "endOffset" : 125
+    }, {
+      "referenceID" : 25,
+      "context" : "There are also RE methods that predict the relationships between entities in a document (Yao et al., 2019; Nan et al., 2020a).",
+      "startOffset" : 88,
+      "endOffset" : 125
+    }, {
+      "referenceID" : 37,
+      "context" : "Sequence-to-sequence (seq2seq) is the general problem of transforming one text into another text (Sutskever et al., 2014; Bahdanau et al., 2014), which includes machine translation, text summa-",
+      "startOffset" : 97,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 0,
+      "context" : "Sequence-to-sequence (seq2seq) is the general problem of transforming one text into another text (Sutskever et al., 2014; Bahdanau et al., 2014), which includes machine translation, text summa-",
+      "startOffset" : 97,
+      "endOffset" : 144
+    }, {
+      "referenceID" : 15,
+      "context" : "The use of the pre-trained language models of BART (Lewis et al., 2019) and T5 (Raffel et al.",
+      "startOffset" : 51,
+      "endOffset" : 71
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2019) and T5 (Raffel et al., 2020) can significantly boost the performances of seq2seq, such as machine translation (Lewis et al.",
+      "startOffset" : 15,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 15,
+      "context" : ", 2020) can significantly boost the performances of seq2seq, such as machine translation (Lewis et al., 2019; Raffel et al., 2020; Liu et al., 2020) and text summarization (Lewis et al.",
+      "startOffset" : 89,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 33,
+      "context" : ", 2020) can significantly boost the performances of seq2seq, such as machine translation (Lewis et al., 2019; Raffel et al., 2020; Liu et al., 2020) and text summarization (Lewis et al.",
+      "startOffset" : 89,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 18,
+      "context" : ", 2020) can significantly boost the performances of seq2seq, such as machine translation (Lewis et al., 2019; Raffel et al., 2020; Liu et al., 2020) and text summarization (Lewis et al.",
+      "startOffset" : 89,
+      "endOffset" : 148
+    }, {
+      "referenceID" : 46,
+      "context" : "Results show that this approach works better than or equally well as the traditional approach of language understanding, in RE (Zeng et al., 2018; Nayak and Ng, 2020), NER (Chen and Moschitti, 2018; Yan et al.",
+      "startOffset" : 127,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 27,
+      "context" : "Results show that this approach works better than or equally well as the traditional approach of language understanding, in RE (Zeng et al., 2018; Nayak and Ng, 2020), NER (Chen and Moschitti, 2018; Yan et al.",
+      "startOffset" : 127,
+      "endOffset" : 166
+    }, {
+      "referenceID" : 3,
+      "context" : ", 2018; Nayak and Ng, 2020), NER (Chen and Moschitti, 2018; Yan et al., 2021) and EE (Lu et al.",
+      "startOffset" : 33,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 44,
+      "context" : ", 2018; Nayak and Ng, 2020), NER (Chen and Moschitti, 2018; Yan et al., 2021) and EE (Lu et al.",
+      "startOffset" : 33,
+      "endOffset" : 77
+    }, {
+      "referenceID" : 41,
+      "context" : "Data-to-text aims to generate natural language descriptions from the input structured data such as sport commentaries (Wiseman et al., 2017).",
+      "startOffset" : 118,
+      "endOffset" : 140
+    }, {
+      "referenceID" : 41,
+      "context" : "The structured data is usually represented as tables (Wiseman et al., 2017; Thomson et al., 2020; Chen et al., 2020), sets of table cells (Parikh et al.",
+      "startOffset" : 53,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 38,
+      "context" : "The structured data is usually represented as tables (Wiseman et al., 2017; Thomson et al., 2020; Chen et al., 2020), sets of table cells (Parikh et al.",
+      "startOffset" : 53,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 4,
+      "context" : "The structured data is usually represented as tables (Wiseman et al., 2017; Thomson et al., 2020; Chen et al., 2020), sets of table cells (Parikh et al.",
+      "startOffset" : 53,
+      "endOffset" : 116
+    }, {
+      "referenceID" : 30,
+      "context" : ", 2020), sets of table cells (Parikh et al., 2020; Bao et al., 2018), semantic representations (Novikova et al.",
+      "startOffset" : 29,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2020), sets of table cells (Parikh et al., 2020; Bao et al., 2018), semantic representations (Novikova et al.",
+      "startOffset" : 29,
+      "endOffset" : 68
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2018), semantic representations (Novikova et al., 2017), or sets of relation",
+      "startOffset" : 34,
+      "endOffset" : 57
+    }, {
+      "referenceID" : 41,
+      "context" : "The task requires the model to select the salient information from the data, organize it in a logical order, and generate an accurate and fluent natural language description (Wiseman et al., 2017).",
+      "startOffset" : 174,
+      "endOffset" : 196
+    }, {
+      "referenceID" : 23,
+      "context" : ", 2020), graph neural network (Marcheggiani and Perez-Beltrachini, 2018; Koncel-Kedziorski et al., 2019), or Transformer (Gong et al.",
+      "startOffset" : 30,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 12,
+      "context" : ", 2020), graph neural network (Marcheggiani and Perez-Beltrachini, 2018; Koncel-Kedziorski et al., 2019), or Transformer (Gong et al.",
+      "startOffset" : 30,
+      "endOffset" : 104
+    }, {
+      "referenceID" : 41,
+      "context" : "We make use of four existing datasets which are traditionally utilized for data-to-text: Rotowire (Wiseman et al., 2017), E2E (Novikova et al.",
+      "startOffset" : 98,
+      "endOffset" : 120
+    }, {
+      "referenceID" : 28,
+      "context" : ", 2017), E2E (Novikova et al., 2017), WikiTableText (Bao et al.",
+      "startOffset" : 13,
+      "endOffset" : 36
+    }, {
+      "referenceID" : 2,
+      "context" : ", 2017), WikiTableText (Bao et al., 2018), and WikiBio (Lebret et al.",
+      "startOffset" : 23,
+      "endOffset" : 41
+    }, {
+      "referenceID" : 50,
+      "context" : "For RE, we use PURE, a state-of-the-art method (Zhong and Chen, 2020).",
+      "startOffset" : 47,
+      "endOffset" : 69
+    }, {
+      "referenceID" : 39,
+      "context" : "Training: For vanilla seq2seq and our method, we adopt Transformer (Vaswani et al., 2017) as the model and fine-tune the models from BART-",
+      "startOffset" : 67,
+      "endOffset" : 89
+    } ],
+    "year" : 0,
+    "abstractText" : "We study a new problem setting of information extraction (IE), referred to as text-to-table. In text-to-table, given a text, one creates a table or several tables expressing the main content of the text, while the model is learned from text-table pair data. The problem setting differs from those of the existing methods for IE. First, the extraction can be carried out from long texts to large tables with complex structures. Second, the extraction is entirely datadriven, and there is no need to explicitly define the schemas. As far as we know, there has been no previous work that studies the problem. In this work, we formalize text-to-table as a sequence-to-sequence (seq2seq) problem. We first employ a seq2seq model fine-tuned from a pre-trained language model to perform the task. We also develop a new method within the seq2seq approach, exploiting two additional techniques in table generation: table constraint and table relation embeddings. We consider text-to-table as an inverse problem of the well-studied table-to-text, and make use of four existing table-to-text datasets in our experiments on text-to-table. Experimental results show that the vanilla seq2seq model can outperform the baseline methods of using relation extraction and named entity extraction. The results also show that our method can further boost the performances of the vanilla seq2seq model. We further discuss the main challenges of the proposed task. The code and data will be made publicly available.",
+    "creator" : null
+  }
+}
