@@ -1,228 +1,376 @@
-# Paper Knowledge Graph Pipeline
+# Paper-Knowledge-Graph-Pipeline 运行指南
 
-Build a knowledge graph from NLP research papers: information extraction, pattern clustering, and graph construction.
-
-English | [中文](README_CN.md)
+这是一个基于论文知识图谱的 Pattern 生成与 Idea 召回系统。本指南帮助你快速上手最新版本（2026年1月更新）。
 
 ---
 
-## Quick Start
+## 📋 快速开始
 
-### Install Dependencies
-
-```bash
-cd Paper-KG-Pipeline
-pip install -r requirements.txt
-```
-
-### One-Click Run
+### 前置条件
 
 ```bash
-cd Paper-KG-Pipeline/scripts
-python run_pipeline.py
+# 检查 Python 版本（建议 3.8+）
+python --version
+
+# 安装依赖
+pip install numpy scikit-learn requests networkx
 ```
 
-### Step-by-Step
+### 环境变量配置
+
+系统需要 **SiliconFlow API** 来生成 Embeddings 和调用 LLM。参考 `01_RAG_minimal_DEMO.ipynb` 进行配置：
 
 ```bash
-cd Paper-KG-Pipeline/scripts
+# 方式1：设置环境变量（推荐）
+export SILICONFLOW_API_KEY="sk-your-api-key-here"
+export LLM_API_URL="https://api.siliconflow.cn/v1/chat/completions"
+export EMBED_API_URL="https://api.siliconflow.cn/v1/embeddings"
+export LLM_MODEL="Qwen/Qwen2.5-7B-Instruct"
+export EMBED_MODEL="Qwen/Qwen3-Embedding-4B"
 
-# Step 1: Data extraction (requires OpenAI API, skip if results exist)
-# python extract_paper_review.py
-
-# Step 2: Pattern clustering (requires Embedding API, skip if results exist)
-# python generate_patterns.py
-
-# Step 3: Build knowledge graph
-python build_knowledge_graph.py
+# 或方式2：在脚本中直接配置（见各脚本的配置部分）
 ```
-
-### Output Files
-
-After running, the following files will be generated in `output/`:
-- `knowledge_graph.gpickle` - NetworkX graph (recommended)
-- `knowledge_graph.json` - JSON format graph
-- `knowledge_graph_stats.json` - Statistics
 
 ---
 
-## Directory Structure
+## 🔧 完整工作流
+
+### Step 1: 数据准备
+
+确保数据目录结构如下：
 
 ```
-Paper-KG-Pipeline/
-├── data/                              # Paper extraction results
-│   ├── ACL_2017/                      # 135 papers
-│   │   ├── ACL_2017_*_paper_node.json # Single paper extraction
-│   │   └── _all_paper_nodes.json      # Merged file
-│   ├── ARR_2022/                      # 323 papers
-│   │   ├── ARR_2022_*_paper_node.json # Single paper extraction
-│   │   └── _all_paper_nodes.json      # Merged file
-│   └── COLING_2020/                   # 87 papers
-│       ├── COLING_2020_*_paper_node.json
-│       └── _all_paper_nodes.json
-│
-├── scripts/                           # Core scripts
-│   ├── extract_paper_review.py        # Step1: Information extraction
-│   ├── generate_patterns.py           # Step2: Clustering + Pattern generation
-│   └── build_knowledge_graph.py       # Step3: Knowledge graph construction
-│
-├── output/                            # Output results
-│   ├── patterns_structured.json       # Pattern clustering results
-│   ├── knowledge_graph.gpickle        # Knowledge graph (NetworkX)
-│   ├── knowledge_graph.json           # Knowledge graph (JSON)
-│   └── knowledge_graph_stats.json     # Graph statistics
-│
-└── README.md
+data/
+├── ACL_2017/
+│   ├── paper_0_paper_node.json
+│   ├── paper_1_paper_node.json
+│   └── ...
+├── COLING_2020/
+│   ├── paper_0_paper_node.json
+│   └── ...
+└── ARR_2022/
+    └── ...
 ```
 
-## Node Types
-
-| Node Type | Count | Description | Key Attributes |
-|---------|------|------|--------|
-| **Paper** | 545 | Paper | paper_id, title, conference |
-| **Domain** | 257 | Research Domain | name, research_object, core_technique |
-| **Idea** | 545 | Core Innovation | description, tech_stack, input_type, output_type |
-| **Skeleton** | 545 | Paper Structure | problem_framing, gap_pattern, method_story, experiments_story |
-| **Trick** | 4550 | Writing Techniques | name, type, purpose, location, description |
-| **Pattern** | 29 | Writing Patterns | name, summary, writing_guide |
-| **Review** | 989 | Peer Reviews | reviewer, strengths, weaknesses, overall_score |
-
-## Edge Types
-
-| Relation | Source → Target | Description |
-|-----|-------------|------|
-| `in_domain` | Paper → Domain | Paper's research domain |
-| `implements` | Paper → Idea | Paper's core innovation |
-| `has_skeleton` | Paper → Skeleton | Paper's structure |
-| `uses_trick` | Paper → Trick | Writing techniques used |
-| `has_review` | Paper → Review | Peer review comments |
-| `exemplified_by` | Pattern → Paper | Example papers for pattern |
-| `commonly_uses` | Pattern → Trick | Common tricks in pattern |
-| `has_skeleton_example` | Pattern → Skeleton | Skeleton examples |
-
-## Usage
-
-### Prerequisites
-
-```bash
-pip install -r requirements.txt
+每个 `*_paper_node.json` 文件应包含以下字段：
+```json
+{
+  "paper_id": "...",
+  "title": "...",
+  "conference": "...",
+  "skeleton": {
+    "problem_framing": "...",
+    "gap_pattern": "...",
+    "method_story": "...",
+    "experiments_story": "..."
+  },
+  "tricks": [
+    {
+      "name": "技巧名称",
+      "type": "...",
+      "description": "...",
+      "purpose": "..."
+    }
+  ]
+}
 ```
 
-### Environment Variables (Optional)
-
-If you need to re-run data extraction or pattern generation, configure the API Token:
-
-```bash
-# Linux/Mac
-export LLM_AUTH_TOKEN='Bearer your_token_here'
-
-# Windows PowerShell
-$env:LLM_AUTH_TOKEN='Bearer your_token_here'
-```
-
-> Note: Pre-processed data is provided. You can directly run `build_knowledge_graph.py` without API access.
-
-### Step 1: Information Extraction (Completed)
-
-Extract four-layer structured information from papers:
-- **domain**: Research object, core techniques, applications
-- **ideal**: Core innovation, tech stack, input/output
-- **skeleton**: Problem framing, research gap, method narrative, experiment design
-- **tricks**: Writing technique list
-
-```bash
-cd scripts
-python extract_paper_review.py
-```
-
-Input: Raw paper data (ACL_2017, ARR_2022, COLING_2020)
-Output: `data/{conference}/*_paper_node.json`
-
-### Step 2: Pattern Clustering (Completed)
-
-Cluster similar paper structures using hierarchical clustering:
-- Embedding: Qwen3-Embedding-8B (4096-dim)
-- Fusion weights: skeleton 40% + tricks 60%
-- Clustering: AgglomerativeClustering (cosine distance, threshold=0.35)
+### Step 2: 生成 Pattern（可选，如已有 patterns_structured.json 可跳过）
 
 ```bash
 cd scripts
 python generate_patterns.py
 ```
 
-Input: `data/{conference}/*_paper_node.json`
-Output: `output/patterns_structured.json`
+**预期输出**：
+```
+================================================================================
+基于 Skeleton + Tricks 聚类生成 Patterns
+================================================================================
 
-### Step 3: Build Knowledge Graph
+【Step 1】加载论文数据
+  📁 加载 ACL_2017: 123 篇论文
+  📁 加载 COLING_2020: 234 篇论文
+  ✅ 共加载 545 篇论文
 
-Integrate extraction results and pattern clustering to build the complete knowledge graph:
+【Step 2】构建pattern embeddings
+  ✓ 完成 545 个pattern的embedding
+
+【Step 3】聚类
+🔄 开始聚类...
+  距离阈值: 0.35
+  ✓ 生成 34 个 clusters
+  📊 Cluster 大小分布:
+    Cluster 0: 8 篇
+    Cluster 1: 12 篇
+    ...
+
+【Step 4】生成patterns
+  📊 分析 Cluster 0 (8 篇)...
+    Pattern 1: 模型压缩与知识蒸馏...
+  ...
+  ✅ 共生成 34 个patterns
+
+【Step 5】生成输出文件
+  ✅ patterns_structured.json
+  ✅ paper_to_pattern.json
+  ✅ patterns_guide.txt
+  ✅ patterns_statistics.json
+```
+
+### Step 3: 构建知识图谱
 
 ```bash
-cd scripts
-python build_knowledge_graph.py
+# 构建实体节点
+python build_entity.py
+
+# 构建边关系
+python build_edges.py
 ```
 
-Input:
-- `data/{conference}/*_paper_node.json`
-- `output/patterns_structured.json`
+**预期输出**：
+```
+✅ 已生成：
+  - output/nodes_idea.json (545 个Idea节点)
+  - output/nodes_pattern.json (34 个Pattern节点)
+  - output/nodes_domain.json (257 个Domain节点)
+  - output/nodes_paper.json (545 个Paper节点)
+  - output/edges_*.json (各类边关系)
+```
 
-Output:
-- `output/knowledge_graph.gpickle` (NetworkX binary format)
-- `output/knowledge_graph.json` (JSON format)
-- `output/knowledge_graph_stats.json` (Statistics)
+### Step 4: 运行召回系统演示
 
-## Data Sources
+```bash
+python simple_recall_demo.py
+```
 
-| Conference | Year | Papers | Reviews | Description |
-|-----|------|--------|---------|------|
-| ACL | 2017 | 135 | 272 | Top NLP conference |
-| ARR | 2022 | 323 | 606 | ACL Rolling Review |
-| COLING | 2020 | 87 | 111 | Computational Linguistics |
+**交互式输入**：
+```
+请输入 Idea（或按 Enter 使用默认示例）:
+使用蒸馏技术完成Transformer跨领域文本分类任务，并在多个数据集上验证效果
+```
 
-## Example Code
+**预期输出**：
+```
+================================================================================
+🎯 三路召回系统 Demo
+================================================================================
 
-### Load Knowledge Graph
+【用户Idea】
+使用蒸馏技术完成Transformer跨领域文本分类任务，并在多个数据集上验证效果
+
+📂 加载数据...
+  ✓ Idea: 545, Pattern: 34, Domain: 257, Paper: 545
+  ✓ 图谱: 1381 节点, 4509 边
+
+🔍 [路径1] 相似Idea召回...
+  找到 523 个相似Idea，选择 Top-10
+  ✓ 召回 5 个Pattern
+
+🌍 [路径2] 领域相关性召回...
+  找到 3 个相关Domain，选择 Top-5
+  ✓ 召回 34 个Pattern
+
+📄 [路径3] 相似Paper召回...
+  找到 171 个相似Paper，选择 Top-20
+  ✓ 召回 9 个Pattern
+
+🔗 融合三路召回结果...
+
+================================================================================
+📊 召回结果 Top-10
+================================================================================
+
+【Rank 1】 pattern_11
+  名称: 模型压缩与知识蒸馏
+  最终得分: 0.1312
+  - 路径1 (相似Idea):   0.1049 (占比 79.9%)
+  - 路径2 (领域相关):   0.0030 (占比 2.3%)
+  - 路径3 (相似Paper):  0.0233 (占比 17.8%)
+  聚类大小: 5 篇论文
+  摘要: ...
+
+【Rank 2】 pattern_17
+  名称: 结构图谱预测方法
+  最终得分: 0.1249
+  ...
+
+================================================================================
+✅ 召回完成!
+================================================================================
+```
+
+---
+
+## 📊 关键改进点（相比旧版本）
+
+### Pattern 聚类优化
+
+| 方面 | 旧版本 | 新版本 | 改进 |
+| :--- | :--- | :--- | :--- |
+| **聚类策略** | 固定 30 个簇 | 自适应距离阈值 | ✅ 更合理 |
+| **Pattern 总数** | 30 个 | 34 个 | ✅ 选择更多 |
+| **最大 Pattern** | 448 篇(82%) | 30 篇(8.6%) | ✅ 消除"万金油" |
+| **最小 Pattern** | 2 篇(质量低) | 5 篇(有筛选) | ✅ 质量保证 |
+| **中位数簇大小** | 2 篇 | 8.5 篇 | ✅ 代表性强 |
+| **中文 Idea 召回** | 0 个结果 | 精准召回 | ✅ 修复 bug |
+
+### 参数配置
 
 ```python
+# 聚类参数（位于 scripts/generate_patterns.py）
+CLUSTER_PARAMS = {
+    "distance_threshold": 0.35,  # 自适应聚类的距离阈值
+    "min_cluster_size": 5,       # 最小簇大小，低于此值的簇被过滤
+    "skeleton_weight": 0.4,      # Skeleton 权重（骨架）
+    "tricks_weight": 0.6,        # Tricks 权重（技巧）
+}
+```
+
+**如何调整**：
+- 降低 `distance_threshold`：生成更多、更精细的 Pattern（推荐 0.30-0.35）
+- 增加 `min_cluster_size`：只保留更大的、代表性更强的簇（推荐 5-10）
+- 调整 weights：改变 Skeleton 和 Tricks 在聚类中的重要性比例
+
+---
+
+## 🔍 理解召回系统
+
+### 三路召回策略
+
+**路径1：相似Idea召回** (Idea → Idea → Pattern)
+```
+用户输入Idea
+  ↓ [向量相似度计算]
+找到最相似的 K 个已有Idea
+  ↓ [获取关联Pattern]
+直接推荐这些Pattern
+  ↓
+得分占比通常 > 50%（直接相关）
+```
+
+**路径2：领域相关性召回** (Idea → Domain → Pattern)
+```
+用户Idea属于哪些Domain
+  ↓ [领域权重计算]
+该Domain内表现最好的Pattern
+  ↓ [效果增益计算]
+推荐"领域之星"Pattern
+  ↓
+得分占比通常 20-40%（领域相关但不直接）
+```
+
+**路径3：相似Paper召回** (Idea → Paper → Pattern)
+```
+找到与用户Idea相似的高质量论文
+  ↓ [论文质量评分]
+这些论文使用的Pattern
+  ↓ [质量反向背书]
+高质量论文推荐的Pattern可信度高
+  ↓
+得分占比通常 20-40%（质量保证）
+```
+
+### 结果融合与解读
+
+```python
+最终得分 = Path1_Score * 0.4 + Path2_Score * 0.3 + Path3_Score * 0.3
+```
+
+**解读技巧**：
+
+| 得分占比模式 | 解释 | 建议 |
+| :--- | :--- | :--- |
+| **路径1 > 70%** | 用户Idea 与历史相似 | ✅ 稳妥选择 |
+| **路径2 > 40%** | Pattern 在领域表现好 | ✅ 领域通用 |
+| **路径3 > 40%** | 高质量Paper背书 | ✅ 质量保证 |
+| **三路均衡** | 各角度都支持 | ⭐ 最佳选择 |
+
+---
+
+## 📚 详细文档
+
+- **知识图谱体系**：见 `docs/RECALL_SYSTEM_EXPLAINED.md`
+  - Pattern 聚类逻辑详解
+  - 节点/边定义与规模
+  - 三路召回策略工作机制
+  - 实际案例分析（Recall_Case_1）
+  - 聚类改进前后对比
+
+- **直观演示**：见 `docs/recall_case_1`
+  - 真实 Idea 的三路召回输出
+  - Top-10 Pattern 排名
+  - 每个 Pattern 的详细信息
+
+---
+
+## 🐛 常见问题
+
+### Q1: Embedding API 报错 (401/403)
+
+**原因**：SiliconFlow API Key 配置错误
+
+**解决**：
+```bash
+# 检查API Key是否正确
+echo $SILICONFLOW_API_KEY
+
+# 或在脚本中直接配置
+# scripts/generate_patterns.py 第 20-31 行
+```
+
+### Q2: 聚类耗时很长
+
+**原因**：Embedding API 调用频繁，有频率限制
+
+**优化**：
+```python
+# scripts/generate_patterns.py 第 179-180 行
+time.sleep(0.1)  # 调大间隔，如 0.2 或 0.3
+```
+
+### Q3: 召回结果为 0
+
+**原因**：
+1. 中文 Idea 分词问题（已修复）
+2. 知识图谱未正确构建
+3. 相似度阈值过高
+
+**调试**：
+```python
+# scripts/simple_recall_demo.py
+# 添加调试输出
+print(f"找到 {len(similar_ideas)} 个相似Idea")
+print(f"Top-1 相似度: {similarities[0] if similarities else 'N/A'}")
+```
+
+### Q4: Pattern 数量与预期不符
+
+**检查**：
+```python
+# 查看聚类统计
 import json
-import pickle
-import networkx as nx
-
-# Method 1: Load gpickle format (recommended)
-with open('output/knowledge_graph.gpickle', 'rb') as f:
-    G = pickle.load(f)
-
-# Method 2: Load JSON format
-with open('output/knowledge_graph.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-    G = nx.MultiDiGraph()
-    for node in data['nodes']:
-        G.add_node(node['id'], **node)
-    for edge in data['edges']:
-        G.add_edge(edge['source'], edge['target'], **edge)
-
-# Statistics
-print(f"Nodes: {G.number_of_nodes()}")
-print(f"Edges: {G.number_of_edges()}")
+with open('output/patterns_statistics.json') as f:
+    stats = json.load(f)
+    print(f"Pattern 数: {stats['total_patterns']}")
+    print(f"覆盖论文数: {stats['total_papers']}")
+    print(f"簇大小分布: {stats['cluster_size_distribution']}")
 ```
 
-### Query Examples
+---
 
-```python
-# Query all Pattern nodes
-patterns = [n for n, d in G.nodes(data=True) if d.get('node_type') == 'Pattern']
-for p in patterns:
-    print(f"{p}: {G.nodes[p].get('name')}")
+## 📈 性能参考
 
-# Query example papers for a Pattern
-pattern_id = 'pattern_1'
-papers = [v for u, v, d in G.edges(data=True) 
-          if u == pattern_id and d.get('relation') == 'exemplified_by']
+基于 545 篇论文的演示数据集：
 
-# Query tricks used by a paper
-paper_id = 'paper_ARR_2022_0'
-tricks = [v for u, v, d in G.edges(data=True) 
-          if u == paper_id and d.get('relation') == 'uses_trick']
-```
+| 操作 | 耗时 | 备注 |
+| :--- | :--- | :--- |
+| 加载论文 | ~1秒 | 从磁盘读取 |
+| 构建Embeddings | ~5-10分钟 | 需要调用API，受网络限制 |
+| 聚类 | ~1秒 | 本地计算 |
+| 生成Pattern摘要 | ~3-5分钟 | 调用LLM生成 |
+| 构建图谱 | ~2秒 | 本地计算 |
+| 单次召回 | ~1秒 | 实时计算相似度 |
+
 
 

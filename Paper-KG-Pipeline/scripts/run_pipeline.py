@@ -41,15 +41,17 @@ def main():
     print("="*60)
     
     steps = [
-        # (1, "数据抽取", "extract_paper_review.py"),  # 已完成，数据在data/
-        # (2, "Pattern聚类", "generate_patterns.py"),  # 已完成，结果在output/
-        (3, "构建知识图谱", "build_knowledge_graph.py"),
+        # (0, "数据抽取", "extract_paper_review.py"),  # 已完成，数据在data/
+        # (1, "Pattern聚类", "generate_patterns.py"),  # 已完成，结果在output/
+        # (2, "构建entity", "build_entity.py"),  # 已完成，结果在output/
+        (3, "运行召回", "simple_recall_demo.py"),
     ]
     
     print("\n📋 将执行以下步骤:")
     print("   1. 数据抽取 (已完成 - 结果在 data/)")
     print("   2. Pattern聚类 (已完成 - 结果在 output/patterns_structured.json)")
-    print("   3. 构建知识图谱")
+    print("   3. 构建知识图谱(已完成 - 结果在 output/nodes_xxx.json)")
+    print("   4. idea召回")
     
     for step_num, name, script in steps:
         if not run_step(step_num, name, script):
@@ -59,10 +61,6 @@ def main():
     print("\n" + "="*60)
     print("🎉 Pipeline完成!")
     print("="*60)
-    print("\n📁 输出文件:")
-    print("   - output/knowledge_graph.gpickle")
-    print("   - output/knowledge_graph.json")
-    print("   - output/knowledge_graph_stats.json")
 
 
 if __name__ == '__main__':
