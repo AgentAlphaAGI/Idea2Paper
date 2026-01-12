@@ -1,6 +1,18 @@
 # Paper-Knowledge-Graph-Pipeline 运行指南
 
-这是一个基于论文知识图谱的 Pattern 生成与 Idea 召回系统。本指南帮助你快速上手最新版本（2026年1月更新）。
+这是一个基于论文知识图谱的 **Pattern 生成与 Idea 召回系统**，现已支持 **Idea2Story 自动生成** 功能。本指南帮助你快速上手最新版本（2026年1月更新）。
+
+## 🆕 新功能: Idea2Story Pipeline
+
+✅ **自动生成可发表的 Paper Story**
+✅ **方法论深度融合**（精准注入技术路线描述，而非简单堆砌）
+✅ **多智能体评审机制**（Methodology/Novelty/Storyteller）
+✅ **智能修正策略**（Tail/Head Injection + 增量修正）
+✅ **多源数据合并**（patterns_structured.json 完整骨架数据）
+✅ **RAG 查重与 Pivot 规避**
+✅ **详细的执行日志**（便于调试）
+
+**快速开始**: `python scripts/idea2story_pipeline.py "你的研究想法"`
 
 ---
 
@@ -288,6 +300,79 @@ CLUSTER_PARAMS = {
 
 ---
 
+---
+
+## 🚀 Step 5: 运行 Idea2Story Pipeline（新增！）
+
+完成召回后，可以使用 Pipeline 自动生成可发表的 Paper Story。
+
+```bash
+# 使用默认 Idea
+python scripts/idea2story_pipeline.py
+
+# 自定义 Idea
+python scripts/idea2story_pipeline.py "你的研究想法描述"
+```
+
+### Pipeline 核心特性
+
+#### 🎯 方法论深度融合（最新改进）
+
+**问题**: 早期版本的 Refine 只是在 Story 末尾追加 Trick 名称，导致"技术堆砌"问题。
+
+**解决**:
+1. **精准提取**: 从 `patterns_structured.json` 的 `skeleton_examples` 中提取完整的 `method_story`（方法论描述）
+2. **针尖式注入**: 将具体的方法论逻辑（而非仅 Trick 名称）直接注入到 Prompt 中
+3. **重构引导**: Prompt 提供"深度融合 vs 简单堆砌"的正反范例，强制 LLM 进行方法论重构
+
+**示例对比**:
+
+❌ **旧版本（技术堆砌）**:
+```
+方法步骤1；方法步骤2；添加课程学习；再添加对抗训练
+```
+
+✅ **新版本（深度融合）**:
+```
+方法步骤1；在训练过程中引入基于难度的课程学习调度器，
+结合对抗扰动正则项，形成渐进式鲁棒训练框架；方法步骤3
+```
+
+#### 📊 多源数据合并（关键修复）
+
+- 加载 `nodes_pattern.json`（基础 Pattern 信息）
+- 合并 `patterns_structured.json`（完整的 `skeleton_examples` 和 `common_tricks`）
+- 确保 Refinement 阶段能访问到完整的方法论描述数据
+
+### Pipeline 流程
+
+```
+User Idea → [召回 Top-10 Patterns]
+    ↓
+[Phase 1] 策略选择（稳健型/创新型/跨域型）
+    ↓
+[Phase 2] 初始 Story 生成
+    ↓
+[Phase 3] 多智能体评审（Methodology/Novelty/Storyteller）
+    ↓ Fail
+[Phase 3.5] 智能修正（注入方法论描述 + 增量修正）
+    ↓ Pass
+[Phase 4] RAG 查重验证
+    ↓ Collision
+[Pivot 策略] 领域迁移 + 约束生成
+    ↓
+✅ Final Story
+```
+
+### 输出文件
+
+- `output/final_story.json` - 最终生成的 Story
+- `output/pipeline_result.json` - 完整的执行历史（包含评审记录、修正历史）
+
+详细说明见 `docs/PIPELINE_IMPLEMENTATION.md` 和 `docs/QUICK_START_PIPELINE.md`
+
+---
+
 ## 📚 详细文档
 
 - **知识图谱体系**：见 `docs/RECALL_SYSTEM_EXPLAINED.md`
@@ -296,6 +381,13 @@ CLUSTER_PARAMS = {
   - 三路召回策略工作机制
   - 实际案例分析（Recall_Case_1）
   - 聚类改进前后对比
+
+- **Idea2Story Pipeline**：见 `docs/PIPELINE_IMPLEMENTATION.md`（新增）
+  - Pipeline 设计思路
+  - 各模块详细说明
+  - 配置参数说明
+  - 调试建议
+  - 优化方向
 
 - **直观演示**：见 `docs/recall_case_1`
   - 真实 Idea 的三路召回输出
