@@ -13,6 +13,7 @@ import json
 from rich import print
 from .utils.serialize import parse_markdown_to_dict
 from .utils.metric import WorstMetricValue
+from ai_scientist.prompts.loader import load_prompt, render_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -260,25 +261,17 @@ class AgentManager:
         )
 
     def _get_task_desc_str(self):
-        task_desc = """You are an ambitious AI researcher who is looking to publish a paper that will contribute significantly to the field.
-You have an idea and you want to conduct creative experiments to gain scientific insights.
-Your aim is to run experiments to gather sufficient results for a top conference paper.
-Your research idea:\n\n
-"""
-        task_desc += (
-            "Title:\n"
-            + self.task_desc["Title"]
-            + "\n"
-            + "Abstract:\n"
-            + self.task_desc["Abstract"]
-            + "\n"
-            + "Short Hypothesis:\n"
-            + self.task_desc["Short Hypothesis"]
-            + "\n"
-        )
+        code_section = ""
         if "Code" in self.task_desc:
-            task_desc += "Code To Use:\n" + self.task_desc["Code"] + "\n"
-        return task_desc
+            code_section = "Code To Use:\n" + self.task_desc["Code"] + "\n"
+        return render_prompt(
+            "treesearch.task_desc_template",
+            task_desc_base=load_prompt("treesearch.task_desc_base"),
+            title=self.task_desc["Title"],
+            abstract=self.task_desc["Abstract"],
+            short_hypothesis=self.task_desc["Short Hypothesis"],
+            code_section=code_section,
+        )
 
     def _create_initial_stage(self):
         """Create the initial stage configuration"""
@@ -432,16 +425,11 @@ Your research idea:\n\n
             return False, "No best node found"
 
         vlm_feedback = self._parse_vlm_feedback(best_node)
-        eval_prompt = f"""
-        Evaluate if the current sub-stage is complete based on the following evidence:
-        1. Figure Analysis:
-        {vlm_feedback}
-
-        Requirements for completion:
-        - {current_substage.goals}
-
-        Provide a detailed evaluation of completion status.
-        """
+        eval_prompt = render_prompt(
+            "treesearch.stage_completion_eval_prompt",
+            vlm_feedback=vlm_feedback,
+            goals=current_substage.goals,
+        )
 
         try:
             evaluation = query(
@@ -450,6 +438,7 @@ Your research idea:\n\n
                 func_spec=stage_completion_eval_spec,
                 model=self.cfg.agent.feedback.model,
                 temperature=self.cfg.agent.feedback.temp,
+                max_tokens=self.cfg.agent.feedback.max_tokens,
             )
             if evaluation["is_complete"]:
                 logger.info(
@@ -540,21 +529,12 @@ Your research idea:\n\n
             # Normal stage 2 completion check
             vlm_feedback = self._parse_vlm_feedback(best_node)
             min_datasets = self.stage_policy["stage2_min_datasets"]
-            eval_prompt = f"""
-            Evaluate if stage 2 (baseline tuning) is complete based on the following evidence:
-
-            1. Figure Analysis:
-            {vlm_feedback}
-
-            2. Datasets Tested: {best_node.datasets_successfully_tested}
-
-            Requirements for completion:
-            1. Training curves should show stable convergence
-            2. Results should be tested on at least {min_datasets} datasets
-            3. No major instabilities or issues in the plots
-
-            Provide a detailed evaluation of completion status.
-            """
+            eval_prompt = render_prompt(
+                "treesearch.stage2_completion_eval_prompt",
+                vlm_feedback=vlm_feedback,
+                datasets_tested=best_node.datasets_successfully_tested,
+                min_datasets=min_datasets,
+            )
 
             try:
                 evaluation = query(
@@ -563,6 +543,7 @@ Your research idea:\n\n
                     func_spec=stage_completion_eval_spec,
                     model=self.cfg.agent.feedback.model,
                     temperature=self.cfg.agent.feedback.temp,
+                    max_tokens=self.cfg.agent.feedback.max_tokens,
                 )
 
                 if evaluation["is_complete"]:
@@ -602,13 +583,9 @@ Your research idea:\n\n
                 self.cfg.agent.stages.stage3_max_iters / 2
             ):
                 if exec_time_minutes < self.cfg.exec.timeout / 60 / 2:
-                    exec_time_feedback = (
-                        f"Implementation works but runs too quickly ({exec_time_minutes:.2f} minutes)."
-                        "We have up to 60 minutes available for each experiment."
-                        "Make sure to scale up the experiment "
-                        "by increasing the number of epochs, using a larger model, or working with bigger datasets."
-                        "Given that the current execution time is {exec_time_minutes:.2f} minutes, think about how changing the number of epochs to run, or using a larger model, or working with bigger datasets to run"
-                        "will affect the execution time, and make sure to scale up the experiment accordingly."
+                    exec_time_feedback = render_prompt(
+                        "treesearch.exec_time_feedback_template",
+                        exec_time_minutes=f"{exec_time_minutes:.2f}",
                     )
                     print(f"[cyan]exec_time_feedback: {exec_time_feedback}[/cyan]")
                     self.journals[stage.name].nodes[
@@ -652,30 +629,18 @@ Your research idea:\n\n
         progress = self._analyze_progress(journal)
 
         # Create prompt for the LLM
-        prompt = f"""
-        Based on the current experimental progress, generate focused goals for the next sub-stage.
-
-        Main Stage Goals:
-        {main_stage_goal}
-
-        Current Progress:
-        - Total attempts: {metrics['total_nodes']}
-        - Successful implementations: {metrics['good_nodes']}
-        - Best performance: {metrics['best_metric']['value'] if metrics['best_metric'] else 'N/A'}
-        - Convergence status: {progress['convergence_status']}
-
-        Current Issues:
-        {json.dumps(issues, indent=2)}
-
-        Recent Changes:
-        {json.dumps(progress['recent_changes'], indent=2)}
-
-        Generate specific, actionable sub-stage goals that:
-        1. Address current issues and limitations
-        2. Build on recent progress
-        3. Move towards main stage goals
-        4. Are concrete and measurable
-        """
+        prompt = render_prompt(
+            "treesearch.substage_goal_prompt",
+            main_stage_goal=main_stage_goal,
+            total_nodes=metrics["total_nodes"],
+            good_nodes=metrics["good_nodes"],
+            best_metric=metrics["best_metric"]["value"]
+            if metrics["best_metric"]
+            else "N/A",
+            convergence_status=progress["convergence_status"],
+            issues_json=json.dumps(issues, indent=2),
+            recent_changes_json=json.dumps(progress["recent_changes"], indent=2),
+        )
 
         # Define the function specification for the LLM
         substage_goal_spec = FunctionSpec(
@@ -705,6 +670,7 @@ Your research idea:\n\n
                 func_spec=substage_goal_spec,
                 model=self.cfg.agent.feedback.model,
                 temperature=self.cfg.agent.feedback.temp,
+                max_tokens=self.cfg.agent.feedback.max_tokens,
             )
 
             # Format the response into a structured goal string
@@ -1111,6 +1077,7 @@ Your research idea:\n\n
                 func_spec=stage_config_spec,
                 model=self.cfg.agent.feedback.model,
                 temperature=self.cfg.agent.feedback.temp,
+                max_tokens=self.cfg.agent.feedback.max_tokens,
             )
             return response
 
@@ -1240,44 +1207,17 @@ Your research idea:\n\n
     ) -> Dict[str, Any]:
         """Evaluate whether experiment is ready for next stage"""
 
-        eval_prompt = f"""
-        Evaluate whether the current experimental stage should progress to the next stage.
-        Consider all available evidence holistically:
-
-        Current Stage Information:
-        - Name: {current_stage.name}
-        - Description: {current_stage.description}
-        - Goals: {', '.join(current_stage.goals) if isinstance(current_stage.goals, list) else current_stage.goals}
-
-        Performance Metrics:
-        {json.dumps(previous_results.get('metrics', {}), indent=2)}
-
-        Identified Issues:
-        {json.dumps(previous_results.get('issues', []), indent=2)}
-
-        Progress Analysis:
-        {json.dumps(previous_results.get('progress', {}), indent=2)}
-
-        Expected Stage Progression:
-        1. Initial Implementation: Focus on basic working implementation
-        2. Baseline Tuning: Systematic optimization of core parameters
-        3. Creative Research: Novel improvements and approaches
-        4. Ablation Studies: Systematic component analysis
-
-        Consider factors like:
-        - Progress toward stage goals
-        - Performance trends and stability
-        - Quality and reliability of results
-        - Understanding of the problem
-        - Presence of systematic issues
-        - Convergence indicators
-        - Readiness for next stage challenges
-
-        Provide a holistic evaluation of whether the experiment should:
-        1. Progress to next stage
-        2. Continue current stage with specific focus
-        3. Extend current stage with modifications
-        """
+        eval_prompt = render_prompt(
+            "treesearch.stage_progression_eval_prompt",
+            stage_name=current_stage.name,
+            stage_description=current_stage.description,
+            stage_goals=", ".join(current_stage.goals)
+            if isinstance(current_stage.goals, list)
+            else current_stage.goals,
+            metrics_json=json.dumps(previous_results.get("metrics", {}), indent=2),
+            issues_json=json.dumps(previous_results.get("issues", []), indent=2),
+            progress_json=json.dumps(previous_results.get("progress", {}), indent=2),
+        )
 
         try:
             evaluation = query(
@@ -1286,6 +1226,7 @@ Your research idea:\n\n
                 func_spec=stage_progress_eval_spec,
                 model=self.cfg.agent.feedback.model,
                 temperature=self.cfg.agent.feedback.temp,
+                max_tokens=self.cfg.agent.feedback.max_tokens,
             )
 
             # Log the evaluation for transparency

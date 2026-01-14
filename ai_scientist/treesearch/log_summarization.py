@@ -8,102 +8,19 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 sys.path.insert(0, parent_dir)
 from ai_scientist.llm import get_response_from_llm, extract_json_between_markers
 from ai_scientist.treesearch.backend import get_ai_client
+from ai_scientist.prompts.loader import load_prompt, render_prompt
 
 
-report_summarizer_sys_msg = """You are an expert machine learning researcher.
-You are given multiple experiment logs, each representing a node in a stage of exploring scientific ideas and implementations.
-Your task is to aggregate these logs and provide scientifically insightful information.
-
-Important instructions:
-- Do NOT hallucinate or fabricate information that is not present in the logs.
-- Do NOT introduce errors when repeating information from the logs.
-- Identify notable insights or differences across the nodes without repeating the same information.
-"""
-
-output_format_control = """Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-JSON:
-```json
-<JSON>
-```
-
-In <THOUGHT>, thoroughly reason as an expert researcher. First, reason about each node, and then reason carefully by combining all the information. It is okay to be very detailed.
-
-In <JSON>, provide the review in JSON format with the following fields in exactly this order:
-- "Experiment_description": a string describing the conducted experiments
-- "Significance": a string explaining why these experiments are important and what impact their findings might have
-- "Description": a string describing the methods, steps taken, and any pertinent context needed to understand the experiments
-- "List_of_included_plots": a list of plots that should be included. Each entry should include:
-  • "path" (the plot path)
-  • "description" (its original description)
-  • "analysis" (your analysis of its scientific insights)
-- "Key_numerical_results": a list of all important numerical results. Be selective about results that contribute to scientific insights. Each entry should include:
-  • "result" (float number)
-  • "description" (your short description of the result)
-  • "analysis" (your analysis of its scientific insights)
-
-Ensure the JSON is valid and properly formatted, as it will be automatically parsed."""
-
-report_summarizer_prompt = (
-    """You are given multiple experiment logs from different "nodes". Each node represents attempts and experiments exploring various scientific ideas.
-
-One key point is that these nodes collectively illustrate a stage of testing different methods or approaches. The crucial task is to identify the scientific insights gleaned from this stage. For example, if one node tries method A and another node tries method B, you should compare any observed differences in performance or outcomes. Summarize both experiments in "Experiment_description", explain the processes in "Description", and place any key numerical findings (such as accuracy metrics, loss values, or runtime comparisons) in "Key_numerical_results."
-
-Be concise and avoid repeating the same information from different nodes. You are encouraged to be thorough, but you do not need to include information from every node. Reason carefully about which results from which nodes are scientifically insightful.
-
-The name of this stage of the experiment: {stage_name}
-
-Here are the experiment logs of the nodes:
-
-{node_infos}
-"""
-    + output_format_control
+report_summarizer_sys_msg = load_prompt(
+    "log_summarization.report_summarizer_sys_msg"
 )
-
-stage_aggregate_prompt = """You are given:
-
-1) The summary of all previous experiment stages:
-{prev_summary}
-
-2) The name of the current experiment stage:
-{stage_name}
-
-3) The summary of the current stage:
-{current_summary}
-
-
-Your task is to produce an **updated comprehensive summary** of all experiment stages, including the newly introduced results from the current stage.
-
-**Key Requirements:**
-1. **No Loss of Critical Information**
-   - Preserve valuable insights from the summary of all previous experiment stages. Do not remove or alter crucial texts.
-   - Absolutely no hallucinations: if something does not appear in the logs or summaries, do not invent it. If something appears in the previous summary, do not make any mistakes when repeating it.
-2. **Merge New Stage Data**
-   - Integrate relevant results from the current stage into the existing summary.
-   - Identify any overlap or repetition between new and old content, and remove only that which is clearly redundant or no longer scientifically insightful.
-   - Be very careful if you want to remove or shorten the old content. By default, you can keep most of it and append new text.
-   - Highlight how new findings connect to or differ from previous findings.
-3. **Numerical Results and Visuals**
-   - Carefully maintain the most insightful plots, figures, and numerical results.
-   - Do not delete crucial quantitative findings or meaningful visual references.
-4. **Length and Format**
-   - The final summary will likely be **very long**. That is acceptable.
-   - Present the updated summary in a format consistent with the style of the previous summaries (e.g., same section headings or structure).
-
-Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-JSON:
-```json
-<JSON>
-```
-Ensure the JSON is valid and properly formatted, as it will be automatically parsed.
-"""
+output_format_control = load_prompt("log_summarization.output_format_control")
+report_summarizer_prompt_template = load_prompt(
+    "log_summarization.report_summarizer_prompt"
+)
+stage_aggregate_prompt_template = load_prompt(
+    "log_summarization.stage_aggregate_prompt"
+)
 
 
 def get_nodes_infos(nodes):
@@ -141,14 +58,17 @@ def get_summarizer_prompt(journal, stage_name):
         print("NO GOOD LEAF NODES!!!")
         good_leaf_nodes = [n for n in journal.good_nodes]
     node_infos = get_nodes_infos(good_leaf_nodes)
-    return report_summarizer_sys_msg, report_summarizer_prompt.format(
-        node_infos=node_infos, stage_name=stage_name
+    prompt = render_prompt(
+        "log_summarization.report_summarizer_prompt",
+        node_infos=node_infos,
+        stage_name=stage_name,
     )
+    return report_summarizer_sys_msg, prompt + output_format_control
 
 
-def get_stage_summary(journal, stage_name, model, client):
+def get_stage_summary(journal, stage_name, model, client, max_tokens: int | None = None):
     sys_msg, prompt = get_summarizer_prompt(journal, stage_name)
-    response = get_response_from_llm(prompt, client, model, sys_msg)
+    response = get_response_from_llm(prompt, client, model, sys_msg, max_tokens=max_tokens)
     summary_json = extract_json_between_markers(response[0])
     return summary_json
 
@@ -196,18 +116,30 @@ def get_node_log(node):
 
 
 def update_summary(
-    prev_summary, cur_stage_name, cur_journal, cur_summary, model, client, max_retry=5
+    prev_summary,
+    cur_stage_name,
+    cur_journal,
+    cur_summary,
+    model,
+    client,
+    max_retry=5,
+    max_tokens: int | None = None,
 ):
     good_leaf_nodes = [n for n in cur_journal.good_nodes if n.is_leaf]
     node_infos = get_nodes_infos(good_leaf_nodes)
-    prompt = stage_aggregate_prompt.format(
+    prompt = render_prompt(
+        "log_summarization.stage_aggregate_prompt",
         prev_summary=prev_summary,
         stage_name=cur_stage_name,
         current_summary=cur_summary,
     )
     try:
         response = get_response_from_llm(
-            prompt, client, model, "You are an expert machine learning researcher."
+            prompt,
+            client,
+            model,
+            load_prompt("log_summarization.stage_aggregate_system_message"),
+            max_tokens=max_tokens,
         )
         summary_json = extract_json_between_markers(response[0])
         assert summary_json
@@ -222,6 +154,7 @@ def update_summary(
                 model,
                 client,
                 max_retry - 1,
+                max_tokens=max_tokens,
             )
         else:
             print(f"Failed to update summary after multiple attempts. Error: {e}")
@@ -229,34 +162,9 @@ def update_summary(
     return summary_json
 
 
-overall_plan_summarizer_prompt = """You have been provided with the plans for both the parent node and the current node. Your task is to synthesize a comprehensive summary of the overall plan by integrating details from both the parent and current node plans.
-The summary should be thorough and clearly articulate the underlying motivations.
-For example, if in your previous overall plan you were experimenting with a new idea, and now your current plan is to fix certain bugs in the previous implementation, your returned overall plan should focus on your previous overall plan, and briefly mention that the current plan includes bug fixes. If your current plan is more about implementing new ideas, then you should summarize that thoroughly along with the previous overall plan.
-The goal is to create a comprehensive summary of all historical plans, focusing on the main scientific planning and objectives.
-
-Previous overall plan:
-{prev_overall_plan}
-
-Current plan:
-{current_plan}
-
-Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-JSON:
-```json
-<JSON>
-```
-
-In <THOUGHT>, thoroughly reason as an expert researcher. First, reason over each node, and then carefully combine all information. It is okay to be very detailed.
-
-In <JSON>, provide the review in JSON format with the following field in exactly this order:
-- "overall_plan": a string that describes the overall plan based on the current and previous overall plans
-
-Ensure the JSON is valid and properly formatted, as it will be automatically parsed.
-"""
+overall_plan_summarizer_prompt = load_prompt(
+    "log_summarization.overall_plan_summarizer_prompt"
+)
 
 
 def annotate_history(journal, cfg=None):
@@ -268,8 +176,10 @@ def annotate_history(journal, cfg=None):
                 try:
                     if cfg.agent.get("summary", None) is not None:
                         model = cfg.agent.summary.model
+                        max_tokens = cfg.agent.summary.get("max_tokens", None)
                     else:
                         model = "gpt-4o-2024-08-06"
+                        max_tokens = None
                     client = get_ai_client(model)
                     response = get_response_from_llm(
                         overall_plan_summarizer_prompt.format(
@@ -279,6 +189,7 @@ def annotate_history(journal, cfg=None):
                         client,
                         model,
                         report_summarizer_sys_msg,
+                        max_tokens=max_tokens,
                     )
                     node.overall_plan = extract_json_between_markers(response[0])[
                         "overall_plan"
@@ -340,10 +251,14 @@ def overall_summarize(journals, cfg=None):
         elif idx == 0:
             if cfg.agent.get("summary", None) is not None:
                 model = cfg.agent.summary.get("model", "")
+                max_tokens = cfg.agent.summary.get("max_tokens", None)
             else:
                 model = "gpt-4o-2024-08-06"
+                max_tokens = None
             client = get_ai_client(model)
-            summary_json = get_stage_summary(journal, stage_name, model, client)
+            summary_json = get_stage_summary(
+                journal, stage_name, model, client, max_tokens=max_tokens
+            )
             return summary_json
 
     from tqdm import tqdm

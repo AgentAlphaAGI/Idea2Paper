@@ -39,6 +39,8 @@ class StageConfig:
     thinking: ThinkingConfig
     betas: str
     max_tokens: Optional[int] = None
+    max_plots: Optional[int] = None
+    max_similar_plots: Optional[int] = None
 
 
 @dataclass
@@ -78,6 +80,8 @@ class ExecConfig:
     timeout: int
     agent_file_name: str
     format_tb_ipython: bool
+    term_out_threshold: Optional[int] = 5100
+    term_out_k: Optional[int] = 2500
 
 
 @dataclass
@@ -172,6 +176,14 @@ def prep_cfg(cfg: Config):
 
     if cfg.agent.type not in ["parallel", "sequential"]:
         raise ValueError("agent.type must be either 'parallel' or 'sequential'")
+
+    # Configure terminal output truncation for prompts/summaries.
+    from .response import set_trim_long_string_defaults
+
+    set_trim_long_string_defaults(
+        threshold=cfg.exec.term_out_threshold,
+        k=cfg.exec.term_out_k,
+    )
 
     return cast(Config, cfg)
 

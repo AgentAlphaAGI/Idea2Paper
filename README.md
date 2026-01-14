@@ -1,8 +1,10 @@
 # aisv2_job_standalone
 
-这是 AI-Scientist-v2 的独立、可移动实验任务封装器。你可以把整个目录复制到任何项目里运行，而无需依赖单独的
-AI-Scientist-v2 checkout。
+这是对AI-Scientist-v2项目的独立、可移动实验任务模块的封装。
+https://github.com/SakanaAI/AI-Scientist-v2
 
+注意：模型能力的原因可能导致奇怪的toolcall schema错误
+可以使用qwen-plus + qwen3-vl-plus测试一下链路
 ## 功能说明（仅实验管线）
 
 它会做这些事：
@@ -53,7 +55,11 @@ python -m aisv2_job run \
   --idea_idx 0 \
   --attempt_id 0 \
   --out_root ./runs \
-  --model_agg_plots o3-mini-2025-01-31
+  --model_agg_plots o3-mini-2025-01-31 \
+  --plot_agg_reflections 5 \
+  --plot_agg_max_figures 12 \
+  --plot_agg_max_tokens 12000 \
+  --keep_experiment_results
 ```
 
 CLI 会在 stdout 打印 JSON manifest，并在
@@ -66,6 +72,11 @@ CLI 会在 stdout 打印 JSON manifest，并在
 CLI 参数 > job_config.yaml > 代码默认值
 
 `job_config.yaml` 中的路径会以“本目录”为基准解析；CLI 里传入的路径按当前工作目录解析。
+
+补充：`aggregate_plots`（生成 `auto_plot_aggregator.py` + `figures/`）相关的关键配置项：
+- `job.plot_agg_max_tokens`：控制聚合画图阶段 LLM 的最大输出 token（太小会导致脚本被截断 -> SyntaxError）。
+- `job.plot_agg_reflections` / `job.plot_agg_max_figures`：控制反思轮数与目标图数量。
+- `job.keep_experiment_results`：保留 `experiment_results/`，方便你后续手动重跑聚合画图（避免“空图”）。
 
 示例（只用 config，不传 CLI 参数）：
 
@@ -145,6 +156,23 @@ agent:
 manifest 会包含所有产物的绝对路径；如果某些预期文件缺失，也会记录 warnings。你可以用 `--strict_artifacts`
 让程序在 summaries 或 figures 缺失时直接失败。
 
+## 只重跑最后的聚合画图（aggregate_plots）
+
+当你想在不中断前面实验的情况下，只重跑最后一步聚合画图：
+
+```bash
+python -m ai_scientist.perform_plotting \
+  --folder <idea_dir> \
+  --model <your_llm_model> \
+  --reflections 5 \
+  --max_figures 12 \
+  --max_tokens 12000
+```
+
+注意：
+- `perform_plotting` 会优先使用 summaries 里记录的 `experiment_results/...` 相对路径；如果顶层 `experiment_results/` 不存在，会自动从 `logs/0-run/experiment_results` 重新创建（symlink 或 copy）。
+- 会生成 `plot_agg_manifest.json`，里面包含可用的 `.npy` 绝对路径；聚合脚本应只从这里读取数据，避免相对路径基准错误。
+
 ## Python SDK
 
 ```python
@@ -168,7 +196,6 @@ SDK 本质上只是调用 CLI 子进程，并返回解析后的 manifest。
 从仓库根目录执行：
 
 ```bash
-mv AI-Scientist-v2 AI-Scientist-v2.bak
 cd experiment-agent
 python -c "import ai_scientist, inspect; print(ai_scientist.__file__)"
 python -m aisv2_job --help

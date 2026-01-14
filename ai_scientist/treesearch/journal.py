@@ -12,6 +12,7 @@ from .interpreter import ExecutionResult
 from .utils.metric import MetricValue, WorstMetricValue
 from .utils.response import trim_long_string
 from .backend import FunctionSpec, query
+from ai_scientist.prompts.loader import load_prompt, render_prompt
 
 from rich import print
 
@@ -433,21 +434,7 @@ class Journal:
             return nodes[0]
 
         # Create evaluation prompt for LLM
-        prompt = {
-            "Introduction": (
-                "You are an experienced AI researcher evaluating different implementations "
-                "of an experiment to select the best one. You should consider all aspects "
-                "including performance metrics, training dynamics, generated plots quality."
-            ),
-            "Task": (
-                "Select the best implementation from the candidates below, considering all available evidence."
-                "Avoid relying too heavily on the validation loss alone, because "
-                "it may not be directly comparable across different objective functions or training details. "
-                "If there are multiple validation losses (e.g., when evaluating multiple datasets), "
-                "consider all of them and select the implementation that performs best overall."
-            ),
-            "Candidates": "",
-        }
+        prompt = load_prompt("journal.best_node_prompt")
         # Gather info about each node
         for node in nodes:
             if not node.is_seed_node:
@@ -506,15 +493,7 @@ class Journal:
         if not self.nodes:
             return "No experiments conducted yet."
 
-        prompt = {
-            "Introduction": (
-                "You are an AI researcher summarizing experimental progress. "
-                "Please analyze both successful and failed experiments to provide insights "
-                "for future improvements."
-            ),
-            "Successful Experiments": "",
-            "Failed Experiments": "",
-        }
+        prompt = load_prompt("journal.summary_prompt")
 
         for node in self.good_nodes:
             exp_info = f"Design: {node.plan}\n  "
@@ -535,14 +514,9 @@ class Journal:
 
         summary = query(
             system_message=prompt,
-            user_message=(
-                "Please provide a comprehensive summary of the experimental progress that includes:\n"
-                "1. Key patterns of success across working experiments\n"
-                "2. Common failure patterns and pitfalls to avoid\n"
-                "3. Specific recommendations for future experiments based on both successes and failures"
-            ),
+            user_message=load_prompt("journal.summary_user_message"),
             model=model_kwargs.get("model", "gpt-4o"),
-            temperature=model_kwargs.get("temp", 0.3)
+            temperature=model_kwargs.get("temp", 0.3),
         )
 
         return summary
@@ -588,24 +562,22 @@ class Journal:
                 ) as f:
                     json.dump(summary, f, indent=2)
 
-        summary_prompt = {
-            "Introduction": "Synthesize the experimental findings from this stage",
-            "Node Summaries": node_summaries,
-            "Best Node": (
-                {
-                    "id": self.get_best_node().id,
-                    "metric": str(self.get_best_node(cfg=cfg).metric),
-                }
-                if self.get_best_node(cfg=cfg)
-                else None
-            ),
-        }
+        summary_prompt = load_prompt("journal.stage_summary_prompt")
+        summary_prompt["Node Summaries"] = node_summaries
+        summary_prompt["Best Node"] = (
+            {
+                "id": self.get_best_node().id,
+                "metric": str(self.get_best_node(cfg=cfg).metric),
+            }
+            if self.get_best_node(cfg=cfg)
+            else None
+        )
 
         stage_summary = query(
             system_message=summary_prompt,
-            user_message="Generate a comprehensive summary of the experimental findings in this stage",
+            user_message=load_prompt("journal.stage_summary_user_message"),
             model=cfg.agent.summary.model if cfg.agent.get("summary", None) else "gpt-4o",
-            temperature=cfg.agent.summary.temp if cfg.agent.get("summary", None) else 0.3
+            temperature=cfg.agent.summary.temp if cfg.agent.get("summary", None) else 0.3,
         )
 
         with open(os.path.join(notes_dir, f"{stage_name}_summary.txt"), "w") as f:

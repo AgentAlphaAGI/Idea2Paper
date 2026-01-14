@@ -38,7 +38,22 @@ def extract_jsons(text):
     return json_objects
 
 
-def trim_long_string(string, threshold=5100, k=2500):
+def trim_long_string(string, threshold: int | None = None, k: int | None = None):
+    # NOTE: defaults are configurable via `set_trim_long_string_defaults()`.
+    threshold = DEFAULT_TRIM_THRESHOLD if threshold is None else threshold
+    k = DEFAULT_TRIM_K if k is None else k
+
+    if threshold is not None and threshold <= 0:
+        return string
+    if k is not None and k <= 0:
+        return string
+
+    if threshold is None:
+        return string
+    if k is None:
+        return string
+
+    k = min(k, max(1, threshold // 2))
     # Check if the length of the string is longer than the threshold
     if len(string) > threshold:
         # Output the first k and last k characters
@@ -50,6 +65,18 @@ def trim_long_string(string, threshold=5100, k=2500):
         return f"{first_k_chars}\n ... [{truncated_len} characters truncated] ... \n{last_k_chars}"
     else:
         return string
+
+
+DEFAULT_TRIM_THRESHOLD = 5100
+DEFAULT_TRIM_K = 2500
+
+
+def set_trim_long_string_defaults(threshold: int | None = None, k: int | None = None) -> None:
+    global DEFAULT_TRIM_THRESHOLD, DEFAULT_TRIM_K
+    if threshold is not None:
+        DEFAULT_TRIM_THRESHOLD = threshold
+    if k is not None:
+        DEFAULT_TRIM_K = k
 
 
 def extract_code(text):

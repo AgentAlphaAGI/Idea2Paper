@@ -53,6 +53,10 @@ def _build_inputs(args, root_dir: Path) -> dict:
         "add_dataset_ref": bool(args.add_dataset_ref),
         "bfts_config": str(_resolve_path(args.bfts_config)),
         "model_agg_plots": str(args.model_agg_plots),
+        "plot_agg_reflections": getattr(args, "plot_agg_reflections", None),
+        "plot_agg_max_figures": getattr(args, "plot_agg_max_figures", None),
+        "plot_agg_max_tokens": getattr(args, "plot_agg_max_tokens", None),
+        "keep_experiment_results": getattr(args, "keep_experiment_results", None),
         "out_root": str(_resolve_path(args.out_root)),
         "run_id": args.run_id,
         "strict_artifacts": bool(args.strict_artifacts),
@@ -176,17 +180,44 @@ def run_experiments_only(args) -> tuple[dict, int]:
 
         experiment_results_dir = idea_dir / "logs" / "0-run" / "experiment_results"
         if experiment_results_dir.exists():
-            shutil.copytree(
-                experiment_results_dir,
-                idea_dir / "experiment_results",
-                dirs_exist_ok=True,
-            )
+            staging_dir = idea_dir / "experiment_results"
+            if staging_dir.exists() or staging_dir.is_symlink():
+                if staging_dir.is_symlink() or staging_dir.is_file():
+                    staging_dir.unlink()
+                else:
+                    shutil.rmtree(staging_dir)
+            try:
+                staging_dir.symlink_to(
+                    experiment_results_dir, target_is_directory=True
+                )
+            except OSError:
+                shutil.copytree(
+                    experiment_results_dir,
+                    staging_dir,
+                    dirs_exist_ok=True,
+                )
 
         from ai_scientist.perform_plotting import aggregate_plots
 
-        aggregate_plots(base_folder=str(idea_dir), model=args.model_agg_plots)
+        plot_agg_max_tokens = getattr(args, "plot_agg_max_tokens", None)
+        if isinstance(plot_agg_max_tokens, int) and plot_agg_max_tokens <= 0:
+            plot_agg_max_tokens = None
 
-        shutil.rmtree(idea_dir / "experiment_results")
+        aggregate_plots(
+            base_folder=str(idea_dir),
+            model=args.model_agg_plots,
+            n_reflections=int(getattr(args, "plot_agg_reflections", 5)),
+            max_figures=int(getattr(args, "plot_agg_max_figures", 12)),
+            max_tokens=plot_agg_max_tokens,
+        )
+
+        if not bool(getattr(args, "keep_experiment_results", False)):
+            staging_dir = idea_dir / "experiment_results"
+            if staging_dir.exists() or staging_dir.is_symlink():
+                if staging_dir.is_symlink() or staging_dir.is_file():
+                    staging_dir.unlink()
+                else:
+                    shutil.rmtree(staging_dir)
 
         _save_token_tracker(idea_dir)
 

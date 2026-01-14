@@ -11,7 +11,7 @@ from ai_scientist.openai_compat import (
     safe_chat_completions_create,
 )
 
-MAX_NUM_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 4096
 
 
 def _model_id(model: str) -> str:
@@ -123,6 +123,7 @@ def get_batch_responses_from_llm(
     msg_history=None,
     temperature=0.7,
     n_responses=1,
+    max_tokens: int | None = None,
 ) -> tuple[list[str], list[list[dict[str, Any]]]]:
     msg = prompt
     if msg_history is None:
@@ -131,13 +132,17 @@ def get_batch_responses_from_llm(
     model_id = _model_id(model)
     messages = _build_messages(model_id, system_message, msg_history, msg)
     temp = 1 if _is_reasoning_model(model_id) else temperature
-    max_tokens = None if _is_reasoning_model(model_id) else MAX_NUM_TOKENS
+    effective_max_tokens = (
+        None
+        if _is_reasoning_model(model_id)
+        else (max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS)
+    )
     response = safe_chat_completions_create(
         client,
         model=model_id,
         messages=messages,
         temperature=temp,
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
         seed=0,
         n=n_responses,
     )
@@ -161,17 +166,28 @@ def get_batch_responses_from_llm(
 
 
 @track_token_usage
-def make_llm_call(client, model, temperature, system_message, prompt):
+def make_llm_call(
+    client,
+    model,
+    temperature,
+    system_message,
+    prompt,
+    max_tokens: int | None = None,
+):
     model_id = _model_id(model)
     temp = 1 if _is_reasoning_model(model_id) else temperature
-    max_tokens = None if _is_reasoning_model(model_id) else MAX_NUM_TOKENS
+    effective_max_tokens = (
+        None
+        if _is_reasoning_model(model_id)
+        else (max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS)
+    )
     messages = _build_messages(model_id, system_message, prompt, None)
     return safe_chat_completions_create(
         client,
         model=model_id,
         messages=messages,
         temperature=temp,
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
         seed=0,
         n=1,
     )
@@ -193,6 +209,7 @@ def get_response_from_llm(
     print_debug=False,
     msg_history=None,
     temperature=0.7,
+    max_tokens: int | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     msg = prompt
     if msg_history is None:
@@ -200,14 +217,18 @@ def get_response_from_llm(
 
     model_id = _model_id(model)
     temp = 1 if _is_reasoning_model(model_id) else temperature
-    max_tokens = None if _is_reasoning_model(model_id) else MAX_NUM_TOKENS
+    effective_max_tokens = (
+        None
+        if _is_reasoning_model(model_id)
+        else (max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS)
+    )
     messages = _build_messages(model_id, system_message, msg_history, msg)
     response = safe_chat_completions_create(
         client,
         model=model_id,
         messages=messages,
         temperature=temp,
-        max_tokens=max_tokens,
+        max_tokens=effective_max_tokens,
         seed=0,
         n=1,
     )

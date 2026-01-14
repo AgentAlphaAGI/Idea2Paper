@@ -8,8 +8,12 @@ from ai_scientist.vlm import (
     get_batch_responses_from_vlm,
     extract_json_between_markers,
 )
+from ai_scientist.prompts.loader import load_prompt, render_prompt
 
 from ai_scientist.perform_llm_review import load_paper
+
+
+DEFAULT_DUPLICATE_CHECK_MAX_TOKENS = 1000
 
 
 def encode_image_to_base64(image_data):
@@ -25,130 +29,16 @@ def encode_image_to_base64(image_data):
         raise TypeError(f"Unsupported image data type: {type(image_data)}")
 
 
-reviewer_system_prompt_base = (
-    "You are an AI researcher who is reviewing a paper that was submitted to a prestigious ML venue."
-    "Be critical and cautious in your decision."
+reviewer_system_prompt_base = load_prompt(
+    "perform_vlm_review.reviewer_system_prompt_base"
 )
-
-img_cap_ref_review_prompt = """The abstract of the paper is:
-
-{abstract}
-
-You will be given an image via the vision API. As a careful scientist reviewer, your task is to:
-  1. Examine the provided image closely.
-  2. Describe in detail what the image shows in a scientific manner.
-  3. Critically analyze whether the image content aligns with the given caption:
-
-{caption}
-
-  4. We also have references in the main text that mention the figure:
-
-{main_text_figrefs}
-
-You should:
-  - Examine the figure in detail: conclude elements in figures (e.g. name of axis) and describe what information is shown (e.g. the line of loss decreases monotonically but plateaus after X epochs)
-  - Suggest any potential improvements or issues in the figure itself (e.g., missing legend, unclear labeling, no meaningful conclusion, mismatch with what the caption claims).
-  - Critique the caption: does it accurately describe the figure? Is it too long/short? Does it include a concise takeaway?
-  - Review how well the main text references (figrefs) explain the figure: are they missing? Do they adequately describe the figure's content, context, or purpose?
-
-Finally, respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-REVIEW JSON:
-```json
-<JSON>
-```
-In <JSON>, provide the review in JSON format with the following fields in the order:
-- "Img_description": "<Describe the figure's contents here>"
-- "Img_review": "<Your analysis of the figure itself, including any suggestions for improvement>"
-- "Caption_review": "<Your assessment of how well the caption matches the figure and any suggestions>"
-- "Figrefs_review": "<Your thoughts on whether the main text references adequately describe or integrate the figure>"
-
-In <THOUGHT>, first, thoroughly reason through your observations, analysis of alignment, and any suggested improvements. It is okay to be very long.
-Then provide your final structured output in <JSON>.
-Make sure the JSON is valid and properly formatted, as it will be parsed automatically."""
-
-
-img_cap_selection_prompt = """The abstract of the paper is:
-
-{abstract}
-
-You will be given an image via the vision API. As a careful scientist reviewer, your task is to:
-  1. Examine the provided image closely.
-  2. Describe in detail what the image shows in a scientific manner.
-  3. Critically analyze whether the image content aligns with the given caption:
-
-{caption}
-
-  4. We also have references in the main text that mention the figure:
-
-{main_text_figrefs}
-
-  5. We have limited pages to present contents:
-
-{reflection_page_info}
-
-You should:
-  - Examine the figure in detail: conclude elements in figures (e.g. name of axis) and describe what information is shown (e.g. the line of loss decreases monotonically but plateaus after X epochs)
-  - Critique the caption: does it accurately describe the figure? Is it too long/short? Does it include a concise takeaway?
-  - Review how well the main text references (figrefs) explain the figure: are they missing? Do they adequately describe the figure's content, context, or purpose?
-
-After considering all of the above, you should carefully evaluate:
-  - Given the current page limit, does this image and its relevant text add significant value to the paper's scientific argument?
-  - Given the current page limit, is this image too sparse in information? Should it be combined with other figures in the main text?
-  - Does this figure contain subfigures?
-  - Is this figure not very informative? For example, some figures may show bars with very similar heights that are difficult to distinguish, or present data in a way that does not effectively communicate meaningful differences or patterns.
-
-Finally, respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-REVIEW JSON:
-```json
-<JSON>
-```
-In <JSON>, provide the review in JSON format with the following fields in the order:
-- "Img_description": "<Describe the figure's contents here>"
-- "Img_review": "<Your analysis of the figure itself, including any suggestions for improvement>"
-- "Caption_review": "<Your assessment of how well the caption matches the figure and any suggestions>"
-- "Figrefs_review": "<Your thoughts on whether the main text references adequately describe or integrate the figure>"
-- "Overall_comments": "<Your thoughts on whether this figure adds significant value to the paper. Should it be moved to the appendix or not?>"
-- "Containing_sub_figures": "<Does this figure contain multiple sub-figures? Do you think the information in this figure is dense? If not, would you suggest combining it with other figures in the main text? If it contains subplots, are their sizes and positions nicely aligned? If not, describe the issues.>"
-- "Informative_review": "<Is this figure informative? Does it effectively communicate meaningful differences or patterns? Or does it show data in a way that makes it difficult to distinguish differences (e.g. bars with very similar heights)?>"
-
-In <THOUGHT>, first, thoroughly reason through your observations, analysis of alignment, and any suggested improvements. It is okay to be very long.
-Then provide your final structured output in <JSON>.
-Make sure the JSON is valid and properly formatted, as it will be parsed automatically."""
-
-img_review_prompt = """
-
-You will be given an image via the vision API. As a careful scientist reviewer, your task is to:
-  1. Examine the provided image closely.
-  2. Describe in detail what the image shows in a scientific manner.
-
-You should:
-  - Examine the figure in detail: conclude elements in figures (e.g. name of axis) and describe what information is shown (e.g. the line of loss decreases monotonically but plateaus after X epochs)
-  - Suggest any potential improvements or issues in the figure itself (e.g., missing legend, unclear labeling, no meaningful conclusion, mismatch with what the caption claims).
-
-Finally, respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-REVIEW JSON:
-```json
-<JSON>
-```
-In <JSON>, provide the review in JSON format with the following fields in the order:
-- "Img_description": "<Describe the figure's contents here>"
-- "Img_review": "<Your analysis of the figure itself, including any suggestions for improvement>"
-
-In <THOUGHT>, first, thoroughly reason through your observations, analysis of alignment, and any suggested improvements. It is okay to be very long.
-Then provide your final structured output in <JSON>.
-Make sure the JSON is valid and properly formatted, as it will be parsed automatically."""
+img_cap_ref_review_prompt = load_prompt(
+    "perform_vlm_review.img_cap_ref_review_prompt"
+)
+img_cap_selection_prompt = load_prompt(
+    "perform_vlm_review.img_cap_selection_prompt"
+)
+img_review_prompt = load_prompt("perform_vlm_review.img_review_prompt")
 
 
 def extract_figure_screenshots(
@@ -348,7 +238,8 @@ def extract_abstract(text):
 
 
 def generate_vlm_img_cap_ref_review(img, abstract, model, client):
-    prompt = img_cap_ref_review_prompt.format(
+    prompt = render_prompt(
+        "perform_vlm_review.img_cap_ref_review_prompt",
         abstract=abstract,
         caption=img["caption"],
         main_text_figrefs=img["main_text_figrefs"],
@@ -386,7 +277,12 @@ def perform_imgs_cap_ref_review(client, client_model, pdf_path):
     return img_reviews
 
 
-def detect_duplicate_figures(client, client_model, pdf_path):
+def detect_duplicate_figures(
+    client,
+    client_model,
+    pdf_path,
+    max_tokens: int = DEFAULT_DUPLICATE_CHECK_MAX_TOKENS,
+):
     paper_txt = load_paper(pdf_path)
     img_folder_path = os.path.join(
         os.path.dirname(pdf_path),
@@ -399,12 +295,8 @@ def detect_duplicate_figures(client, client_model, pdf_path):
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are an expert at identifying duplicate or highly similar images. "
-                "Please analyze these images and determine if they are duplicates or variations of the same visualization. "
-                "Response format: reasoning, followed by `Duplicate figures: <list of duplicate figure names>`."
-                "Make sure you use the exact figure names (e.g. Figure 1, Figure 2b, etc.) as they appear in the paper."
-                "If you find no duplicates, respond with `No duplicates found`."
+            "content": load_prompt(
+                "perform_vlm_review.duplicate_figures_system_prompt"
             ),
         },
         {
@@ -412,7 +304,9 @@ def detect_duplicate_figures(client, client_model, pdf_path):
             "content": [
                 {
                     "type": "text",
-                    "text": "Are any of these images duplicates or highly similar? If so, please identify which ones are similar and explain why. Focus on content similarity, not just visual style.",
+                    "text": load_prompt(
+                        "perform_vlm_review.duplicate_figures_user_prompt"
+                    ),
                 }
             ],
         },
@@ -433,7 +327,7 @@ def detect_duplicate_figures(client, client_model, pdf_path):
         response = client.chat.completions.create(
             model=client_model,
             messages=messages,
-            max_tokens=1000,
+            max_tokens=max_tokens,
         )
 
         analysis = response.choices[0].message.content
@@ -448,7 +342,8 @@ def detect_duplicate_figures(client, client_model, pdf_path):
 def generate_vlm_img_selection_review(
     img, abstract, model, client, reflection_page_info
 ):
-    prompt = img_cap_selection_prompt.format(
+    prompt = render_prompt(
+        "perform_vlm_review.img_cap_selection_prompt",
         abstract=abstract,
         caption=img["caption"],
         main_text_figrefs=img["main_text_figrefs"],

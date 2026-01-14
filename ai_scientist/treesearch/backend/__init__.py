@@ -47,7 +47,7 @@ def query(
     # Handle models with beta limitations
     # ref: https://platform.openai.com/docs/guides/reasoning/beta-limitations
     _, model_id = parse_model_spec(model)
-    if model_id.startswith("o1"):
+    if model_id.startswith(("o1", "o3")):
         if system_message and user_message is None:
             user_message = system_message
         elif system_message is None and user_message:
@@ -58,8 +58,10 @@ def query(
             user_message = system_message
         system_message = None
         # model_kwargs["temperature"] = 0.5
-        model_kwargs["reasoning_effort"] = "high"
-        model_kwargs["max_completion_tokens"] = 100000  # max_tokens
+        model_kwargs["reasoning_effort"] = model_kwargs.get("reasoning_effort", "high")
+        model_kwargs["max_completion_tokens"] = model_kwargs.get(
+            "max_completion_tokens", max_tokens if max_tokens is not None else 100000
+        )
         # remove 'temperature' from model_kwargs
         model_kwargs.pop("temperature", None)
     else:

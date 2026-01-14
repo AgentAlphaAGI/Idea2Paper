@@ -8,7 +8,13 @@ from . import config as job_config
 
 
 PATH_KEYS = {"load_ideas", "bfts_config", "out_root"}
-INT_KEYS = {"idea_idx", "attempt_id"}
+INT_KEYS = {
+    "idea_idx",
+    "attempt_id",
+    "plot_agg_reflections",
+    "plot_agg_max_figures",
+    "plot_agg_max_tokens",
+}
 
 
 def _get_root_dir() -> Path:
@@ -38,6 +44,12 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--add_dataset_ref", action="store_true", default=None)
     run_parser.add_argument("--bfts_config", type=str, default=None)
     run_parser.add_argument("--model_agg_plots", type=str, default=None)
+    run_parser.add_argument("--plot_agg_reflections", type=int, default=None)
+    run_parser.add_argument("--plot_agg_max_figures", type=int, default=None)
+    run_parser.add_argument("--plot_agg_max_tokens", type=int, default=None)
+    run_parser.add_argument(
+        "--keep_experiment_results", action="store_true", default=None
+    )
     run_parser.add_argument("--out_root", type=str, default=None)
     run_parser.add_argument("--run_id", type=str, default=None)
     run_parser.add_argument("--strict_artifacts", action="store_true", default=None)
@@ -70,6 +82,10 @@ def _merge_settings(args, config_data: dict, root_dir: Path) -> dict:
         "add_dataset_ref": False,
         "bfts_config": str(root_dir / "bfts_config.yaml"),
         "model_agg_plots": "o3-mini-2025-01-31",
+        "plot_agg_reflections": 5,
+        "plot_agg_max_figures": 12,
+        "plot_agg_max_tokens": None,
+        "keep_experiment_results": False,
         "out_root": str(Path.cwd()),
         "run_id": None,
         "strict_artifacts": False,

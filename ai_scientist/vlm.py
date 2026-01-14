@@ -12,7 +12,7 @@ from ai_scientist.openai_compat import (
     safe_chat_completions_create,
 )
 
-MAX_NUM_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 4096
 
 AVAILABLE_VLMS = [
     "gpt-4o-2024-05-13",
@@ -54,7 +54,9 @@ def encode_image_to_base64(image_path: str) -> str:
 
 
 @track_token_usage
-def make_llm_call(client, model, temperature, system_message, prompt):
+def make_llm_call(
+    client, model, temperature, system_message, prompt, max_tokens: int | None = None
+):
     _, model_id = parse_model_spec(model)
     is_reasoning = model_id.startswith("o1") or model_id.startswith("o3")
     role = "user" if is_reasoning else "system"
@@ -63,14 +65,20 @@ def make_llm_call(client, model, temperature, system_message, prompt):
         model=model_id,
         messages=[{"role": role, "content": system_message}, *prompt],
         temperature=1 if is_reasoning else temperature,
-        max_tokens=None if is_reasoning else MAX_NUM_TOKENS,
+        max_tokens=(
+            None
+            if is_reasoning
+            else (max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS)
+        ),
         seed=0,
         n=1,
     )
 
 
 @track_token_usage
-def make_vlm_call(client, model, temperature, system_message, prompt):
+def make_vlm_call(
+    client, model, temperature, system_message, prompt, max_tokens: int | None = None
+):
     _, model_id = parse_model_spec(model)
     is_reasoning = model_id.startswith("o1") or model_id.startswith("o3")
     role = "user" if is_reasoning else "system"
@@ -79,7 +87,11 @@ def make_vlm_call(client, model, temperature, system_message, prompt):
         model=model_id,
         messages=[{"role": role, "content": system_message}, *prompt],
         temperature=1 if is_reasoning else temperature,
-        max_tokens=None if is_reasoning else MAX_NUM_TOKENS,
+        max_tokens=(
+            None
+            if is_reasoning
+            else (max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS)
+        ),
     )
 
 
@@ -104,6 +116,7 @@ def get_response_from_vlm(
     msg_history: list[dict[str, Any]] | None = None,
     temperature: float = 0.7,
     max_images: int = 25,
+    max_tokens: int | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Get response from vision-language model."""
     if msg_history is None:
@@ -137,6 +150,7 @@ def get_response_from_vlm(
         temperature,
         system_message=system_message,
         prompt=new_msg_history,
+        max_tokens=max_tokens,
     )
 
     content = response.choices[0].message.content
@@ -207,6 +221,7 @@ def get_batch_responses_from_vlm(
     temperature: float = 0.7,
     n_responses: int = 1,
     max_images: int = 200,
+    max_tokens: int | None = None,
 ) -> tuple[list[str], list[list[dict[str, Any]]]]:
     """Get multiple responses from vision-language model for the same input.
 
@@ -254,7 +269,7 @@ def get_batch_responses_from_vlm(
         model=model_id,
         messages=[{"role": "system", "content": system_message}, *new_msg_history],
         temperature=temperature,
-        max_tokens=MAX_NUM_TOKENS,
+        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
         n=n_responses,
         seed=0,
     )

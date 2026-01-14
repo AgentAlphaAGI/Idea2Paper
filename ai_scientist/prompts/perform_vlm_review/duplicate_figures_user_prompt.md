@@ -1,0 +1,1 @@
+Are any of these images duplicates or highly similar? If so, please identify which ones are similar and explain why. Focus on content similarity, not just visual style.

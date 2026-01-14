@@ -20,6 +20,7 @@ from ai_scientist.tools.semantic_scholar import search_for_papers
 
 from ai_scientist.perform_vlm_review import generate_vlm_img_review
 from ai_scientist.vlm import create_client as create_vlm_client
+from ai_scientist.prompts.loader import load_prompt, render_prompt
 
 
 def remove_accents_and_clean(s):
@@ -151,92 +152,22 @@ def get_citation_addition(
 ):
     report, citations = context
     msg_history = []
-    citation_system_msg_template = """You are an ambitious AI researcher who is looking to publish a paper to a top-tier ML conference that will contribute significantly to the field.
-You have already completed the experiments and now you are looking to collect citations to related papers.
-This phase focuses on collecting references and annotating them to be integrated later.
-Collected citations will be added to a references.bib file.
+    citation_system_msg_template = load_prompt(
+        "perform_writeup.citation_system_msg_template"
+    )
 
-Reasons to reference papers include:
-1. Summarizing Research: Cite sources when summarizing the existing literature.
-2. Using Specific Concepts or Data: Provide citations when discussing specific theories, models, or data.
-3. Comparing Findings: Cite relevant studies when comparing or contrasting different findings.
-4. Highlighting Research Gaps: Cite previous research when pointing out gaps your survey addresses.
-5. Using Established Methods: Cite the creators of methodologies you employ in your survey.
-6. Supporting Arguments: Cite sources that back up your conclusions and arguments.
-7. Suggesting Future Research: Reference studies related to proposed future research directions.
+    citation_first_prompt_template = load_prompt(
+        "perform_writeup.citation_first_prompt_template"
+    )
 
-Ensure sufficient cites will be collected for all of these categories, and no categories are missed.
-You will be given access to the Semantic Scholar API; only add citations that you have found using the API.
-Aim to discuss a broad range of relevant papers, not just the most popular ones.
-Make sure not to copy verbatim from prior literature to avoid plagiarism.
-You will have {total_rounds} rounds to add to the references but do not need to use them all.
-
-DO NOT ADD A CITATION THAT ALREADY EXISTS!"""
-
-    citation_first_prompt_template = """Round {current_round}/{total_rounds}:
-
-You planned and executed the following idea:
-```markdown
-{Idea}
-```
-
-You produced the following report:
-```markdown
-{report}
-```
-
-Your current list of citations is:
-```
-{citations}
-```
-
-Identify the most important citation that you still need to add, and the query to find the paper.
-
-Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-RESPONSE:
-```json
-<JSON>
-```
-
-In <THOUGHT>, first briefly reason and identify which citations are missing.
-If no more citations are needed, add "No more citations needed" to your thoughts.
-Do not add "No more citations needed" if you are adding citations this round.
-
-In <JSON>, respond in JSON format with the following fields:
-- "Description": The purpose of the desired citation and a brief description of what you are looking for.
-- "Query": The search query to find the paper (e.g., attention is all you need).
-This JSON will be automatically parsed, so ensure the format is precise."""
-
-    citation_second_prompt_template = """Search has recovered the following articles:
-
-{papers}
-
-Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-RESPONSE:
-```json
-<JSON>
-```
-
-In <THOUGHT>, first briefly reason over the search results and identify which citation(s) best fit your paper.
-If none are appropriate or would contribute significantly to the write-up, add "Do not add any" to your thoughts.
-Do not select papers that are already in the `references.bib` file, or if the same citation exists under a different name.
-
-In <JSON>, respond in JSON format with the following fields:
-- "Selected": A list of integer indices for the selected papers, for example [0, 1]. Do not use quotes for the indices, e.g. "['0', '1']" is invalid.
-- "Description": Update the previous description of the citation(s) with the additional context. This should be a brief description of the work(s), their relevance, and where in a paper these should be cited.
-This JSON will be automatically parsed, so ensure the format is precise."""
+    citation_second_prompt_template = load_prompt(
+        "perform_writeup.citation_second_prompt_template"
+    )
 
     try:
         text, msg_history = get_response_from_llm(
-            msg=citation_first_prompt_template.format(
+            msg=render_prompt(
+                "perform_writeup.citation_first_prompt_template",
                 current_round=current_round + 1,
                 total_rounds=total_rounds,
                 Idea=idea_text,
@@ -245,8 +176,9 @@ This JSON will be automatically parsed, so ensure the format is precise."""
             ),
             client=client,
             model=model,
-            system_message=citation_system_msg_template.format(
-                total_rounds=total_rounds
+            system_message=render_prompt(
+                "perform_writeup.citation_system_msg_template",
+                total_rounds=total_rounds,
             ),
             msg_history=msg_history,
             print_debug=False,
@@ -284,15 +216,17 @@ This JSON will be automatically parsed, so ensure the format is precise."""
 
     try:
         text, msg_history = get_response_from_llm(
-            msg=citation_second_prompt_template.format(
+            msg=render_prompt(
+                "perform_writeup.citation_second_prompt_template",
                 papers=papers_str,
                 current_round=current_round + 1,
                 total_rounds=total_rounds,
             ),
             client=client,
             model=model,
-            system_message=citation_system_msg_template.format(
-                total_rounds=total_rounds
+            system_message=render_prompt(
+                "perform_writeup.citation_system_msg_template",
+                total_rounds=total_rounds,
             ),
             msg_history=msg_history,
             print_debug=False,
@@ -342,114 +276,11 @@ This JSON will be automatically parsed, so ensure the format is precise."""
 
 
 # Using a template string to allow injection of the {page_limit} argument
-writeup_system_message_template = """You are an ambitious AI researcher who is looking to publish a paper that will contribute significantly to the field.
-Ensure that the paper is scientifically accurate, objective, and truthful. Accurately report the experimental results, even if they are negative or inconclusive.
-You are planning to submit to a top-tier ML conference, which has guidelines:
-- The main paper is limited to {page_limit} pages, including all figures and tables, but excluding references, the impact statement, and optional appendices. In general, try to use the available space and include all relevant information.
-- The main paper should be double-column format, while the appendices can be in single-column format. When in double column format, make sure that tables and figures are correctly placed.
-- Do not change the overall style which is mandated by the conference. Keep to the current method of including the references.bib file.
-- Do not remove the \\graphicspath directive or no figures will be found.
+writeup_system_message_template = load_prompt(
+    "perform_writeup.writeup_system_message_template"
+)
 
-Here are some tips for each section of the paper:
-
-- **Title**:
-  - Title should be catchy and informative. It should give a good idea of what the paper is about.
-  - Try to keep it under 2 lines.
-
-- **Abstract**:
-  - TL;DR of the paper.
-  - What are we trying to do and why is it relevant?
-  - Make sure the abstract reads smoothly and is well-motivated. This should be one continuous paragraph.
-
-- **Introduction**:
-  - Longer version of the Abstract, i.e., an overview of the entire paper.
-  - Provide context to the study and explain its relevance.
-  - If results are inconclusive or negative, present them frankly; if they are positive, you may highlight how the approach effectively addresses the research question or problem.
-  - Summarize your contributions, highlighting pertinent findings, insights, or proposed methods.
-
-- **Related Work**:
-  - Academic siblings of our work, i.e., alternative attempts in literature at trying to address the same or similar problems.
-  - Compare and contrast their approach with yours, noting key differences or similarities.
-  - Ensure proper citations are provided.
-
-- **Background**:
-  - Present foundational concepts or prior work needed to understand your method.
-  - This should include necessary definitions, the problem setting, or relevant theoretical constructs.
-
-- **Method**:
-  - Clearly detail what you propose to do and why. If your study aims to address certain hypotheses, describe them and how your method is constructed to test them.
-  - If results are negative or inconclusive, you may suggest improvements or discuss possible causes.
-
-- **Experimental Setup**:
-  - Explain how you tested your method or hypothesis.
-  - Describe necessary details such as data, environment, and baselines, but omit hardware details unless explicitly mentioned.
-
-- **Experiments**:
-  - Present the results truthfully according to the data you have. If outcomes are not as expected, discuss it transparently.
-  - Include comparisons to baselines if available, and only include analyses supported by genuine data.
-  - Try to include all relevant plots and tables. Consider combining multiple plots into one figure if they are related.
-
-- **Conclusion**:
-  - Summarize the entire paper, including key strengths or findings.
-  - If results are strong, highlight how they might address the research problem.
-  - If results are negative or inconclusive, highlight potential improvements or reasons and propose future directions.
-
-- **Appendix**:
-  - Place for supplementary material that did not fit in the main paper.
-
-Ensure you are always writing good compilable LaTeX code. Common mistakes that should be fixed include:
-- LaTeX syntax errors (unenclosed math, unmatched braces, etc.).
-- Duplicate figure labels or references.
-- Unescaped special characters: & % $ # _ {{ }} ~ ^ \\
-- Proper table/figure closure.
-- Do not hallucinate new citations or any results not in the logs.
-
-When returning final code, place it in fenced triple backticks with 'latex' syntax highlighting.
-"""
-
-writeup_prompt = """Your goal is to write up the following idea:
-
-```markdown
-{idea_text}
-```
-
-We have the following experiment summaries (JSON):
-```json
-{summaries}
-```
-
-We also have a script used to produce the final plots (use this to see how the plots are generated and what names are used in the legend):
-```python
-{aggregator_code}
-```
-Please also consider which plots should naturally be grouped together as subfigures.
-
-Available plots for the writeup (use these filenames):
-```
-{plot_list}
-```
-
-We also have VLM-based figure descriptions:
-```
-{plot_descriptions}
-```
-
-Your current progress on the LaTeX write-up is:
-```latex
-{latex_writeup}
-```
-
-Produce the final version of the LaTeX manuscript now, ensuring the paper is coherent, concise, and reports results accurately.
-Return the entire file in full, with no unfilled placeholders!
-This must be an acceptable complete LaTeX writeup.
-
-Please provide the updated LaTeX code for 'template.tex', wrapped in triple backticks
-with "latex" syntax highlighting, like so:
-
-```latex
-<UPDATED LATEX CODE>
-```
-"""
+writeup_prompt = load_prompt("perform_writeup.writeup_prompt")
 
 
 def perform_writeup(
@@ -619,14 +450,16 @@ def perform_writeup(
             plot_descriptions_str = "No descriptions available."
 
         # Construct final prompt for big model, placing the figure descriptions alongside the plot list
-        big_model_system_message = writeup_system_message_template.format(
-            page_limit=page_limit
+        big_model_system_message = render_prompt(
+            "perform_writeup.writeup_system_message_template",
+            page_limit=page_limit,
         )
         big_client, big_client_model = create_client(big_model)
         with open(writeup_file, "r") as f:
             writeup_text = f.read()
 
-        combined_prompt = writeup_prompt.format(
+        combined_prompt = render_prompt(
+            "perform_writeup.writeup_prompt",
             idea_text=idea_text,
             summaries=combined_summaries_str,
             aggregator_code=aggregator_code,
@@ -685,26 +518,13 @@ def perform_writeup(
                 f"chktex {writeup_file} -q -n2 -n24 -n13 -n1"
             ).read()
 
-            reflection_prompt = f"""
-Now let's reflect and identify any issues (including but not limited to):
-1) Are there any LaTeX syntax errors or style violations we can fix? Refer to the chktex output below.
-2) Is the writing clear, and scientifically rigorous?
-3) Have we included all relevant details from the summaries without hallucinating?
-4) The following figures are available in the folder but not used in the LaTeX: {sorted(unused_figs)}
-5) The following figure references in the LaTeX do not match any actual file: {sorted(invalid_figs)}
-{reflection_page_info}
-chktex results:
-```
-{check_output}
-```
-
-Please provide a revised complete LaTeX in triple backticks, or repeat the same if no changes are needed.
-Return the entire file in full, with no unfilled placeholders!
-This must be an acceptable complete LaTeX writeup.
-Do not hallucinate any details!
-
-If you believe you are done, simply say: "I am done".
-"""
+            reflection_prompt = render_prompt(
+                "perform_writeup.reflection_prompt",
+                unused_figs=sorted(unused_figs),
+                invalid_figs=sorted(invalid_figs),
+                reflection_page_info=reflection_page_info,
+                check_output=check_output,
+            )
 
             reflection_response, msg_history = get_response_from_llm(
                 msg=reflection_prompt,

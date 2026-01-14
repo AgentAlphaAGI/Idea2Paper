@@ -28,6 +28,7 @@ from ai_scientist.perform_vlm_review import (
     detect_duplicate_figures,
 )
 from ai_scientist.vlm import create_client as create_vlm_client
+from ai_scientist.prompts.loader import load_prompt, render_prompt
 
 
 def remove_accents_and_clean(s):
@@ -339,93 +340,22 @@ def get_citation_addition(
 ):
     report, citations = context
     msg_history = []
-    citation_system_msg_template = """You are an ambitious AI researcher who is looking to publish a paper to a workshop at ICLR 2025 that explores real-world pitfalls, failures, and challenges in deep learning.
-You have already completed the experiments and now you are looking to collect citations to related papers.
-This phase focuses on collecting references and annotating them to be integrated later.
-Collected citations will be added to a references.bib file.
+    citation_system_msg_template = load_prompt(
+        "perform_icbinb_writeup.citation_system_msg_template"
+    )
 
-Reasons to reference papers include:
-1. Summarizing Research: Cite sources when summarizing the existing literature.
-2. Using Specific Concepts: Provide citations when discussing specific theories or concepts.
-3. Datasets, models, and optimizers: Cite the creators of datasets, models, and optimizers.
-4. Comparing Findings: Cite relevant studies when comparing or contrasting different findings.
-5. Highlighting Research Gaps: Cite previous research when pointing out gaps your study addresses.
-6. Using Established Methods: Cite the creators of methodologies you employ.
-7. Supporting Arguments: Cite sources that back up your conclusions and arguments.
-8. Suggesting Future Research: Reference studies related to proposed future research directions.
+    citation_first_prompt_template = load_prompt(
+        "perform_icbinb_writeup.citation_first_prompt_template"
+    )
 
-Ensure sufficient cites will be collected for all of these categories, and no categories are missed.
-You will be given access to the Semantic Scholar API; only add citations that you have found using the API.
-Aim to discuss a broad range of relevant papers, not just the most popular ones.
-Make sure not to copy verbatim from prior literature to avoid plagiarism.
-You will have {total_rounds} rounds to add to the references but do not need to use them all.
-
-DO NOT ADD A CITATION THAT ALREADY EXISTS!"""
-
-    citation_first_prompt_template = """Round {current_round}/{total_rounds}:
-
-You planned and executed the following idea:
-```markdown
-{Idea}
-```
-
-You produced the following report:
-```markdown
-{report}
-```
-
-Your current list of citations is:
-```
-{citations}
-```
-
-Identify the most important citation that you still need to add, and the query to find the paper.
-
-Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-RESPONSE:
-```json
-<JSON>
-```
-
-In <THOUGHT>, first briefly reason and identify which citations are missing.
-If no more citations are needed, add "No more citations needed" to your thoughts.
-Do not add "No more citations needed" if you are adding citations this round.
-
-In <JSON>, respond in JSON format with the following fields:
-- "Description": The purpose of the desired citation and a brief description of what you are looking for.
-- "Query": The search query to find the paper (e.g., attention is all you need).
-This JSON will be automatically parsed, so ensure the format is precise."""
-
-    citation_second_prompt_template = """Search has recovered the following articles:
-
-{papers}
-
-Respond in the following format:
-
-THOUGHT:
-<THOUGHT>
-
-RESPONSE:
-```json
-<JSON>
-```
-
-In <THOUGHT>, briefly reason over the search results and identify which citation(s) best fit your paper.
-If none are appropriate or would contribute significantly to the write-up, add "Do not add any" to your thoughts.
-Do not select papers that are already in the `references.bib` file, or if the same citation exists under a different name.
-
-In <JSON>, respond in JSON format with the following fields:
-- "Selected": A list of integer indices for the selected papers, for example [0, 1]. Do not use quotes for the indices, e.g. "['0', '1']" is invalid.
-- "Description": Update the previous description of the citation(s) with the additional context. This should be a brief description of the work(s), their relevance, and where in a paper these should be cited.
-This JSON will be automatically parsed, so ensure the format is precise."""
+    citation_second_prompt_template = load_prompt(
+        "perform_icbinb_writeup.citation_second_prompt_template"
+    )
 
     try:
         text, msg_history = get_response_from_llm(
-            prompt=citation_first_prompt_template.format(
+            prompt=render_prompt(
+                "perform_icbinb_writeup.citation_first_prompt_template",
                 current_round=current_round + 1,
                 total_rounds=total_rounds,
                 Idea=idea_text,
@@ -434,8 +364,9 @@ This JSON will be automatically parsed, so ensure the format is precise."""
             ),
             client=client,
             model=model,
-            system_message=citation_system_msg_template.format(
-                total_rounds=total_rounds
+            system_message=render_prompt(
+                "perform_icbinb_writeup.citation_system_msg_template",
+                total_rounds=total_rounds,
             ),
             msg_history=msg_history,
             print_debug=False,
@@ -473,15 +404,17 @@ This JSON will be automatically parsed, so ensure the format is precise."""
 
     try:
         text, msg_history = get_response_from_llm(
-            prompt=citation_second_prompt_template.format(
+            prompt=render_prompt(
+                "perform_icbinb_writeup.citation_second_prompt_template",
                 papers=papers_str,
                 current_round=current_round + 1,
                 total_rounds=total_rounds,
             ),
             client=client,
             model=model,
-            system_message=citation_system_msg_template.format(
-                total_rounds=total_rounds
+            system_message=render_prompt(
+                "perform_icbinb_writeup.citation_system_msg_template",
+                total_rounds=total_rounds,
             ),
             msg_history=msg_history,
             print_debug=False,
@@ -530,119 +463,11 @@ This JSON will be automatically parsed, so ensure the format is precise."""
     return references_prompt, False
 
 
-writeup_system_message_template = """You are an ambitious AI researcher who is looking to publish a paper to the "I Can't Believe It's Not Better" (ICBINB) Workshop at ICLR 2025.
-This workshop aims to highlight real-world pitfalls, challenges, and negative or inconclusive results in deep learning, encouraging open discussion.
-You must accurately represent the results of the experiments.
-The main paper is limited to {page_limit} pages in single-column format, not counting references. In general, try to use the available space and include all relevant information.
-DO NOT USE MORE THAN {page_limit} PAGES FOR THE MAIN TEXT.
-MINIMIZE THE USAGE OF ITEMIZE OR ENUMERATE. ONLY USE THEM IF THEY ARE ABSOLUTELY NECESSARY AND CONTAIN SUBSTANTIAL INFORMATION.
-Ensure that the tables and figures are correctly placed in a reasonable location and format.
+writeup_system_message_template = load_prompt(
+    "perform_icbinb_writeup.writeup_system_message_template"
+)
 
-- Do not change the overall style which is mandated by the conference. Keep to the current method of including the references.bib file.
-- Do not remove the \\graphicspath directive or no figures will be found.
-- Do not add `Acknowledgements` section to the paper.
-
-Here are some tips for each section of the paper:
-
-- **Title**:
-  - Title should be catchy and informative. It should give a good idea of what the paper is about.
-  - Try to keep it under 2 lines.
-
-- **Abstract**:
-  - Brief summary highlighting the nature of the challenge or pitfall explored.
-  - Concise motivation of why this matters for real-world deployment.
-  - This should be one continuous paragraph.
-
-- **Introduction**:
-  - Overview of the issue or challenge being explored.
-  - Clearly state why this problem is important, especially for practical or real-world contexts.
-  - Summarize your contributions or findings: they may include negative results, real-world pitfalls, unexpected behaviors, or partial improvements.
-
-- **Related Work**:
-  - Cite relevant papers or approaches that have tackled similar issues or have encountered similar pitfalls.
-  - Compare and contrast with your own findings.
-
-- **Background** (optional):
-  - Provide necessary technical or domain-specific background if needed.
-
-- **Method / Problem Discussion**:
-  - Detail the problem context or the method if it is relevant to highlight the challenges faced.
-  - If results are not strictly an improvement, discuss partial successes or lessons learned.
-
-- **Experiments** (if applicable):
-  - Present results truthfully according to the data you have. Negative, unexpected, or inconclusive findings are valid contributions for this workshop.
-  - Include figures, tables, or real-world examples that illustrate the pitfalls.
-  - Include up to 4 figures in the main text. All other figures should be in the appendix.
-
-- **Conclusion**:
-  - Summarize the main lessons learned or contributions.
-  - Suggest next steps or future directions, highlighting how these insights can help the community avoid or overcome similar issues.
-
-- **Appendix**:
-  - Place for supplementary material that did not fit in the main paper.
-  - Add more information and details (hyperparameters, algorithms, etc.) in the supplementary material.
-  - Add more plots and tables in the supplementary material. Make sure that this information is not already covered in the main paper.
-  - When checking for duplicate figures, be sure to also review their descriptions to catch cases where different figures convey the same information. For example, one figure might present aggregated training accuracy as a single line plot with a shaded standard deviation (e.g., aggregated_training_accuracy.png), while another (per_seed_training_accuracy.png) shows the same data as three separate line plots.
-
-Ensure you are always writing good compilable LaTeX code. Common mistakes that should be fixed include:
-- LaTeX syntax errors (unenclosed math, unmatched braces, etc.).
-- Duplicate figure labels or references.
-- Unescaped special characters: & % $ # _ {{ }} ~ ^ \\
-- Proper table/figure closure.
-- Do not hallucinate new citations or any results not in the logs.
-
-Ensure proper citation usage:
-- Always include references within \begin{{filecontents}}{{references.bib}} ... \end{{filecontents}}, even if they haven't changed from the previous round.
-- Use citations from the provided references.bib content.
-- Each section (especially Related Work) should have multiple citations.
-
-When returning final code, place it in fenced triple backticks with 'latex' syntax highlighting.
-"""
-
-writeup_prompt = """Your goal is to write up the following idea:
-
-```markdown
-{idea_text}
-```
-
-We have the following experiment summaries (JSON):
-```json
-{summaries}
-```
-
-We also have a script used to produce the final plots (use this to see how the plots are generated and what names are used in the legend):
-```python
-{aggregator_code}
-```
-Please also consider which plots can naturally be grouped together as subfigures.
-
-Available plots for the writeup (use these filenames):
-```
-{plot_list}
-```
-
-We also have VLM-based figure descriptions:
-```
-{plot_descriptions}
-```
-
-Your current progress on the LaTeX write-up is:
-```latex
-{latex_writeup}
-```
-
-Produce the final version of the LaTeX manuscript now, ensuring the paper is coherent, concise, and reports results accurately.
-Return the entire file in full, with no unfilled placeholders!
-This must be an acceptable complete LaTeX writeup, suitable for a 4-page single-column workshop paper.
-Make sure to use the citations from the references.bib file.
-
-Please provide the updated LaTeX code for 'template.tex', wrapped in triple backticks
-with "latex" syntax highlighting, like so:
-
-```latex
-<UPDATED LATEX CODE>
-```
-"""
+writeup_prompt = load_prompt("perform_icbinb_writeup.writeup_prompt")
 
 
 def load_idea_text(base_folder):
@@ -689,6 +514,17 @@ def load_exp_summaries(base_folder):
 
 
 def filter_experiment_summaries(exp_summaries, step_name):
+    def strip_plot_path(plot_analyses):
+        if isinstance(plot_analyses, list):
+            cleaned = []
+            for entry in plot_analyses:
+                if isinstance(entry, dict):
+                    cleaned.append({k: v for k, v in entry.items() if k != "plot_path"})
+                else:
+                    cleaned.append(entry)
+            return cleaned
+        return plot_analyses
+
     if step_name == "citation_gathering":
         node_keys_to_keep = {
             "overall_plan",
@@ -727,18 +563,25 @@ def filter_experiment_summaries(exp_summaries, step_name):
                     filtered_summaries[stage_name][key] = {}
                     for node_key in exp_summaries[stage_name][key].keys():
                         if node_key in node_keys_to_keep:
-                            filtered_summaries[stage_name][key][node_key] = (
-                                exp_summaries[stage_name][key][node_key]
-                            )
+                            value = exp_summaries[stage_name][key][node_key]
+                            if (
+                                step_name == "plot_aggregation"
+                                and node_key == "plot_analyses"
+                            ):
+                                value = strip_plot_path(value)
+                            filtered_summaries[stage_name][key][node_key] = value
         elif stage_name == "ABLATION_SUMMARY" and step_name == "plot_aggregation":
             filtered_summaries[stage_name] = {}
             for ablation_summary in exp_summaries[stage_name]:
                 filtered_summaries[stage_name][ablation_summary["ablation_name"]] = {}
                 for node_key in ablation_summary.keys():
                     if node_key in node_keys_to_keep:
+                        value = ablation_summary[node_key]
+                        if node_key == "plot_analyses":
+                            value = strip_plot_path(value)
                         filtered_summaries[stage_name][
                             ablation_summary["ablation_name"]
-                        ][node_key] = ablation_summary[node_key]
+                        ][node_key] = value
     return filtered_summaries
 
 
@@ -978,14 +821,16 @@ def perform_writeup(
             print(traceback.format_exc())
             plot_descriptions_str = "No descriptions available."
 
-        big_model_system_message = writeup_system_message_template.format(
-            page_limit=page_limit
+        big_model_system_message = render_prompt(
+            "perform_icbinb_writeup.writeup_system_message_template",
+            page_limit=page_limit,
         )
         big_client, big_client_model = create_client(big_model)
         with open(writeup_file, "r") as f:
             writeup_text = f.read()
 
-        combined_prompt = writeup_prompt.format(
+        combined_prompt = render_prompt(
+            "perform_icbinb_writeup.writeup_prompt",
             idea_text=idea_text,
             summaries=combined_summaries_str,
             aggregator_code=aggregator_code,
@@ -1048,39 +893,15 @@ def perform_writeup(
                 f"chktex {writeup_file} -q -n2 -n24 -n13 -n1"
             ).read()
 
-            reflection_prompt = f"""
-Now let's reflect and identify any issues (including but not limited to):
-1) Are there any LaTeX syntax errors or style violations we can fix? Refer to the chktex output below.
-2) Is the writing clear, and scientifically rigorous for a workshop focusing on real-world pitfalls?
-3) Have we included all relevant details from the summaries without hallucinating?
-4) Are there short sections (one or two sentences) that could be combined into a single paragraph?
-5) Can we use more information and details (hyperparameters, unused figures, etc.) in the supplementary material? Only add information that is not already covered in the main paper.
-6) The following figures are available in the folder but not used in the LaTeX: {sorted(unused_figs)}
-7) The following figure references in the LaTeX do not match any actual file: {sorted(invalid_figs)}
-{reflection_page_info}
-chktex results:
-```
-{check_output}
-```
-8) Issues identified in the VLM reviews of the images, their captions, and related text discussions. Ensure each caption clearly matches its image content and that there is substantial discussion of each figure in the text.
-VLM reviews:
-```
-{review_img_cap_ref}
-```
-
-9) Duplicate figures between main text and appendix. Make sure to remove the duplicate figures from the appendix.
-```
-{analysis_duplicate_figs}
-```
-
-Please provide a revised complete LaTeX in triple backticks, or repeat the same if no changes are needed.
-Return the entire file in full, with no unfilled placeholders!
-This must be an acceptable complete LaTeX writeup.
-Do not hallucinate any details!
-Ensure proper citation usage:
-- Always include references within \begin{{filecontents}}{{references.bib}} ... \end{{filecontents}}, even if they haven't changed from the previous round.
-- Use citations from the provided references.bib content.
-"""
+            reflection_prompt = render_prompt(
+                "perform_icbinb_writeup.reflection_prompt",
+                unused_figs=sorted(unused_figs),
+                invalid_figs=sorted(invalid_figs),
+                reflection_page_info=reflection_page_info,
+                check_output=check_output,
+                review_img_cap_ref=review_img_cap_ref,
+                analysis_duplicate_figs=analysis_duplicate_figs,
+            )
 
             reflection_response, msg_history = get_response_from_llm(
                 prompt=reflection_prompt,
@@ -1123,27 +944,13 @@ Ensure proper citation usage:
             review_img_selection = perform_imgs_cap_ref_review_selection(
                 vlm_client, vlm_model, reflection_pdf, reflection_page_info
             )
-            img_reflection_prompt = f"""Now let's reflect on
-The following figures are currently used in the paper: {sorted(used_figs)}
-The following figures are available in the folder but not used in the LaTeX: {sorted(unused_figs)}
-
-{reflection_page_info}
-
-The following is the VLM review on figures:
-
-{review_img_selection}
-
-Please review the figures and make the following changes:
-1. For figures that do not add significant value to the paper, move them to the appendix
-2. For figures that are not very informative or do not effectively communicate meaningful patterns, remove them entirely
-3. For figures that does not contain subfigures and present sparse information, consider combining them with other related figures
-4. Update all relevant text discussions to reflect any changes in figure placement or combinations
-5. Enhance the scientific analysis of the remaining figures in the text - provide detailed, insightful discussions of their significance and findings
-
-Please ensure all changes maintain scientific rigor and improve the paper's clarity and impact.
-Be more aggressive with figure selection - move more figures to the appendix or group them together with other figures if the page limit is already exceeded.
-
-If you believe you are done with reflection, simply say: "I am done"."""
+            img_reflection_prompt = render_prompt(
+                "perform_icbinb_writeup.img_reflection_prompt",
+                used_figs=sorted(used_figs),
+                unused_figs=sorted(unused_figs),
+                reflection_page_info=reflection_page_info,
+                review_img_selection=review_img_selection,
+            )
             reflection_response, msg_history = get_response_from_llm(
                 prompt=img_reflection_prompt,
                 client=big_client,
@@ -1192,8 +999,9 @@ If you believe you are done with reflection, simply say: "I am done"."""
         # Get new reflection_page_info
         reflection_page_info = get_reflection_page_info(reflection_pdf, page_limit)
 
-        final_reflection_prompt = """{reflection_page_info}
-USE MINIMAL EDITS TO OPTIMIZE THE PAGE LIMIT USAGE."""
+        final_reflection_prompt = load_prompt(
+            "perform_icbinb_writeup.final_reflection_prompt"
+        )
         reflection_response, msg_history = get_response_from_llm(
             prompt=final_reflection_prompt,
             client=big_client,
