@@ -6,30 +6,34 @@
 3. patterns_statistics.json - 统计报告
 """
 
+import glob
 import json
 import os
-import glob
-import numpy as np
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics.pairwise import cosine_similarity
-import requests
-from typing import Dict, List, Tuple
-from collections import Counter, defaultdict
 import time
+from collections import Counter, defaultdict
+from typing import Dict, List, Tuple
 
-# LLM配置 - 请配置环境变量或修改此处
+import numpy as np
+import requests
+from sklearn.cluster import AgglomerativeClustering
+
+# LLM配置 - 切换至 SiliconFlow (参考 01_RAG_minimal_DEMO)
 LLM_CONFIG = {
-    "api_url": os.environ.get("LLM_API_URL", "https://api.openai.com/v1/chat/completions"),
-    "auth_token": os.environ.get("LLM_AUTH_TOKEN", ""),
-    "model": os.environ.get("LLM_MODEL", "gpt-4")
+    "api_url": os.environ.get("LLM_API_URL", "https://api.siliconflow.cn/v1/chat/completions"),
+    "auth_token": os.environ.get("SILICONFLOW_API_KEY", "sk-your-api-key-here"),
+    "model": os.environ.get("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 }
 
 # Embedding配置
 EMBED_CONFIG = {
-    "api_url": os.environ.get("EMBED_API_URL", "https://api.openai.com/v1/embeddings"),
-    "auth_token": os.environ.get("LLM_AUTH_TOKEN", ""),
-    "model": os.environ.get("EMBED_MODEL", "text-embedding-3-small")
+    "api_url": os.environ.get("EMBED_API_URL", "https://api.siliconflow.cn/v1/embeddings"),
+    "auth_token": os.environ.get("SILICONFLOW_API_KEY", "sk-your-api-key-here"),
+    "model": os.environ.get("EMBED_MODEL", "Qwen/Qwen3-Embedding-4B")
 }
+
+print(f"🚀 正在启动 Pattern 生成 (使用 SiliconFlow)...")
+print(f"   - LLM 模型: {LLM_CONFIG['model']}")
+print(f"   - Embedding 模型: {EMBED_CONFIG['model']}")
 
 if not LLM_CONFIG["auth_token"]:
     print("⚠️  警告: 未设置 LLM_AUTH_TOKEN 环境变量")
@@ -48,7 +52,7 @@ def get_embedding(text: str, max_retries: int = 3) -> List[float]:
     """获取文本的embedding向量"""
     url = EMBED_CONFIG["api_url"]
     headers = {
-        "Authorization": EMBED_CONFIG["auth_token"],
+        "Authorization": f"Bearer {EMBED_CONFIG['auth_token']}",
         "Content-Type": "application/json"
     }
     
@@ -77,7 +81,7 @@ def call_llm(prompt: str, max_retries: int = 3) -> str:
     """调用LLM API"""
     url = LLM_CONFIG["api_url"]
     headers = {
-        "Authorization": LLM_CONFIG["auth_token"],
+        "Authorization": f"Bearer {LLM_CONFIG['auth_token']}",
         "Content-Type": "application/json"
     }
     
@@ -197,27 +201,34 @@ def build_pattern_embeddings(papers: List[Dict]) -> Tuple[np.ndarray, List[Dict]
 
 
 def cluster_patterns(embeddings: np.ndarray) -> np.ndarray:
-    """对patterns进行层次聚类"""
+    """对patterns进行层次聚类（自适应距离阈值方式）"""
     print(f"\n🔄 开始聚类...")
-    
-    # 层次聚类（使用cosine距离）
+
+    distance_threshold = CLUSTER_PARAMS['distance_threshold']
+    print(f"  距离阈值: {distance_threshold}")
+
     clusterer = AgglomerativeClustering(
-        n_clusters=None,
-        distance_threshold=CLUSTER_PARAMS['distance_threshold'],
-        affinity='cosine',
+        n_clusters=None,                           # 改为动态
+        distance_threshold=distance_threshold,     # 使用阈值
+        metric='cosine',
         linkage='average'
     )
-    
+
     labels = clusterer.fit_predict(embeddings)
-    
+
+    # 处理可能的 -1 标签（未聚类的论文）
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    print(f"  生成 {n_clusters} 个clusters")
-    
-    # 统计cluster大小
+    print(f"  ✓ 生成 {n_clusters} 个 clusters")
+
     cluster_sizes = Counter(labels)
-    for cluster_id, size in cluster_sizes.most_common():
+    print(f"  📊 Cluster 大小分布:")
+    for cluster_id in sorted(cluster_sizes.keys()):
         if cluster_id != -1:
-            print(f"    Cluster {cluster_id}: {size} 篇")
+            print(f"    Cluster {cluster_id}: {cluster_sizes[cluster_id]} 篇")
+
+    if -1 in cluster_sizes:
+        print(f"    未聚类: {cluster_sizes[-1]} 篇")
+
     
     return labels
 
@@ -280,9 +291,12 @@ def generate_pattern_summary(cluster_analysis: Dict) -> str:
     # ============================================================
     skeleton_info_list = []
     for i, paper in enumerate(all_papers[:8]):  # 最多取8篇避免token过长
-        skeleton = paper.get('skeleton', {})
+        if not paper:
+            continue
+        skeleton = paper.get('skeleton') or {}
+        title = paper.get('title') or 'Unknown Title'
         skeleton_info_list.append(f"""
-论文{i+1}：《{paper.get('title', '')[:60]}》
+论文{i+1}：《{str(title)[:60]}》
   - 问题定位：{skeleton.get('problem_framing', '')}
   - 研究缺口：{skeleton.get('gap_pattern', '')}
   - 方法叙述：{skeleton.get('method_story', '')}
@@ -296,7 +310,11 @@ def generate_pattern_summary(cluster_analysis: Dict) -> str:
     tricks_info_list = []
     seen_tricks = set()  # 去重
     for paper in all_papers:
-        for trick in paper.get('tricks', []):
+        if not paper:
+            continue
+        for trick in (paper.get('tricks') or []):
+            if not trick:
+                continue
             trick_name = trick.get('name', '')
             if trick_name and trick_name not in seen_tricks:
                 seen_tricks.add(trick_name)
@@ -309,9 +327,12 @@ def generate_pattern_summary(cluster_analysis: Dict) -> str:
                 })
     
     # 按频率统计，取前15个高频trick的完整信息
-    trick_freq = cluster_analysis['trick_frequency']
-    top_trick_names = [name for name, _ in trick_freq[:15]]
+    trick_freq = cluster_analysis.get('trick_frequency', [])
+    if not trick_freq:
+        trick_freq = []
     
+    top_trick_names = [item[0] for item in trick_freq[:15] if item and isinstance(item, (list, tuple))]
+
     tricks_full_list = []
     for trick_info in tricks_info_list:
         if trick_info['name'] in top_trick_names:
@@ -711,26 +732,47 @@ def main():
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     patterns = []
     
-    for cluster_id in range(n_clusters):
+    # 创建原始 cluster_id -> 新 pattern_id 的映射
+    old_to_new_id = {}  # old_cluster_id -> new_pattern_id (1-based)
+    new_pattern_id = 1
+
+    # 创建 paper_id -> pattern_id 的映射
+    paper_to_pattern = {}  # paper_id -> new_pattern_id
+
+    for cluster_id in sorted(set(labels)):
+        if cluster_id == -1:  # 跳过未聚类的论文
+            print(f"  ⚠️  Cluster -1: {(labels == -1).sum()}篇 (未聚类，已跳过)")
+            continue
+
         cluster_indices = [i for i in range(len(labels)) if labels[i] == cluster_id]
-        
+
         if len(cluster_indices) < CLUSTER_PARAMS['min_cluster_size']:
             print(f"  ⚠️  Cluster {cluster_id}: {len(cluster_indices)}篇 (过小，跳过)")
             continue
         
         cluster_papers = [pattern_data[i] for i in cluster_indices]
         
-        # 分析cluster
-        cluster_analysis = analyze_cluster(cluster_papers, cluster_id)
+        # 建立旧 ID 到新 ID 的映射
+        old_to_new_id[cluster_id] = new_pattern_id
         
+        # 记录这个 cluster 中所有 paper 的映射
+        for idx in cluster_indices:
+            paper_id = pattern_data[idx]['paper_id']
+            paper_to_pattern[paper_id] = new_pattern_id
+
+        # 分析cluster（使用新的 pattern_id）
+        cluster_analysis = analyze_cluster(cluster_papers, new_pattern_id)
+
         # 生成summary
         summary = generate_pattern_summary(cluster_analysis)
-        print(f"    Summary: {summary[:80]}...")
+        print(f"    Pattern {new_pattern_id}: {summary[:80]}...")
         
         # 组装pattern
         pattern = assemble_pattern(cluster_analysis, summary)
         patterns.append(pattern)
     
+        new_pattern_id += 1
+
     print(f"\n✅ 共生成 {len(patterns)} 个patterns")
     
     # 5. 生成输出文件
@@ -746,6 +788,11 @@ def main():
         json.dump(patterns, f, ensure_ascii=False, indent=2)
     print("  ✅ patterns_structured.json")
     
+    # 5.2 保存 Paper → Pattern 映射（供后续使用）
+    with open(os.path.join(output_dir, 'paper_to_pattern.json'), 'w', encoding='utf-8') as f:
+        json.dump(paper_to_pattern, f, ensure_ascii=False, indent=2)
+    print(f"  ✅ paper_to_pattern.json ({len(paper_to_pattern)} 篇论文)")
+
     # 5.2 用户指导
     guide_text = generate_user_guide(patterns)
     with open(os.path.join(output_dir, 'patterns_guide.txt'), 'w', encoding='utf-8') as f:
