@@ -54,7 +54,7 @@ NODES_PAPER = OUTPUT_DIR / "nodes_paper.json"
 STATS_FILE = OUTPUT_DIR / "knowledge_graph_stats.json"
 
 # LLM API 配置
-SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "sk-ilncaejvbxxjksbqkzsxitfdftiemfvbubotocgitgmmmedh")
+SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 LLM_API_URL = os.getenv("LLM_API_URL", "https://api.siliconflow.cn/v1/chat/completions")
 LLM_MODEL = os.getenv("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
 

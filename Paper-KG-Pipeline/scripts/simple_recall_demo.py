@@ -104,7 +104,7 @@ def get_embedding(text, max_retries=3):
     if text in _embedding_cache:
         return _embedding_cache[text]
 
-    api_key = os.environ.get('SILICONFLOW_API_KEY', 'sk-ilncaejvbxxjksbqkzsxitfdftiemfvbubotocgitgmmmedh')
+    api_key = os.environ.get('SILICONFLOW_API_KEY', '')
 
     if not api_key:
         if not _embedding_warning_shown:

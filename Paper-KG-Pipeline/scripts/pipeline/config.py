@@ -8,7 +8,7 @@ PROJECT_ROOT = CURRENT_DIR.parent.parent
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
 # ===================== LLM API 配置 =====================
-LLM_API_KEY = os.getenv("SILICONFLOW_API_KEY", "sk-ilncaejvbxxjksbqkzsxitfdftiemfvbubotocgitgmmmedh")
+LLM_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 LLM_API_URL = os.getenv("LLM_API_URL", "https://api.siliconflow.cn/v1/chat/completions")
 LLM_MODEL = os.getenv("LLM_MODEL", "MiniMaxAI/MiniMax-M2")
 

@@ -149,7 +149,7 @@ class RecallSystem:
 
     def _get_embedding(self, text: str, max_retries: int = 3) -> List[float]:
         """调用SiliconFlow API获取文本embedding"""
-        api_key = os.environ.get('SILICONFLOW_API_KEY', 'sk-ilncaejvbxxjksbqkzsxitfdftiemfvbubotocgitgmmmedh')
+        api_key = os.environ.get('SILICONFLOW_API_KEY', '')
 
         if not api_key:
             if not hasattr(self, '_embedding_warning_shown'):
