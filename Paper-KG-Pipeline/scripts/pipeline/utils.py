@@ -1,17 +1,47 @@
 import json
 import re
+import time
 import warnings
 from typing import Dict, Any, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # 抑制 urllib3 的 OpenSSL 警告
 warnings.filterwarnings("ignore", category=UserWarning, module='urllib3')
 
 from .config import LLM_API_KEY, LLM_API_URL, LLM_MODEL
 
-def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
-    """调用 LLM API"""
+def _create_session_with_retries():
+    """创建带有重试机制的 requests Session"""
+    session = requests.Session()
+
+    # 定义重试策略
+    retry_strategy = Retry(
+        total=3,  # 总共重试 3 次
+        backoff_factor=2,  # 指数退避: 1s, 2s, 4s
+        status_forcelist=[429, 500, 502, 503, 504],  # 在这些状态码上重试
+        allowed_methods=["POST", "GET"]
+    )
+
+    # 为 HTTP 和 HTTPS 适配器应用重试策略
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    return session
+
+def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000, timeout: int = 120) -> str:
+    """
+    调用 LLM API（支持重试和延长超时）
+
+    Args:
+        prompt: 提示文本
+        temperature: 温度参数
+        max_tokens: 最大 token 数
+        timeout: 请求超时时间（秒），默认 120s
+    """
     if not LLM_API_KEY:
         print("⚠️  警告: LLM_API_KEY 未配置，使用模拟输出")
         return f"[模拟LLM输出] Prompt: {prompt[:100]}..."
@@ -28,13 +58,48 @@ def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> s
         "max_tokens": max_tokens
     }
 
-    try:
-        response = requests.post(LLM_API_URL, headers=headers, json=data, timeout=60)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"❌ LLM 调用失败: {e}")
-        return ""
+    max_retries = 3
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            session = _create_session_with_retries()
+
+            if attempt > 0:
+                print(f"   ⏳ 重试 LLM 调用 (尝试 {attempt + 1}/{max_retries})...")
+                time.sleep(retry_delay)
+
+            response = session.post(
+                LLM_API_URL,
+                headers=headers,
+                json=data,
+                timeout=timeout
+            )
+            response.raise_for_status()
+            session.close()
+            return response.json()["choices"][0]["message"]["content"]
+
+        except requests.exceptions.Timeout as e:
+            print(f"   ⚠️  超时异常 (尝试 {attempt + 1}/{max_retries}): 读取超时")
+            if attempt < max_retries - 1:
+                print(f"   ⏳ {retry_delay} 秒后重试...")
+            else:
+                print(f"❌ LLM 调用失败（超时）: {e}")
+                return ""
+
+        except requests.exceptions.ConnectionError as e:
+            print(f"   ⚠️  连接异常 (尝试 {attempt + 1}/{max_retries}): {str(e)[:60]}")
+            if attempt < max_retries - 1:
+                print(f"   ⏳ {retry_delay} 秒后重试...")
+            else:
+                print(f"❌ LLM 调用失败（连接错误）: {e}")
+                return ""
+
+        except Exception as e:
+            print(f"❌ LLM 调用失败: {e}")
+            return ""
+
+    return ""
 
 def clean_json_text(text: str) -> str:
     """清理 JSON 文本中的 Markdown 标记和非法字符"""

@@ -26,7 +26,7 @@ class MultiAgentCritic:
                     {'reviewer': str, 'role': str, 'score': float, 'feedback': str},
                     ...
                 ],
-                'main_issue': str,  # 'novelty' | 'stability' | 'interpretability' | 'domain_mismatch'
+                'main_issue': str,  # 'novelty' | 'stability' | 'domain_distance'
                 'suggestions': List[str]
             }
         """
@@ -119,7 +119,8 @@ class MultiAgentCritic:
 }}
 """
 
-        response = call_llm(prompt, temperature=0.3, max_tokens=800)  # 降低 temperature 提高逻辑一致性
+        # 使用更长的超时时间（180 秒）以应对网络延迟
+        response = call_llm(prompt, temperature=0.3, max_tokens=800, timeout=180)
 
         # 1. 尝试标准 JSON 解析
         result = parse_json_from_llm(response)
@@ -207,13 +208,14 @@ class MultiAgentCritic:
         print(f"      分数分布: {scores}")
         print(f"      最低分评审员: {worst_review['reviewer']} ({role}), 分数: {scores[min_idx]}")
 
-        # 根据角色诊断问题
+        # 根据角色诊断问题,映射到Pattern分类维度
         if role == 'Novelty':
-            return 'novelty', ['注入冷门 Trick 提升新颖性', '寻找长尾 Pattern']
+            return 'novelty', ['从novelty维度选择创新Pattern', '注入长尾Pattern提升新颖性']
         elif role == 'Methodology':
-            return 'stability', ['注入成熟稳健的 Trick', '增加鲁棒性验证']
+            return 'stability', ['从stability维度选择稳健Pattern', '注入成熟方法增强鲁棒性']
         elif role == 'Storyteller':
-            return 'interpretability', ['增加可视化分析', '补充 Case Study']
+            return 'domain_distance', ['从domain_distance维度选择跨域Pattern', '引入不同视角优化叙事']
         else:
-            return 'domain_mismatch', ['调整领域适配方法', '增加预处理步骤']
+            # Fallback
+            return 'novelty', ['从novelty维度选择创新Pattern']
 

@@ -1,18 +1,28 @@
 """
-简化的召回系统Demo - 单个测试用例
+简化的召回系统Demo - 单个测试用例 (V3版本)
 
 使用方法:
   python scripts/simple_recall_demo.py "你的Idea描述"
 
 示例:
   python scripts/simple_recall_demo.py "使用Transformer进行文本分类"
+
+V3版本更新:
+  - 适配V3节点结构 (Paper.idea为字符串，非嵌套字典)
+  - 路径1直接使用Idea.pattern_ids，无需通过Paper中转
+  - Paper暂无review数据，质量默认0.5
 """
 
 import json
+import os
 import pickle
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
+
+import numpy as np
+import requests
 
 # ===================== 路径配置 =====================
 SCRIPT_DIR = Path(__file__).parent
@@ -27,24 +37,39 @@ GRAPH_FILE = OUTPUT_DIR / "knowledge_graph_v2.gpickle"
 
 # ===================== 配置参数 =====================
 TOP_K_IDEAS = 10
+TOP_K_PATTERNS_PATH1 = 10  # 路径1最终保留Top-K个Pattern（重要通道）
+
 TOP_K_DOMAINS = 5
+TOP_K_PATTERNS_PATH2 = 5   # 路径2最终保留Top-K个Pattern（辅助通道）
+
 TOP_K_PAPERS = 20
+TOP_K_PATTERNS_PATH3 = 10  # 路径3最终保留Top-K个Pattern（重要通道）
+
 FINAL_TOP_K = 10
 
-PATH1_WEIGHT = 0.4
-PATH2_WEIGHT = 0.2
-PATH3_WEIGHT = 0.4
+PATH1_WEIGHT = 0.4  # 相似Idea - 重要
+PATH2_WEIGHT = 0.2  # 领域相关 - 辅助
+PATH3_WEIGHT = 0.4  # 相似Paper - 重要
+
+USE_EMBEDDING = True  # 使用embedding计算相似度（推荐）
+
+# 两阶段召回优化（粗排+精排）
+TWO_STAGE_RECALL = True      # 启用两阶段召回（大幅提速）
+COARSE_RECALL_SIZE = 100     # 粗召回数量（Jaccard快速筛选）
 
 
 # ===================== 工具函数 =====================
 def compute_similarity(text1, text2):
-    """基于字符的 Jaccard 相似度 (适配中文)"""
-    if not text1 or not text2:
-        return 0.0
+    """计算两个文本的相似度"""
+    if USE_EMBEDDING:
+        return compute_embedding_similarity(text1, text2)
+    else:
+        return compute_jaccard_similarity(text1, text2)
 
-    # 转换为字符集合
-    tokens1 = set(text1.lower().replace(" ", ""))
-    tokens2 = set(text2.lower().replace(" ", ""))
+def compute_jaccard_similarity(text1, text2):
+    """词袋Jaccard相似度（快速但不准确）"""
+    tokens1 = set(text1.lower().split())
+    tokens2 = set(text2.lower().split())
 
     if not tokens1 or not tokens2:
         return 0.0
@@ -52,6 +77,106 @@ def compute_similarity(text1, text2):
     intersection = len(tokens1 & tokens2)
     union = len(tokens1 | tokens2)
     return intersection / union
+
+def compute_embedding_similarity(text1, text2):
+    """基于embedding的余弦相似度（更准确）"""
+    emb1 = get_embedding(text1)
+    emb2 = get_embedding(text2)
+
+    if emb1 is None or emb2 is None:
+        return compute_jaccard_similarity(text1, text2)
+
+    emb1 = np.array(emb1)
+    emb2 = np.array(emb2)
+
+    cosine_sim = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+    return float(cosine_sim)
+
+_embedding_cache = {}
+_embedding_warning_shown = False
+_embedding_error_shown = False
+
+def get_embedding(text, max_retries=3):
+    """调用SiliconFlow API获取文本embedding"""
+    global _embedding_warning_shown, _embedding_error_shown
+
+    # 缓存检查
+    if text in _embedding_cache:
+        return _embedding_cache[text]
+
+    api_key = os.environ.get('SILICONFLOW_API_KEY', 'sk-ilncaejvbxxjksbqkzsxitfdftiemfvbubotocgitgmmmedh')
+
+    if not api_key:
+        if not _embedding_warning_shown:
+            print("  ⚠️  未设置SILICONFLOW_API_KEY，降级到Jaccard相似度")
+            _embedding_warning_shown = True
+        return None
+
+    url = "https://api.siliconflow.cn/v1/embeddings"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "Qwen/Qwen3-Embedding-4B",
+        "input": text[:2000]
+    }
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            embedding = result['data'][0]['embedding']
+            _embedding_cache[text] = embedding
+            return embedding
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(0.5)
+            else:
+                if not _embedding_error_shown:
+                    print(f"  ⚠️  Embedding API调用失败: {e}，降级到Jaccard相似度")
+                    _embedding_error_shown = True
+                return None
+
+    return None
+
+
+def get_paper_quality(paper):
+    """计算Paper的综合质量分数
+
+    基于review的评分，归一化到[0, 1]
+    如果没有review数据，返回默认值0.5
+    """
+    reviews = paper.get('reviews', [])
+
+    if not reviews:
+        return 0.5  # 默认中等质量
+
+    # 提取所有评分
+    scores = []
+    for review in reviews:
+        score_str = review.get('overall_score', '')
+        # 尝试解析评分（可能是 "7", "7/10", "7.0" 等格式）
+        try:
+            if '/' in score_str:
+                score_str = score_str.split('/')[0]
+            score = float(score_str.strip())
+            scores.append(score)
+        except (ValueError, AttributeError):
+            continue
+
+    if not scores:
+        return 0.5
+
+    # 计算平均分并归一化
+    import numpy as np
+    avg_score = np.mean(scores)
+    # 假设评分范围是 1-10，归一化到 [0, 1]
+    normalized_score = (avg_score - 1) / 9
+
+    return min(max(normalized_score, 0.0), 1.0)
 
 
 # ===================== 主函数 =====================
@@ -61,7 +186,7 @@ def main():
         user_idea = " ".join(sys.argv[1:])
     else:
         # user_idea = "使用蒸馏技术完成Transformer跨领域文本分类任务，并在多个数据集上验证效果"
-        user_idea = "使用蒸馏技术做Transformer跨领域文本分类任务"
+        user_idea = "Research on the Self-Evolution of Intelligent Agents Based on Reflection and Memory"
 
     print("=" * 80)
     print("🎯 三路召回系统 Demo")
@@ -93,30 +218,60 @@ def main():
     # ===================== 路径1: 相似Idea召回 =====================
     print("🔍 [路径1] 相似Idea召回...")
 
-    similarities = []
-    for idea in ideas:
-        sim = compute_similarity(user_idea, idea['description'])
-        if sim > 0:
-            similarities.append((idea['idea_id'], sim))
+    # 两阶段召回优化
+    if TWO_STAGE_RECALL and USE_EMBEDDING:
+        print(f"  [粗排] 使用Jaccard快速筛选Top-{COARSE_RECALL_SIZE}...")
+        coarse_similarities = []
+        for idea in ideas:
+            sim = compute_jaccard_similarity(user_idea, idea['description'])
+            if sim > 0:
+                coarse_similarities.append((idea['idea_id'], sim))
 
-    similarities.sort(key=lambda x: x[1], reverse=True)
-    top_ideas = similarities[:TOP_K_IDEAS]
+        coarse_similarities.sort(key=lambda x: x[1], reverse=True)
+        candidates = coarse_similarities[:COARSE_RECALL_SIZE]
 
-    print(f"  找到 {len(similarities)} 个相似Idea，选择 Top-{TOP_K_IDEAS}")
+        print(f"  [精排] 使用Embedding重排Top-{TOP_K_IDEAS}...")
+        fine_similarities = []
+        for idea_id, _ in candidates:
+            idea = idea_map[idea_id]
+            sim = compute_embedding_similarity(user_idea, idea['description'])
+            if sim > 0:
+                fine_similarities.append((idea_id, sim))
+
+        fine_similarities.sort(key=lambda x: x[1], reverse=True)
+        top_ideas = fine_similarities[:TOP_K_IDEAS]
+
+        print(f"  ✓ 粗排{len(coarse_similarities)}个 → 精排{len(candidates)}个 → 最终{len(top_ideas)}个")
+    else:
+        # 单阶段召回（原逻辑）
+        similarities = []
+        for idea in ideas:
+            sim = compute_similarity(user_idea, idea['description'])
+            if sim > 0:
+                similarities.append((idea['idea_id'], sim))
+
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        top_ideas = similarities[:TOP_K_IDEAS]
+
+        print(f"  找到 {len(similarities)} 个相似Idea，选择 Top-{TOP_K_IDEAS}")
 
     path1_scores = defaultdict(float)
     for idea_id, similarity in top_ideas:
         idea = idea_map[idea_id]
-        # 打印匹配到的相似 Idea 辅助调试
+        # 打印匹配到的相似 Idea 辅助调试(增加到300字符)
         if similarity > 0.2:
-            print(f"    - 匹配 Idea: {idea['description'][:40]}... (sim={similarity:.3f})")
+            print(f"    - 匹配 Idea [{idea_id}]: {idea['description'][:300]}... (sim={similarity:.3f})")
 
         # 路径 1 直接从 Idea 节点的 pattern_ids 召回
         pattern_ids = idea.get('pattern_ids', [])
         for pid in pattern_ids:
             path1_scores[pid] += similarity
 
-    print(f"  ✓ 召回 {len(path1_scores)} 个Pattern\n")
+    # 排序并只保留Top-K个Pattern
+    sorted_path1 = sorted(path1_scores.items(), key=lambda x: x[1], reverse=True)
+    path1_scores = dict(sorted_path1[:TOP_K_PATTERNS_PATH1])
+
+    print(f"  ✓ 召回 {len(sorted_path1)} 个Pattern，保留Top-{TOP_K_PATTERNS_PATH1}\n")
 
     # ===================== 路径2: 领域相关召回 =====================
     print("🌍 [路径2] 领域相关性召回...")
@@ -140,6 +295,20 @@ def main():
 
     path2_scores = defaultdict(float)
     for domain_id, domain_weight in top_domains:
+        # 打印Domain详细信息
+        domain = domain_map.get(domain_id)
+        if domain:
+            domain_name = domain.get('name', 'N/A')
+            paper_count = domain.get('paper_count', 0)
+            sub_domains = domain.get('sub_domains', [])
+            sub_domain_str = ', '.join(sub_domains[:5])  # 只显示前5个sub_domain
+            if len(sub_domains) > 5:
+                sub_domain_str += f"... (共{len(sub_domains)}个)"
+
+            print(f"  - {domain_id} (名称={domain_name}, 相关度={domain_weight:.3f}, 论文数={paper_count})")
+            if sub_domain_str:
+                print(f"    子领域: {sub_domain_str}")
+
         for predecessor in G.predecessors(domain_id):
             edge_data = G[predecessor][domain_id]
             if edge_data.get('relation') == 'works_well_in':
@@ -148,39 +317,76 @@ def main():
                 confidence = edge_data.get('confidence', 0.0)
                 path2_scores[pattern_id] += domain_weight * max(effectiveness, 0.1) * confidence
 
-    print(f"  ✓ 召回 {len(path2_scores)} 个Pattern\n")
+    # 排序并只保留Top-K个Pattern
+    sorted_path2 = sorted(path2_scores.items(), key=lambda x: x[1], reverse=True)
+    path2_scores = dict(sorted_path2[:TOP_K_PATTERNS_PATH2])
+
+    print(f"  ✓ 召回 {len(sorted_path2)} 个Pattern，保留Top-{TOP_K_PATTERNS_PATH2}\n")
 
     # ===================== 路径3: 相似Paper召回 =====================
     print("📄 [路径3] 相似Paper召回...")
 
-    similarities = []
-    for paper in papers:
-        # 尝试多个可能的 Idea 描述字段
-        paper_idea = paper.get('idea', {}).get('core_idea', '') or paper.get('abstract', '')[:100]
-        if not paper_idea:
-            continue
+    # 两阶段召回优化
+    if TWO_STAGE_RECALL and USE_EMBEDDING:
+        print(f"  [粗排] 使用Jaccard快速筛选Top-{COARSE_RECALL_SIZE}...")
+        coarse_similarities = []
+        for paper in papers:
+            paper_title = paper.get('title', '')
+            if not paper_title:
+                continue
 
-        sim = compute_similarity(user_idea, paper_idea)
-        if sim > 0.1 and G.has_node(paper['paper_id']):
-            reviews = paper.get('reviews', [])
-            if reviews:
-                import numpy as np
-                scores = [r.get('rating', 5) for r in reviews]
-                avg_score = np.mean(scores)
-                quality = (avg_score - 1) / 9
-            else:
-                quality = 0.5
+            sim = compute_jaccard_similarity(user_idea, paper_title)
+            if sim > 0.05:  # 降低阈值
+                coarse_similarities.append((paper['paper_id'], sim))
 
-            combined = sim * quality
-            similarities.append((paper['paper_id'], sim, quality, combined))
+        coarse_similarities.sort(key=lambda x: x[1], reverse=True)
+        candidates = coarse_similarities[:COARSE_RECALL_SIZE]
 
-    similarities.sort(key=lambda x: x[3], reverse=True)
-    top_papers = similarities[:TOP_K_PAPERS]
+        print(f"  [精排] 使用Embedding重排Top-{TOP_K_PAPERS}...")
+        fine_similarities = []
+        for paper_id, _ in candidates:
+            paper = paper_map.get(paper_id)
+            if not paper:
+                continue
+            paper_title = paper.get('title', '')
 
-    print(f"  找到 {len(similarities)} 个相似Paper，选择 Top-{TOP_K_PAPERS}")
+            sim = compute_embedding_similarity(user_idea, paper_title)
+            if sim > 0.1 and G.has_node(paper_id):
+                quality = get_paper_quality(paper)
+                combined = sim * quality
+                fine_similarities.append((paper_id, sim, quality, combined))
+
+        fine_similarities.sort(key=lambda x: x[3], reverse=True)
+        top_papers = fine_similarities[:TOP_K_PAPERS]
+
+        print(f"  ✓ 粗排{len(coarse_similarities)}个 → 精排{len(candidates)}个 → 最终{len(top_papers)}个")
+    else:
+        # 单阶段召回（原逻辑）
+        similarities = []
+        for paper in papers:
+            paper_title = paper.get('title', '')
+            if not paper_title:
+                continue
+
+            sim = compute_similarity(user_idea, paper_title)
+            if sim > 0.1 and G.has_node(paper['paper_id']):
+                quality = get_paper_quality(paper)
+                combined = sim * quality
+                similarities.append((paper['paper_id'], sim, quality, combined))
+
+        similarities.sort(key=lambda x: x[3], reverse=True)
+        top_papers = similarities[:TOP_K_PAPERS]
+
+        print(f"  找到 {len(similarities)} 个相似Paper，选择 Top-{TOP_K_PAPERS}")
 
     path3_scores = defaultdict(float)
     for paper_id, similarity, quality, combined_weight in top_papers:
+        paper = paper_map.get(paper_id, {})
+        quality_source = "review" if paper.get('reviews') else "默认"
+        title = paper.get('title', 'N/A')
+        print(f"  - {paper_id} (相似度={similarity:.3f}, 质量={quality:.3f} [{quality_source}])")
+        print(f"    标题: {title}")
+
         if not G.has_node(paper_id):
             continue
         for successor in G.successors(paper_id):
@@ -190,7 +396,11 @@ def main():
                 pattern_quality = edge_data.get('quality', 0.5)
                 path3_scores[pattern_id] += combined_weight * pattern_quality
 
-    print(f"  ✓ 召回 {len(path3_scores)} 个Pattern\n")
+    # 排序并只保留Top-K个Pattern
+    sorted_path3 = sorted(path3_scores.items(), key=lambda x: x[1], reverse=True)
+    path3_scores = dict(sorted_path3[:TOP_K_PATTERNS_PATH3])
+
+    print(f"  ✓ 召回 {len(sorted_path3)} 个Pattern，保留Top-{TOP_K_PATTERNS_PATH3}\n")
 
     # ===================== 融合结果 =====================
     print("🔗 融合三路召回结果...\n")
@@ -228,10 +438,17 @@ def main():
             print(f"  - 路径2 (领域相关):   {score2:.4f} (占比 {score2/final_score*100:.1f}%)")
             print(f"  - 路径3 (相似Paper):  {score3:.4f} (占比 {score3/final_score*100:.1f}%)")
 
-        print(f"  聚类大小: {pattern_info.get('cluster_size', 0)} 篇论文")
+        print(f"  聚类大小: {pattern_info.get('size', 0)} 篇论文")
 
-        summary = pattern_info.get('summary', 'N/A')
-        print(f"  摘要: {summary[:120]}...")
+        # V3版本: 优先显示LLM增强的总结，否则显示原始示例
+        if pattern_info.get('llm_enhanced_summary'):
+            llm_summary = pattern_info['llm_enhanced_summary'].get('representative_ideas', '')
+            print(f"  归纳总结: {llm_summary[:120]}...")
+        else:
+            summary = pattern_info.get('summary', {})
+            ideas = summary.get('representative_ideas', [])
+            if ideas:
+                print(f"  示例Idea: {ideas[0][:120] if ideas else 'N/A'}...")
 
     print("\n" + "=" * 80)
     print("✅ 召回完成!")

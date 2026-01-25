@@ -25,7 +25,6 @@ NODES_IDEA = OUTPUT_DIR / "nodes_idea.json"
 NODES_PATTERN = OUTPUT_DIR / "nodes_pattern.json"
 NODES_DOMAIN = OUTPUT_DIR / "nodes_domain.json"
 NODES_PAPER = OUTPUT_DIR / "nodes_paper.json"
-PATTERNS_STRUCTURED = OUTPUT_DIR / "patterns_structured.json"
 
 # 输出文件
 EDGES_FILE = OUTPUT_DIR / "edges.json"
@@ -61,7 +60,6 @@ class EdgeBuilder:
         self.patterns = self._load_json(NODES_PATTERN)
         self.domains = self._load_json(NODES_DOMAIN)
         self.papers = self._load_json(NODES_PAPER)
-        self.patterns_structured = self._load_json(PATTERNS_STRUCTURED)
 
         print(f"  ✓ Idea: {len(self.ideas)} 个")
         print(f"  ✓ Pattern: {len(self.patterns)} 个")
@@ -124,43 +122,38 @@ class EdgeBuilder:
 
         for paper in self.papers:
             paper_id = paper['paper_id']
-
-            # 1. Paper -[implements]-> Idea
-            for idea in self.ideas:
-                if paper_id in idea.get('source_paper_ids', []):
-                    self.G.add_edge(
-                        paper_id,
-                        idea['idea_id'],
-                        relation='implements'
-                    )
-                    self.stats.paper_implements_idea += 1
-                    break
-
-            # 2. Paper -[uses_pattern]-> Pattern (带质量权重)
-            pattern_ids = paper.get('pattern_ids', [])
             paper_quality = self._get_paper_quality(paper)
 
-            for pattern_id in pattern_ids:
-                if pattern_id in self.pattern_id_to_pattern:
-                    self.G.add_edge(
-                        paper_id,
-                        pattern_id,
-                        relation='uses_pattern',
-                        quality=paper_quality
-                    )
-                    self.stats.paper_uses_pattern += 1
+            # 1. Paper -[implements]-> Idea
+            idea_id = paper.get('idea_id', '')
+            if idea_id and idea_id in self.idea_id_to_idea:
+                self.G.add_edge(
+                    paper_id,
+                    idea_id,
+                    relation='implements'
+                )
+                self.stats.paper_implements_idea += 1
+
+            # 2. Paper -[uses_pattern]-> Pattern (带质量权重)
+            pattern_id = paper.get('pattern_id', '')
+            if pattern_id and pattern_id in self.pattern_id_to_pattern:
+                self.G.add_edge(
+                    paper_id,
+                    pattern_id,
+                    relation='uses_pattern',
+                    quality=paper_quality
+                )
+                self.stats.paper_uses_pattern += 1
 
             # 3. Paper -[in_domain]-> Domain
-            domain_names = paper.get('domains', [])
-            for domain_name in domain_names:
-                domain_id = self.domain_name_to_id.get(domain_name)
-                if domain_id:
-                    self.G.add_edge(
-                        paper_id,
-                        domain_id,
-                        relation='in_domain'
-                    )
-                    self.stats.paper_in_domain += 1
+            domain_id = paper.get('domain_id', '')
+            if domain_id and domain_id in self.domain_id_to_domain:
+                self.G.add_edge(
+                    paper_id,
+                    domain_id,
+                    relation='in_domain'
+                )
+                self.stats.paper_in_domain += 1
 
         print(f"  ✓ Paper->Idea: {self.stats.paper_implements_idea} 条")
         print(f"  ✓ Paper->Pattern: {self.stats.paper_uses_pattern} 条")
@@ -190,11 +183,10 @@ class EdgeBuilder:
                 if not paper:
                     continue
 
-                domain_names = paper.get('domains', [])
-                for domain_name in domain_names:
-                    domain_id = self.domain_name_to_id.get(domain_name)
-                    if domain_id:
-                        domain_counts[domain_id] += 1
+                # V3: Paper 有 domain_id 字段
+                domain_id = paper.get('domain_id', '')
+                if domain_id:
+                    domain_counts[domain_id] += 1
 
             # 计算每个 Domain 的权重并创建边
             total_papers = len(source_paper_ids)
@@ -230,17 +222,17 @@ class EdgeBuilder:
             domain_stats = defaultdict(lambda: {'papers': [], 'qualities': []})
 
             for paper in self.papers:
-                if pattern_id not in paper.get('pattern_ids', []):
+                # V3: Paper 有 pattern_id 字段（单个）
+                if paper.get('pattern_id', '') != pattern_id:
                     continue
 
                 paper_quality = self._get_paper_quality(paper)
-                domain_names = paper.get('domains', [])
+                # V3: Paper 有 domain_id 字段
+                domain_id = paper.get('domain_id', '')
 
-                for domain_name in domain_names:
-                    domain_id = self.domain_name_to_id.get(domain_name)
-                    if domain_id:
-                        domain_stats[domain_id]['papers'].append(paper['paper_id'])
-                        domain_stats[domain_id]['qualities'].append(paper_quality)
+                if domain_id:
+                    domain_stats[domain_id]['papers'].append(paper['paper_id'])
+                    domain_stats[domain_id]['qualities'].append(paper_quality)
 
             # 为每个 Domain 创建 works_well_in 边
             for domain_id, stats in domain_stats.items():
@@ -256,8 +248,9 @@ class EdgeBuilder:
                 if not domain:
                     continue
 
+                # V3: 根据 domain_id 筛选 Paper
                 domain_papers = [p for p in self.papers
-                                if domain['name'] in p.get('domains', [])]
+                                if p.get('domain_id', '') == domain_id]
                 domain_baseline = np.mean([self._get_paper_quality(p) for p in domain_papers]) if domain_papers else 0.7
 
                 # 效果 = 平均质量 - 基线
@@ -308,7 +301,8 @@ class EdgeBuilder:
 
             for paper in self.papers:
                 paper_id = paper['paper_id']
-                paper_idea = paper.get('idea', {}).get('core_idea', '')
+                # V3: Paper 的 idea 字段是字符串，而不是字典
+                paper_idea = paper.get('idea', '')
 
                 if not paper_idea:
                     continue
