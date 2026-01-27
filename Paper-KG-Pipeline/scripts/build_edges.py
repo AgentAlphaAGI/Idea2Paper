@@ -25,6 +25,7 @@ NODES_IDEA = OUTPUT_DIR / "nodes_idea.json"
 NODES_PATTERN = OUTPUT_DIR / "nodes_pattern.json"
 NODES_DOMAIN = OUTPUT_DIR / "nodes_domain.json"
 NODES_PAPER = OUTPUT_DIR / "nodes_paper.json"
+NODES_REVIEW = OUTPUT_DIR / "nodes_review.json"  # 新增：Review 节点
 
 # 输出文件
 EDGES_FILE = OUTPUT_DIR / "edges.json"
@@ -60,11 +61,13 @@ class EdgeBuilder:
         self.patterns = self._load_json(NODES_PATTERN)
         self.domains = self._load_json(NODES_DOMAIN)
         self.papers = self._load_json(NODES_PAPER)
+        self.reviews = self._load_json(NODES_REVIEW) if NODES_REVIEW.exists() else []
 
         print(f"  ✓ Idea: {len(self.ideas)} 个")
         print(f"  ✓ Pattern: {len(self.patterns)} 个")
         print(f"  ✓ Domain: {len(self.domains)} 个")
         print(f"  ✓ Paper: {len(self.papers)} 个")
+        print(f"  ✓ Review: {len(self.reviews)} 条")
 
         # 构建映射索引
         self._build_indices()
@@ -92,6 +95,17 @@ class EdgeBuilder:
         # Paper: paper_id -> paper
         self.paper_id_to_paper = {p['paper_id']: p for p in self.papers}
 
+        # Review: review_id -> review
+        self.review_id_to_review = {r['review_id']: r for r in self.reviews}
+        # Paper: paper_id -> reviews list
+        self.paper_id_to_reviews = {}
+        for review in self.reviews:
+            paper_id = review.get('paper_id', '')
+            if paper_id:
+                if paper_id not in self.paper_id_to_reviews:
+                    self.paper_id_to_reviews[paper_id] = []
+                self.paper_id_to_reviews[paper_id].append(review)
+
         print(f"  ✓ 索引构建完成")
 
     def build_all_edges(self):
@@ -103,14 +117,17 @@ class EdgeBuilder:
         # Step 1: 基础连接边（Paper 为中心）
         self._build_paper_edges()
 
-        # Step 2: 召回边 - 路径2: Idea → Domain → Pattern
+        # Step 2: Review 相关边
+        self._build_paper_review_edges()
+
+        # Step 3: 召回边 - 路径2: Idea → Domain → Pattern
         self._build_idea_belongs_to_domain_edges()
         self._build_pattern_works_well_in_domain_edges()
 
-        # Step 3: 召回边 - 路径3: Idea → Paper → Pattern
+        # Step 4: 召回边 - 路径3: Idea → Paper → Pattern
         self._build_idea_similar_to_paper_edges()
 
-        # Step 4: 保存结果
+        # Step 5: 保存结果
         self._save_edges()
         self._print_stats()
 
@@ -158,6 +175,39 @@ class EdgeBuilder:
         print(f"  ✓ Paper->Idea: {self.stats.paper_implements_idea} 条")
         print(f"  ✓ Paper->Pattern: {self.stats.paper_uses_pattern} 条")
         print(f"  ✓ Paper->Domain: {self.stats.paper_in_domain} 条")
+
+    # ===================== Review 相关边 =====================
+
+    def _build_paper_review_edges(self):
+        """构建 Paper -[has_review]-> Review 边，以及 Review -[evaluates]-> Quality 伪节点"""
+        print("\n⭐ 构建 Paper <-> Review 边...")
+
+        paper_review_count = 0
+
+        for paper in self.papers:
+            paper_id = paper['paper_id']
+            review_ids = paper.get('review_ids', [])
+
+            if not review_ids:
+                continue
+
+            for review_id in review_ids:
+                # Paper -[has_review]-> Review
+                review = self.review_id_to_review.get(review_id)
+                if not review:
+                    continue
+
+                score_value = review.get('overall_score_value', 0.5)
+
+                self.G.add_edge(
+                    paper_id,
+                    review_id,
+                    relation='has_review',
+                    score=score_value
+                )
+                paper_review_count += 1
+
+        print(f"  ✓ Paper->Review: {paper_review_count} 条")
 
     # ===================== 召回边 - 路径2: Idea → Domain → Pattern =====================
 
@@ -348,33 +398,16 @@ class EdgeBuilder:
 
         基于 review 的评分，归一化到 [0, 1]
         """
-        reviews = paper.get('reviews', [])
+        # V3: 使用 review_stats 中的 avg_score
+        review_stats = paper.get('review_stats', {})
+        avg_score = review_stats.get('avg_score', 0.5)
 
-        if not reviews:
-            return 0.5  # 默认中等质量
-
-        # 提取所有评分
-        scores = []
-        for review in reviews:
-            score_str = review.get('overall_score', '')
-            # 尝试解析评分（可能是 "7", "7/10", "7.0" 等格式）
-            try:
-                if '/' in score_str:
-                    score_str = score_str.split('/')[0]
-                score = float(score_str.strip())
-                scores.append(score)
-            except (ValueError, AttributeError):
-                continue
-
-        if not scores:
+        # 如果没有 review 数据，返回默认值
+        if avg_score == 0.5 and review_stats.get('review_count', 0) == 0:
             return 0.5
 
-        # 计算平均分并归一化
-        avg_score = np.mean(scores)
-        # 假设评分范围是 1-10，归一化到 [0, 1]
-        normalized_score = (avg_score - 1) / 9
-
-        return min(max(normalized_score, 0.0), 1.0)
+        # avg_score 已经被归一化到 [0, 1]
+        return min(max(avg_score, 0.0), 1.0)
 
     def _compute_text_similarity(self, text1: str, text2: str) -> float:
         """计算两段文本的简单相似度
@@ -435,6 +468,12 @@ class EdgeBuilder:
         print(f"  Paper->Idea:                {self.stats.paper_implements_idea} 条")
         print(f"  Paper->Pattern:             {self.stats.paper_uses_pattern} 条")
         print(f"  Paper->Domain:              {self.stats.paper_in_domain} 条")
+
+        print("\n【Review 质量边】")
+        review_edges = sum(1 for u, v, d in self.G.edges(data=True) if d.get('relation') == 'has_review')
+        print(f"  Paper->Review:              {review_edges} 条")
+        print(f"  关联论文数:                  {len([p for p in self.papers if p.get('review_ids')])} 篇")
+        print(f"  总Review数:                  {len(self.reviews)} 条")
 
         print("\n【召回边 - 路径2: Idea → Domain → Pattern】")
         print(f"  Idea->Domain:               {self.stats.idea_belongs_to_domain} 条")

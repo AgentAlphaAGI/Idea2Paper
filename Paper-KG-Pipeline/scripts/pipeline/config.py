@@ -10,7 +10,7 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 # ===================== LLM API 配置 =====================
 LLM_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 LLM_API_URL = os.getenv("LLM_API_URL", "https://api.siliconflow.cn/v1/chat/completions")
-LLM_MODEL = os.getenv("LLM_MODEL", "MiniMaxAI/MiniMax-M2")
+LLM_MODEL = os.getenv("LLM_MODEL", "Pro/zai-org/GLM-4.7")
 
 # ===================== Pipeline 配置 =====================
 class PipelineConfig:
@@ -25,7 +25,7 @@ class PipelineConfig:
     MAX_REFINE_ITERATIONS = 3  # 最多修正 3 轮
 
     # 新颖性模式配置
-    NOVELTY_MODE_MAX_PATTERNS = 10  # 新颖性模式最多尝试的 Pattern 数
+    NOVELTY_MODE_MAX_PATTERNS = 3  # 新颖性模式最多尝试的 Pattern 数
     NOVELTY_SCORE_THRESHOLD = 6.0  # 新颖性得分阈值
 
     # RAG 查重阈值

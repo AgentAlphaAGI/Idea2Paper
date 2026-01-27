@@ -368,8 +368,9 @@ for paper_id, _ in candidates:  # 100个
     sim = compute_embedding_similarity(user_idea, paper_title)
 
     if sim > 0.1:  # 过滤低相似度
+        # 获取Paper质量 (优先使用 review_stats.avg_score)
         quality = _get_paper_quality(paper)  # [0, 1]
-        combined_weight = sim * quality
+        combined_weight = sim * quality  # 结合相似度和质量
         fine_similarities.append((paper_id, sim, quality, combined_weight))
 
 fine_similarities.sort(key=lambda x: x[3], reverse=True)
@@ -388,9 +389,10 @@ for paper_id, similarity, paper_quality, combined_weight in top_20_papers:
 
         if edge_data['relation'] == 'uses_pattern':
             pattern_id = successor
-            pattern_quality = edge_data['quality']  # Paper质量
+            pattern_quality = edge_data['quality']  # Paper的Review质量
 
-            # 得分 = 相似度 × Paper质量 × Pattern质量
+            # 得分 = (相似度 × Paper质量) × Pattern质量
+            # paper_quality 来自 review_stats.avg_score
             score = combined_weight * pattern_quality
             pattern_scores[pattern_id] += score
 
@@ -776,7 +778,8 @@ if domain == "Natural Language Processing":
 
 ✅ **三路互补召回**: 兼顾相似度、领域和质量
 ✅ **两阶段优化**: 提速13倍,实现秒级召回
-✅ **LLM增强Pattern**: 912个Pattern经过LLM归纳总结
+✅ **质量导向召回**: 路径3结合Review质量评分,提升召回准确性
+✅ **LLM增强Pattern**: 124个Pattern经过LLM归纳总结
 ✅ **可扩展架构**: 易于添加新召回路径
 ✅ **完整监控**: 详细的日志和评估指标
 
@@ -784,15 +787,15 @@ if domain == "Natural Language Processing":
 
 ✅ **Embedding + Jaccard混合策略**: 平衡精度和速度
 ✅ **图谱结构化召回**: 利用边权重精确计算得分
-✅ **质量导向**: 考虑Paper质量和Pattern效果
+✅ **多维度质量评分**: 综合overall_score、confidence、contribution、correctness
 ✅ **实时计算**: 路径3避免预构建冗余边
 
 ### 待改进
 
-⚠️ **补充Review数据**: 提升质量评分准确性
 ⚠️ **优化Domain匹配**: 引入层级结构或Embedding匹配
 ⚠️ **向量数据库**: 进一步提升召回效率到1-3秒
 ⚠️ **在线学习**: 根据用户反馈调整权重
+⚠️ **扩展Review数据**: 整合更多会议的评审数据
 
 ---
 

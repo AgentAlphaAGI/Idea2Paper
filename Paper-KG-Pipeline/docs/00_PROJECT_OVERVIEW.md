@@ -589,13 +589,12 @@ cat output/log.json | jq '.'
 ### 9.1 数据层面
 
 **当前局限**:
-- ⚠️ Paper节点暂无review数据,质量分默认0.5
 - ⚠️ Domain粒度过粗,98个Domain覆盖8,285篇论文
 
 **改进方向**:
-- 📌 补充ICLR 2025 review数据
 - 📌 引入Domain层级结构(主领域→子领域)
 - 📌 使用sub_domains进行精细匹配
+- 📌 扩展到更多会议的 Review 数据
 
 ### 9.2 召回层面
 

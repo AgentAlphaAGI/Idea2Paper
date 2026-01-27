@@ -44,6 +44,7 @@ DATA_DIR = PROJECT_ROOT / "data" / "ICLR_25"
 ASSIGNMENTS_FILE = DATA_DIR / "assignments.jsonl"
 CLUSTER_LIBRARY_FILE = DATA_DIR / "cluster_library_sorted.jsonl"
 PATTERN_DETAILS_FILE = DATA_DIR / "iclr_patterns_full.jsonl"  # 使用完整的英文版本
+REVIEWS_FILE = DATA_DIR / "paper_reviews_dataset_iclr_reviews_filtered.jsonl"  # Review 数据
 
 # 输出路径
 OUTPUT_DIR = PROJECT_ROOT / "output"
@@ -51,12 +52,13 @@ NODES_IDEA = OUTPUT_DIR / "nodes_idea.json"
 NODES_PATTERN = OUTPUT_DIR / "nodes_pattern.json"
 NODES_DOMAIN = OUTPUT_DIR / "nodes_domain.json"
 NODES_PAPER = OUTPUT_DIR / "nodes_paper.json"
+NODES_REVIEW = OUTPUT_DIR / "nodes_review.json"  # 新增：Review 节点
 STATS_FILE = OUTPUT_DIR / "knowledge_graph_stats.json"
 
 # LLM API 配置
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 LLM_API_URL = os.getenv("LLM_API_URL", "https://api.siliconflow.cn/v1/chat/completions")
-LLM_MODEL = os.getenv("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+LLM_MODEL = os.getenv("LLM_MODEL", "Qwen/Qwen3-14B")
 
 
 # ===================== 数据类 =====================
@@ -69,6 +71,7 @@ class GraphStats:
     patterns: int = 0
     domains: int = 0
     papers: int = 0
+    reviews: int = 0
 
 
 # ===================== 节点构建器 =====================
@@ -84,6 +87,7 @@ class KnowledgeGraphBuilderV3:
         self.pattern_nodes: List[Dict] = []
         self.domain_nodes: List[Dict] = []
         self.paper_nodes: List[Dict] = []
+        self.review_nodes: List[Dict] = []  # 新增：Review 节点
 
         # 去重映射
         self.idea_map: Dict[str, str] = {}           # idea_hash -> idea_id
@@ -91,9 +95,11 @@ class KnowledgeGraphBuilderV3:
         self.pattern_map: Dict[int, str] = {}        # cluster_id -> pattern_id
         self.global_pattern_map: Dict[str, str] = {} # global_pattern_id -> idea_id
         self.paper_map: Dict[str, str] = {}          # paper_id -> paper_id
+        self.review_map: Dict[str, str] = {}         # 新增：review_id -> review_id
 
         # 中间数据
         self.paper_details: Dict[str, Dict] = {}     # paper_id -> pattern details
+        self.paper_reviews_map: Dict[str, List[Dict]] = {}  # 新增：paper_id -> list of reviews
 
     def build(self):
         """构建完整的知识图谱"""
@@ -106,9 +112,11 @@ class KnowledgeGraphBuilderV3:
         assignments = self._load_assignments()
         clusters = self._load_clusters()
         pattern_details = self._load_pattern_details()
+        reviews_data = self._load_reviews()  # 新增：加载 Review 数据
         print(f"✅ 加载 {len(assignments)} 篇论文分配")
         print(f"✅ 加载 {len(clusters)} 个 Pattern Clusters")
         print(f"✅ 加载 {len(pattern_details)} 篇论文的详细Pattern")
+        print(f"✅ 加载 {len(reviews_data)} 篇论文的 Review 数据")  # 新增
 
         # Step 2: 构建节点
         print("\n【Step 2】构建节点")
@@ -117,12 +125,14 @@ class KnowledgeGraphBuilderV3:
         self._build_idea_nodes(pattern_details)
         self._build_domain_nodes(assignments, clusters)
         self._build_paper_nodes(assignments, pattern_details)
+        self._build_review_nodes(reviews_data)  # 新增：构建 Review 节点
 
         # Step 3: 建立关联
         print("\n【Step 3】建立节点关联")
         self._link_paper_to_pattern(assignments)
         self._link_paper_to_idea()
         self._link_paper_to_domain()
+        self._link_paper_to_review()  # 新增：关联 Paper 和 Review
         self._link_idea_to_pattern()
 
         # Step 4: 保存节点
@@ -184,6 +194,35 @@ class KnowledgeGraphBuilderV3:
 
         self.paper_details = details
         return details
+
+    def _load_reviews(self) -> Dict[str, List[Dict]]:
+        """加载Review数据 (paper_reviews_dataset_iclr_reviews_filtered.jsonl)"""
+        reviews_data = {}
+        if not REVIEWS_FILE.exists():
+            print(f"⚠️  文件不存在: {REVIEWS_FILE}")
+            return {}
+
+        with open(REVIEWS_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    item = json.loads(line)
+                    paper_id = item.get('id')  # 论文ID来自 'id' 字段
+                    related_notes = item.get('related_notes', '[]')
+
+                    # 解析 related_notes（是一个 JSON 字符串）
+                    if isinstance(related_notes, str):
+                        try:
+                            reviews_list = json.loads(related_notes)
+                        except:
+                            reviews_list = []
+                    else:
+                        reviews_list = related_notes if isinstance(related_notes, list) else []
+
+                    if paper_id and reviews_list:
+                        reviews_data[paper_id] = reviews_list
+                        self.paper_reviews_map[paper_id] = reviews_list
+
+        return reviews_data
 
     # ===================== 构建节点 =====================
 
@@ -516,6 +555,96 @@ Make sure each sentence is detailed, informative, and captures the diversity of 
 
         print(f"  ✓ 创建 {len(self.paper_nodes)} 个 Paper 节点")
 
+    def _build_review_nodes(self, reviews_data: Dict[str, List[Dict]]):
+        """构建 Review 节点"""
+        print("\n⭐ 构建 Review 节点...")
+
+        for paper_id, reviews_list in reviews_data.items():
+            for review in reviews_list:
+                review_id = review.get('review_id', '')
+                if not review_id:
+                    continue
+
+                self.review_map[review_id] = review_id
+
+                # 解析 overall_score
+                overall_score = review.get('overall_score', '')
+                score_value = self._parse_overall_score(overall_score)
+
+                # 提取关键信息
+                self.review_nodes.append({
+                    'review_id': review_id,
+                    'paper_id': review.get('paper_id', ''),
+
+                    # 评分信息
+                    'overall_score': overall_score,
+                    'overall_score_value': score_value,  # 数值化的分数
+                    'confidence': review.get('confidence'),  # 可能为 None
+
+                    # 评价内容
+                    'paper_summary': review.get('paper_summary', '')[:500],  # 限制长度
+                    'strengths': review.get('strengths', ''),
+                    'weaknesses': review.get('weaknesses', ''),
+                    'comments': review.get('comments', ''),
+                    'tldr': review.get('tldr', ''),
+
+                    # 评价维度
+                    'contribution': review.get('contribution'),
+                    'correctness': review.get('correctness', ''),
+                    'clarity_quality_novelty_reproducibility': review.get('clarity_quality_novelty_reproducibility', ''),
+                    'recommendation': review.get('recommendation', ''),
+
+                    # 元数据
+                    'reviewer': review.get('reviewer'),
+                })
+
+        print(f"  ✓ 创建 {len(self.review_nodes)} 个 Review 节点")
+
+    def _parse_overall_score(self, score_str: str) -> float:
+        """将整体评分字符串转换为数值 (0-1)
+
+        基础映射，后续在 review_stats 中会综合多个维度重新计算
+        """
+        if not score_str:
+            return 0.5
+
+        score_str = score_str.lower().strip()
+
+        # 按数字大小映射 (1-10 的评分)
+        score_mapping = {
+            '10': 1.0,
+            '9': 0.95,
+            '8': 0.85,
+            '7': 0.7,
+            '6': 0.6,
+            '5': 0.5,
+            '4': 0.4,
+            '3': 0.3,
+            '2': 0.2,
+            '1': 0.1,
+        }
+
+        # 先尝试提取数字（例如 "6: marginally above..." -> 0.6）
+        import re
+        numbers = re.findall(r'\d+', score_str)
+        if numbers:
+            for num_str in numbers:
+                if num_str in score_mapping:
+                    return score_mapping[num_str]
+
+        # 文本映射
+        text_mapping = {
+            'accept': 0.8,
+            'reject': 0.2,
+            'borderline': 0.5,
+        }
+
+        for key, value in text_mapping.items():
+            if key in score_str:
+                return value
+
+        return 0.5  # 默认中等评分
+
     # ===================== 建立关联 =====================
 
     def _link_paper_to_pattern(self, assignments: List[Dict]):
@@ -558,6 +687,60 @@ Make sure each sentence is detailed, informative, and captures the diversity of 
 
         linked_count = sum(1 for p in self.paper_nodes if p['domain_id'])
         print(f"  ✓ {linked_count}/{len(self.paper_nodes)} 篇论文关联到Domain")
+
+    def _link_paper_to_review(self):
+        """建立 Paper -> Review 关联并补充 Paper 的 Review 质量信息"""
+        print("\n🔗 建立 Paper -> Review 关联...")
+
+        # 为每个 Paper 收集关联的 Review
+        paper_review_stats = defaultdict(lambda: {
+            'review_ids': [],
+            'avg_score': 0.0,
+            'review_count': 0,
+            'highest_score': 0.0,
+            'lowest_score': 1.0
+        })
+
+        for review_node in self.review_nodes:
+            paper_id = review_node.get('paper_id', '')
+            if not paper_id:
+                continue
+
+            score_value = review_node.get('overall_score_value', 0.5)
+            paper_review_stats[paper_id]['review_ids'].append(review_node['review_id'])
+            paper_review_stats[paper_id]['review_count'] += 1
+            paper_review_stats[paper_id]['highest_score'] = max(
+                paper_review_stats[paper_id]['highest_score'], score_value
+            )
+            paper_review_stats[paper_id]['lowest_score'] = min(
+                paper_review_stats[paper_id]['lowest_score'], score_value
+            )
+
+        # 计算平均分并更新 Paper 节点
+        for paper_id, stats in paper_review_stats.items():
+            if stats['review_count'] > 0:
+                review_ids = stats['review_ids']
+                scores = [
+                    next((r['overall_score_value'] for r in self.review_nodes if r['review_id'] == rid), 0.5)
+                    for rid in review_ids
+                ]
+                stats['avg_score'] = sum(scores) / len(scores)
+
+            # 找到对应的 Paper 节点并补充信息
+            for paper_node in self.paper_nodes:
+                if paper_node['paper_id'] == paper_id:
+                    paper_node['review_ids'] = stats['review_ids']
+                    paper_node['review_stats'] = {
+                        'review_count': stats['review_count'],
+                        'avg_score': stats['avg_score'],
+                        'highest_score': stats['highest_score'],
+                        'lowest_score': stats['lowest_score']
+                    }
+                    break
+
+        linked_count = sum(1 for p in self.paper_nodes if p.get('review_ids'))
+        print(f"  ✓ {linked_count}/{len(self.paper_nodes)} 篇论文关联到Review")
+        print(f"  ✓ 共关联 {len(self.review_nodes)} 条Review")
 
     def _link_idea_to_pattern(self):
         """建立 Idea -> Pattern 关联（通过Paper中转）"""
@@ -607,17 +790,23 @@ Make sure each sentence is detailed, informative, and captures the diversity of 
             json.dump(self.paper_nodes, f, ensure_ascii=False, indent=2)
         print(f"  ✓ {NODES_PAPER}")
 
+        with open(NODES_REVIEW, 'w', encoding='utf-8') as f:
+            json.dump(self.review_nodes, f, ensure_ascii=False, indent=2)
+        print(f"  ✓ {NODES_REVIEW}")
+
     def _update_stats(self):
         """更新统计信息"""
         self.stats.ideas = len(self.idea_nodes)
         self.stats.patterns = len(self.pattern_nodes)
         self.stats.domains = len(self.domain_nodes)
         self.stats.papers = len(self.paper_nodes)
+        self.stats.reviews = len(self.review_nodes)
         self.stats.total_nodes = (
             self.stats.ideas +
             self.stats.patterns +
             self.stats.domains +
-            self.stats.papers
+            self.stats.papers +
+            self.stats.reviews
         )
 
     def _save_stats(self):

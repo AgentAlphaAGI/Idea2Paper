@@ -9,7 +9,7 @@
 V3版本更新:
   - 适配V3节点结构 (Paper.idea为字符串，非嵌套字典)
   - 路径1直接使用Idea.pattern_ids，无需通过Paper中转
-  - Paper暂无review数据，质量默认0.5
+  - Paper通过review_stats获取质量分数，支持兼容旧结构
 """
 
 import json
@@ -164,7 +164,7 @@ class RecallSystem:
         }
 
         payload = {
-            "model": "Qwen/Qwen3-Embedding-4B",
+            "model": "Qwen/Qwen3-Embedding-8B",
             "input": text[:2000]  # 限制长度避免超限
         }
 
@@ -191,6 +191,14 @@ class RecallSystem:
         基于review的评分，归一化到[0, 1]
         如果没有review数据，返回默认值0.5
         """
+        # 优先使用新结构中的 review_stats.avg_score
+        review_stats = paper.get('review_stats', {})
+
+        if review_stats and review_stats.get('avg_score'):
+            # 已经是 0-1 的分数
+            return float(review_stats['avg_score'])
+
+        # 备选方案：兼容旧结构（review 列表）
         reviews = paper.get('reviews', [])
 
         if not reviews:
@@ -475,7 +483,13 @@ class RecallSystem:
 
         for paper_id, similarity, quality, combined_weight in top_papers:
             paper = self.paper_id_to_paper.get(paper_id, {})
-            quality_source = "review" if paper.get('reviews') else "默认"
+            # 判断质量来源：优先检查review_stats，然后是reviews，否则是默认值
+            if paper.get('review_stats'):
+                quality_source = f"review({paper['review_stats'].get('review_count', 0)}条)"
+            elif paper.get('reviews'):
+                quality_source = "review"
+            else:
+                quality_source = "默认"
             title = paper.get('title', 'N/A')
             print(f"  - {paper_id} (相似度={similarity:.3f}, 质量={quality:.3f} [{quality_source}])")
             print(f"    标题: {title}")

@@ -557,8 +557,9 @@ LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"  # 节点构建
 # Pattern-Domain边权重计算
 BASELINE_SAMPLE_SIZE = 20  # confidence达到1.0的样本数阈值
 
-# Paper质量评分(无review数据时)
-DEFAULT_PAPER_QUALITY = 0.5  # [0, 1]
+# Paper质量评分
+# 优先使用 review_stats.avg_score (基于多维度Review评分)
+# 无review数据时使用默认值 0.5
 ```
 
 ---
@@ -730,24 +731,25 @@ print(f"边数: {G.number_of_edges()}")
 2. 修改`DATA_DIR`路径
 3. 重新运行`build_entity_v3.py`
 
-### 10.2 Review数据补充
+### 10.2 Review数据扩展
 
-**当前状态**: Paper节点暂无review数据，质量分默认0.5
+**当前状态**: Paper节点已集成ICLR 2025的review数据，包含多维度评分
 
-**改进方案**:
-```python
-# 在assignments.jsonl中添加reviews字段
+**数据结构**:
+```json
 {
   "paper_id": "xxx",
-  "reviews": [
-    {"overall_score": 7},
-    {"overall_score": 8}
-  ],
-  ...
+  "review_ids": ["review_1", "review_2", ...],
+  "review_stats": {
+    "review_count": 4,
+    "avg_score": 0.656,
+    "highest_score": 0.790,
+    "lowest_score": 0.575
+  }
 }
-
-# 质量评分将自动生效
 ```
+
+**扩展方案**: 可添加更多会议的review数据以丰富知识图谱
 
 ### 10.3 性能优化
 
