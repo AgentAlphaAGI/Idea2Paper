@@ -7,19 +7,29 @@ from pathlib import Path
 
 from openai import OpenAI
 
+# ===== HF dataset =====
 DATASET_NAME = "AgentAlphaAGI/Paper-Review-Dataset"
 SPLIT = "train"
-N = 5000
+N = 10  # 本次运行抽取多少新记录
 
-
+# ===== LLM Model =====
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")  # 你可改成 gpt-4.1 / gpt-4o 等
 
 # 获取项目根目录 (知识图谱Pipeline)
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+
+# ===== Local input file (downloaded JSONL) =====
+INPUT_PATH = os.getenv(
+    "INPUT_JSONL_PATH",
+    str(PROJECT_ROOT / "data" / "ICLR_merged_cleaned_huggingface.jsonl")
+)
+
+# ===== Output file =====
 # 输出路径
 OUTPUT_DIR = PROJECT_ROOT / "output"
 OUT_PATH = OUTPUT_DIR / "iclr_patterns_full.jsonl"
+
 
 # ====== English Prompt ======
 PROMPT_TEMPLATE = r"""
