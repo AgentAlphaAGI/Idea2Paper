@@ -4,7 +4,7 @@
 
 [![PyPI - Python Version](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
-[![arXiv](https://img.shields.io/badge/arXiv-2601.20833-b31b1b.svg)](https://arxiv.org/abs/2601.20833)
+[![arXiv - Idea2Story](https://img.shields.io/badge/arXiv-2601.20833-b31b1b.svg)](https://arxiv.org/abs/2601.20833)
 [![Stars](https://img.shields.io/github/stars/czstudio/Idea2Paper?style=social)](https://github.com/czstudio/Idea2Paper/stargazers)
 
 [English](README.md) | [中文](README-zh_CN.md)
@@ -13,9 +13,27 @@
 
 ---
 
+## 📄 Papers
+
+### Idea2Story (Core Submodule of Idea2Paper)
+
+- 🌐 **arXiv**: https://arxiv.org/abs/2601.20833
+- 📘 **PDF**: [papers/Idea2Story.pdf](papers/Idea2Story.pdf)
+
+*Idea2Story introduces a pre-computation–driven framework that shifts literature understanding
+from runtime reasoning to offline knowledge graph construction, enabling more efficient and
+reliable autonomous scientific discovery.*
+
+
+
 ## 🔎 Why Idea2Paper?
 
 **Idea2Paper** is an end-to-end pipeline that turns a research idea into a submission-ready "story" (paper narrative skeleton). It addresses the challenge of transforming raw ideas into structured academic narratives by leveraging knowledge graphs, pattern selection, and multi-agent review systems.
+
+> **Idea2Paper** is an overarching end-to-end research agent project.  
+> **Idea2Story** is a core submodule within Idea2Paper, focusing on transforming underspecified research ideas
+> into complete, submission-ready scientific narratives.
+
 
 ### 🧠 Core Philosophy
 - **Knowledge-Driven**: Uses ICLR data to build a comprehensive knowledge graph.
@@ -25,7 +43,7 @@
 <div align="center">
 <img src="https://arxiv.org/html/2601.20833v1/x1.png" alt="Idea2Paper Architecture" width="800"/>
 <br/>
-<em>Idea2Paper Pipeline Architecture</em>
+<em>Idea2Story pipeline architecture (a core module within Idea2Paper)</em>
 </div>
 
 ## ✨ Key Features
@@ -95,6 +113,22 @@ Licensed under the **MIT License**.
   <img src="https://contrib.rocks/image?repo=czstudio/Idea2Paper" />
 </a>
 
+## 📑 Citation (Idea2Story)
+
+If you find **Idea2Story** useful, please cite:
+
+```bibtex
+@misc{xu2026idea2storyautomatedpipelinetransforming,
+  title={Idea2Story: An Automated Pipeline for Transforming Research Concepts into Complete Scientific Narratives},
+  author={Tengyue Xu and Zhuoyang Qian and Gaoge Liu and Li Ling and Zhentao Zhang and Biao Wu and Shuo Zhang and Ke Lu and Wei Shi and Ziqi Wang and Zheng Feng and Yan Luo and Shu Xu and Yongjin Chen and Zhibo Feng and Zhuo Chen and Bruce Yuan and Harry Wang and Kris Chen},
+  year={2026},
+  eprint={2601.20833},
+  archivePrefix={arXiv},
+  primaryClass={cs.CE},
+  url={https://arxiv.org/abs/2601.20833}
+}
+```
+
 ---
 
 ## 📈 Star History
@@ -106,3 +140,4 @@ Licensed under the **MIT License**.
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=czstudio/Idea2Paper&type=Date" />
  </picture>
 </a>
+
