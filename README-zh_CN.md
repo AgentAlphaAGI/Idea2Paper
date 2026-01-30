@@ -4,18 +4,36 @@
 
 [![PyPI - Python Version](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
-[![arXiv](https://img.shields.io/badge/arXiv-2601.20833-b31b1b.svg)](https://arxiv.org/abs/2601.20833)
+[![arXiv - Idea2Story](https://img.shields.io/badge/arXiv-2601.20833-b31b1b.svg)](https://arxiv.org/abs/2601.20833)
 [![Stars](https://img.shields.io/github/stars/czstudio/Idea2Paper?style=social)](https://github.com/czstudio/Idea2Paper/stargazers)
 
 [English](README.md) | [中文](README-zh_CN.md)
 
 </div>
 
+
+## 📄 论文
+
+### Idea2Story（Idea2Paper 的核心子模块）
+
+- 🌐 **arXiv**：https://arxiv.org/abs/2601.20833  
+- 📘 **PDF**：[papers/Idea2Story.pdf](papers/Idea2Story.pdf)
+
+*Idea2Story 提出了一种以“预计算”为核心驱动的自动化科研叙事生成框架，
+将对学术文献的理解从运行时推理（runtime reasoning）
+前移至离线的知识图谱构建阶段，从而实现更加高效、稳定且可审计的
+自主科学发现流程。*
+
+
 ---
 
 ## 📖 项目概述
 
 **Idea2Paper** 是一个把你的研究想法（Idea）自动变成“可投稿论文的 Story（论文叙事骨架）”的端到端流水线。它集成了知识图谱召回、Pattern 选择、Story 生成、可标定 Multi-Agent Review 以及 RAG 查重与智能修正等功能。
+
+> **Idea2Paper** 是一个面向端到端科研流程的总体研究智能体项目。  
+> **Idea2Story** 是 Idea2Paper 中的核心子模块，专注于将尚不充分定义的科研想法
+> 自动转化为结构完整、可直接投稿的学术论文叙事框架。
 
 ### 核心路径
 仓库核心路径：`Paper-KG-Pipeline/`
@@ -93,14 +111,32 @@ python Paper-KG-Pipeline/scripts/idea2story_pipeline.py "your idea"
   <img src="https://contrib.rocks/image?repo=czstudio/Idea2Paper" />
 </a>
 
+## 📑 引用（Idea2Story）
+
+如果你在研究或项目中使用了 **Idea2Story**，请按如下方式引用：
+
+```bibtex
+@misc{xu2026idea2storyautomatedpipelinetransforming,
+  title={Idea2Story: An Automated Pipeline for Transforming Research Concepts into Complete Scientific Narratives},
+  author={Tengyue Xu and Zhuoyang Qian and Gaoge Liu and Li Ling and Zhentao Zhang and Biao Wu and Shuo Zhang and Ke Lu and Wei Shi and Ziqi Wang and Zheng Feng and Yan Luo and Shu Xu and Yongjin Chen and Zhibo Feng and Zhuo Chen and Bruce Yuan and Harry Wang and Kris Chen},
+  year={2026},
+  eprint={2601.20833},
+  archivePrefix={arXiv},
+  primaryClass={cs.CE},
+  url={https://arxiv.org/abs/2601.20833}
+}
+
+```
 ---
 
 ## 📈 Star History
 
-<a href="https://star-history.com/#czstudio/Idea2Paper&Date">
+<a href="https://star-history.com/#AgentAlphaAGI/Idea2Paper&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=czstudio/Idea2Paper&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=czstudio/Idea2Paper&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=czstudio/Idea2Paper&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=AgentAlphaAGI/Idea2Paper&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=AgentAlphaAGI/Idea2Paper&type=Date" />
+   <img alt="Star History Chart"
+     src="https://api.star-history.com/svg?repos=AgentAlphaAGI/Idea2Paper&type=Date&v=20260130" />
  </picture>
 </a>
+
