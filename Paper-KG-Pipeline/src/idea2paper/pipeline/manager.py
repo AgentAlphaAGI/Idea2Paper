@@ -9,6 +9,14 @@ from idea2paper.pipeline.refinement import RefinementEngine
 from idea2paper.pipeline.story_generator import StoryGenerator
 from idea2paper.pipeline.story_reflector import StoryReflector
 from idea2paper.pipeline.verifier import RAGVerifier
+from idea2paper.novelty.novelty_checker import NoveltyChecker
+from idea2paper.config import (
+    NOVELTY_ENABLE,
+    NOVELTY_ACTION,
+    NOVELTY_MAX_PIVOTS,
+    NOVELTY_REQUIRE_EMBEDDING,
+    OUTPUT_DIR,
+)
 from idea2paper.infra.run_context import get_logger
 
 
@@ -16,10 +24,11 @@ class Idea2StoryPipeline:
     """Idea2Story 主流程编排器"""
 
     def __init__(self, user_idea: str, recalled_patterns: List[Tuple[str, Dict, float]],
-                 papers: List[Dict]):
+                 papers: List[Dict], run_id: str | None = None):
         self.user_idea = user_idea
         self.recalled_patterns = recalled_patterns
         self.papers = papers
+        self.run_id = run_id
 
         # 初始化各模块（传递 user_idea 给 PatternSelector 用于智能分类）
         self.pattern_selector = PatternSelector(recalled_patterns, user_idea)
@@ -30,6 +39,11 @@ class Idea2StoryPipeline:
         # RefinementEngine 需要在 Pattern Selection 后初始化，以获取分类结果
         self.refinement_engine = None  # 延迟初始化
         self.verifier = RAGVerifier(papers)
+        self.novelty_checker = NoveltyChecker(
+            papers=self.papers,
+            nodes_paper_path=OUTPUT_DIR / "nodes_paper.json",
+            logger=get_logger()
+        )
         self.pattern_info_map = {pid: info for pid, info, _ in recalled_patterns}
 
     def _build_critic_context(self, fallback_pattern_id: str, fallback_pattern_info: Dict) -> Dict:
@@ -477,6 +491,93 @@ class Idea2StoryPipeline:
                 print(f"\n✅ 使用当前版本作为最终输出（得分相同或更高）")
             print("=" * 80)
 
+        # 本地查新（Novelty Check）+ Pivot
+        novelty_report = None
+        novelty_action = NOVELTY_ACTION
+        pivot_attempts = 0
+        if NOVELTY_ENABLE:
+            run_id = self.run_id or "run_unknown"
+            novelty_report = self.novelty_checker.check(final_story, run_id, self.user_idea)
+            if logger:
+                logger.log_event("novelty_check_done", {
+                    "risk_level": novelty_report.get("risk_level"),
+                    "max_similarity": novelty_report.get("max_similarity"),
+                    "embedding_available": novelty_report.get("embedding_available"),
+                    "report_path": novelty_report.get("report_path")
+                })
+
+            if not novelty_report.get("embedding_available", False):
+                if NOVELTY_REQUIRE_EMBEDDING:
+                    raise RuntimeError("Novelty check requires embeddings, but embedding is unavailable")
+                # embedding 不可用时默认不触发 pivot
+                if novelty_action == "pivot":
+                    novelty_action = "report_only"
+
+            while (
+                novelty_report.get("risk_level") == "high"
+                and novelty_action == "pivot"
+                and pivot_attempts < NOVELTY_MAX_PIVOTS
+            ):
+                pivot_attempts += 1
+                top_title = ""
+                if novelty_report.get("candidates"):
+                    top_title = novelty_report["candidates"][0].get("title", "")
+                if logger:
+                    logger.log_event("novelty_pivot_triggered", {
+                        "attempt": pivot_attempts,
+                        "top_title": top_title,
+                        "max_similarity": novelty_report.get("max_similarity")
+                    })
+
+                # 生成 Pivot 约束（复用 verifier 的策略）
+                if top_title:
+                    constraints = self.verifier.generate_pivot_constraints(final_story, [{"title": top_title}])
+                else:
+                    constraints = [
+                        "避免与已有工作使用相同核心技术组合",
+                        "将应用场景迁移到新领域",
+                        "增加额外约束条件（如无监督、少样本等）"
+                    ]
+
+                # 重新生成（使用 novelty 或 domain_distance 维度的 Pattern）
+                if ranked_patterns.get('novelty') and len(ranked_patterns['novelty']) > 0:
+                    pattern_id, pattern_info, metadata = ranked_patterns['novelty'][0]
+                    print(f"\n🔄 [Novelty Pivot] 切换到新颖度维度 Pattern: {pattern_id}")
+                elif ranked_patterns.get('domain_distance') and len(ranked_patterns['domain_distance']) > 0:
+                    pattern_id, pattern_info, metadata = ranked_patterns['domain_distance'][0]
+                    print(f"\n🔄 [Novelty Pivot] 切换到领域距离维度 Pattern: {pattern_id}")
+                else:
+                    # fallback 使用当前 pattern_info
+                    pattern_id, pattern_info = pattern_id, pattern_info
+
+                final_story = self.story_generator.generate(
+                    pattern_id, pattern_info, constraints, injected_tricks
+                )
+
+                novelty_report = self.novelty_checker.check(final_story, run_id, self.user_idea)
+                if logger:
+                    logger.log_event("novelty_check_done", {
+                        "risk_level": novelty_report.get("risk_level"),
+                        "max_similarity": novelty_report.get("max_similarity"),
+                        "embedding_available": novelty_report.get("embedding_available"),
+                        "report_path": novelty_report.get("report_path"),
+                        "pivot_attempt": pivot_attempts
+                    })
+
+            if novelty_report.get("risk_level") == "high":
+                if novelty_action == "fail":
+                    raise RuntimeError("Novelty check high risk after pivots")
+                if logger:
+                    logger.log_event("novelty_pivot_exhausted", {
+                        "attempts": pivot_attempts,
+                        "max_similarity": novelty_report.get("max_similarity"),
+                        "action": novelty_action
+                    })
+
+            if novelty_report is not None:
+                novelty_report["pivot_attempts"] = pivot_attempts
+                novelty_report["action"] = novelty_action
+
         # Phase 4: RAG Verification
         verification_result = self.verifier.verify(final_story)
 
@@ -537,5 +638,6 @@ class Idea2StoryPipeline:
             },
             'review_history': review_history,
             'refinement_history': refinement_history,
-            'verification_result': verification_result
+            'verification_result': verification_result,
+            'novelty_report': novelty_report
         }

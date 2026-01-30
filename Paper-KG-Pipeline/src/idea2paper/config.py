@@ -137,6 +137,62 @@ RESULTS_KEEP_LOG = _get(
     cfg_path=["results", "keep_log"],
 )
 
+# ===================== Novelty Check 配置 =====================
+NOVELTY_ENABLE = _get(
+    "I2P_NOVELTY_ENABLE",
+    True,
+    cast=bool,
+    cfg_path=["novelty", "enable"],
+)
+NOVELTY_TOPK = _get(
+    "I2P_NOVELTY_TOPK",
+    100,
+    cast=int,
+    cfg_path=["novelty", "top_k"],
+)
+NOVELTY_HIGH_TH = _get(
+    "I2P_NOVELTY_HIGH_TH",
+    0.88,
+    cast=float,
+    cfg_path=["novelty", "high_th"],
+)
+NOVELTY_MEDIUM_TH = _get(
+    "I2P_NOVELTY_MEDIUM_TH",
+    0.82,
+    cast=float,
+    cfg_path=["novelty", "medium_th"],
+)
+NOVELTY_INDEX_DIR = _get(
+    "I2P_NOVELTY_INDEX_DIR",
+    str(OUTPUT_DIR / "novelty_index"),
+    cast=Path,
+    cfg_path=["novelty", "index_dir"],
+)
+NOVELTY_ACTION = _get(
+    "I2P_NOVELTY_ACTION",
+    "pivot",
+    cast=str,
+    cfg_path=["novelty", "action"],
+)
+NOVELTY_MAX_PIVOTS = _get(
+    "I2P_NOVELTY_MAX_PIVOTS",
+    2,
+    cast=int,
+    cfg_path=["novelty", "max_pivots"],
+)
+NOVELTY_REQUIRE_EMBEDDING = _get(
+    "I2P_NOVELTY_REQUIRE_EMBEDDING",
+    False,
+    cast=bool,
+    cfg_path=["novelty", "require_embedding"],
+)
+NOVELTY_REPORT_IN_OUTPUT = _get(
+    "I2P_NOVELTY_REPORT_IN_OUTPUT",
+    False,
+    cast=bool,
+    cfg_path=["novelty", "report_in_output"],
+)
+
 # ===================== Pipeline 配置 =====================
 class PipelineConfig:
     """Pipeline 配置参数"""

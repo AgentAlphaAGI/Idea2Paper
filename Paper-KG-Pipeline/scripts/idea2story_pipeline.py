@@ -173,7 +173,7 @@ def main():
         print(f"✅ 召回完成: Top-{len(recalled_patterns)} Patterns\n")
 
         # 运行 Pipeline（传递 user_idea 用于 Pattern 智能分类）
-        pipeline = Idea2StoryPipeline(user_idea, recalled_patterns, papers)
+        pipeline = Idea2StoryPipeline(user_idea, recalled_patterns, papers, run_id=run_id)
         result = pipeline.run()
         success = True
 
@@ -196,6 +196,7 @@ def main():
                 'final_story': result['final_story'],
                 'review_history': result['review_history'],
                 'results_dir': results_dir,
+                'novelty_report': result.get('novelty_report'),
                 'review_summary': {
                     'total_reviews': len(result['review_history']),
                     'final_score': result['review_history'][-1]['avg_score'] if result['review_history'] else 0
@@ -222,6 +223,9 @@ def main():
                     keep_log=RESULTS_KEEP_LOG,
                 )
                 run_log_dir = (LOG_ROOT / run_id) if ENABLE_RUN_LOGGING else None
+                novelty_report_path = None
+                if isinstance(result.get("novelty_report"), dict):
+                    novelty_report_path = result["novelty_report"].get("report_path")
                 bundle_status = bundler.bundle(
                     run_id=run_id,
                     user_idea=user_idea,
@@ -251,7 +255,8 @@ def main():
                                 "fallback": PipelineConfig.PASS_FALLBACK,
                                 "fixed_score": PipelineConfig.PASS_SCORE,
                             },
-                        }
+                        },
+                        "novelty_report_path": novelty_report_path
                     },
                 )
                 if bundle_status.get("ok"):
