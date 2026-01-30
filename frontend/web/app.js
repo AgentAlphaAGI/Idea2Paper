@@ -10,6 +10,9 @@ const toggleVerification = document.getElementById("toggleVerification");
 const stageName = document.getElementById("stageName");
 const stageDetail = document.getElementById("stageDetail");
 const progressBar = document.getElementById("progressBar");
+const substageEvent = document.getElementById("substageEvent");
+const idleInfo = document.getElementById("idleInfo");
+const activityInfo = document.getElementById("activityInfo");
 const finalStoryEl = document.getElementById("finalStory");
 const summaryEl = document.getElementById("summary");
 
@@ -39,6 +42,23 @@ function setStage(stage) {
   stageDetail.textContent = stage?.detail || "Waiting for a run…";
   const progress = Math.round((stage?.progress || 0) * 100);
   progressBar.style.width = `${progress}%`;
+
+  substageEvent.textContent = stage?.substage_event_type || "—";
+
+  if (stage?.idle_seconds == null) {
+    idleInfo.textContent = "—";
+  } else {
+    const s = Math.floor(stage.idle_seconds);
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    idleInfo.textContent = `${m}m ${r}s`;
+  }
+
+  const act = stage?.activity || {};
+  const pills = [];
+  if (act.llm_active) pills.push('<span class="pill">LLM active</span>');
+  if (act.embedding_active) pills.push('<span class="pill">Embedding active</span>');
+  activityInfo.innerHTML = pills.length ? pills.join(" ") : '<span class="pill gray">No recent activity</span>';
 }
 
 function safeText(value) {

@@ -26,6 +26,29 @@ TMP_ROOT = REPO_ROOT / "frontend" / "server" / ".tmp"
 
 registry = RunRegistry(REPO_ROOT)
 
+def _file_mtime(path: Path):
+    try:
+        if path.exists():
+            return path.stat().st_mtime
+    except Exception:
+        return None
+    return None
+
+def _activity_snapshot(log_dir: Path, active_window_sec: int = 120) -> dict:
+    now = time.time()
+    llm_path = log_dir / "llm_calls.jsonl"
+    emb_path = log_dir / "embedding_calls.jsonl"
+    llm_ts = _file_mtime(llm_path)
+    emb_ts = _file_mtime(emb_path)
+    llm_active = llm_ts is not None and (now - llm_ts) <= active_window_sec
+    emb_active = emb_ts is not None and (now - emb_ts) <= active_window_sec
+    return {
+        "llm_active": llm_active,
+        "embedding_active": emb_active,
+        "last_llm_ts": llm_ts,
+        "last_embedding_ts": emb_ts,
+    }
+
 
 def _now_iso():
     return datetime.utcnow().isoformat() + "Z"
@@ -68,14 +91,15 @@ class Handler(BaseHTTPRequestHandler):
             return _json_response(self, {"ok": True})
 
         if path.startswith("/api/runs/"):
-            parts = path.split("/")
+            parts = path.strip("/").split("/")
+            # /api/runs/<ui_run_id>[/result|logs.zip]
+            if len(parts) < 3:
+                return _json_response(self, {"ok": False, "error": "invalid runs path"}, status=400)
+            ui_run_id = parts[2]
             if len(parts) >= 4 and parts[3] == "result":
-                ui_run_id = parts[2]
                 return self._handle_result(ui_run_id)
             if len(parts) >= 4 and parts[3] == "logs.zip":
-                ui_run_id = parts[2]
                 return self._handle_logs(ui_run_id)
-            ui_run_id = parts[2]
             return self._handle_status(ui_run_id)
 
         # serve static
@@ -169,6 +193,15 @@ class Handler(BaseHTTPRequestHandler):
         log_dir = (LOG_ROOT / info.run_id) if info.run_id else None
         events_path = (log_dir / "events.jsonl") if log_dir and log_dir.exists() else None
         stage = infer_stage(events_path, info.status) if events_path else {"name": "Initializing", "progress": 0.05, "detail": "Waiting for log directory..."}
+        if log_dir and log_dir.exists():
+            stage["activity"] = _activity_snapshot(log_dir)
+        else:
+            stage["activity"] = {
+                "llm_active": False,
+                "embedding_active": False,
+                "last_llm_ts": None,
+                "last_embedding_ts": None,
+            }
 
         results_dir = (RESULTS_ROOT / info.run_id) if info.run_id else None
         if results_dir and not results_dir.exists():
