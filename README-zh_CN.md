@@ -81,6 +81,31 @@ python Paper-KG-Pipeline/scripts/idea2story_pipeline.py "your idea"
    ```bash
    python Paper-KG-Pipeline/scripts/idea2story_pipeline.py "你的研究Idea描述"
    ```
+  
+## 🌐 前端（本地 Web UI）
+
+运行一个极简的本地 UI，用于启动 pipeline，并且**只展示**高层阶段信息与最终结果（不在页面上展示原始日志内容）。
+
+### 启动
+
+```bash
+python frontend/server/app.py --host 127.0.0.1 --port 8080
+```
+
+在浏览器中打开：
+
+```text
+http://127.0.0.1:8080/
+```
+
+### 你可以在 UI 中做什么
+- 从网页运行同一个 pipeline 入口 (`idea2story_pipeline.py`) 。
+- 为本次运行配置 `SILICONFLOW_API_KEY`, `LLM_API_URL`, `LLM_MODEL` （服务端不会持久化保存）。
+- 开关 Novelty / Verification.
+- 一键下载本次运行的日志（zip）。
+
+更多说明见 `frontend/README.md`.
+
 
 ## 🤖 Multi‑Agent Review（可标定、可追溯）
 
