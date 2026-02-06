@@ -28,9 +28,10 @@ def demo_basic_usage():
     print("=" * 80)
 
     from idea2story_pipeline import Idea2StoryPipeline
-    from simple_recall_demo import (
-        NODES_PATTERN, NODES_PAPER
-    )
+    
+    # 重新定义路径，避免循环引用
+    NODES_PATTERN = OUTPUT_DIR / "nodes_pattern.json"
+    NODES_PAPER = OUTPUT_DIR / "nodes_paper.json"
 
     # 用户 Idea
     user_idea = "使用对比学习改进小样本文本分类，并在医疗领域数据集上验证"

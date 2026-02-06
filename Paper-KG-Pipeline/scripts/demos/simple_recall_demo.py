@@ -110,86 +110,22 @@ def compute_embedding_similarity(text1, text2):
     cosine_sim = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
     return float(cosine_sim)
 
+from idea2paper.infra.embeddings import get_embedding as infra_get_embedding
+
 _embedding_cache = {}
-_embedding_warning_shown = False
-_embedding_error_shown = False
 
 def get_embedding(text, max_retries=3):
-    """调用SiliconFlow API获取文本embedding"""
-    global _embedding_warning_shown, _embedding_error_shown
-    logger = get_logger()
-
+    """调用统一的Embedding API接口"""
     # 缓存检查
     if text in _embedding_cache:
         return _embedding_cache[text]
 
-    api_key = os.environ.get('SILICONFLOW_API_KEY', '')
-
-    if not api_key:
-        if not _embedding_warning_shown:
-            print("  ⚠️  未设置SILICONFLOW_API_KEY，降级到Jaccard相似度")
-            _embedding_warning_shown = True
-        return None
-
-    url = "https://api.siliconflow.cn/v1/embeddings"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "model": "Qwen/Qwen3-Embedding-8B",
-        "input": text[:2000]
-    }
-
-    for attempt in range(max_retries):
-        try:
-            start_ts = time.time()
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
-            response.raise_for_status()
-            result = response.json()
-            embedding = result['data'][0]['embedding']
-            _embedding_cache[text] = embedding
-            if logger:
-                logger.log_embedding_call(
-                    request={
-                        "provider": "siliconflow",
-                        "url": url,
-                        "model": payload["model"],
-                        "input_preview": text[:2000],
-                        "timeout": 10
-                    },
-                    response={
-                        "ok": True,
-                        "latency_ms": int((time.time() - start_ts) * 1000)
-                    }
-                )
-            return embedding
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(0.5)
-            else:
-                if not _embedding_error_shown:
-                    print(f"  ⚠️  Embedding API调用失败: {e}，降级到Jaccard相似度")
-                    _embedding_error_shown = True
-                if logger:
-                    logger.log_embedding_call(
-                        request={
-                            "provider": "siliconflow",
-                            "url": url,
-                            "model": payload["model"],
-                            "input_preview": text[:2000],
-                            "timeout": 10
-                        },
-                        response={
-                            "ok": False,
-                            "latency_ms": 0,
-                            "error": str(e)
-                        }
-                    )
-                return None
-
-    return None
+    embedding = infra_get_embedding(text, timeout=60)
+    
+    if embedding:
+        _embedding_cache[text] = embedding
+    
+    return embedding
 
 
 def get_paper_quality(paper):
