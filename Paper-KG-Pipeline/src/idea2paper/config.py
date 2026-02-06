@@ -79,7 +79,13 @@ def _get(key: str, default, cast=None, cfg_path: list | None = None):
     return _cast(value, cast) if cast else value
 
 # ===================== LLM API 配置 =====================
-LLM_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+LLM_API_KEY = _get(
+    "LLM_API_KEY",
+    "",  # 移除对旧环境变量 SILICONFLOW_API_KEY 的默认依赖，强制使用新标准
+    cast=str,
+    cfg_path=["llm", "api_key"],
+)
+
 LLM_API_URL = _get(
     "LLM_API_URL",
     "https://api.siliconflow.cn/v1/chat/completions",
@@ -94,22 +100,47 @@ LLM_MODEL = _get(
 )
 
 # ===================== Embedding API 配置 =====================
-# Embedding 可独立配置；默认沿用 SiliconFlow + Qwen3-Embedding-8B。
+# 1. Determine active provider
 EMBEDDING_PROVIDER = _get(
     "EMBEDDING_PROVIDER",
-    "siliconflow",
+    None,
     cast=str,
-    cfg_path=["embedding", "provider"],
+    cfg_path=["embedding", "active_provider"],
 )
+# Fallback to legacy "provider" key if active_provider not set
+if not EMBEDDING_PROVIDER:
+    EMBEDDING_PROVIDER = _get(
+        "EMBEDDING_PROVIDER",
+        "siliconflow",
+        cast=str,
+        cfg_path=["embedding", "provider"],
+    )
+
+# 2. Resolve defaults based on provider
+_prov_cfg = _get_from_cfg(_USER_CONFIG, ["embedding", "providers", EMBEDDING_PROVIDER])
+if _prov_cfg:
+    _default_url = _prov_cfg.get("api_url")
+    _default_model = _prov_cfg.get("model")
+else:
+    # Hardcoded defaults for known providers if config is missing details
+    if EMBEDDING_PROVIDER == "ollama":
+        _default_url = "http://localhost:11434/v1/embeddings"
+        _default_model = "qwen3-embedding:8b"
+    else:
+        # Default for siliconflow or others
+        _default_url = "https://api.siliconflow.cn/v1/embeddings"
+        _default_model = "Qwen/Qwen3-Embedding-8B"
+
 EMBEDDING_API_URL = _get(
     "EMBEDDING_API_URL",
-    "https://api.siliconflow.cn/v1/embeddings",
+    _default_url,
     cast=str,
+    # Legacy flat config can still override if present
     cfg_path=["embedding", "api_url"],
 )
 EMBEDDING_MODEL = _get(
     "EMBEDDING_MODEL",
-    "Qwen/Qwen3-Embedding-8B",
+    _default_model,
     cast=str,
     cfg_path=["embedding", "model"],
 )

@@ -348,6 +348,10 @@ class RecallSystem:
         else:
             texts = [build_recall_paper_text(self.paper_id_to_paper[i]) for i in candidate_ids]
 
+        # 如果没有配置API Key且不是Ollama，直接使用Jaccard
+        if not os.environ.get('SILICONFLOW_API_KEY', '') and EMBEDDING_PROVIDER != "ollama":
+             return [(cid, self._compute_jaccard_similarity(user_idea, text)) for cid, text in zip(candidate_ids, texts)]
+
         if not self._use_embed_batch:
             return [(cid, self._compute_embedding_similarity(user_idea, text)) for cid, text in zip(candidate_ids, texts)]
 

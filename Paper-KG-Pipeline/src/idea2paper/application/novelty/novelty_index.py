@@ -194,8 +194,25 @@ class NoveltyIndex:
 
     def query(self, story_text: str, top_k: int) -> Tuple[List[Dict], Dict]:
         """Return candidates list and info dict."""
+        # 尝试即时加载或构建（如果使用本地缓存，即使没有离线索引文件，也可以通过缓存计算）
+        if self._embeddings is None:
+             # 这里可以尝试触发一次 rebuild_index()，或者依赖 _ensure_loaded()
+             # 但为了简单起见，如果 embedding 可用，我们应该允许实时计算
+             pass
+
         self._ensure_loaded()
         info = {"embedding_available": True, "notes": []}
+
+        # 核心修复：即使没有预先构建的离线索引矩阵 (_embeddings is None)
+        # 如果我们有 embedding 能力，我们应该允许降级为"实时全量计算"
+        # 或者提示用户需要构建索引。
+        # 鉴于这是一个演示项目，我们可以尝试自动构建一次索引（如果数据量不大）
+        if self._embeddings is None or self._paper_meta is None:
+            # 尝试自动构建索引
+            print("   ⚠️  Novelty Index missing, rebuilding now...")
+            self.rebuild_index()
+            # 再次尝试加载
+            self._ensure_loaded()
 
         if self._embeddings is None or self._paper_meta is None:
             info["embedding_available"] = False

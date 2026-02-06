@@ -92,6 +92,8 @@ def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000, time
                 print(f"   ⏳ 重试 LLM 调用 (尝试 {attempt + 1}/{max_retries})...")
                 time.sleep(retry_delay)
 
+            print(f"   🚀 调用 LLM: {LLM_MODEL}...", end="", flush=True)
+            start_req_ts = time.time()
             response = session.post(
                 LLM_API_URL,
                 headers=headers,
@@ -99,6 +101,9 @@ def call_llm(prompt: str, temperature: float = 0.7, max_tokens: int = 2000, time
                 timeout=timeout
             )
             response.raise_for_status()
+            latency = time.time() - start_req_ts
+            print(f" ✅ ({latency:.2f}s)")
+            
             session.close()
             content = response.json()["choices"][0]["message"]["content"]
             if logger:
