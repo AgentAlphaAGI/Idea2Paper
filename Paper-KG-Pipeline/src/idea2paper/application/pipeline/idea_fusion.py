@@ -28,6 +28,7 @@ IdeaFusionEngine - 在概念层面融合两个研究 idea
 
 from typing import Dict, Optional
 
+from idea2paper.config import PipelineConfig
 from idea2paper.infra.llm import call_llm, parse_json_from_llm
 
 
@@ -119,7 +120,12 @@ class IdeaFusionEngine:
 
 只返回 JSON，不需要其他说明。
 """
-        response = call_llm(prompt, temperature=0.7, max_tokens=500, timeout=120)
+        response = call_llm(
+            prompt,
+            temperature=PipelineConfig.LLM_TEMPERATURE_IDEA_FUSION,
+            max_tokens=500,
+            timeout=120,
+        )
         result = parse_json_from_llm(response)
 
         if result and all(k in result for k in ['problem', 'assumption', 'novelty_claim']):
@@ -171,7 +177,12 @@ class IdeaFusionEngine:
 
 只返回 JSON，不需要其他说明。
 """
-        response = call_llm(prompt, temperature=0.7, max_tokens=500, timeout=120)
+        response = call_llm(
+            prompt,
+            temperature=PipelineConfig.LLM_TEMPERATURE_IDEA_FUSION,
+            max_tokens=500,
+            timeout=120,
+        )
         result = parse_json_from_llm(response)
 
         if result and all(k in result for k in ['problem', 'assumption', 'novelty_claim']):
@@ -224,7 +235,12 @@ class IdeaFusionEngine:
 }}
 """
 
-        response = call_llm(prompt, temperature=0.8, max_tokens=800, timeout=180)
+        response = call_llm(
+            prompt,
+            temperature=PipelineConfig.LLM_TEMPERATURE_IDEA_FUSION_STAGE2,
+            max_tokens=800,
+            timeout=180,
+        )
         result = parse_json_from_llm(response)
 
         if result:
@@ -307,7 +323,12 @@ KEY REQUIREMENTS:
 5. Avoid phrases like "combine X with Y" or "integrate A and B" - instead use "reframe", "transform", "unify"
 """
 
-        response = call_llm(prompt, temperature=0.9, max_tokens=1500, timeout=180)
+        response = call_llm(
+            prompt,
+            temperature=PipelineConfig.LLM_TEMPERATURE_IDEA_FUSION_STAGE3,
+            max_tokens=1500,
+            timeout=180,
+        )
         result = parse_json_from_llm(response)
 
         if result and 'fused_idea_description' in result:

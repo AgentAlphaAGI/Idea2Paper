@@ -8,6 +8,7 @@ Story Reflector: 在 Story 生成过程中加入反思融合机制
 import json
 from typing import Dict, Optional, List
 
+from idea2paper.config import PipelineConfig
 from idea2paper.infra.llm import call_llm, parse_json_from_llm
 
 
@@ -196,7 +197,12 @@ class StoryReflector:
 """
 
         try:
-            response = call_llm(prompt, temperature=0.5, max_tokens=1000, timeout=120)
+            response = call_llm(
+                prompt,
+                temperature=PipelineConfig.LLM_TEMPERATURE_STORY_REFLECTOR,
+                max_tokens=1000,
+                timeout=120,
+            )
             result = parse_json_from_llm(response)
             if not result:
                 result = self._default_fusion_analysis(old_story, new_pattern)
@@ -257,7 +263,12 @@ class StoryReflector:
 """
 
         try:
-            response = call_llm(prompt, temperature=0.5, max_tokens=800, timeout=120)
+            response = call_llm(
+                prompt,
+                temperature=PipelineConfig.LLM_TEMPERATURE_STORY_REFLECTOR,
+                max_tokens=800,
+                timeout=120,
+            )
             result = parse_json_from_llm(response)
             if not result:
                 result = self._default_coherence_check()

@@ -7,7 +7,8 @@ from idea2paper.infra.llm import call_llm, parse_json_from_llm
 class PatternSelector:
     """Pattern 选择器: 选择多样化的 Pattern（支持 LLM 辅助分类和动态排序）"""
 
-    def __init__(self, recalled_patterns: List[Tuple[str, Dict, float]], user_idea: str = ""):
+    def __init__(self, recalled_patterns: List[Tuple[str, Dict, float]], user_idea: str = "",
+                 idea_brief: Optional[Dict] = None):
         """
         Args:
             recalled_patterns: [(pattern_id, pattern_info, score), ...]
@@ -15,7 +16,23 @@ class PatternSelector:
         """
         self.recalled_patterns = recalled_patterns
         self.user_idea = user_idea
+        self.idea_brief = idea_brief
         self.pattern_classifications = {}  # 存储 LLM 分类结果
+
+    def _build_idea_brief_block(self) -> str:
+        if not self.idea_brief:
+            return ""
+        constraints = ", ".join(self.idea_brief.get("constraints", []) or [])
+        keywords_en = ", ".join(self.idea_brief.get("keywords_en", []) or [])
+        problem_def = self.idea_brief.get("problem_definition", "")
+        block = "\n【User Requirements Brief】\n"
+        if problem_def:
+            block += f"Problem Definition: {problem_def}\n"
+        if constraints:
+            block += f"Constraints: {constraints}\n"
+        if keywords_en:
+            block += f"Keywords (EN): {keywords_en}\n"
+        return block
 
     def select(self) -> Dict[str, List[Tuple[str, Dict, Dict]]]:
         """选择多个 Pattern 并按三个维度（稳健度、新颖度、跨域度）分别排序
@@ -147,6 +164,7 @@ Your task is to rigorously evaluate a research pattern across THREE independent 
 
 【User's Research Idea】
 "{self.user_idea}"
+{self._build_idea_brief_block()}
 
 【Pattern Information】
 Pattern ID: {pattern_id}
@@ -204,7 +222,12 @@ Consider semantic and methodological distance, not just application domain.
 
         try:
             # 使用更长的超时时间（180 秒）以应对网络较慢的情况
-            response = call_llm(prompt, temperature=0.3, max_tokens=300, timeout=180)
+            response = call_llm(
+                prompt,
+                temperature=PipelineConfig.LLM_TEMPERATURE_PATTERN_SELECTOR,
+                max_tokens=300,
+                timeout=180,
+            )
             scores = parse_json_from_llm(response)
             if scores and all(k in scores for k in ['stability_score', 'novelty_score', 'domain_distance']):
                 return scores

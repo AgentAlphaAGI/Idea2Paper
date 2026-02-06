@@ -107,6 +107,21 @@ class MultiAgentCritic:
 
         return True, "", {"comparisons": ordered, "main_gaps": main_gaps}
 
+    def _build_idea_brief_block(self) -> str:
+        brief = getattr(self, "_idea_brief", None)
+        if not brief:
+            return ""
+        constraints = ", ".join(brief.get("constraints", []) or [])
+        keywords_en = ", ".join(brief.get("keywords_en", []) or [])
+        block = "\nUser Requirements Brief (for alignment only):\n"
+        if brief.get("problem_definition"):
+            block += f"- Problem: {brief.get('problem_definition')}\n"
+        if constraints:
+            block += f"- Constraints: {constraints}\n"
+        if keywords_en:
+            block += f"- Keywords: {keywords_en}\n"
+        return block
+
     def _build_anchor_prompt(self, story: Dict, reviewer: Dict, anchors: List[Dict]) -> str:
         problem_text = story.get('problem_framing') or story.get('problem_definition', '')
         method_text = story.get('method_skeleton', '')
@@ -119,6 +134,7 @@ class MultiAgentCritic:
                 f"- paper_id: {a['paper_id']} | title: {a.get('title','')} | score10: {a['score10']:.1f}"
             )
         anchor_text = "\n".join(anchor_lines)
+        idea_brief_block = self._build_idea_brief_block()
 
         return f"""
 You are a strict reviewer ({reviewer['role']}) for top-tier ML/NLP conferences.
@@ -126,6 +142,7 @@ You must NOT output a direct score. Only compare the Story against anchor papers
 
 Anchors (score10 comes from real review statistics):
 {anchor_text}
+{idea_brief_block}
 
 Story:
 Title: {story.get('title','')}
@@ -194,7 +211,12 @@ Return ONLY the corrected JSON:
         pattern_id: str
     ) -> Tuple[List[Dict], List[str]]:
         base_prompt = self._build_anchor_prompt(story, reviewer, anchors)
-        response = call_llm(base_prompt, temperature=0.0, max_tokens=800, timeout=180)
+        response = call_llm(
+            base_prompt,
+            temperature=PipelineConfig.LLM_TEMPERATURE_CRITIC_MAIN,
+            max_tokens=800,
+            timeout=180,
+        )
         result = parse_json_from_llm(response)
         ok, reason, normalized = (False, "parse_failed", {})
         if result:
@@ -225,7 +247,12 @@ Return ONLY the corrected JSON:
                 prompt = self._build_reemit_prompt(story, reviewer, anchors)
 
             print(f"   ⏳ Critic JSON retry {attempt}/{retries} ({strategy})...")
-            response = call_llm(prompt, temperature=0.0, max_tokens=800, timeout=180)
+            response = call_llm(
+                prompt,
+                temperature=PipelineConfig.LLM_TEMPERATURE_CRITIC_REPAIR,
+                max_tokens=800,
+                timeout=180,
+            )
             result = parse_json_from_llm(response)
             ok, reason, normalized = (False, "parse_failed", {})
             if result:
@@ -355,6 +382,7 @@ Return ONLY the corrected JSON:
         pattern_id = context.get("pattern_id", "")
         pattern_info = context.get("pattern_info", {}) or {}
         anchors = context.get("anchors", []) or []
+        self._idea_brief = context.get("idea_brief")
 
         if not anchors and pattern_id and self.review_index:
             anchors = self.review_index.select_initial_anchors(
@@ -527,7 +555,12 @@ Return ONLY the corrected JSON:
 """
 
         # 使用更长的超时时间（180 秒）以应对网络延迟
-        response = call_llm(prompt, temperature=0.3, max_tokens=800, timeout=180)
+        response = call_llm(
+            prompt,
+            temperature=PipelineConfig.LLM_TEMPERATURE_CRITIC_ANCHORED,
+            max_tokens=800,
+            timeout=180,
+        )
 
         # 1. 尝试标准 JSON 解析
         result = parse_json_from_llm(response)

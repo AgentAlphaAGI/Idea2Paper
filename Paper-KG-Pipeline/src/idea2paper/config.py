@@ -180,12 +180,9 @@ RESULTS_ENABLE = _get(
     cast=bool,
     cfg_path=["results", "enable"],
 )
-RESULTS_MODE = _get(
-    "I2P_RESULTS_MODE",
-    "link",
-    cast=str,
-    cfg_path=["results", "mode"],
-)
+# Hard-coded: always copy results into `results/run_.../` (no symlinks).
+# This avoids platform-specific symlink issues and makes results fully portable.
+RESULTS_MODE = "copy"
 RESULTS_KEEP_LOG = _get(
     "I2P_RESULTS_KEEP_LOG",
     True,
@@ -351,6 +348,132 @@ class PipelineConfig:
         cfg_path=["pass", "fallback"],
     )  # global|fixed
 
+    # LLM Temperature (per stage; defaults preserve current behavior)
+    LLM_TEMPERATURE_DEFAULT = _get(
+        "I2P_LLM_TEMPERATURE_DEFAULT",
+        0.7,
+        cast=float,
+        cfg_path=["llm", "temperature", "default"],
+    )
+    LLM_TEMPERATURE_STORY_GENERATOR = _get(
+        "I2P_LLM_TEMPERATURE_STORY_GENERATOR",
+        0.7,
+        cast=float,
+        cfg_path=["llm", "temperature", "story_generator"],
+    )
+    LLM_TEMPERATURE_STORY_GENERATOR_REWRITE = _get(
+        "I2P_LLM_TEMPERATURE_STORY_GENERATOR_REWRITE",
+        0.3,
+        cast=float,
+        cfg_path=["llm", "temperature", "story_generator_rewrite"],
+    )
+    LLM_TEMPERATURE_STORY_REFLECTOR = _get(
+        "I2P_LLM_TEMPERATURE_STORY_REFLECTOR",
+        0.5,
+        cast=float,
+        cfg_path=["llm", "temperature", "story_reflector"],
+    )
+    LLM_TEMPERATURE_PATTERN_SELECTOR = _get(
+        "I2P_LLM_TEMPERATURE_PATTERN_SELECTOR",
+        0.3,
+        cast=float,
+        cfg_path=["llm", "temperature", "pattern_selector"],
+    )
+    LLM_TEMPERATURE_IDEA_FUSION = _get(
+        "I2P_LLM_TEMPERATURE_IDEA_FUSION",
+        0.7,
+        cast=float,
+        cfg_path=["llm", "temperature", "idea_fusion"],
+    )
+    LLM_TEMPERATURE_IDEA_FUSION_STAGE2 = _get(
+        "I2P_LLM_TEMPERATURE_IDEA_FUSION_STAGE2",
+        0.8,
+        cast=float,
+        cfg_path=["llm", "temperature", "idea_fusion_stage2"],
+    )
+    LLM_TEMPERATURE_IDEA_FUSION_STAGE3 = _get(
+        "I2P_LLM_TEMPERATURE_IDEA_FUSION_STAGE3",
+        0.9,
+        cast=float,
+        cfg_path=["llm", "temperature", "idea_fusion_stage3"],
+    )
+    LLM_TEMPERATURE_CRITIC_MAIN = _get(
+        "I2P_LLM_TEMPERATURE_CRITIC_MAIN",
+        0.0,
+        cast=float,
+        cfg_path=["llm", "temperature", "critic_main"],
+    )
+    LLM_TEMPERATURE_CRITIC_REPAIR = _get(
+        "I2P_LLM_TEMPERATURE_CRITIC_REPAIR",
+        0.0,
+        cast=float,
+        cfg_path=["llm", "temperature", "critic_repair"],
+    )
+    LLM_TEMPERATURE_CRITIC_ANCHORED = _get(
+        "I2P_LLM_TEMPERATURE_CRITIC_ANCHORED",
+        0.3,
+        cast=float,
+        cfg_path=["llm", "temperature", "critic_anchored"],
+    )
+
+    # Idea Packaging (optional; defaults preserve current behavior)
+    IDEA_PACKAGING_ENABLE = _get(
+        "I2P_IDEA_PACKAGING_ENABLE",
+        False,
+        cast=bool,
+        cfg_path=["idea", "packaging_enable"],
+    )
+    IDEA_PACKAGING_TOPN_PATTERNS = _get(
+        "I2P_IDEA_PACKAGING_TOPN_PATTERNS",
+        5,
+        cast=int,
+        cfg_path=["idea", "packaging_topn_patterns"],
+    )
+    IDEA_PACKAGING_MAX_EXEMPLAR_PAPERS = _get(
+        "I2P_IDEA_PACKAGING_MAX_EXEMPLAR_PAPERS",
+        8,
+        cast=int,
+        cfg_path=["idea", "packaging_max_exemplar_papers"],
+    )
+    IDEA_PACKAGING_CANDIDATE_K = _get(
+        "I2P_IDEA_PACKAGING_CANDIDATE_K",
+        3,
+        cast=int,
+        cfg_path=["idea", "packaging_candidate_k"],
+    )
+    IDEA_PACKAGING_SELECT_MODE = _get(
+        "I2P_IDEA_PACKAGING_SELECT_MODE",
+        "llm_then_recall",
+        cast=str,
+        cfg_path=["idea", "packaging_select_mode"],
+    )
+    IDEA_PACKAGING_FORCE_EN_QUERY = _get(
+        "I2P_IDEA_PACKAGING_FORCE_EN_QUERY",
+        True,
+        cast=bool,
+        cfg_path=["idea", "packaging_force_en_query"],
+    )
+
+    # Idea Packaging LLM temperatures
+    LLM_TEMPERATURE_IDEA_PACKAGING_PARSE = _get(
+        "I2P_LLM_TEMPERATURE_IDEA_PACKAGING_PARSE",
+        0.0,
+        cast=float,
+        cfg_path=["llm", "temperature", "idea_packaging_parse"],
+    )
+    LLM_TEMPERATURE_IDEA_PACKAGING_PATTERN_GUIDED = _get(
+        "I2P_LLM_TEMPERATURE_IDEA_PACKAGING_PATTERN_GUIDED",
+        0.3,
+        cast=float,
+        cfg_path=["llm", "temperature", "idea_packaging_pattern_guided"],
+    )
+    LLM_TEMPERATURE_IDEA_PACKAGING_JUDGE = _get(
+        "I2P_LLM_TEMPERATURE_IDEA_PACKAGING_JUDGE",
+        0.0,
+        cast=float,
+        cfg_path=["llm", "temperature", "idea_packaging_judge"],
+    )
+
     # 新颖性模式配置
     NOVELTY_MODE_MAX_PATTERNS = 3  # 新颖性模式最多尝试的 Pattern 数
     NOVELTY_SCORE_THRESHOLD = 6.0  # 新颖性得分阈值
@@ -403,6 +526,24 @@ class PipelineConfig:
         False,
         cast=bool,
         cfg_path=["recall", "use_offline_index"],
+    )
+    SUBDOMAIN_TAXONOMY_ENABLE = _get(
+        "I2P_SUBDOMAIN_TAXONOMY_ENABLE",
+        False,
+        cast=bool,
+        cfg_path=["recall", "subdomain_taxonomy_enable"],
+    )
+    SUBDOMAIN_TAXONOMY_PATH = _get(
+        "I2P_SUBDOMAIN_TAXONOMY_PATH",
+        "",
+        cast=str,
+        cfg_path=["recall", "subdomain_taxonomy_path"],
+    )
+    SUBDOMAIN_TAXONOMY_STOPLIST_MODE = _get(
+        "I2P_SUBDOMAIN_TAXONOMY_STOPLIST_MODE",
+        "drop",
+        cast=str,
+        cfg_path=["recall", "subdomain_taxonomy_stoplist_mode"],
     )
     RECALL_INDEX_DIR = _get(
         "I2P_RECALL_INDEX_DIR",

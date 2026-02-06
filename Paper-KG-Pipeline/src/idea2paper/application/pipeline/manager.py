@@ -25,15 +25,18 @@ class Idea2StoryPipeline:
     """Idea2Story 主流程编排器"""
 
     def __init__(self, user_idea: str, recalled_patterns: List[Tuple[str, Dict, float]],
-                 papers: List[Dict], run_id: str | None = None):
+                 papers: List[Dict], run_id: str | None = None,
+                 idea_brief: Dict | None = None):
         self.user_idea = user_idea
+        self.raw_idea = user_idea
+        self.idea_brief = idea_brief
         self.recalled_patterns = recalled_patterns
         self.papers = papers
         self.run_id = run_id
 
         # 初始化各模块（传递 user_idea 给 PatternSelector 用于智能分类）
-        self.pattern_selector = PatternSelector(recalled_patterns, user_idea)
-        self.story_generator = StoryGenerator(user_idea)
+        self.pattern_selector = PatternSelector(recalled_patterns, user_idea, idea_brief=idea_brief)
+        self.story_generator = StoryGenerator(user_idea, idea_brief=idea_brief)
         self.story_reflector = StoryReflector()  # 新增：故事反思器
         self.review_index = ReviewIndex(papers)
         self.critic = MultiAgentCritic(review_index=self.review_index)
@@ -54,7 +57,8 @@ class Idea2StoryPipeline:
         pattern_info = self.pattern_info_map.get(current_pid, fallback_pattern_info)
         return {
             'pattern_id': current_pid,
-            'pattern_info': pattern_info
+            'pattern_info': pattern_info,
+            'idea_brief': self.idea_brief
         }
 
     def run(self) -> Dict:
@@ -74,7 +78,7 @@ class Idea2StoryPipeline:
         print("\n" + "=" * 80)
         print("🚀 Idea2Story Pipeline 启动")
         print("=" * 80)
-        print(f"\n【用户 Idea】\n{self.user_idea}\n")
+        print(f"\n【用户 Idea】\n{self.raw_idea}\n")
 
         # Phase 1: Pattern Selection (多维度评分与排序)
         ranked_patterns = self.pattern_selector.select()

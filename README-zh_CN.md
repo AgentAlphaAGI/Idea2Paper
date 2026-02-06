@@ -134,6 +134,9 @@ paper-KG-Pipeline/
 > 若显式设置 `I2P_NOVELTY_INDEX_DIR` / `I2P_RECALL_INDEX_DIR`（环境变量或 `i2p_config.json`），会优先使用显式值。  
 > **建议（速度/稳定性）：** 建议设置 `I2P_ANCHOR_DENSIFY_ENABLE=0` 以关闭 Adaptive Densify；否则 Phase 3 的 Critic 可能会非常耗时，并且在严格 JSON 校验下更容易因为格式问题失败。  
 > **建议（排障）：** 若反复出现 Critic JSON 格式/解析错误，可设置 `I2P_CRITIC_STRICT_JSON=0`（或 `critic.strict_json=false`）关闭严格模式，允许降级继续运行。  
+> **建议（温度配置）：** 支持通过 `I2P_LLM_TEMPERATURE_*` 或 `llm.temperature.*` 配置各阶段温度，默认保持不变；critic 建议低温更稳，story 生成可中温。  
+> **建议（Idea Packaging）：** 可选的质量增强（默认关闭），开启后会进行 pattern 引导的 idea 包装与二次召回：`I2P_IDEA_PACKAGING_ENABLE=1` 或 `idea.packaging_enable=true`。  
+> **建议（Subdomain Taxonomy）：** 可选质量增强，用于减少 Path2 子领域重复与长尾影响。先离线生成一次：`Paper-KG-Pipeline/scripts/tools/build_subdomain_taxonomy.py`，再启用 `I2P_SUBDOMAIN_TAXONOMY_ENABLE=1`（可选 `I2P_SUBDOMAIN_TAXONOMY_PATH`）。  
 > **当前可直接适配（无需改代码）：** 兼容 OpenAI Embeddings API 的 `/v1/embeddings`（要求 `input` 支持字符串或数组，例如 SiliconFlow、OpenAI 及其它 OpenAI-compatible 服务）。  
 > **暂不直接支持：** DashScope/百炼原生 embeddings 接口（`/api/v1/services/embeddings/...`），需要额外适配层。
 
@@ -144,29 +147,29 @@ paper-KG-Pipeline/
   
 ## 🌐 前端（本地 Web UI）
 
-> **状态：** 当前前端仍处于不稳定阶段，建议暂时使用终端运行项目，不要使用前端；后续会持续完善。
+基于 React + TypeScript 的现代化 Web 界面，用于运行 Idea2Story 流水线并可视化结果。
 
-运行一个极简的本地 UI，用于启动 pipeline，并且**只展示**高层阶段信息与最终结果（不在页面上展示原始日志内容）。
+### 快速开始
 
-### 启动
+启动后端服务：
 
 ```bash
 python frontend/server/app.py --host 127.0.0.1 --port 8080
 ```
 
-在浏览器中打开：
+在浏览器中打开 `http://127.0.0.1:8080`
 
-```text
-http://127.0.0.1:8080/
-```
+前端已预先构建，后端服务器会自动提供静态文件。无需安装 Node.js。
 
-### 你可以在 UI 中做什么
-- 从网页运行同一个 pipeline 入口 (`idea2story_pipeline.py`) 。
-- 为本次运行配置 `SILICONFLOW_API_KEY`, `LLM_API_URL`, `LLM_MODEL` （服务端不会持久化保存）。
-- 开关 Novelty / Verification.
-- 一键下载本次运行的日志（zip）。
+### 功能特性
 
-更多说明见 `frontend/README.md`.
+- 通过 Web 界面运行 Idea2Story 流水线
+- 配置 API 密钥和模型参数
+- 查看实时进度和结果
+- 交互式知识图谱可视化
+- 导出结果和日志为 ZIP
+
+开发模式和更多说明见 `frontend/README.md`。
 
 
 ## 🤖 Multi‑Agent Review（可标定、可追溯）

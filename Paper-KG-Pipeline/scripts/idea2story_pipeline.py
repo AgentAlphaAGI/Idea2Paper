@@ -68,6 +68,7 @@ try:
     from pipeline.run_context import set_logger, reset_logger
     from tools.build_novelty_index import build_novelty_index
     from tools.build_recall_index import build_recall_index
+    from idea2paper.application.idea_packaging import IdeaPackager
 except ImportError:
     # 如果直接运行脚本，尝试添加当前目录到 path
     import os
@@ -105,11 +106,66 @@ except ImportError:
     from pipeline.run_context import set_logger, reset_logger
     from tools.build_novelty_index import build_novelty_index
     from tools.build_recall_index import build_recall_index
+    from idea2paper.application.idea_packaging import IdeaPackager
 
 
 def _log_event(logger, event_type: str, payload: dict):
     if logger:
         logger.log_event(event_type, payload)
+
+
+def _recall_focus_score(recall_audit: dict | None) -> float:
+    if not recall_audit:
+        return 0.0
+    path2 = recall_audit.get("path2", {}) or {}
+    candidate_stats = path2.get("candidate_stats", []) or []
+    ratios = []
+    for stat in candidate_stats:
+        if not stat:
+            continue
+        before = int(stat.get("candidates_before", 0) or 0)
+        after = int(stat.get("candidates_after", 0) or 0)
+        if before > 0:
+            ratios.append((before - after) / float(before))
+    if not ratios:
+        return 0.0
+    return sum(ratios) / len(ratios)
+
+
+def _truncate_text(text: str, max_len: int = 800) -> str:
+    if not isinstance(text, str):
+        return text
+    return text if len(text) <= max_len else text[:max_len]
+
+
+def _shrink_brief(brief: dict | None, max_len: int = 600) -> dict | None:
+    if not isinstance(brief, dict):
+        return None
+    out = {}
+    for k, v in brief.items():
+        if isinstance(v, str):
+            out[k] = _truncate_text(v, max_len)
+        elif isinstance(v, list):
+            trimmed = []
+            for item in v[:5]:
+                if isinstance(item, str):
+                    trimmed.append(_truncate_text(item, max_len))
+                else:
+                    trimmed.append(item)
+            out[k] = trimmed
+        elif isinstance(v, dict):
+            sub = {}
+            for sk, sv in v.items():
+                if isinstance(sv, str):
+                    sub[sk] = _truncate_text(sv, max_len)
+                elif isinstance(sv, list):
+                    sub[sk] = [(_truncate_text(x, max_len) if isinstance(x, str) else x) for x in sv[:5]]
+                else:
+                    sub[sk] = sv
+            out[k] = sub
+        else:
+            out[k] = v
+    return out
 
 
 def ensure_required_indexes(logger=None):
@@ -239,6 +295,7 @@ def main():
 
         print(f"  ✓ 加载 {len(patterns)} 个 Pattern")
         print(f"  ✓ 加载 {len(papers)} 个 Paper")
+        papers_by_id = {p.get("paper_id"): p for p in papers if p.get("paper_id")}
 
         # 运行召回（复用 simple_recall_demo 的逻辑）
         # 注意：这里为了复用逻辑，直接导入了 simple_recall_demo
@@ -259,7 +316,110 @@ def main():
         recall_system = RecallSystem()
 
         print("\n  执行三路召回（优化版，支持两阶段加速）...")
-        recall_results = recall_system.recall(user_idea, verbose=True)
+        raw_user_idea = user_idea
+        idea_brief_best = None
+        retrieval_query_best = raw_user_idea
+        idea_packaging_meta = None
+
+        if PipelineConfig.IDEA_PACKAGING_ENABLE:
+            try:
+                packager = IdeaPackager(logger=logger)
+                brief_a, query_a = packager.parse_raw_idea(raw_user_idea)
+                if not query_a:
+                    query_a = raw_user_idea
+
+                first_recall = recall_system.recall(query_a, verbose=False)
+                topn = max(1, int(PipelineConfig.IDEA_PACKAGING_TOPN_PATTERNS))
+                candidate_k = max(1, int(PipelineConfig.IDEA_PACKAGING_CANDIDATE_K))
+                top_patterns = first_recall[:topn]
+
+                candidates = []
+                judge_candidates = []
+                for pattern_id, pattern_info, score in top_patterns[:candidate_k]:
+                    evidence = packager.build_pattern_evidence(
+                        pattern_id,
+                        pattern_info,
+                        papers_by_id,
+                        max_exemplar_papers=PipelineConfig.IDEA_PACKAGING_MAX_EXEMPLAR_PAPERS,
+                    )
+                    brief_c, query_c = packager.package_with_pattern(raw_user_idea, brief_a, evidence)
+                    candidates.append({
+                        "pattern_id": pattern_id,
+                        "pattern_name": pattern_info.get("name", ""),
+                        "score": float(score),
+                        "brief": brief_c,
+                        "query": query_c,
+                    })
+                    judge_candidates.append({
+                        "pattern_id": pattern_id,
+                        "pattern_name": pattern_info.get("name", ""),
+                        "brief": brief_c,
+                    })
+
+                best_idx, judge_info = packager.judge_best_candidate(raw_user_idea, judge_candidates)
+                chosen_idx = best_idx if candidates else 0
+
+                select_mode = (PipelineConfig.IDEA_PACKAGING_SELECT_MODE or "llm_then_recall").lower()
+                recall_scores = {}
+                if select_mode in ("llm_then_recall", "recall_only") and candidates:
+                    for idx, cand in enumerate(candidates):
+                        query = cand.get("query") or raw_user_idea
+                        _ = recall_system.recall(query, verbose=False)
+                        audit = getattr(recall_system, "last_audit", None)
+                        recall_scores[idx] = _recall_focus_score(audit)
+                    recall_best_idx = max(recall_scores, key=recall_scores.get) if recall_scores else chosen_idx
+                    if select_mode == "recall_only":
+                        chosen_idx = recall_best_idx
+                    else:
+                        if recall_scores.get(recall_best_idx, 0.0) > recall_scores.get(chosen_idx, 0.0) + 0.05:
+                            chosen_idx = recall_best_idx
+
+                chosen = candidates[chosen_idx] if candidates else None
+                if chosen:
+                    idea_brief_best = chosen.get("brief")
+                    retrieval_query_best = chosen.get("query") or raw_user_idea
+                else:
+                    idea_brief_best = brief_a
+                    retrieval_query_best = query_a
+
+                idea_packaging_meta = {
+                    "raw_idea": raw_user_idea,
+                    "brief_a": brief_a,
+                    "query_a": query_a,
+                    "candidates": candidates,
+                    "judge": judge_info,
+                    "recall_scores": recall_scores,
+                    "chosen_index": chosen_idx,
+                    "query_best": retrieval_query_best,
+                    "brief_best": idea_brief_best,
+                }
+                if logger:
+                    logger.log_event("idea_packaging", {
+                        "enabled": True,
+                        "topn_patterns": topn,
+                        "candidate_k": candidate_k,
+                        "select_mode": select_mode,
+                        "raw_idea": _truncate_text(raw_user_idea, 800),
+                        "query_best": _truncate_text(retrieval_query_best, 800),
+                        "brief_best": _shrink_brief(idea_brief_best, 600),
+                        "candidates": [
+                            {
+                                "pattern_id": c.get("pattern_id"),
+                                "pattern_name": c.get("pattern_name"),
+                                "query": _truncate_text(c.get("query", ""), 300),
+                            } for c in candidates
+                        ],
+                        "judge": judge_info,
+                        "recall_scores": recall_scores,
+                        "chosen_index": chosen_idx,
+                    })
+            except Exception as e:
+                if logger:
+                    logger.log_event("idea_packaging_failed", {"error": str(e)})
+                idea_brief_best = None
+                retrieval_query_best = raw_user_idea
+
+        recall_results = recall_system.recall(retrieval_query_best, verbose=True)
         recall_audit = getattr(recall_system, "last_audit", None)
 
         # 【关键修复】加载完整的 patterns_structured.json 以合并数据
@@ -300,12 +460,20 @@ def main():
         print(f"✅ 召回完成: Top-{len(recalled_patterns)} Patterns\n")
 
         # 运行 Pipeline（传递 user_idea 用于 Pattern 智能分类）
-        pipeline = Idea2StoryPipeline(user_idea, recalled_patterns, papers, run_id=run_id)
+        pipeline = Idea2StoryPipeline(
+            raw_user_idea,
+            recalled_patterns,
+            papers,
+            run_id=run_id,
+            idea_brief=idea_brief_best,
+        )
         result = pipeline.run()
         if recall_audit is not None:
             result["recall_audit"] = recall_audit
             if logger and PipelineConfig.RECALL_AUDIT_IN_EVENTS:
                 logger.log_event("recall_audit", recall_audit)
+        if idea_packaging_meta:
+            result["idea_packaging"] = idea_packaging_meta
         success = True
 
         # 保存结果
@@ -340,7 +508,8 @@ def main():
                 'verification_summary': {
                     'collision_detected': result['verification_result']['collision_detected'],
                     'max_similarity': result['verification_result']['max_similarity']
-                }
+                },
+                'idea_packaging': result.get('idea_packaging')
             }, f, ensure_ascii=False, indent=2)
 
         print(f"💾 完整结果已保存到: {full_result_file}")
