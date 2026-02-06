@@ -26,7 +26,7 @@ import requests
 
 from pipeline.run_context import get_logger
 from idea2paper.config import OUTPUT_DIR, PipelineConfig
-from idea2paper.infra.embeddings import get_embeddings_batch, EMBEDDING_MODEL
+from idea2paper.infra.embeddings import get_embeddings_batch, EMBEDDING_MODEL, EMBEDDING_API_URL, EMBEDDING_PROVIDER
 from idea2paper.recall.recall_text import build_recall_idea_text, build_recall_paper_text, truncate_for_embedding
 from idea2paper.recall.tokenize import to_token_set, jaccard_from_sets
 
@@ -259,6 +259,10 @@ class RecallSystem:
         else:
             texts = [build_recall_paper_text(self.paper_id_to_paper[i]) for i in candidate_ids]
 
+        # 如果没有配置API Key且不是Ollama，直接使用Jaccard
+        if not os.environ.get('SILICONFLOW_API_KEY', '') and EMBEDDING_PROVIDER != "ollama":
+             return [(cid, self._compute_jaccard_similarity(user_idea, text)) for cid, text in zip(candidate_ids, texts)]
+
         if not self._use_embed_batch:
             return [(cid, self._compute_embedding_similarity(user_idea, text)) for cid, text in zip(candidate_ids, texts)]
 
@@ -322,20 +326,21 @@ class RecallSystem:
         return float(cosine_sim)
 
     def _get_embedding(self, text: str, max_retries: int = 3) -> List[float]:
-        """调用SiliconFlow API获取文本embedding"""
+        """调用Embedding API获取文本embedding"""
         api_key = os.environ.get('SILICONFLOW_API_KEY', '')
 
-        if not api_key:
+        if not api_key and EMBEDDING_PROVIDER != "ollama":
             if not hasattr(self, '_embedding_warning_shown'):
                 print("  ⚠️  未设置SILICONFLOW_API_KEY，降级到Jaccard相似度")
                 self._embedding_warning_shown = True
             return None
 
-        url = "https://api.siliconflow.cn/v1/embeddings"
+        url = EMBEDDING_API_URL
         headers = {
-            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        if api_key:
+             headers["Authorization"] = f"Bearer {api_key}"
 
         payload = {
             "model": EMBEDDING_MODEL,
@@ -345,17 +350,17 @@ class RecallSystem:
         for attempt in range(max_retries):
             try:
                 start_ts = time.time()
-                response = requests.post(url, headers=headers, json=payload, timeout=10)
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
                 response.raise_for_status()
                 result = response.json()
                 if self.logger:
                     self.logger.log_embedding_call(
                         request={
-                            "provider": "siliconflow",
+                            "provider": EMBEDDING_PROVIDER,
                             "url": url,
                             "model": payload["model"],
                             "input_preview": truncate_for_embedding(text),
-                            "timeout": 10
+                            "timeout": 60
                         },
                         response={
                             "ok": True,
@@ -373,11 +378,11 @@ class RecallSystem:
                     if self.logger:
                         self.logger.log_embedding_call(
                             request={
-                                "provider": "siliconflow",
-                            "url": url,
-                            "model": payload["model"],
-                            "input_preview": truncate_for_embedding(text),
-                            "timeout": 10
+                                "provider": EMBEDDING_PROVIDER,
+                                "url": url,
+                                "model": payload["model"],
+                                "input_preview": truncate_for_embedding(text),
+                            "timeout": 60
                         },
                             response={
                                 "ok": False,

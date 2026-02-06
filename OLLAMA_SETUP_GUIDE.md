@@ -8,21 +8,43 @@
 
 ## 2. 快速配置步骤
 
-由于模型文件已经下载到本地项目目录，您只需要执行以下两步即可完成配置：
+### 步骤 1: 准备模型 (国内加速下载)
+由于 HuggingFace 或 Ollama 官方源在国内下载速度较慢，我们推荐使用 **ModelScope (魔搭社区)** 进行极速下载。
 
-### 步骤 1: 创建 Ollama 模型
+1.  **安装 ModelScope 库**:
+    ```bash
+    pip install modelscope
+    ```
 
-在项目根目录下打开终端，运行以下命令：
+2.  **下载 GGUF 模型**:
+    创建一个下载脚本 `download_model.py` 并运行：
+    ```python
+    from modelscope.hub.file_download import model_file_download
+
+    # 下载 Qwen3-Embedding-8B 的 GGUF 量化版本
+    model_id = 'Qwen/Qwen3-Embedding-8B-GGUF'
+    file_name = 'Qwen3-Embedding-8B-Q4_K_M.gguf'
+    
+    print("🚀 正在从 ModelScope 下载模型...")
+    path = model_file_download(model_id, file_name, local_dir='.')
+    print(f"✅ 下载完成: {path}")
+    ```
+
+### 步骤 2: 创建 Ollama 模型
+下载完成后，在项目根目录下运行：
 
 ```bash
-# 使用项目自带的 Modelfile 创建模型
+# 1. 确认已下载文件
+ls Qwen3-Embedding-8B-Q4_K_M.gguf
+
+# 2. 使用 Modelfile 创建模型
 ollama create qwen3-embedding:8b -f Modelfile
 ```
 
 **验证安装**:
 运行 `ollama list`，如果您看到 `qwen3-embedding:8b`，说明模型已就绪。
 
-### 步骤 2: 确认项目配置
+### 步骤 3: 确认项目配置
 
 检查项目根目录下的 `i2p_config.json` 文件，确保配置如下：
 
