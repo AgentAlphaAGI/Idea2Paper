@@ -79,7 +79,13 @@ def _get(key: str, default, cast=None, cfg_path: list | None = None):
     return _cast(value, cast) if cast else value
 
 # ===================== LLM API 配置 =====================
-LLM_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
+LLM_API_KEY = _get(
+    "LLM_API_KEY",
+    "",  # 移除对旧环境变量 SILICONFLOW_API_KEY 的默认依赖，强制使用新标准
+    cast=str,
+    cfg_path=["llm", "api_key"],
+)
+
 LLM_API_URL = _get(
     "LLM_API_URL",
     "https://api.siliconflow.cn/v1/chat/completions",
