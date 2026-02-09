@@ -5,7 +5,7 @@
 数据源：
   - data/ICLR_25/assignments.jsonl: Paper到Pattern的分配关系
   - data/ICLR_25/cluster_library_sorted.jsonl: Pattern Cluster信息
-  - data/ICLR_25/iclr_patterns_full_cn_912.jsonl: Pattern详细属性
+  - data/ICLR_25/iclr_patterns_full.jsonl: Pattern详细属性
 
 节点类型：
   - Idea: 核心创新点（从pattern的idea字段提取）
