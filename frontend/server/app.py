@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -258,8 +259,11 @@ class Handler(BaseHTTPRequestHandler):
         # Apply configuration from new format (config_overrides)
         config_overrides = config.get("config_overrides", {}) or {}
         for key, value in config_overrides.items():
-            if value is not None:
-                env[key] = str(value)
+            if value is None:
+                continue
+            if isinstance(value, str) and value.strip() == "":
+                continue
+            env[key] = str(value)
 
         # Legacy format support
         api_key = llm.get("api_key")
@@ -287,7 +291,7 @@ class Handler(BaseHTTPRequestHandler):
         if platform.system() == "Windows":
             env["PYTHONIOENCODING"] = "utf-8"
 
-        cmd = ["python", str(PIPELINE_SCRIPT), idea]
+        cmd = [sys.executable, "-u", str(PIPELINE_SCRIPT), idea]
 
         try:
             # Prepare subprocess arguments (cross-platform)

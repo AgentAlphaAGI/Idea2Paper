@@ -179,7 +179,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, t }
             type="password"
             onChange={(e: any) => setConfig({...config, llmApiKey: e.target.value})}
             desc={t.config.descriptions.silicon_key}
-            required={true}
+            required={false}
          />
          <SelectGroup
             label={t.config.labels.llm_provider}
@@ -266,7 +266,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({ config, setConfig, t }
             type="password"
             onChange={(e: any) => setConfig({...config, embeddingApiKey: e.target.value})}
             placeholder="Enter your Embedding API Key"
-            required={true}
+            required={false}
             desc="API Key for the embedding service"
          />
       </CollapsibleSection>

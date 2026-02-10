@@ -316,6 +316,7 @@ def main():
     start_dt = datetime.now(timezone.utc)
     run_id = f"run_{start_dt.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}_{uuid.uuid4().hex[:6]}"
     success = False
+    exit_code = 0
 
     try:
         if ENABLE_RUN_LOGGING:
@@ -507,6 +508,12 @@ def main():
         print("-" * 80)
         print(f"✅ 召回完成: Top-{len(recalled_patterns)} Patterns\n")
 
+        if not recalled_patterns:
+            raise RuntimeError(
+                "Recall returned 0 patterns. Please provide a more detailed idea "
+                "(preferably an English sentence with domain/method keywords)."
+            )
+
         # 运行 Pipeline（传递 user_idea 用于 Pattern 智能分类）
         pipeline = Idea2StoryPipeline(
             raw_user_idea,
@@ -516,6 +523,16 @@ def main():
             idea_brief=idea_brief_best,
         )
         result = pipeline.run()
+        if not isinstance(result, dict):
+            raise RuntimeError(f"Pipeline returned invalid result type: {type(result).__name__}")
+        if not result.get("success", False):
+            raise RuntimeError(
+                "Pipeline did not produce a valid story. "
+                "Try a more specific idea and ensure recall can retrieve patterns."
+            )
+        if "final_story" not in result:
+            raise RuntimeError("Pipeline result missing required field: final_story")
+
         if recall_audit is not None:
             result["recall_audit"] = recall_audit
             if logger and PipelineConfig.RECALL_AUDIT_IN_EVENTS:
@@ -628,6 +645,8 @@ def main():
                     logger.log_event("results_bundle_failed", {"error": str(e)})
 
     except Exception as e:
+        success = False
+        exit_code = 1
         print(f"\n❌ 错误: {e}")
         if logger:
             logger.log_event("run_error", {"error": str(e)})
@@ -641,6 +660,9 @@ def main():
             })
         if token is not None:
             reset_logger(token)
+
+    if exit_code != 0:
+        raise SystemExit(exit_code)
 
 
 if __name__ == '__main__':

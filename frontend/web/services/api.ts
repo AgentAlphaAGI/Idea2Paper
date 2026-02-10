@@ -239,6 +239,14 @@ const RealStrategy = {
             configOverrides.LLM_ANTHROPIC_VERSION = config.llmAnthropicVersion;
         }
 
+        // Do not send empty-string overrides (preserve server-side .env defaults)
+        Object.keys(configOverrides).forEach((key) => {
+            const value = configOverrides[key];
+            if (typeof value === 'string' && value.trim() === '') {
+                delete configOverrides[key];
+            }
+        });
+
         // Start the pipeline
         const response = await fetch(runEndpoint, {
             method: 'POST',

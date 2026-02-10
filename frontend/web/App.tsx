@@ -254,13 +254,64 @@ function App() {
       const savedConfig = localStorage.getItem('idea2paper_config');
       if (savedConfig) {
         const parsed = JSON.parse(savedConfig);
+        const migrationKey = 'idea2paper_config_migrated_20260211';
+        const qualityModeKey = 'idea2paper_quality_mode_enabled_20260211';
+        const isLegacySiliconDefaults =
+          parsed?.llmUrl === 'https://api.siliconflow.cn/v1/chat/completions' ||
+          parsed?.embeddingUrl === 'https://api.siliconflow.cn/v1/embeddings' ||
+          parsed?.llmModel === 'Pro/zai-org/GLM-4.7' ||
+          parsed?.embeddingModel === 'Qwen/Qwen3-Embedding-8B' ||
+          parsed?.baseUrl === 'http://localhost:8080';
+
+        if (!localStorage.getItem(migrationKey) && isLegacySiliconDefaults) {
+          parsed.baseUrl = 'http://127.0.0.1:8080';
+          parsed.llmProvider = 'openai_compatible_chat';
+          parsed.llmUrl = 'https://right.codes/codex/v1/chat/completions';
+          parsed.llmModel = 'gpt-5-codex';
+          parsed.embeddingUrl = 'https://api.openai.com/v1/embeddings';
+          parsed.embeddingModel = 'text-embedding-3-large';
+
+          parsed.novelty = { ...(parsed.novelty || {}), enable: true };
+          parsed.verification = { ...(parsed.verification || {}), enable: true };
+          parsed.index = {
+            ...(parsed.index || {}),
+            autoPrepare: true,
+            allowBuild: true,
+          };
+          parsed.critic = { ...(parsed.critic || {}), strictJson: true };
+
+          localStorage.setItem(migrationKey, '1');
+        }
+
+        if (!localStorage.getItem(qualityModeKey)) {
+          parsed.novelty = { ...(parsed.novelty || {}), enable: true };
+          parsed.verification = { ...(parsed.verification || {}), enable: true };
+          parsed.index = {
+            ...(parsed.index || {}),
+            autoPrepare: true,
+            allowBuild: true,
+          };
+          parsed.critic = { ...(parsed.critic || {}), strictJson: true };
+          localStorage.setItem(qualityModeKey, '1');
+        }
+
+        const pickNonEmpty = (value: unknown, fallback: string) => {
+          if (typeof value !== 'string') return fallback;
+          return value.trim() === '' ? fallback : value;
+        };
         // Merge with defaults to ensure all fields exist
         return {
           ...defaultConfig,
           ...parsed,
-          llmApiKey: parsed.llmApiKey ?? parsed.siliconFlowApiKey ?? defaultConfig.llmApiKey,
-          llmProvider: parsed.llmProvider ?? defaultConfig.llmProvider,
-          llmAnthropicVersion: parsed.llmAnthropicVersion ?? defaultConfig.llmAnthropicVersion,
+          baseUrl: pickNonEmpty(parsed.baseUrl, defaultConfig.baseUrl),
+          llmApiKey: pickNonEmpty(parsed.llmApiKey ?? parsed.siliconFlowApiKey, defaultConfig.llmApiKey),
+          llmProvider: pickNonEmpty(parsed.llmProvider, defaultConfig.llmProvider) as AppConfig['llmProvider'],
+          llmUrl: pickNonEmpty(parsed.llmUrl, defaultConfig.llmUrl),
+          llmModel: pickNonEmpty(parsed.llmModel, defaultConfig.llmModel),
+          llmAnthropicVersion: pickNonEmpty(parsed.llmAnthropicVersion, defaultConfig.llmAnthropicVersion),
+          embeddingUrl: pickNonEmpty(parsed.embeddingUrl, defaultConfig.embeddingUrl),
+          embeddingModel: pickNonEmpty(parsed.embeddingModel, defaultConfig.embeddingModel),
+          embeddingApiKey: pickNonEmpty(parsed.embeddingApiKey, defaultConfig.embeddingApiKey),
           endpoints: { ...defaultConfig.endpoints, ...(parsed.endpoints || {}) },
           llmTemperatures: { ...defaultConfig.llmTemperatures, ...(parsed.llmTemperatures || {}) },
           ideaPackaging: { ...defaultConfig.ideaPackaging, ...(parsed.ideaPackaging || {}) },
@@ -284,7 +335,7 @@ function App() {
   const defaultConfig: AppConfig = {
     // System
     apiKey: '',
-    baseUrl: 'http://localhost:8080',
+    baseUrl: 'http://127.0.0.1:8080',
     endpoints: {
       runPipeline: '/api/runs',
       checkStatus: '/api/runs',
@@ -300,8 +351,8 @@ function App() {
     llmProvider: 'openai_compatible_chat',
     
     // LLM
-    llmUrl: 'https://api.siliconflow.cn/v1/chat/completions',
-    llmModel: 'Pro/zai-org/GLM-4.7',
+    llmUrl: 'https://right.codes/codex/v1/chat/completions',
+    llmModel: 'gpt-5-codex',
     llmAnthropicVersion: '2025-11-01',
     llmTemperatures: {
       default: 0.7,
@@ -321,8 +372,8 @@ function App() {
     },
 
     // Embedding
-    embeddingUrl: 'https://api.siliconflow.cn/v1/embeddings',
-    embeddingModel: 'Qwen/Qwen3-Embedding-8B',
+    embeddingUrl: 'https://api.openai.com/v1/embeddings',
+    embeddingModel: 'text-embedding-3-large',
     embeddingApiKey: '',
     indexDirMode: 'auto_profile',
 
@@ -493,9 +544,6 @@ function App() {
     // Validate critical configuration before starting
     const missingFields: string[] = [];
 
-    if (!config.llmApiKey || config.llmApiKey.trim() === '') {
-      missingFields.push(lang === 'en' ? 'LLM API Key' : 'LLM API Key');
-    }
     if (!config.llmUrl || config.llmUrl.trim() === '') {
       missingFields.push(lang === 'en' ? 'LLM API URL' : 'LLM API URL');
     }
@@ -510,9 +558,6 @@ function App() {
     }
     if (!config.embeddingModel || config.embeddingModel.trim() === '') {
       missingFields.push(lang === 'en' ? 'Embedding Model' : 'Embedding Model');
-    }
-    if (!config.embeddingApiKey || config.embeddingApiKey.trim() === '') {
-      missingFields.push(lang === 'en' ? 'Embedding API Key' : 'Embedding API Key');
     }
 
     if (missingFields.length > 0) {
