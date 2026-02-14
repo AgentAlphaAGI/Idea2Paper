@@ -148,9 +148,11 @@ def _embedding_ping_once(timeout: int) -> Tuple[bool, Optional[int], str]:
     """
     Real embedding ping (fail-fast) and infer embedding_dim.
     """
-    api_key = os.getenv("EMBEDDING_API_KEY", "")
+    # Keep key resolution consistent with config.py:
+    # EMBEDDING_API_KEY falls back to LLM_API_KEY when not explicitly set.
+    api_key = (os.getenv("EMBEDDING_API_KEY", "") or os.getenv("LLM_API_KEY", "")).strip()
     if not api_key:
-        return False, None, "EMBEDDING_API_KEY not configured"
+        return False, None, "EMBEDDING_API_KEY/LLM_API_KEY not configured"
 
     if not EMBEDDING_API_URL:
         return False, None, "EMBEDDING_API_URL not configured"
