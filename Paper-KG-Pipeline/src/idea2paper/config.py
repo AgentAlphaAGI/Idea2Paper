@@ -670,6 +670,82 @@ class PipelineConfig:
         cfg_path=["critic", "json_retries"],
     )
 
+    # ===================== Path4: Agentic Search 配置 =====================
+    PATH4_ENABLE = _get(
+        "I2P_PATH4_ENABLE",
+        False,
+        cast=bool,
+        cfg_path=["path4", "enable"],
+    )
+    PATH4_MAX_QUERIES = _get(
+        "I2P_PATH4_MAX_QUERIES",
+        8,
+        cast=int,
+        cfg_path=["path4", "max_queries"],
+    )
+    PATH4_FINAL_QUERIES = _get(
+        "I2P_PATH4_FINAL_QUERIES",
+        5,
+        cast=int,
+        cfg_path=["path4", "final_queries"],
+    )
+    PATH4_YEAR_RANGE = _get(
+        "I2P_PATH4_YEAR_RANGE",
+        "2024-2026",
+        cast=str,
+        cfg_path=["path4", "year_range"],
+    )
+    PATH4_SEARCH_LIMIT_PER_QUERY = _get(
+        "I2P_PATH4_SEARCH_LIMIT_PER_QUERY",
+        50,
+        cast=int,
+        cfg_path=["path4", "search_limit_per_query"],
+    )
+    PATH4_VENUE_WHITELIST_MODE = _get(
+        "I2P_PATH4_VENUE_WHITELIST_MODE",
+        "cs_top",
+        cast=str,
+        cfg_path=["path4", "venue_whitelist_mode"],
+    )
+    LLM_TEMPERATURE_PATH4_PLANNER = _get(
+        "I2P_LLM_TEMPERATURE_PATH4_PLANNER",
+        0.0,
+        cast=float,
+        cfg_path=["llm", "temperature", "path4_planner"],
+    )
+    PATH4_BACKTRACK_ENABLE = _get(
+        "I2P_PATH4_BACKTRACK_ENABLE",
+        True,
+        cast=bool,
+        cfg_path=["path4", "backtrack_enable"],
+    )
+    PATH4_BACKTRACK_THRESHOLD = _get(
+        "I2P_PATH4_BACKTRACK_THRESHOLD",
+        5,
+        cast=int,
+        cfg_path=["path4", "backtrack_threshold"],
+    )
+    PATH4_BACKTRACK_EXTRA_QUERIES = _get(
+        "I2P_PATH4_BACKTRACK_EXTRA_QUERIES",
+        3,
+        cast=int,
+        cfg_path=["path4", "backtrack_extra_queries"],
+    )
+
+    # Extractor
+    PATH4_EXTRACTOR_BATCH_SIZE = _get(
+        "I2P_PATH4_EXTRACTOR_BATCH_SIZE",
+        5,
+        cast=int,
+        cfg_path=["path4", "extractor_batch_size"],
+    )
+    LLM_TEMPERATURE_PATH4_EXTRACTOR = _get(
+        "I2P_LLM_TEMPERATURE_PATH4_EXTRACTOR",
+        0.2,
+        cast=float,
+        cfg_path=["llm", "temperature", "path4_extractor"],
+    )
+
     # Blind Judge tau config
     JUDGE_TAU_PATH = _get(
         "I2P_JUDGE_TAU_PATH",
