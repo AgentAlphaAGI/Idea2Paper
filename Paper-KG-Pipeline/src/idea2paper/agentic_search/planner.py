@@ -11,6 +11,7 @@ Path4 Planner — 将用户 idea 转为结构化的英文检索 query
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional
 
@@ -57,7 +58,7 @@ class PlannerOutput:
 _PLANNER_SYSTEM = """\
 You are an expert research assistant that helps generate academic search queries.
 Your goal is to convert a research idea into a set of precise English search queries
-suitable for academic paper search engines (e.g. Semantic Scholar).
+suitable for academic paper search engines (e.g. OpenAlex).
 """
 
 _PLANNER_TEMPLATE = """\
@@ -192,6 +193,31 @@ def _prune_candidates(
     return selected[:max_final]
 
 
+def _build_user_idea_query(user_idea: str) -> str:
+    """Build a direct query from raw user idea text."""
+    if not user_idea:
+        return ""
+    q = " ".join(user_idea.strip().split())
+
+    # Remove common prompt-like prefixes to reduce search noise.
+    q = re.sub(
+        r"^(idea|research\s*idea|project\s*idea|my\s*idea(\s+is)?)\s*[:\-]\s*",
+        "",
+        q,
+        flags=re.IGNORECASE,
+    )
+    q = re.sub(r"^(idea|research\s*idea|my\s*idea(\s+is)?)\s+", "", q, flags=re.IGNORECASE)
+    q = " ".join(q.strip().split())
+    if not q:
+        return ""
+
+    # Keep query reasonably short for search relevance.
+    words = q.split()
+    if len(words) > 24:
+        q = " ".join(words[:24])
+    return q
+
+
 # ────────────────────────────────────────
 # AgenticPlanner
 # ────────────────────────────────────────
@@ -249,7 +275,34 @@ class AgenticPlanner:
             candidates = self._fallback_queries(user_idea, idea_brief)
             anchors = {"method": [], "task": [], "constraint": []}
 
+        # Always include one direct query from the original user idea.
+        direct_query = _build_user_idea_query(user_idea)
+        if direct_query:
+            exists = any(q.query.strip().lower() == direct_query.lower() for q in candidates)
+            if not exists:
+                candidates.append(QuerySpec(
+                    query=direct_query,
+                    intent="related_area",
+                    must_have=[],
+                    source="user_idea",
+                ))
+
         final = _prune_candidates(candidates, self._final_queries)
+
+        # Ensure the direct user-idea query is kept in final queries.
+        if direct_query:
+            has_direct = any(q.query.strip().lower() == direct_query.lower() for q in final)
+            if not has_direct:
+                direct_q = QuerySpec(
+                    query=direct_query,
+                    intent="related_area",
+                    must_have=[],
+                    source="user_idea",
+                )
+                if len(final) < self._final_queries:
+                    final.append(direct_q)
+                elif final:
+                    final[-1] = direct_q
 
         output = PlannerOutput(
             anchors=anchors,

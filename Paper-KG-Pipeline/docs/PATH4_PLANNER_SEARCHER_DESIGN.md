@@ -62,7 +62,7 @@ Planner 最稳的落地方式不是“纯 prompt”，而是 **LLM 生成候选 
 **模板约束（非常重要，降低噪声）**
 
 - 每条 query **只包含 2–4 个 anchor**（避免把一句话全部塞进去导致召回稀释）
-- 强制英文、禁止引号语法/高级检索语法（兼容 S2 的 plain-text search）
+- 强制英文、禁止引号语法/高级检索语法（兼容 OpenAlex 的 plain-text search）
 - 避免出现过宽词（如 “deep learning”, “neural network”）作为唯一关键词
 - 允许 1–2 条 query 包含“对比/反向”词（例如 “efficient”, “without labels”）用于召回更贴近 gap 的论文
 
@@ -88,7 +88,7 @@ Planner 最稳的落地方式不是“纯 prompt”，而是 **LLM 生成候选 
 
 - **多样性**：intent 至少覆盖 `core_method` 与 `task_setting`，其余 intent 可选
 - **去重**：query token 集合 Jaccard > 0.8 的视为重复，只保留更短、更“锚点密度高”的那条
-- **长度**：建议 6–14 个英文词；过长会削弱 S2 的相关性排序
+- **长度**：建议 6–14 个英文词；过长会削弱搜索相关性排序
 
 ### 1.3 Planner 的两种运行模式
 
@@ -109,42 +109,42 @@ Planner 最稳的落地方式不是“纯 prompt”，而是 **LLM 生成候选 
 - 结果页结构经常变化，解析成本高，且不具备稳定的字段（venue/year/pdf/abstract）保证
 - 从合规与可复现角度，Scholar 更适合作为“人工辅助入口”，而不是 pipeline 的核心依赖
 
-结论：**Planner/Searcher 的 MVP 应以结构化学术 API 为主（Semantic Scholar），而不是 Google Scholar。**
+结论：**Planner/Searcher 的 MVP 应以结构化学术 API 为主（OpenAlex），而不是 Google Scholar。**
 
 ### 2.2 数据源选择（MVP）
 
 按“可落地 + 字段齐全 + 可过滤 + 可复现”排序：
 
-1. **Semantic Scholar Academic Graph API（主力）**
-   - 优点：有 `venue / publicationVenue / year / abstract / openAccessPdf` 等字段；支持 `year`、`fieldsOfStudy` 过滤；结果较干净
-2. （后续可加）OpenAlex / OpenReview / arXiv
-   - v0.1 先不引入，避免扩大不确定性面
+1. **OpenAlex Works API（主力）**
+   - 优点：有 `publication_year / abstract_inverted_index / primary_location / cited_by_count` 等字段；支持 year 过滤；稳定性高
+2. （后续可加）OpenReview / arXiv / Crossref
+   - 作为补充源，不作为 v0.1 主流程依赖
 
 > 参考：Gemini Deep Research 的公开描述强调“反复规划→搜索→读→发现缺口→再搜索”的迭代式研究工作流。
 > 我们在 v0.1 里只借鉴其 **planning+iterative search 的结构**，但数据源仍选择可工程化的学术 API。
 
-### 2.3 Searcher 的调用策略（Semantic Scholar）
+### 2.3 Searcher 的调用策略（OpenAlex）
 
 对每条 query：
 
-- endpoint：`GET /graph/v1/paper/search`
+- endpoint：`GET /works`（OpenAlex）
 - 过滤参数（建议）：
-  - `fieldsOfStudy=Computer Science`
-  - `year=2024-2026`（或“近两年”配置项）
-  - `limit=50`（单 query 拉回上限）
-  - `fields=` 建议至少包含：
-    - `paperId,externalIds,title,abstract,venue,publicationVenue,year,publicationDate,authors,url,isOpenAccess,openAccessPdf,citationCount,influentialCitationCount,tldr`
+  - `search=<query>`
+  - `filter=publication_year:2024-2026`（或“近两年”配置项）
+  - `per-page=50`（单 query 拉回上限）
+  - `select=` 建议至少包含：
+    - `id,display_name,publication_year,abstract_inverted_index,primary_location,locations,authorships,cited_by_count,doi,ids`
 
-**为什么不在 API 层强行加 `venue=`？**
+**为什么不在 API 层强行加 venue 条件？**
 
-- S2 的 `venue` 过滤是“字符串匹配”，实际 venue 命名有多种别名；API 层过滤容易漏召回
+- OpenAlex 的 venue/source 字段在不同 location 上存在命名差异；API 层强过滤容易漏召回
 - 我们采用 v2 要求的 **白名单硬过滤**，放在结果后处理阶段做“更可靠”的规范化匹配
 
 ### 2.4 白名单硬过滤（核心）
 
 对每篇返回论文做 venue 规范化（只要一个稳定规则即可）：
 
-1. 取 `publicationVenue.name`（若存在）否则取 `venue` 字符串
+1. 取 `primary_location.source.display_name` 或 `raw_source_name`
 2. lower + 去标点 + 去多空格
 3. 用白名单 alias 表做“包含匹配”（例如包含 `\"international conference on machine learning\"` 或 `\"icml\"`）
 
@@ -160,7 +160,8 @@ Planner 最稳的落地方式不是“纯 prompt”，而是 **LLM 生成候选 
 - `papers: List[PaperStub]`
   - `paper_id, title, abstract, venue_norm, year, url, external_ids, source_query`
 
-> 后续去重（跨 query、与 KG 存量）可以在 Searcher 或独立 Dedup 模块补上；\n+> v0.1 先把“能稳定搜到白名单内论文”打通。
+> 后续去重（跨 query、与 KG 存量）可以在 Searcher 或独立 Dedup 模块补上；  
+> v0.1 先把“能稳定搜到白名单内论文”打通。
 
 ---
 
@@ -169,6 +170,6 @@ Planner 最稳的落地方式不是“纯 prompt”，而是 **LLM 生成候选 
 为了让这一步尽快可跑，建议先做以下“最小可用”决策：
 
 - Planner：一次 LLM 生成 8 条候选 query → 规则裁剪成 6 条
-- Searcher：只用 Semantic Scholar；每条 query 拉回 Top 50；白名单硬过滤后合并（可先不 dedup）
+- Searcher：只用 OpenAlex；每条 query 拉回 Top 50；白名单硬过滤后合并（可先不 dedup）
 - 输出：保证每篇论文至少有 `title + abstract + venue_norm + year + url`，便于后续 Extractor 抽取
 

@@ -19,25 +19,95 @@ from typing import Dict, List, Optional, Tuple
 
 _CS_TOP_VENUES: List[Tuple[str, List[str]]] = [
     # ML / AI
-    ("ICLR", ["iclr", "international conference on learning representations"]),
-    ("ICML", ["icml", "international conference on machine learning"]),
-    ("NeurIPS", ["neurips", "neural information processing systems", "nips"]),
-    ("AAAI", ["aaai", "association for the advancement of artificial intelligence"]),
+    ("ICLR", [
+        "iclr",
+        "international conference on learning representations",
+        "proceedings of the international conference on learning representations",
+    ]),
+    ("ICML", [
+        "icml",
+        "international conference on machine learning",
+        "proceedings of the international conference on machine learning",
+    ]),
+    ("NeurIPS", [
+        "neurips",
+        "neural information processing systems",
+        "nips",
+        "advances in neural information processing systems",
+        "conference on neural information processing systems",
+    ]),
+    ("AAAI", [
+        "aaai",
+        "association for the advancement of artificial intelligence",
+        "proceedings of the aaai conference on artificial intelligence",
+        "aaai conference on artificial intelligence",
+    ]),
 
     # CV
-    ("CVPR", ["cvpr", "computer vision and pattern recognition"]),
-    ("ICCV", ["iccv", "international conference on computer vision"]),
-    ("ECCV", ["eccv", "european conference on computer vision"]),
+    ("CVPR", [
+        "cvpr",
+        "computer vision and pattern recognition",
+        "ieee cvpr",
+        "conference on computer vision and pattern recognition",
+        "proceedings of the ieee cvpr",
+    ]),
+    ("ICCV", [
+        "iccv",
+        "international conference on computer vision",
+        "proceedings of the ieee international conference on computer vision",
+    ]),
+    ("ECCV", [
+        "eccv",
+        "european conference on computer vision",
+        "proceedings of the european conference on computer vision",
+    ]),
 
     # NLP
-    ("ACL", ["annual meeting of the association for computational linguistics"]),
-    ("EMNLP", ["emnlp", "empirical methods in natural language processing"]),
-    ("NAACL", ["naacl", "north american chapter"]),
+    ("ACL", [
+        "acl",
+        "annual meeting of the association for computational linguistics",
+        "proceedings of the annual meeting of the association for computational linguistics",
+        "findings of the association for computational linguistics acl",
+        "acl main conference",
+        "association for computational linguistics volume 1 long papers",
+    ]),
+    ("EMNLP", [
+        "emnlp",
+        "empirical methods in natural language processing",
+        "conference on empirical methods in natural language processing",
+        "findings of the association for computational linguistics emnlp",
+        "proceedings of the conference on empirical methods in natural language processing",
+    ]),
+    ("NAACL", [
+        "naacl",
+        "north american chapter",
+        "conference of the north american chapter of the association for computational linguistics",
+        "conference of the nations of the americas chapter of the association for computational linguistics",
+        "human language technologies",
+        "findings of the association for computational linguistics naacl",
+        "findings of naacl",
+    ]),
 
     # Data / IR
-    ("KDD", ["kdd", "knowledge discovery and data mining"]),
-    ("WWW", ["www", "world wide web"]),
-    ("SIGIR", ["sigir", "information retrieval"]),
+    ("KDD", [
+        "kdd",
+        "knowledge discovery and data mining",
+        "acm sigkdd conference on knowledge discovery and data mining",
+        "proceedings of the acm sigkdd conference on knowledge discovery and data mining",
+    ]),
+    ("WWW", [
+        "www",
+        "world wide web",
+        "the web conference",
+        "acm web conference",
+        "proceedings of the web conference",
+    ]),
+    ("SIGIR", [
+        "sigir",
+        "acm sigir conference",
+        "international acm sigir conference on research and development in information retrieval",
+        "proceedings of the international acm sigir conference on research and development in information retrieval",
+    ]),
 
     # Systems / Robotics / Others
     ("CoRL", ["corl", "conference on robot learning"]),
@@ -83,8 +153,8 @@ def match_venue(
     """Check if a paper's venue matches the CS top whitelist.
 
     Args:
-        venue_name: The ``venue`` string from Semantic Scholar.
-        publication_venue: The ``publicationVenue`` dict from S2 (may have ``name``).
+        venue_name: Venue/source name string from any academic API response.
+        publication_venue: Optional structured venue dict (may contain ``name``).
 
     Returns:
         Canonical venue name (e.g. "ICLR") if matched, else None.

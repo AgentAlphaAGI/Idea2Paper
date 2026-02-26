@@ -43,6 +43,7 @@ class PaperPattern:
     summary: Dict = field(default_factory=dict)
     exemplar_count: int = 1
     exemplar_paper_ids: List[str] = field(default_factory=list)
+    citation_count: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -64,6 +65,7 @@ class PaperPattern:
             "venue_norm": self.venue_norm,
             "year": self.year,
             "url": self.url,
+            "citation_count": self.citation_count,
         }
 
 
@@ -399,6 +401,7 @@ def _llm_result_to_pattern(paper: PaperStub, extracted: dict) -> PaperPattern:
         summary=summary,
         exemplar_count=1,
         exemplar_paper_ids=[paper.paper_id],
+        citation_count=getattr(paper, "citation_count", 0) or 0,
     )
 
 

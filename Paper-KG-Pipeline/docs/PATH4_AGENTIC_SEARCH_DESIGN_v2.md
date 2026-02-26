@@ -12,7 +12,7 @@
 **Agentic Search（第四路）是一条完全独立的"联网检索 → pattern 抽取 → 排序"链路。**
 它的核心思路是：
 
-1. 根据用户 idea 自动生成检索 query，通过学术 API（Semantic Scholar）在 **CS 顶会白名单**
+1. 根据用户 idea 自动生成检索 query，通过学术 API（OpenAlex）在 **CS 顶会白名单**
    范围内搜索近期论文；不在白名单中的论文直接丢弃，不参与后续任何环节。
 2. 对搜到的白名单内论文，去除 KG 中已有的存量，仅保留"KG 外的新论文"。
 3. 对这些新论文用 LLM 抽取 paper-level pattern（problem / gap / solution / story），
@@ -38,7 +38,7 @@ user_idea
 └────┬─────┘
      │
      ▼
-┌──────────┐  Semantic Scholar API
+┌──────────┐  OpenAlex Works API
 │ Searcher │  ◆ 硬过滤：仅保留 venue ∈ 白名单 的论文（其余直接丢弃）
 │          │  ◆ 去重：跨 query 去重 + 与 KG 存量 title 去重
 └────┬─────┘
@@ -73,8 +73,7 @@ user_idea
 
 ### 1.2 Searcher
 
-- 对每条 query 调用 Semantic Scholar `/paper/search`，限制 `fieldsOfStudy=Computer Science`、
-  `year=近1-2年`
+- 对每条 query 调用 OpenAlex `/works`，限制 `publication_year=近1-2年`
 - **Venue 硬过滤**：对返回的每篇论文检查其 `venue` / `publicationVenue` 是否命中白名单；
   **不命中者直接丢弃**，不给分、不参与后续任何环节
 - 跨 query 按 paperId 去重
@@ -239,7 +238,7 @@ for pattern_id, rank in ranked_p4:
 | Venue 过滤策略 | **硬过滤**（不在白名单 → 直接丢弃） | 减少噪声、控制质量，CS 顶会已足够覆盖高质量信号 |
 | 两条通路的融合方式 | **Rank-based (RRF)**，不做原始分数加权 | 两条通路分数量纲不同，rank 融合更公平、更鲁棒 |
 | Path4 内部排序 | 独立维度（relevance + recency + cluster_size） | Path4 没有 KG 的质量/边权信号，不应与三路共用打分体系 |
-| 数据源 | Semantic Scholar（MVP） | 免费、有 abstract、venue/year 过滤好用 |
+| 数据源 | OpenAlex（MVP） | 免费稳定、有 abstract/year/venue/citation 信号 |
 | pattern 输出格式 | 对齐 `nodes_pattern.json` | 下游 packaging/critic 不需要改动 |
 | 失败策略 | Path4 任何故障 → 返回空，不阻塞其他三路 | 增量功能不应降低系统稳定性 |
 
@@ -271,6 +270,6 @@ PATH4_CACHE_TTL_DAYS = 7
 
 | 阶段 | 内容 | 周期 |
 |------|------|------|
-| **Phase 1 (MVP)** | Planner + Searcher(S2, 白名单硬过滤) + Extractor + Clusterer + 内部排序 + RRF 合并 | 1 周 |
+| **Phase 1 (MVP)** | Planner + Searcher(OpenAlex, 白名单硬过滤) + Extractor + Clusterer + 内部排序 + RRF 合并 | 1 周 |
 | **Phase 2** | Backtrack 机制、多数据源、IdeaPackager evidence fallback、前端展示 | 2 周 |
 | **Phase 3** | PDF 深抽取、HDBSCAN、增量缓存、Path4 采纳率统计 | 持续 |

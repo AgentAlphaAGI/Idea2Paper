@@ -1,11 +1,12 @@
 """
-Path4 Agentic Research Pipeline — Planner → Searcher → Backtrack → Extractor
+Path4 Agentic Research Pipeline — Planner → Searcher → Backtrack → Extractor → Ranker
 
 端到端编排：
   1. Planner: 从 user_idea 生成 5-8 条检索 query
-  2. Searcher: 对每条 query 调 Semantic Scholar + 白名单硬过滤
+  2. Searcher: 对每条 query 调 OpenAlex + 白名单硬过滤
   3. Backtrack: 若白名单过滤后论文 < 阈值, Planner 再生成宽泛 query 重搜
   4. Extractor: 从论文 abstract 抽取 paper-level pattern (对齐 nodes_pattern.json)
+  5. Ranker: 对 pattern 做内部排序并写入 rank_scores
 
 参考: Gemini / OpenAI Deep Research 的 planning → search → gap → re-search 循环
 """
@@ -33,6 +34,7 @@ from idea2paper.infra.run_context import get_logger
 from idea2paper.agentic_search.planner import AgenticPlanner, PlannerOutput, QuerySpec
 from idea2paper.agentic_search.searcher import AgenticSearcher, SearcherOutput, PaperStub
 from idea2paper.agentic_search.extractor import AgenticExtractor, ExtractorOutput, PaperPattern
+from idea2paper.agentic_search.ranker import Path4Ranker
 
 
 @dataclass
@@ -45,6 +47,7 @@ class AgenticResearchResult:
     backtrack_queries: List[QuerySpec] = field(default_factory=list)
     backtrack_searcher_output: Optional[SearcherOutput] = None
     extractor_output: Optional[ExtractorOutput] = None
+    ranked_patterns: List[Dict] = field(default_factory=list)
     total_time_sec: float = 0.0
 
     @property
@@ -70,6 +73,11 @@ class AgenticResearchResult:
             return self.extractor_output.patterns
         return []
 
+    @property
+    def all_ranked_patterns(self) -> List[Dict]:
+        """All ranked patterns with rank_scores."""
+        return self.ranked_patterns
+
     def to_dict(self) -> dict:
         d = {
             "user_idea": self.user_idea,
@@ -78,6 +86,7 @@ class AgenticResearchResult:
             "backtrack_used": self.backtrack_used,
             "total_papers": len(self.all_papers),
             "total_patterns": len(self.all_patterns),
+            "total_ranked_patterns": len(self.all_ranked_patterns),
             "total_time_sec": round(self.total_time_sec, 2),
         }
         if self.backtrack_used:
@@ -86,6 +95,8 @@ class AgenticResearchResult:
                 d["backtrack_searcher"] = self.backtrack_searcher_output.to_dict()
         if self.extractor_output:
             d["extractor"] = self.extractor_output.to_dict()
+        if self.ranked_patterns:
+            d["ranked_patterns"] = self.ranked_patterns
         return d
 
     def summary(self) -> str:
@@ -102,6 +113,7 @@ class AgenticResearchResult:
             + (f" + {len(self.backtrack_queries)} 条 backtrack" if self.backtrack_used else ""),
             f"   论文总数: {len(papers)} 篇 (白名单内, 去重后)",
             f"   Pattern 数: {len(self.all_patterns)} 条",
+            f"   Ranked Pattern 数: {len(self.all_ranked_patterns)} 条",
             f"   会议分布: {venue_dist}",
             f"   耗时: {self.total_time_sec:.1f}s",
         ]
@@ -109,7 +121,7 @@ class AgenticResearchResult:
 
 
 class AgenticResearchPipeline:
-    """Orchestrate Planner → Searcher → (Backtrack) → Extractor for Path4.
+    """Orchestrate Planner → Searcher → (Backtrack) → Extractor → Ranker for Path4.
 
     Usage:
         pipeline = AgenticResearchPipeline()
@@ -122,12 +134,12 @@ class AgenticResearchPipeline:
     def __init__(
         self,
         logger=None,
-        s2_api_key: Optional[str] = None,
     ):
         self.logger = logger or get_logger()
         self._planner = AgenticPlanner(logger=self.logger)
-        self._searcher = AgenticSearcher(logger=self.logger, s2_api_key=s2_api_key)
+        self._searcher = AgenticSearcher(logger=self.logger)
         self._extractor = AgenticExtractor(logger=self.logger)
+        self._ranker = Path4Ranker(logger=self.logger)
         self._backtrack_enable = bool(PipelineConfig.PATH4_BACKTRACK_ENABLE)
         self._backtrack_threshold = int(PipelineConfig.PATH4_BACKTRACK_THRESHOLD)
         self._backtrack_extra = int(PipelineConfig.PATH4_BACKTRACK_EXTRA_QUERIES)
@@ -200,6 +212,15 @@ class AgenticResearchPipeline:
         else:
             print("\n  ⏭️  无论文可抽取, 跳过 Extractor")
 
+        # ── Phase 5: Rank patterns ──
+        ranked_patterns: List[Dict] = []
+        if extractor_output and extractor_output.patterns:
+            print("\n📊 [Path4 Pipeline] 执行内部排序 (Ranker)...")
+            pattern_dicts = [p.to_nodes_pattern_format() for p in extractor_output.patterns]
+            ranked_patterns = self._ranker.rank(pattern_dicts, user_idea)
+        else:
+            print("\n  ⏭️  无 pattern 可排序, 跳过 Ranker")
+
         total_time = time.time() - t0
 
         result = AgenticResearchResult(
@@ -210,6 +231,7 @@ class AgenticResearchPipeline:
             backtrack_queries=bt_queries,
             backtrack_searcher_output=bt_searcher_output,
             extractor_output=extractor_output,
+            ranked_patterns=ranked_patterns,
             total_time_sec=total_time,
         )
 
@@ -222,6 +244,7 @@ class AgenticResearchPipeline:
             self.logger.log_event("path4_pipeline_done", {
                 "total_papers": len(result.all_papers),
                 "total_patterns": len(result.all_patterns),
+                "total_ranked_patterns": len(result.all_ranked_patterns),
                 "backtrack_used": backtrack_used,
                 "total_time_sec": round(total_time, 2),
             })
@@ -230,7 +253,7 @@ class AgenticResearchPipeline:
 
     @staticmethod
     def save_patterns(result: AgenticResearchResult, out_path: Optional[str] = None) -> Optional[str]:
-        """Save extracted patterns to JSON (nodes_pattern.json compatible).
+        """Save ranked patterns to JSON (nodes_pattern.json compatible + rank_scores).
 
         Args:
             result: Pipeline result.
@@ -239,7 +262,7 @@ class AgenticResearchPipeline:
         Returns:
             Path of the saved file, or None if no patterns to save.
         """
-        patterns = result.all_patterns
+        patterns = result.all_ranked_patterns
         if not patterns:
             return None
 
@@ -247,10 +270,59 @@ class AgenticResearchPipeline:
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
             out_path = str(OUTPUT_DIR / "path4_patterns.json")
 
-        data = [p.to_nodes_pattern_format() for p in patterns]
+        data = patterns
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"\n📝 Pattern 已保存: {out_path} ({len(data)} 条)")
+        print(f"\n📝 Ranked Pattern 已保存: {out_path} ({len(data)} 条)")
+        return out_path
+
+    @staticmethod
+    def save_venue_debug(result: AgenticResearchResult, out_path: Optional[str] = None) -> Optional[str]:
+        """Save venue matching diagnostics for each query.
+
+        Source data comes from searcher_output.stats.per_query[*].venue_debug.
+        Includes both initial search and optional backtrack search.
+        """
+        per_query_debug: List[Dict] = []
+
+        def _collect_from_searcher(searcher_output: Optional[SearcherOutput], phase: str) -> None:
+            if not searcher_output:
+                return
+            per_query = (searcher_output.stats or {}).get("per_query", [])
+            for i, item in enumerate(per_query, 1):
+                per_query_debug.append({
+                    "phase": phase,
+                    "query_idx": i,
+                    "query": item.get("query", ""),
+                    "intent": item.get("intent", ""),
+                    "raw_count": item.get("raw_count", 0),
+                    "whitelist_count": item.get("whitelist_count", 0),
+                    "new_count": item.get("new_count", 0),
+                    "venue_debug": item.get("venue_debug", {}),
+                })
+
+        _collect_from_searcher(result.searcher_output, "initial")
+        _collect_from_searcher(result.backtrack_searcher_output, "backtrack")
+
+        if not per_query_debug:
+            return None
+
+        if out_path is None:
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            out_path = str(OUTPUT_DIR / "path4_venue_debug.json")
+
+        payload = {
+            "user_idea": result.user_idea,
+            "query_debug": per_query_debug,
+            "summary": {
+                "total_queries": len(per_query_debug),
+                "initial_queries": sum(1 for x in per_query_debug if x["phase"] == "initial"),
+                "backtrack_queries": sum(1 for x in per_query_debug if x["phase"] == "backtrack"),
+            },
+        }
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        print(f"📝 Venue Debug 已保存: {out_path} ({len(per_query_debug)} 条 query 记录)")
         return out_path
 
 
@@ -264,7 +336,7 @@ if __name__ == "__main__":
     import sys
 
     parser = argparse.ArgumentParser(
-        description="Path4 Agentic Search — Planner + Searcher 调试入口",
+        description="Path4 Agentic Search — Planner + Searcher + Extractor + Ranker 调试入口",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -274,8 +346,8 @@ if __name__ == "__main__":
   # 传 idea_brief (JSON 文件)
   python pipeline.py "my idea text" --brief path/to/brief.json
 
-  # 指定 Semantic Scholar API key，结果保存到文件
-  python pipeline.py "my idea" --s2-key sk-xxx --out /tmp/path4_result.json
+  # 跑完整链路并输出完整结果
+  python pipeline.py "my idea" --out /tmp/path4_result.json
         """,
     )
     parser.add_argument("idea", help="Research idea text (可中文可英文)")
@@ -284,12 +356,6 @@ if __name__ == "__main__":
         metavar="JSON_FILE",
         default=None,
         help="idea_brief JSON 文件路径 (可选)，格式见设计文档",
-    )
-    parser.add_argument(
-        "--s2-key",
-        metavar="KEY",
-        default=None,
-        help="Semantic Scholar API key (可选，未填则使用匿名限速 1 req/s)",
     )
     parser.add_argument(
         "--out",
@@ -310,7 +376,7 @@ if __name__ == "__main__":
             print(f"[CLI] ⚠️  加载 --brief 文件失败: {e}", file=sys.stderr)
 
     # Run pipeline
-    pipeline = AgenticResearchPipeline(s2_api_key=args.s2_key)
+    pipeline = AgenticResearchPipeline()
     result = pipeline.run(args.idea, idea_brief=idea_brief)
 
     # Print per-paper detail
@@ -337,14 +403,16 @@ if __name__ == "__main__":
             if stories:
                 print(f"       story:   {stories[0][:100]}...")
 
-    # Save patterns to nodes_pattern.json-compatible file
+    # Save ranked patterns (includes rank_scores)
     AgenticResearchPipeline.save_patterns(result)
+    AgenticResearchPipeline.save_venue_debug(result)
 
     # Save full result to file
     if args.out:
         out_data = result.to_dict()
         out_data["papers_detail"] = [p.to_dict() for p in result.all_papers]
         out_data["patterns_detail"] = [p.to_nodes_pattern_format() for p in result.all_patterns]
+        out_data["ranked_patterns_detail"] = result.all_ranked_patterns
         try:
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(out_data, f, ensure_ascii=False, indent=2)

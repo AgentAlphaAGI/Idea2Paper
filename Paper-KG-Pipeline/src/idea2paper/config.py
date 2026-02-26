@@ -701,6 +701,18 @@ class PipelineConfig:
         cast=int,
         cfg_path=["path4", "search_limit_per_query"],
     )
+    PATH4_SEARCH_MIN_WHITELIST_PER_QUERY = _get(
+        "I2P_PATH4_SEARCH_MIN_WHITELIST_PER_QUERY",
+        5,
+        cast=int,
+        cfg_path=["path4", "search_min_whitelist_per_query"],
+    )
+    PATH4_SEARCH_MAX_PAGES_PER_QUERY = _get(
+        "I2P_PATH4_SEARCH_MAX_PAGES_PER_QUERY",
+        3,
+        cast=int,
+        cfg_path=["path4", "search_max_pages_per_query"],
+    )
     PATH4_VENUE_WHITELIST_MODE = _get(
         "I2P_PATH4_VENUE_WHITELIST_MODE",
         "cs_top",
