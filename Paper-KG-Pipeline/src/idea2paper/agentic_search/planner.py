@@ -234,9 +234,9 @@ class AgenticPlanner:
 
     def __init__(self, logger=None):
         self.logger = logger or get_logger()
-        self._max_queries = int(PipelineConfig.PATH4_MAX_QUERIES)
-        self._final_queries = int(PipelineConfig.PATH4_FINAL_QUERIES)
-        self._temperature = float(PipelineConfig.LLM_TEMPERATURE_PATH4_PLANNER)
+        self._max_queries = int(PipelineConfig.AGENTIC_SEARCH_MAX_QUERIES)
+        self._final_queries = int(PipelineConfig.AGENTIC_SEARCH_FINAL_QUERIES)
+        self._temperature = float(PipelineConfig.LLM_TEMPERATURE_AGENTIC_SEARCH_PLANNER)
 
     def plan(
         self,
@@ -311,7 +311,7 @@ class AgenticPlanner:
         )
 
         if self.logger:
-            self.logger.log_event("path4_planner_done", {
+            self.logger.log_event("agenticSearch_planner_done", {
                 "candidate_count": len(candidates),
                 "final_count": len(final),
                 "anchors": anchors,

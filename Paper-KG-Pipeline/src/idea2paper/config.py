@@ -77,6 +77,29 @@ def _get(key: str, default, cast=None, cfg_path: list | None = None):
         value = cfg_val if cfg_val is not None else default
     return _cast(value, cast) if cast else value
 
+
+def _get_with_legacy(
+    key: str,
+    legacy_key: str,
+    default,
+    cast=None,
+    cfg_path: list | None = None,
+    legacy_cfg_path: list | None = None,
+):
+    env_val = os.getenv(key)
+    if env_val is None and legacy_key:
+        env_val = os.getenv(legacy_key)
+
+    if env_val is not None:
+        value = env_val
+    else:
+        cfg_val = _get_from_cfg(_USER_CONFIG, cfg_path)
+        if cfg_val is None and legacy_cfg_path:
+            cfg_val = _get_from_cfg(_USER_CONFIG, legacy_cfg_path)
+        value = cfg_val if cfg_val is not None else default
+
+    return _cast(value, cast) if cast else value
+
 # ===================== LLM API 配置 =====================
 # Secret: only from env/.env (do not put in i2p_config.json)
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
@@ -342,6 +365,21 @@ class PipelineConfig:
         cast=str,
         cfg_path=["pass", "fallback"],
     )  # global|fixed
+
+    # Per-role 最低分硬约束：即使整体 avg 通过，单个 role 低于此值也视为 fail
+    # 设为 0.0 表示不启用（默认不限制）；设为 5.0 则 Novelty < 5 强制不通过
+    PASS_MIN_NOVELTY_SCORE = _get(
+        "I2P_PASS_MIN_NOVELTY_SCORE",
+        5.0,
+        cast=float,
+        cfg_path=["pass", "min_novelty_score"],
+    )  # Novelty 单项最低分；0.0 = 不限制
+    PASS_MIN_METHODOLOGY_SCORE = _get(
+        "I2P_PASS_MIN_METHODOLOGY_SCORE",
+        0.0,
+        cast=float,
+        cfg_path=["pass", "min_methodology_score"],
+    )  # Methodology 单项最低分；0.0 = 不限制
 
     # LLM Temperature (per stage; defaults preserve current behavior)
     LLM_TEMPERATURE_DEFAULT = _get(
@@ -670,93 +708,195 @@ class PipelineConfig:
         cfg_path=["critic", "json_retries"],
     )
 
-    # ===================== Path4: Agentic Search 配置 =====================
-    PATH4_ENABLE = _get(
+    # ===================== Agentic Search 配置（兼容旧 PATH4 命名） =====================
+    AGENTIC_SEARCH_ENABLE = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_ENABLE",
         "I2P_PATH4_ENABLE",
         False,
         cast=bool,
-        cfg_path=["path4", "enable"],
+        cfg_path=["agenticSearch", "enable"],
+        legacy_cfg_path=["path4", "enable"],
     )
-    PATH4_MAX_QUERIES = _get(
+    AGENTIC_SEARCH_MAX_QUERIES = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_MAX_QUERIES",
         "I2P_PATH4_MAX_QUERIES",
         8,
         cast=int,
-        cfg_path=["path4", "max_queries"],
+        cfg_path=["agenticSearch", "max_queries"],
+        legacy_cfg_path=["path4", "max_queries"],
     )
-    PATH4_FINAL_QUERIES = _get(
+    AGENTIC_SEARCH_FINAL_QUERIES = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_FINAL_QUERIES",
         "I2P_PATH4_FINAL_QUERIES",
         5,
         cast=int,
-        cfg_path=["path4", "final_queries"],
+        cfg_path=["agenticSearch", "final_queries"],
+        legacy_cfg_path=["path4", "final_queries"],
     )
-    PATH4_YEAR_RANGE = _get(
+    AGENTIC_SEARCH_YEAR_RANGE = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_YEAR_RANGE",
         "I2P_PATH4_YEAR_RANGE",
         "2024-2026",
         cast=str,
-        cfg_path=["path4", "year_range"],
+        cfg_path=["agenticSearch", "year_range"],
+        legacy_cfg_path=["path4", "year_range"],
     )
-    PATH4_SEARCH_LIMIT_PER_QUERY = _get(
+    AGENTIC_SEARCH_LIMIT_PER_QUERY = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_LIMIT_PER_QUERY",
         "I2P_PATH4_SEARCH_LIMIT_PER_QUERY",
         50,
         cast=int,
-        cfg_path=["path4", "search_limit_per_query"],
+        cfg_path=["agenticSearch", "search_limit_per_query"],
+        legacy_cfg_path=["path4", "search_limit_per_query"],
     )
-    PATH4_SEARCH_MIN_WHITELIST_PER_QUERY = _get(
+    AGENTIC_SEARCH_MIN_WHITELIST_PER_QUERY = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_MIN_WHITELIST_PER_QUERY",
         "I2P_PATH4_SEARCH_MIN_WHITELIST_PER_QUERY",
         5,
         cast=int,
-        cfg_path=["path4", "search_min_whitelist_per_query"],
+        cfg_path=["agenticSearch", "search_min_whitelist_per_query"],
+        legacy_cfg_path=["path4", "search_min_whitelist_per_query"],
     )
-    PATH4_SEARCH_MAX_PAGES_PER_QUERY = _get(
+    AGENTIC_SEARCH_MAX_PAGES_PER_QUERY = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_MAX_PAGES_PER_QUERY",
         "I2P_PATH4_SEARCH_MAX_PAGES_PER_QUERY",
         3,
         cast=int,
-        cfg_path=["path4", "search_max_pages_per_query"],
+        cfg_path=["agenticSearch", "search_max_pages_per_query"],
+        legacy_cfg_path=["path4", "search_max_pages_per_query"],
     )
-    PATH4_VENUE_WHITELIST_MODE = _get(
+    AGENTIC_SEARCH_VENUE_WHITELIST_MODE = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_VENUE_WHITELIST_MODE",
         "I2P_PATH4_VENUE_WHITELIST_MODE",
         "cs_top",
         cast=str,
-        cfg_path=["path4", "venue_whitelist_mode"],
+        cfg_path=["agenticSearch", "venue_whitelist_mode"],
+        legacy_cfg_path=["path4", "venue_whitelist_mode"],
     )
-    LLM_TEMPERATURE_PATH4_PLANNER = _get(
+    LLM_TEMPERATURE_AGENTIC_SEARCH_PLANNER = _get_with_legacy(
+        "I2P_LLM_TEMPERATURE_AGENTIC_SEARCH_PLANNER",
         "I2P_LLM_TEMPERATURE_PATH4_PLANNER",
         0.0,
         cast=float,
-        cfg_path=["llm", "temperature", "path4_planner"],
+        cfg_path=["llm", "temperature", "agentic_search_planner"],
+        legacy_cfg_path=["llm", "temperature", "path4_planner"],
     )
-    PATH4_BACKTRACK_ENABLE = _get(
+    AGENTIC_SEARCH_BACKTRACK_ENABLE = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_BACKTRACK_ENABLE",
         "I2P_PATH4_BACKTRACK_ENABLE",
         True,
         cast=bool,
-        cfg_path=["path4", "backtrack_enable"],
+        cfg_path=["agenticSearch", "backtrack_enable"],
+        legacy_cfg_path=["path4", "backtrack_enable"],
     )
-    PATH4_BACKTRACK_THRESHOLD = _get(
+    AGENTIC_SEARCH_BACKTRACK_THRESHOLD = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_BACKTRACK_THRESHOLD",
         "I2P_PATH4_BACKTRACK_THRESHOLD",
         5,
         cast=int,
-        cfg_path=["path4", "backtrack_threshold"],
+        cfg_path=["agenticSearch", "backtrack_threshold"],
+        legacy_cfg_path=["path4", "backtrack_threshold"],
     )
-    PATH4_BACKTRACK_EXTRA_QUERIES = _get(
+    AGENTIC_SEARCH_BACKTRACK_EXTRA_QUERIES = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_BACKTRACK_EXTRA_QUERIES",
         "I2P_PATH4_BACKTRACK_EXTRA_QUERIES",
         3,
         cast=int,
-        cfg_path=["path4", "backtrack_extra_queries"],
+        cfg_path=["agenticSearch", "backtrack_extra_queries"],
+        legacy_cfg_path=["path4", "backtrack_extra_queries"],
     )
 
-    # Extractor
-    PATH4_EXTRACTOR_BATCH_SIZE = _get(
+    # Agentic Search Extractor
+    AGENTIC_SEARCH_EXTRACTOR_BATCH_SIZE = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_EXTRACTOR_BATCH_SIZE",
         "I2P_PATH4_EXTRACTOR_BATCH_SIZE",
         5,
         cast=int,
-        cfg_path=["path4", "extractor_batch_size"],
+        cfg_path=["agenticSearch", "extractor_batch_size"],
+        legacy_cfg_path=["path4", "extractor_batch_size"],
     )
-    LLM_TEMPERATURE_PATH4_EXTRACTOR = _get(
+    LLM_TEMPERATURE_AGENTIC_SEARCH_EXTRACTOR = _get_with_legacy(
+        "I2P_LLM_TEMPERATURE_AGENTIC_SEARCH_EXTRACTOR",
         "I2P_LLM_TEMPERATURE_PATH4_EXTRACTOR",
         0.2,
         cast=float,
-        cfg_path=["llm", "temperature", "path4_extractor"],
+        cfg_path=["llm", "temperature", "agentic_search_extractor"],
+        legacy_cfg_path=["llm", "temperature", "path4_extractor"],
     )
+
+    # Agentic Search fusion
+    AGENTIC_SEARCH_RRF_ENABLE = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_ENABLE",
+        "I2P_PATH4_RRF_ENABLE",
+        True,
+        cast=bool,
+        cfg_path=["agenticSearch", "rrf_enable"],
+        legacy_cfg_path=["path4", "rrf_enable"],
+    )
+    AGENTIC_SEARCH_RRF_K = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_K",
+        "I2P_PATH4_RRF_K",
+        60,
+        cast=int,
+        cfg_path=["agenticSearch", "rrf_k"],
+        legacy_cfg_path=["path4", "rrf_k"],
+    )
+    AGENTIC_SEARCH_RRF_WEIGHT_OLD = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_WEIGHT_OLD",
+        "I2P_PATH4_RRF_WEIGHT_OLD",
+        0.7,
+        cast=float,
+        cfg_path=["agenticSearch", "rrf_weight_old"],
+        legacy_cfg_path=["path4", "rrf_weight_old"],
+    )
+    AGENTIC_SEARCH_RRF_WEIGHT_AGENTIC = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_WEIGHT_AGENTIC",
+        "I2P_PATH4_RRF_WEIGHT",
+        0.3,
+        cast=float,
+        cfg_path=["agenticSearch", "rrf_weight_agentic"],
+        legacy_cfg_path=["path4", "rrf_weight"],
+    )
+    AGENTIC_SEARCH_RRF_TOP_N_OLD = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_TOP_N_OLD",
+        "I2P_PATH4_RRF_TOP_N_OLD",
+        10,
+        cast=int,
+        cfg_path=["agenticSearch", "rrf_top_n_old"],
+        legacy_cfg_path=["path4", "rrf_top_n_old"],
+    )
+    AGENTIC_SEARCH_RRF_TOP_M = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_TOP_M",
+        "I2P_PATH4_TOP_M",
+        8,
+        cast=int,
+        cfg_path=["agenticSearch", "rrf_top_m_agentic"],
+        legacy_cfg_path=["path4", "top_m"],
+    )
+    AGENTIC_SEARCH_RRF_FINAL_TOP_K = _get_with_legacy(
+        "I2P_AGENTIC_SEARCH_RRF_FINAL_TOP_K",
+        "I2P_PATH4_RRF_FINAL_TOP_K",
+        10,
+        cast=int,
+        cfg_path=["agenticSearch", "rrf_final_top_k"],
+        legacy_cfg_path=["path4", "rrf_final_top_k"],
+    )
+
+    # Backward-compatible aliases (keep existing code working)
+    PATH4_ENABLE = AGENTIC_SEARCH_ENABLE
+    PATH4_MAX_QUERIES = AGENTIC_SEARCH_MAX_QUERIES
+    PATH4_FINAL_QUERIES = AGENTIC_SEARCH_FINAL_QUERIES
+    PATH4_YEAR_RANGE = AGENTIC_SEARCH_YEAR_RANGE
+    PATH4_SEARCH_LIMIT_PER_QUERY = AGENTIC_SEARCH_LIMIT_PER_QUERY
+    PATH4_SEARCH_MIN_WHITELIST_PER_QUERY = AGENTIC_SEARCH_MIN_WHITELIST_PER_QUERY
+    PATH4_SEARCH_MAX_PAGES_PER_QUERY = AGENTIC_SEARCH_MAX_PAGES_PER_QUERY
+    PATH4_VENUE_WHITELIST_MODE = AGENTIC_SEARCH_VENUE_WHITELIST_MODE
+    LLM_TEMPERATURE_PATH4_PLANNER = LLM_TEMPERATURE_AGENTIC_SEARCH_PLANNER
+    PATH4_BACKTRACK_ENABLE = AGENTIC_SEARCH_BACKTRACK_ENABLE
+    PATH4_BACKTRACK_THRESHOLD = AGENTIC_SEARCH_BACKTRACK_THRESHOLD
+    PATH4_BACKTRACK_EXTRA_QUERIES = AGENTIC_SEARCH_BACKTRACK_EXTRA_QUERIES
+    PATH4_EXTRACTOR_BATCH_SIZE = AGENTIC_SEARCH_EXTRACTOR_BATCH_SIZE
+    LLM_TEMPERATURE_PATH4_EXTRACTOR = LLM_TEMPERATURE_AGENTIC_SEARCH_EXTRACTOR
 
     # Blind Judge tau config
     JUDGE_TAU_PATH = _get(

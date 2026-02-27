@@ -232,10 +232,10 @@ class AgenticSearcher:
 
     def __init__(self, logger=None):
         self.logger = logger or get_logger()
-        self._year_range = str(PipelineConfig.PATH4_YEAR_RANGE)
-        self._limit_per_query = int(PipelineConfig.PATH4_SEARCH_LIMIT_PER_QUERY)
-        self._min_whitelist_per_query = int(PipelineConfig.PATH4_SEARCH_MIN_WHITELIST_PER_QUERY)
-        self._max_pages_per_query = int(PipelineConfig.PATH4_SEARCH_MAX_PAGES_PER_QUERY)
+        self._year_range = str(PipelineConfig.AGENTIC_SEARCH_YEAR_RANGE)
+        self._limit_per_query = int(PipelineConfig.AGENTIC_SEARCH_LIMIT_PER_QUERY)
+        self._min_whitelist_per_query = int(PipelineConfig.AGENTIC_SEARCH_MIN_WHITELIST_PER_QUERY)
+        self._max_pages_per_query = int(PipelineConfig.AGENTIC_SEARCH_MAX_PAGES_PER_QUERY)
         # OpenAlex polite pool is permissive, keep a small interval for safety.
         self._request_interval_sec = 0.5
 
@@ -322,7 +322,7 @@ class AgenticSearcher:
         stats["total_after_dedup"] = len(papers_list)
 
         if self.logger:
-            self.logger.log_event("path4_searcher_done", {
+            self.logger.log_event("agenticSearch_searcher_done", {
                 "provider": "openalex",
                 "total_raw": stats["total_raw"],
                 "total_after_whitelist": stats["total_after_whitelist"],

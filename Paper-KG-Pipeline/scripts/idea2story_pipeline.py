@@ -12,10 +12,10 @@ Idea2Story Pipeline - 从用户 Idea 到可发表的 Paper Story
 """
 
 import json
-import os
 import sys
 import time
 import uuid
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,6 +74,11 @@ try:
     from tools.build_novelty_index import build_novelty_index
     from tools.build_recall_index import build_recall_index
     from idea2paper.application.idea_packaging import IdeaPackager
+    from idea2paper.agentic_search.pipeline import AgenticResearchPipeline
+    from idea2paper.recall.agentic_search_fusion import (
+        WeightedRRFConfig,
+        fuse_old_and_agentic_search,
+    )
 except ImportError:
     # 如果直接运行脚本，尝试添加当前目录到 path
     import os
@@ -117,6 +122,11 @@ except ImportError:
     from tools.build_novelty_index import build_novelty_index
     from tools.build_recall_index import build_recall_index
     from idea2paper.application.idea_packaging import IdeaPackager
+    from idea2paper.agentic_search.pipeline import AgenticResearchPipeline
+    from idea2paper.recall.agentic_search_fusion import (
+        WeightedRRFConfig,
+        fuse_old_and_agentic_search,
+    )
 
 
 def _log_event(logger, event_type: str, payload: dict):
@@ -478,8 +488,64 @@ def main():
                 idea_brief_best = None
                 retrieval_query_best = raw_user_idea
 
-        recall_results = recall_system.recall(retrieval_query_best, verbose=True)
+        recall_results = recall_system.recall(
+            retrieval_query_best,
+            verbose=True,
+            raw_idea=raw_user_idea,  # 传入原始短Idea，供路径3的Jaccard/Embedding匹配使用
+        )
         recall_audit = getattr(recall_system, "last_audit", None)
+
+        if PipelineConfig.AGENTIC_SEARCH_ENABLE:
+            print("\n🤖 运行 Agentic Search 召回...")
+            agentic_pipeline = AgenticResearchPipeline(logger=logger)
+            try:
+                agentic_result = agentic_pipeline.run(raw_user_idea, idea_brief=idea_brief_best)
+                agentic_ranked = agentic_result.all_ranked_patterns
+
+                # Persist diagnostics with clearer naming.
+                AgenticResearchPipeline.save_patterns(
+                    agentic_result,
+                    out_path=str(OUTPUT_DIR / "agenticSearch_patterns.json"),
+                )
+                AgenticResearchPipeline.save_venue_debug(
+                    agentic_result,
+                    out_path=str(OUTPUT_DIR / "agenticSearch_venue_debug.json"),
+                )
+
+                if agentic_ranked:
+                    old_count = len(recall_results)
+                    fusion_cfg = WeightedRRFConfig(
+                        k=int(PipelineConfig.AGENTIC_SEARCH_RRF_K),
+                        weight_old=float(PipelineConfig.AGENTIC_SEARCH_RRF_WEIGHT_OLD),
+                        weight_agentic=float(PipelineConfig.AGENTIC_SEARCH_RRF_WEIGHT_AGENTIC),
+                        top_n_old=int(PipelineConfig.AGENTIC_SEARCH_RRF_TOP_N_OLD),
+                        top_m_agentic=int(PipelineConfig.AGENTIC_SEARCH_RRF_TOP_M),
+                        final_top_k=int(PipelineConfig.AGENTIC_SEARCH_RRF_FINAL_TOP_K),
+                    )
+                    recall_results = fuse_old_and_agentic_search(
+                        old_ranked=recall_results,
+                        agentic_ranked=agentic_ranked,
+                        config=fusion_cfg,
+                    )
+                    print(f"✅ 已融合三路召回 + Agentic Search: Top-{len(recall_results)}")
+                    if logger:
+                        logger.log_event("agenticSearch_recall_fused", {
+                            "old_count": old_count,
+                            "agentic_count": len(agentic_ranked),
+                            "rrf_k": fusion_cfg.k,
+                            "weight_old": fusion_cfg.weight_old,
+                            "weight_agentic": fusion_cfg.weight_agentic,
+                            "top_n_old": fusion_cfg.top_n_old,
+                            "top_m_agentic": fusion_cfg.top_m_agentic,
+                            "final_top_k": fusion_cfg.final_top_k,
+                        })
+                else:
+                    print("⚠️ Agentic Search 未产出可融合 pattern，继续使用原三路召回")
+            except Exception as e:
+                # Keep base pipeline resilient: Path4/Agentic failures should not block.
+                print(f"⚠️ Agentic Search 执行失败，回退原三路召回: {e}")
+                if logger:
+                    logger.log_event("agenticSearch_failed", {"error": str(e)})
 
         # 如果召回为空：说明当前 idea 无法匹配到可用的领域/Pattern 数据，直接提示用户并停止程序
         if not recall_results:

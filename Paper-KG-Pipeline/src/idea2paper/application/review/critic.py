@@ -140,6 +140,27 @@ class MultiAgentCritic:
         else:
             passed = avg_score >= PipelineConfig.PASS_SCORE
 
+        # Per-role 最低分硬约束：无论整体 avg 是否通过，单项低于阈值一律强制 fail
+        min_novelty = float(getattr(PipelineConfig, "PASS_MIN_NOVELTY_SCORE", 0.0))
+        min_methodology = float(getattr(PipelineConfig, "PASS_MIN_METHODOLOGY_SCORE", 0.0))
+        min_score_violations = {}
+        if min_novelty > 0.0:
+            novelty_score = float(role_scores.get("Novelty", 0.0))
+            if novelty_score < min_novelty:
+                min_score_violations["Novelty"] = {"score": novelty_score, "min_required": min_novelty}
+                passed = False
+        if min_methodology > 0.0:
+            methodology_score = float(role_scores.get("Methodology", 0.0))
+            if methodology_score < min_methodology:
+                min_score_violations["Methodology"] = {"score": methodology_score, "min_required": min_methodology}
+                passed = False
+        if min_score_violations:
+            details = ", ".join(
+                f"{role}={v['score']:.2f}<{v['min_required']:.2f}"
+                for role, v in min_score_violations.items()
+            )
+            print(f"  ⛔ Per-role 最低分约束触发 → fail（{details}）")
+
         pass_audit = {
             "mode": mode if mode else "fixed",
             "used_distribution": used_distribution,
@@ -150,6 +171,7 @@ class MultiAgentCritic:
             "roles_ge_q75": roles_ge_q75,
             "avg_ge_q50": avg_ge_q50,
             "avg_score": avg_score,
+            "min_score_violations": min_score_violations,
         }
 
         return passed, pass_audit

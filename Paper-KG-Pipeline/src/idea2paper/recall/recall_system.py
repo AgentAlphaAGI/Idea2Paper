@@ -12,18 +12,15 @@ V3版本更新:
   - Paper通过review_stats获取质量分数，支持兼容旧结构
 """
 
+import hashlib
 import json
-import os
 import pickle
 import time
-import hashlib
 from collections import defaultdict, Counter
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
-
-from pipeline.run_context import get_logger
 from idea2paper.config import OUTPUT_DIR, PipelineConfig
 from idea2paper.infra.embeddings import get_embedding, get_embeddings_batch, EMBEDDING_MODEL
 from idea2paper.infra.subdomain_taxonomy import (
@@ -32,6 +29,7 @@ from idea2paper.infra.subdomain_taxonomy import (
 )
 from idea2paper.recall.recall_text import build_recall_idea_text, build_recall_paper_text, truncate_for_embedding
 from idea2paper.recall.tokenize import to_token_set, jaccard_from_sets
+from pipeline.run_context import get_logger
 
 # 输入文件
 NODES_IDEA = OUTPUT_DIR / "nodes_idea.json"
@@ -713,7 +711,7 @@ class RecallSystem:
 
     # ===================== 路径3: Idea → Paper → Pattern =====================
 
-    def _recall_path3_similar_papers(self, user_idea: str) -> Dict[str, float]:
+    def _recall_path3_similar_papers(self, user_idea: str, raw_idea: str | None = None) -> Dict[str, float]:
         """路径3: 通过相似Paper召回Pattern (V3版本 + 两阶段优化)
 
         流程:
@@ -724,17 +722,25 @@ class RecallSystem:
 
         注意:
           - 使用Paper的title进行相似度计算(与路径1的idea description互补)
+          - 粗排(Jaccard)使用 raw_idea（原始短Idea），避免IdeaPackaging扩展后的超长query
+            与短title做Jaccard时因分母膨胀（并集>>交集）导致所有候选都低于阈值。
+          - 精排(Embedding)使用 user_idea（增强query），语义更丰富，匹配更准确。
+          - raw_idea 若未提供，则粗排也回退到 user_idea（兼容未启用IdeaPackaging的调用）
           - V3版本Paper暂无review数据时，质量默认0.5
 
         返回: {pattern_id: score}
         """
         print("\n📄 [路径3] 相似Paper召回...")
 
+        # 粗排用原始短 idea（防止扩展 query 分母膨胀导致 Jaccard 全部 < 阈值）
+        # 精排用增强 query（语义更丰富，能更准确地从候选中找到真正相关的 paper）
+        coarse_query = raw_idea if raw_idea else user_idea
+
         # Step 1: 粗排 - 使用Jaccard快速筛选
         if RecallConfig.TWO_STAGE_RECALL and RecallConfig.USE_EMBEDDING:
             print(f"  [粗排] 使用Jaccard快速筛选Top-{RecallConfig.COARSE_RECALL_SIZE}...")
             coarse_similarities = []
-            user_tokens = to_token_set(user_idea)
+            user_tokens = to_token_set(coarse_query)
 
             for paper in self.papers:
                 paper_title = paper.get('title', '')
@@ -745,7 +751,7 @@ class RecallSystem:
                 if self._use_token_cache and paper_id in self._paper_token_sets:
                     sim = jaccard_from_sets(user_tokens, self._paper_token_sets[paper_id])
                 else:
-                    sim = self._compute_jaccard_similarity(user_idea, paper_title)
+                    sim = self._compute_jaccard_similarity(coarse_query, paper_title)
                 if sim > 0.05:  # 降低阈值以保留更多候选
                     coarse_similarities.append((paper['paper_id'], sim))
 
@@ -753,7 +759,7 @@ class RecallSystem:
             candidates = coarse_similarities[:RecallConfig.COARSE_RECALL_SIZE]
 
             print(f"  [精排] 使用Embedding重排Top-{RecallConfig.PATH3_TOP_K_PAPERS}...")
-            # Step 2: 精排 - 对候选使用Embedding重新计算
+            # Step 2: 精排 - 对候选使用Embedding重新计算（用增强query，语义更丰富）
             fine_similarities = []
             candidate_ids = [paper_id for paper_id, _ in candidates]
             sims = self._compute_embedding_similarities(user_idea, candidate_ids, kind="paper")
@@ -769,7 +775,7 @@ class RecallSystem:
 
             print(f"  ✓ 粗排{len(coarse_similarities)}个 → 精排{len(candidates)}个 → 最终{len(top_papers)}个")
         else:
-            # 单阶段召回（原逻辑）
+            # 单阶段召回（原逻辑，仅用 user_idea）
             similarities = []
 
             for paper in self.papers:
@@ -844,12 +850,14 @@ class RecallSystem:
 
     # ===================== 多路融合 =====================
 
-    def recall(self, user_idea: str, verbose: bool = True) -> List[Tuple[str, Dict, float]]:
+    def recall(self, user_idea: str, verbose: bool = True, raw_idea: str | None = None) -> List[Tuple[str, Dict, float]]:
         """三路召回融合
 
         Args:
-            user_idea: 用户输入的Idea描述
+            user_idea: 用户输入的Idea描述（可能是经IdeaPackaging扩展后的检索query）
             verbose: 是否打印详细信息
+            raw_idea: 用户原始的短Idea文本（未经扩展），用于路径3的Jaccard/Embedding匹配。
+                      若为None则路径3使用user_idea（兼容旧调用）。
 
         Returns:
             [(pattern_id, pattern_info, score), ...] 按得分排序
@@ -868,7 +876,8 @@ class RecallSystem:
         path2_scores = self._recall_path2_domain_patterns(user_idea, top_ideas=top_ideas)
 
         # 路径3: 相似Paper召回
-        path3_scores = self._recall_path3_similar_papers(user_idea)
+        # 传入 raw_idea，避免扩展 query 因与短 title 做 Jaccard 时分母膨胀导致粗排结果为空
+        path3_scores = self._recall_path3_similar_papers(user_idea, raw_idea=raw_idea)
 
         # 融合三路得分
         print("\n🔗 融合三路召回结果...")

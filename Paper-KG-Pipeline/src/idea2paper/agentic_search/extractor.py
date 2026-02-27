@@ -424,8 +424,8 @@ class AgenticExtractor:
 
     def __init__(self, logger=None):
         self.logger = logger or get_logger()
-        self._batch_size = int(PipelineConfig.PATH4_EXTRACTOR_BATCH_SIZE)
-        self._temperature = float(PipelineConfig.LLM_TEMPERATURE_PATH4_EXTRACTOR)
+        self._batch_size = int(PipelineConfig.AGENTIC_SEARCH_EXTRACTOR_BATCH_SIZE)
+        self._temperature = float(PipelineConfig.LLM_TEMPERATURE_AGENTIC_SEARCH_EXTRACTOR)
         self._max_retries = 3
 
     # ── public API ──
@@ -489,7 +489,7 @@ class AgenticExtractor:
         }
 
         if self.logger:
-            self.logger.log_event("path4_extractor_done", stats)
+            self.logger.log_event("agenticSearch_extractor_done", stats)
 
         print(f"\n  ✓ 抽取完成: {len(patterns)}/{len(papers)} 篇成功")
         if skipped_no_abstract:

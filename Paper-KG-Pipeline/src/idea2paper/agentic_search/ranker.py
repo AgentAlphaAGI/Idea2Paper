@@ -8,7 +8,7 @@ Path4 Ranker — pattern 内部独立排序
   - recency   : year min-max 归一化
   - impact    : log(1 + citation_count) min-max 归一化
 
-path4_score = α·relevance + β·recency_norm + γ·impact_norm
+agenticSearch_score = α·relevance + β·recency_norm + γ·impact_norm
 
 输出按 score 降序排列的 pattern 列表，每个 pattern 附带 rank_scores 字段。
 """
@@ -117,7 +117,7 @@ class Path4Ranker:
             "relevance": float,
             "recency_norm": float,
             "impact_norm": float,
-            "path4_score": float,
+            "agenticSearch_score": float,
             "rank": int          # 1-based
           }
         """
@@ -156,6 +156,8 @@ class Path4Ranker:
                 "relevance": round(relevances[idx], 4),
                 "recency_norm": round(recency_norms[idx], 4),
                 "impact_norm": round(impact_norms[idx], 4),
+                "agenticSearch_score": scores[idx],
+                # Backward-compatible alias.
                 "path4_score": scores[idx],
                 "rank": rank_pos + 1,
             }
@@ -165,14 +167,15 @@ class Path4Ranker:
         print(f"\n  排序完成 (α={self.alpha}, β={self.beta}, γ={self.gamma})")
         for p in ranked[:5]:
             rs = p["rank_scores"]
-            print(f"  #{rs['rank']:2d}  score={rs['path4_score']:.4f}  "
+            score = rs.get("agenticSearch_score", rs.get("path4_score", 0.0))
+            print(f"  #{rs['rank']:2d}  score={score:.4f}  "
                   f"rel={rs['relevance']:.3f} rec={rs['recency_norm']:.3f} "
                   f"imp={rs['impact_norm']:.3f}  {p.get('title', '')[:60]}")
         if n > 5:
             print(f"  ... ({n - 5} more)")
 
         if self.logger:
-            self.logger.log_event("path4_ranker_done", {
+            self.logger.log_event("agenticSearch_ranker_done", {
                 "pattern_count": n,
                 "alpha": self.alpha, "beta": self.beta, "gamma": self.gamma,
                 "embedding_success": any(r > 0 for r in relevances),
@@ -227,19 +230,19 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Path4 Ranker — 对 path4_patterns.json 做内部排序",
+        description="Agentic Search Ranker — 对 agenticSearch_patterns.json 做内部排序",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   python ranker.py "Use LLM agents with tool retrieval for complex task planning"
-  python ranker.py "my idea" --input path4_patterns.json --output path4_patterns.json
+  python ranker.py "my idea" --input agenticSearch_patterns.json --output agenticSearch_patterns.json
         """,
     )
     parser.add_argument("idea", help="User research idea (用于计算 relevance)")
     parser.add_argument(
         "--input", "-i",
         default=None,
-        help="输入 JSON 文件路径 (默认: output/path4_patterns.json)",
+        help="输入 JSON 文件路径 (默认: output/agenticSearch_patterns.json)",
     )
     parser.add_argument(
         "--output", "-o",
@@ -253,7 +256,7 @@ def main():
 
     # Resolve paths
     from idea2paper.config import OUTPUT_DIR
-    input_path = args.input or str(OUTPUT_DIR / "path4_patterns.json")
+    input_path = args.input or str(OUTPUT_DIR / "agenticSearch_patterns.json")
     output_path = args.output or input_path
 
     # Load patterns

@@ -121,7 +121,7 @@ class AgenticResearchResult:
 
 
 class AgenticResearchPipeline:
-    """Orchestrate Planner → Searcher → (Backtrack) → Extractor → Ranker for Path4.
+    """Orchestrate Planner → Searcher → (Backtrack) → Extractor → Ranker for Agentic Search.
 
     Usage:
         pipeline = AgenticResearchPipeline()
@@ -140,9 +140,9 @@ class AgenticResearchPipeline:
         self._searcher = AgenticSearcher(logger=self.logger)
         self._extractor = AgenticExtractor(logger=self.logger)
         self._ranker = Path4Ranker(logger=self.logger)
-        self._backtrack_enable = bool(PipelineConfig.PATH4_BACKTRACK_ENABLE)
-        self._backtrack_threshold = int(PipelineConfig.PATH4_BACKTRACK_THRESHOLD)
-        self._backtrack_extra = int(PipelineConfig.PATH4_BACKTRACK_EXTRA_QUERIES)
+        self._backtrack_enable = bool(PipelineConfig.AGENTIC_SEARCH_BACKTRACK_ENABLE)
+        self._backtrack_threshold = int(PipelineConfig.AGENTIC_SEARCH_BACKTRACK_THRESHOLD)
+        self._backtrack_extra = int(PipelineConfig.AGENTIC_SEARCH_BACKTRACK_EXTRA_QUERIES)
 
     def run(
         self,
@@ -161,7 +161,7 @@ class AgenticResearchPipeline:
         t0 = time.time()
 
         print("=" * 80)
-        print("🚀 Path4 Agentic Research Pipeline")
+        print("🚀 Agentic Search Research Pipeline")
         print("=" * 80)
         print(f"\n【User Idea】\n{user_idea}\n")
 
@@ -241,7 +241,7 @@ class AgenticResearchPipeline:
         print("=" * 80)
 
         if self.logger:
-            self.logger.log_event("path4_pipeline_done", {
+            self.logger.log_event("agenticSearch_pipeline_done", {
                 "total_papers": len(result.all_papers),
                 "total_patterns": len(result.all_patterns),
                 "total_ranked_patterns": len(result.all_ranked_patterns),
@@ -257,7 +257,7 @@ class AgenticResearchPipeline:
 
         Args:
             result: Pipeline result.
-            out_path: Output file path. Defaults to output/path4_patterns.json.
+            out_path: Output file path. Defaults to output/agenticSearch_patterns.json.
 
         Returns:
             Path of the saved file, or None if no patterns to save.
@@ -268,7 +268,7 @@ class AgenticResearchPipeline:
 
         if out_path is None:
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            out_path = str(OUTPUT_DIR / "path4_patterns.json")
+            out_path = str(OUTPUT_DIR / "agenticSearch_patterns.json")
 
         data = patterns
         with open(out_path, "w", encoding="utf-8") as f:
@@ -309,7 +309,7 @@ class AgenticResearchPipeline:
 
         if out_path is None:
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            out_path = str(OUTPUT_DIR / "path4_venue_debug.json")
+            out_path = str(OUTPUT_DIR / "agenticSearch_venue_debug.json")
 
         payload = {
             "user_idea": result.user_idea,
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     import sys
 
     parser = argparse.ArgumentParser(
-        description="Path4 Agentic Search — Planner + Searcher + Extractor + Ranker 调试入口",
+        description="Agentic Search — Planner + Searcher + Extractor + Ranker 调试入口",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -347,7 +347,7 @@ if __name__ == "__main__":
   python pipeline.py "my idea text" --brief path/to/brief.json
 
   # 跑完整链路并输出完整结果
-  python pipeline.py "my idea" --out /tmp/path4_result.json
+  python pipeline.py "my idea" --out /tmp/agenticSearch_result.json
         """,
     )
     parser.add_argument("idea", help="Research idea text (可中文可英文)")

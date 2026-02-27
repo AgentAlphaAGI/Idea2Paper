@@ -1,16 +1,6 @@
 import time
 from typing import Dict, List, Tuple
 
-from idea2paper.config import PipelineConfig
-from idea2paper.review.critic import MultiAgentCritic
-from idea2paper.review.review_index import ReviewIndex
-from idea2paper.pipeline.pattern_selector import PatternSelector
-from idea2paper.pipeline.refinement import RefinementEngine
-from idea2paper.pipeline.story_generator import StoryGenerator
-from idea2paper.pipeline.story_reflector import StoryReflector
-from idea2paper.pipeline.verifier import RAGVerifier
-from idea2paper.pipeline.verification_adapter import verification_from_novelty_report
-from idea2paper.novelty.novelty_checker import NoveltyChecker
 from idea2paper.config import (
     NOVELTY_ENABLE,
     NOVELTY_ACTION,
@@ -18,7 +8,17 @@ from idea2paper.config import (
     NOVELTY_REQUIRE_EMBEDDING,
     OUTPUT_DIR,
 )
+from idea2paper.config import PipelineConfig
 from idea2paper.infra.run_context import get_logger
+from idea2paper.novelty.novelty_checker import NoveltyChecker
+from idea2paper.pipeline.pattern_selector import PatternSelector
+from idea2paper.pipeline.refinement import RefinementEngine
+from idea2paper.pipeline.story_generator import StoryGenerator
+from idea2paper.pipeline.story_reflector import StoryReflector
+from idea2paper.pipeline.verification_adapter import verification_from_novelty_report
+from idea2paper.pipeline.verifier import RAGVerifier
+from idea2paper.review.critic import MultiAgentCritic
+from idea2paper.review.review_index import ReviewIndex
 
 
 class Idea2StoryPipeline:
@@ -87,18 +87,45 @@ class Idea2StoryPipeline:
             print("❌ 未选择到 Pattern，流程终止")
             return {'success': False}
 
-        # 选择第一个 Pattern 进行生成（优先使用 stability 维度的第一个）
-        if ranked_patterns.get('stability') and len(ranked_patterns['stability']) > 0:
-            dimension_type = 'stability'
-            pattern_id, pattern_info, metadata = ranked_patterns['stability'][0]
-        elif ranked_patterns.get('novelty') and len(ranked_patterns['novelty']) > 0:
-            dimension_type = 'novelty'
-            pattern_id, pattern_info, metadata = ranked_patterns['novelty'][0]
-        else:
-            dimension_type = list(ranked_patterns.keys())[0]
-            pattern_id, pattern_info, metadata = ranked_patterns[dimension_type][0]
+        # 选择第一个 Pattern 进行生成（优先使用 stability 维度的第一个 KG pattern）
+        # Agentic Search pattern（source='agentic_search'，size=1）质量未经社区验证，
+        # 不宜作为初始 Story 的基座 pattern。应优先选 KG pattern 保证稳定性；
+        # Agentic pattern 的新颖性价值留给后续 Refinement 阶段通过 idea fusion 注入。
+        def _is_agentic(pid: str, pinfo: Dict) -> bool:
+            return (
+                str(pinfo.get("source", "")).lower() == "agentic_search"
+                or str(pid).startswith("p4_")
+            )
 
-        print(f"\n🎯 使用 Pattern: {dimension_type} 维度 - {pattern_id}")
+        pattern_id = None
+        pattern_info = None
+        metadata = None
+        dimension_type = None
+
+        if ranked_patterns.get('stability'):
+            # 优先选 stability 维度里第一个 KG pattern
+            for pid, pinfo, meta in ranked_patterns['stability']:
+                if not _is_agentic(pid, pinfo):
+                    pattern_id, pattern_info, metadata = pid, pinfo, meta
+                    dimension_type = 'stability'
+                    break
+            # 若 stability 维度全是 agentic pattern，退回到第一个（不应出现但做保底）
+            if pattern_id is None:
+                pattern_id, pattern_info, metadata = ranked_patterns['stability'][0]
+                dimension_type = 'stability'
+
+        if pattern_id is None and ranked_patterns.get('novelty'):
+            pattern_id, pattern_info, metadata = ranked_patterns['novelty'][0]
+            dimension_type = 'novelty'
+
+        if pattern_id is None:
+            first_dim = list(ranked_patterns.keys())[0]
+            pattern_id, pattern_info, metadata = ranked_patterns[first_dim][0]
+            dimension_type = first_dim
+
+        is_agentic_initial = _is_agentic(pattern_id, pattern_info)
+        print(f"\n🎯 使用 Pattern: {dimension_type} 维度 - {pattern_id}"
+              + (" [KG]" if not is_agentic_initial else " [Agentic-fallback]"))
         if logger:
             logger.log_event("pattern_selected", {
                 "pattern_id": pattern_id,
