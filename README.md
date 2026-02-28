@@ -68,7 +68,7 @@ reliable autonomous scientific discovery.
 
 | WeChat Group                                                                                | Discord Channel |
 |---------------------------------------------------------------------------------------------| --- |
-| <p align="center"> <img src="./assets/images/idea2paper_code.png" width="200" /><br/>  </p> | https://discord.gg/FfXtbREb |
+| <p align="center"> <img src="./assets/images/idea2paper_code.jpg" width="200" /><br/>  </p> | (https://discord.gg/XfAQYRZ4kk) |
 
 
 ## ✨ Key Features
