@@ -881,6 +881,31 @@ class PipelineConfig:
         cfg_path=["agenticSearch", "rrf_final_top_k"],
         legacy_cfg_path=["path4", "rrf_final_top_k"],
     )
+    # Agentic Search source-mix rerank (OpenAlex/arXiv fairness for top-N)
+    AGENTIC_SEARCH_SOURCE_MIX_ENABLE = _get(
+        "I2P_AGENTIC_SEARCH_SOURCE_MIX_ENABLE",
+        True,
+        cast=bool,
+        cfg_path=["agenticSearch", "source_mix_enable"],
+    )
+    AGENTIC_SEARCH_SOURCE_MIX_RATIO_OPENALEX = _get(
+        "I2P_AGENTIC_SEARCH_SOURCE_MIX_RATIO_OPENALEX",
+        0.6,
+        cast=float,
+        cfg_path=["agenticSearch", "source_mix_ratio_openalex"],
+    )
+    AGENTIC_SEARCH_SOURCE_MIX_RATIO_ARXIV = _get(
+        "I2P_AGENTIC_SEARCH_SOURCE_MIX_RATIO_ARXIV",
+        0.4,
+        cast=float,
+        cfg_path=["agenticSearch", "source_mix_ratio_arxiv"],
+    )
+    AGENTIC_SEARCH_SOURCE_MIX_TOP_N = _get(
+        "I2P_AGENTIC_SEARCH_SOURCE_MIX_TOP_N",
+        AGENTIC_SEARCH_RRF_TOP_M,
+        cast=int,
+        cfg_path=["agenticSearch", "source_mix_top_n"],
+    )
 
     # Backward-compatible aliases (keep existing code working)
     PATH4_ENABLE = AGENTIC_SEARCH_ENABLE
@@ -897,6 +922,74 @@ class PipelineConfig:
     PATH4_BACKTRACK_EXTRA_QUERIES = AGENTIC_SEARCH_BACKTRACK_EXTRA_QUERIES
     PATH4_EXTRACTOR_BATCH_SIZE = AGENTIC_SEARCH_EXTRACTOR_BATCH_SIZE
     LLM_TEMPERATURE_PATH4_EXTRACTOR = LLM_TEMPERATURE_AGENTIC_SEARCH_EXTRACTOR
+
+    # ===================== arXiv 补充召回通路配置 =====================
+    # 开关
+    AGENTIC_SEARCH_ARXIV_ENABLE = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_ENABLE",
+        True,
+        cast=bool,
+        cfg_path=["agenticSearch", "arxiv_enable"],
+    )
+    # 只保留 MIN_YEAR 及以后的 preprint（默认当年）
+    AGENTIC_SEARCH_ARXIV_MIN_YEAR = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_MIN_YEAR",
+        2025,
+        cast=int,
+        cfg_path=["agenticSearch", "arxiv_min_year"],
+    )
+    # 每条 query 请求 arXiv 返回的最大原始数量
+    AGENTIC_SEARCH_ARXIV_MAX_RESULTS_PER_QUERY = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_MAX_RESULTS_PER_QUERY",
+        25,
+        cast=int,
+        cfg_path=["agenticSearch", "arxiv_max_results_per_query"],
+    )
+    # 经过初筛后保留的 top-N（进入 Extractor 的上限）
+    AGENTIC_SEARCH_ARXIV_TOP_N_PER_QUERY = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_TOP_N_PER_QUERY",
+        5,
+        cast=int,
+        cfg_path=["agenticSearch", "arxiv_top_n_per_query"],
+    )
+    # 相邻请求最小间隔（官方要求 ≥ 3s）
+    AGENTIC_SEARCH_ARXIV_REQUEST_INTERVAL_SEC = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_REQUEST_INTERVAL_SEC",
+        3.0,
+        cast=float,
+        cfg_path=["agenticSearch", "arxiv_request_interval_sec"],
+    )
+    # 软预筛分数阈值（低于此值丢弃）
+    AGENTIC_SEARCH_ARXIV_MIN_PRESCREEN_SCORE = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_MIN_PRESCREEN_SCORE",
+        0.2,
+        cast=float,
+        cfg_path=["agenticSearch", "arxiv_min_prescreen_score"],
+    )
+    # 分类过滤开关（默认开启，限 CS 子分类）
+    AGENTIC_SEARCH_ARXIV_CATEGORY_FILTER_ENABLE = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_CATEGORY_FILTER_ENABLE",
+        True,
+        cast=bool,
+        cfg_path=["agenticSearch", "arxiv_category_filter_enable"],
+    )
+    # arXiv 分类白名单（逗号分隔字符串或列表均可）
+    _arxiv_cats_raw = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_CS_CATEGORIES",
+        "cs.LG,cs.AI,cs.CL,cs.CV,cs.IR,cs.RO,cs.NE",
+        cast=str,
+        cfg_path=["agenticSearch", "arxiv_cs_categories"],
+    )
+    AGENTIC_SEARCH_ARXIV_CS_CATEGORIES: list = [
+        c.strip() for c in str(_arxiv_cats_raw).split(",") if c.strip()
+    ]
+    # 在 RRF 截断前至少保留的 arXiv pattern 数量（来源保底）
+    AGENTIC_SEARCH_ARXIV_MIN_PATTERNS = _get(
+        "I2P_AGENTIC_SEARCH_ARXIV_MIN_PATTERNS",
+        2,
+        cast=int,
+        cfg_path=["agenticSearch", "arxiv_min_patterns"],
+    )
 
     # Blind Judge tau config
     JUDGE_TAU_PATH = _get(

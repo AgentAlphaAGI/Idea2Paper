@@ -28,6 +28,7 @@ if __package__ is None or __package__ == "":
     if str(_SRC_ROOT) not in sys.path:
         sys.path.insert(0, str(_SRC_ROOT))
 
+from idea2paper.config import PipelineConfig
 from idea2paper.infra.embeddings import get_embedding, get_embeddings_batch
 from idea2paper.infra.run_context import get_logger
 
@@ -104,6 +105,10 @@ class Path4Ranker:
         self.beta = beta
         self.gamma = gamma
         self.logger = logger or get_logger()
+        self._source_mix_enable = bool(PipelineConfig.AGENTIC_SEARCH_SOURCE_MIX_ENABLE)
+        self._source_mix_ratio_openalex = float(PipelineConfig.AGENTIC_SEARCH_SOURCE_MIX_RATIO_OPENALEX)
+        self._source_mix_ratio_arxiv = float(PipelineConfig.AGENTIC_SEARCH_SOURCE_MIX_RATIO_ARXIV)
+        self._source_mix_top_n = int(PipelineConfig.AGENTIC_SEARCH_SOURCE_MIX_TOP_N)
 
     def rank(
         self,
@@ -163,6 +168,15 @@ class Path4Ranker:
             }
             ranked.append(p)
 
+        # Optional source-mix fairness rerank on the head portion (used by later fusion).
+        ranked = self._apply_source_mix_head(
+            ranked=ranked,
+            top_n=self._source_mix_top_n,
+            ratio_openalex=self._source_mix_ratio_openalex,
+            ratio_arxiv=self._source_mix_ratio_arxiv,
+            enable=self._source_mix_enable,
+        )
+
         # Print top-5
         print(f"\n  排序完成 (α={self.alpha}, β={self.beta}, γ={self.gamma})")
         for p in ranked[:5]:
@@ -220,6 +234,84 @@ class Path4Ranker:
         success_count = sum(1 for r in relevances if r > 0)
         print(f"  ✓ embedding 完成: {success_count}/{n} 条成功")
         return relevances
+
+    @staticmethod
+    def _apply_source_mix_head(
+        ranked: List[dict],
+        top_n: int,
+        ratio_openalex: float,
+        ratio_arxiv: float,
+        enable: bool = True,
+    ) -> List[dict]:
+        """Reorder the top-N region with OpenAlex/arXiv source quotas and interleaving.
+
+        This keeps overall ranking signal but avoids one source dominating the head list,
+        which is the part consumed by downstream fusion (`top_m_agentic`).
+        """
+        if not enable or not ranked:
+            return ranked
+
+        n = min(len(ranked), max(0, int(top_n)))
+        if n <= 0:
+            return ranked
+
+        # Normalize ratios; fallback to 0.6/0.4 on invalid config.
+        ro = max(0.0, float(ratio_openalex))
+        ra = max(0.0, float(ratio_arxiv))
+        if ro + ra < 1e-9:
+            ro, ra = 0.6, 0.4
+        else:
+            s = ro + ra
+            ro, ra = ro / s, ra / s
+
+        target_oa = max(0, min(n, int(round(n * ro))))
+        target_ax = n - target_oa
+
+        oa_all = [p for p in ranked if str(p.get("venue_norm", "")) != "arXiv"]
+        ax_all = [p for p in ranked if str(p.get("venue_norm", "")) == "arXiv"]
+
+        picked_oa = oa_all[:target_oa]
+        picked_ax = ax_all[:target_ax]
+
+        used_ids = {id(p) for p in picked_oa}
+        used_ids.update(id(p) for p in picked_ax)
+
+        # Spillover: if one side不足，从另一侧按原排序补齐。
+        if len(picked_oa) + len(picked_ax) < n:
+            for p in ranked:
+                if id(p) in used_ids:
+                    continue
+                if str(p.get("venue_norm", "")) != "arXiv":
+                    picked_oa.append(p)
+                else:
+                    picked_ax.append(p)
+                used_ids.add(id(p))
+                if len(picked_oa) + len(picked_ax) >= n:
+                    break
+
+        # Interleave head list to keep both sources visible.
+        mixed_head: List[dict] = []
+        i = 0
+        while i < len(picked_oa) or i < len(picked_ax):
+            if i < len(picked_oa):
+                mixed_head.append(picked_oa[i])
+            if i < len(picked_ax):
+                mixed_head.append(picked_ax[i])
+            i += 1
+        mixed_head = mixed_head[:n]
+
+        used_head_ids = {id(p) for p in mixed_head}
+        tail = [p for p in ranked if id(p) not in used_head_ids]
+        mixed = mixed_head + tail
+
+        # Refresh rank index after source-mix rerank.
+        for idx, p in enumerate(mixed, start=1):
+            rs = p.get("rank_scores")
+            if isinstance(rs, dict):
+                rs["rank"] = idx
+                rs["source_mix_applied"] = bool(enable)
+
+        return mixed
 
 
 # ────────────────────────────────────────

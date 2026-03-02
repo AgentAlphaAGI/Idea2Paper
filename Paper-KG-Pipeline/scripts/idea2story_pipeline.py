@@ -188,6 +188,76 @@ def _shrink_brief(brief: dict | None, max_len: int = 600) -> dict | None:
     return out
 
 
+def _classify_pattern_source(pattern_id: str, pattern_info: dict) -> dict:
+    """Classify one recalled pattern source for diagnostics."""
+    pattern_info = pattern_info or {}
+    venue_norm = str(pattern_info.get("venue_norm") or "").strip()
+    source_tag = str(pattern_info.get("source") or "").strip().lower()
+    is_agentic = (source_tag == "agentic_search") or str(pattern_id).startswith("p4_")
+
+    if not is_agentic:
+        return {
+            "group": "kg",
+            "label": "kg",
+            "venue_norm": venue_norm or "",
+        }
+    if venue_norm.lower() == "arxiv":
+        return {
+            "group": "agentic_arxiv",
+            "label": "agentic:arXiv",
+            "venue_norm": venue_norm or "arXiv",
+        }
+    return {
+        "group": "agentic_openalex",
+        "label": f"agentic:{venue_norm or 'OpenAlex'}",
+        "venue_norm": venue_norm or "",
+    }
+
+
+def _print_topk_source_breakdown(recall_results, top_k: int = 10, logger=None) -> None:
+    """Print and log source breakdown for final recalled top-k patterns."""
+    top_items = list(recall_results[: max(0, int(top_k))])
+    counts = {"kg": 0, "agentic_openalex": 0, "agentic_arxiv": 0}
+    details = []
+
+    print("\n📌 Final Top-K 来源审计")
+    print("-" * 80)
+    for idx, (pattern_id, pattern_info, score) in enumerate(top_items, 1):
+        cls = _classify_pattern_source(pattern_id, pattern_info)
+        group = cls["group"]
+        counts[group] = counts.get(group, 0) + 1
+        detail = {
+            "rank": idx,
+            "pattern_id": pattern_id,
+            "source_label": cls["label"],
+            "group": group,
+            "venue_norm": cls.get("venue_norm", ""),
+            "score": float(score),
+        }
+        details.append(detail)
+        print(
+            f"  #{idx:02d} {pattern_id}  "
+            f"[{cls['label']}]  score={float(score):.4f}"
+        )
+
+    print(
+        "  汇总: "
+        f"KG={counts['kg']}, "
+        f"Agentic(OpenAlex)={counts['agentic_openalex']}, "
+        f"Agentic(arXiv)={counts['agentic_arxiv']}"
+    )
+
+    if logger:
+        logger.log_event(
+            "final_topk_source_breakdown",
+            {
+                "top_k": len(top_items),
+                "counts": counts,
+                "details": details,
+            },
+        )
+
+
 def ensure_required_indexes(logger=None):
     if not PipelineConfig.INDEX_AUTO_PREPARE:
         return
@@ -602,6 +672,9 @@ def main():
 
         # 恢复 argv
         sys.argv = original_argv
+
+        # 打印最终召回 Top-K 的来源构成（KG / Agentic(OpenAlex) / Agentic(arXiv)）
+        _print_topk_source_breakdown(recalled_patterns, top_k=10, logger=logger)
 
         print("-" * 80)
         print(f"✅ 召回完成: Top-{len(recalled_patterns)} Patterns\n")
