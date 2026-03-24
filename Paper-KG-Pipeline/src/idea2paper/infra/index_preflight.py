@@ -151,9 +151,11 @@ def validate_novelty_index(index_dir: Path, nodes_paper_path: Path, embedding_mo
     if manifest.get("index_count") is not None and meta_count != int(manifest.get("index_count")):
         result["reason"] = "incomplete"
         return result
-    if manifest.get("paper_count") is not None and int(manifest.get("paper_count")) != int(manifest.get("index_count")):
-        result["reason"] = "incomplete"
-        return result
+    if manifest.get("paper_count") is not None and manifest.get("index_count") is not None:
+        expected = int(manifest.get("index_count")) + int(manifest.get("skipped", 0))
+        if int(manifest.get("paper_count")) != expected:
+            result["reason"] = "incomplete"
+            return result
 
     result["ok"] = True
     result["reason"] = "ok"
