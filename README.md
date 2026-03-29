@@ -92,6 +92,7 @@ reliable autonomous scientific discovery.
 
 - 📄 `Paper-KG-Pipeline/output/final_story.json`: Final structured Story (title/abstract/problem/method/contribs/experiments).
 - 🔍 `Paper-KG-Pipeline/output/pipeline_result.json`: Full pipeline trace (reviews, corrections, audits).
+- 📄 `paper.tex`: LaTeX paper (via `story_to_latex.py`, see [Story to LaTeX](#story-to-latex)).
 - 📂 `log/run_.../`: Structured logs for every run.
 
 ## 🚀 Getting Started
@@ -113,8 +114,9 @@ pip install -r Paper-KG-Pipeline/requirements.txt
 > **Tip (LLM temperature):** per-stage temperatures are configurable via `I2P_LLM_TEMPERATURE_*` or `llm.temperature.*`; defaults preserve current behavior. Critic is usually low temp for stability, while story generation can be moderate.  
 > **Tip (Idea Packaging):** optional quality boost via pattern-guided idea packaging + double recall (default off). Enable with `I2P_IDEA_PACKAGING_ENABLE=1` or `idea.packaging_enable=true`.  
 > **Tip (Subdomain taxonomy):** optional quality boost for Path2 to reduce duplicated/long-tail subdomains. When enabled, the pipeline auto-detects and (if `I2P_INDEX_ALLOW_BUILD=1`) auto-builds `subdomain_taxonomy.json` under `recall_index_dir` (recommended: leave `I2P_SUBDOMAIN_TAXONOMY_PATH` empty). First build uses batched embeddings; you can also build manually via `Paper-KG-Pipeline/scripts/tools/build_subdomain_taxonomy.py`.  
-> **Supported (no code changes):** OpenAI-compatible Embeddings APIs (`/v1/embeddings`) that accept `input` as a string or a list.  
-> **Not supported yet:** DashScope “native” embeddings endpoint (`/api/v1/services/embeddings/...`) requires an adapter.
+> **Supported (no code changes):** OpenAI-compatible Embeddings APIs (`/v1/embeddings`) that accept `input` as a string or a list. Gemini native embeddings via `EMBEDDING_PROVIDER=gemini`.  
+> **Not supported yet:** DashScope “native” embeddings endpoint (`/api/v1/services/embeddings/...`) requires an adapter.  
+> **Tip (startup preflight):** Pipeline runs LLM/embedding connectivity check before each run. To skip: `I2P_PREFLIGHT_ENABLE=0`.
 
 ### Dataset
 
@@ -142,6 +144,22 @@ and make sure the embedding model matches the index you downloaded, otherwise er
 ```bash
 python Paper-KG-Pipeline/scripts/idea2story_pipeline.py "your research idea"
 ```
+
+### Story to LaTeX
+
+Convert `final_story.json` to an arXiv-style LaTeX paper:
+
+```bash
+python Paper-KG-Pipeline/scripts/story_to_latex.py <results_dir>
+```
+
+Examples:
+
+```bash
+python Paper-KG-Pipeline/scripts/story_to_latex.py "results/xxx" -o paper.tex
+```
+
+Options: `-o paper.tex` (output filename), `--no-download` (use built-in template without arxiv.sty, for offline use). Output is written to the results directory; can be compiled with `pdflatex paper.tex`.
 
 ## 🌐 Frontend (Local Web UI)
 

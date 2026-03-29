@@ -105,6 +105,7 @@ python Paper-KG-Pipeline/scripts/idea2story_pipeline.py "your idea"
 
 - 📄 `Paper-KG-Pipeline/output/final_story.json`：最终 Story（结构化字段：标题/摘要/问题/方法/贡献/实验等）
 - 🔍 `Paper-KG-Pipeline/output/pipeline_result.json`：完整链路结果（包含评审、修正、查重、审计信息）
+- 📄 `paper.tex`：LaTeX 论文（通过 `story_to_latex.py` 生成，见 [Story 转 LaTeX](#story-转-latex)）
 - 📂 `Paper-KG-Pipeline/log/run_.../`：每次运行的结构化运行日志
 
 ## 🚀 快速开始
@@ -147,13 +148,30 @@ paper-KG-Pipeline/
 > **建议（温度配置）：** 支持通过 `I2P_LLM_TEMPERATURE_*` 或 `llm.temperature.*` 配置各阶段温度，默认保持不变；critic 建议低温更稳，story 生成可中温。  
 > **建议（Idea Packaging）：** 可选的质量增强（默认关闭），开启后会进行 pattern 引导的 idea 包装与二次召回：`I2P_IDEA_PACKAGING_ENABLE=1` 或 `idea.packaging_enable=true`。  
 > **建议（Subdomain Taxonomy）：** 可选质量增强，用于减少 Path2 子领域重复与长尾影响。开启后会自动检测并在 `I2P_INDEX_ALLOW_BUILD=1` 时自动构建 `recall_index_dir/subdomain_taxonomy.json`（推荐：`I2P_SUBDOMAIN_TAXONOMY_PATH` 留空）。首次构建会分 batch 调 embedding；也可手动运行 `Paper-KG-Pipeline/scripts/tools/build_subdomain_taxonomy.py`。  
-> **当前可直接适配（无需改代码）：** 兼容 OpenAI Embeddings API 的 `/v1/embeddings`（要求 `input` 支持字符串或数组）。  
-> **暂不直接支持：** DashScope/百炼原生 embeddings 接口（`/api/v1/services/embeddings/...`），需要额外适配层。
+> **当前可直接适配（无需改代码）：** 兼容 OpenAI Embeddings API 的 `/v1/embeddings`（要求 `input` 支持字符串或数组）。Gemini 原生 embeddings 可通过 `EMBEDDING_PROVIDER=gemini` 使用。  
+> **暂不直接支持：** DashScope/百炼原生 embeddings 接口（`/api/v1/services/embeddings/...`），需要额外适配层。  
+> **建议（启动预检）：** 每次运行前会检查 LLM/embedding 连通性。跳过预检：`I2P_PREFLIGHT_ENABLE=0`。
 
 ### **4. 运行**：
    ```bash
    python Paper-KG-Pipeline/scripts/idea2story_pipeline.py "你的研究Idea描述"
    ```
+
+### Story 转 LaTeX
+
+将 `final_story.json` 转为 arXiv 风格 LaTeX 论文：
+
+```bash
+python Paper-KG-Pipeline/scripts/story_to_latex.py <results_dir>
+```
+
+示例：
+
+```bash
+python Paper-KG-Pipeline/scripts/story_to_latex.py "results/xxx" -o paper.tex
+```
+
+选项：`-o paper.tex`（指定输出文件名），`--no-download`（使用内置模板，不下载 arxiv.sty，离线可用）。输出写入 results 目录，可以使用 `pdflatex paper.tex` 直接编译。
   
 ## 🌐 前端（本地 Web UI）
 

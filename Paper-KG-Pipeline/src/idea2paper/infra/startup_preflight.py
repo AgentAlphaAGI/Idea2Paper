@@ -1,6 +1,7 @@
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -9,6 +10,7 @@ import requests
 from idea2paper.config import (
     EMBEDDING_API_URL,
     EMBEDDING_MODEL,
+    EMBEDDING_PROVIDER,
     LLM_API_URL,
     LLM_BASE_URL,
     LLM_MODEL,
@@ -50,7 +52,7 @@ def _int_env(key: str, default: int) -> int:
         return default
 
 
-def _sleep_backoff(attempt: int, base: float = 1.0, cap: float = 8.0):
+def _sleep_backoff(attempt: int, base: float = 1.0, cap: float = 8.0) -> None:
     time.sleep(min(cap, base * (2 ** attempt)))
 
 
@@ -144,9 +146,14 @@ def _llm_ping_once(timeout: int) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def _is_gemini_embedding() -> bool:
+    return (EMBEDDING_PROVIDER or "").strip().lower() == "gemini"
+
+
 def _embedding_ping_once(timeout: int) -> Tuple[bool, Optional[int], str]:
     """
     Real embedding ping (fail-fast) and infer embedding_dim.
+    Supports both OpenAI-compatible and Gemini native APIs.
     """
     api_key = os.getenv("EMBEDDING_API_KEY", "")
     if not api_key:
@@ -155,6 +162,38 @@ def _embedding_ping_once(timeout: int) -> Tuple[bool, Optional[int], str]:
     if not EMBEDDING_API_URL:
         return False, None, "EMBEDDING_API_URL not configured"
 
+    if _is_gemini_embedding():
+        return _embedding_ping_gemini(api_key, timeout)
+    return _embedding_ping_openai(api_key, timeout)
+
+
+def _embedding_ping_gemini(api_key: str, timeout: int) -> Tuple[bool, Optional[int], str]:
+    url = (EMBEDDING_API_URL or "").strip()
+    if ":embedContent" not in url:
+        base = url.rstrip("/") or "https://generativelanguage.googleapis.com/v1beta"
+        url = f"{base}/models/{EMBEDDING_MODEL}:embedContent"
+
+    headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+    payload = {
+        "model": f"models/{EMBEDDING_MODEL}",
+        "content": {"parts": [{"text": "ping"}]},
+    }
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        emb = data.get("embedding", {}).get("values")
+        if not isinstance(emb, list):
+            return False, None, "invalid Gemini embedding response: 'embedding.values' is not a list"
+        dim = len(emb)
+        if dim <= 0:
+            return False, None, "embedding_dim is 0"
+        return True, dim, ""
+    except Exception as e:
+        return False, None, str(e)
+
+
+def _embedding_ping_openai(api_key: str, timeout: int) -> Tuple[bool, Optional[int], str]:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {"model": EMBEDDING_MODEL, "input": "ping"}
     try:
@@ -172,7 +211,7 @@ def _embedding_ping_once(timeout: int) -> Tuple[bool, Optional[int], str]:
         return False, None, str(e)
 
 
-def _read_npy_dim(path) -> Optional[int]:
+def _read_npy_dim(path: Path) -> Optional[int]:
     try:
         arr = np.load(path, mmap_mode="r")
         if getattr(arr, "ndim", None) != 2:
@@ -182,7 +221,7 @@ def _read_npy_dim(path) -> Optional[int]:
         return None
 
 
-def _check_index_dims(online_dim: int):
+def _check_index_dims(online_dim: int) -> None:
     """
     Compare online embedding dim with existing local index .npy dims.
     If index does not exist yet (first run), skip that check.
