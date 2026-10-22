@@ -7,7 +7,7 @@ import json
 import re
 import os
 import requests
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 
@@ -213,7 +213,7 @@ def call_llm(prompt: str, system_prompt: str = "", temperature: float = 0.3, max
     return ""
 
 
-def parse_json_response(response: str) -> Dict:
+def parse_json_response(response: str) -> Any:
     """解析 LLM 返回的 JSON"""
     json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', response, re.DOTALL)
     if json_match:
@@ -227,7 +227,10 @@ def parse_json_response(response: str) -> Dict:
         return json.loads(json_str)
     except json.JSONDecodeError as e:
         print(f"  [解析] JSON 解析失败: {e}")
-        return {}
+        raise ValueError(
+            f"LLM response is not valid JSON: {e.msg} "
+            f"(line {e.lineno}, column {e.colno})"
+        ) from e
 
 
 # ============================================================
@@ -490,8 +493,8 @@ def batch_extract(
     metadata_dir: str,
     output_dir: str, 
     limit: int = None
-):
-    """批量抽取，生成 paper 节点和 review 节点"""
+) -> int:
+    """批量抽取并返回失败 paper 数量"""
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -511,6 +514,7 @@ def batch_extract(
     
     success_count = 0
     fail_count = 0
+    failed_paper_ids = []
     all_paper_nodes = []
     all_review_nodes = []
     
@@ -557,6 +561,7 @@ def batch_extract(
             import traceback
             traceback.print_exc()
             fail_count += 1
+            failed_paper_ids.append(paper_id)
             continue
     
     # 保存汇总文件
@@ -572,6 +577,11 @@ def batch_extract(
             json.dump(all_review_nodes, f, ensure_ascii=False, indent=2)
         print(f"💾 Review 汇总文件: {review_summary_file}")
     
+    failed_ids_file = os.path.join(output_dir, "_failed_paper_ids.json")
+    with open(failed_ids_file, 'w', encoding='utf-8') as f:
+        json.dump(failed_paper_ids, f, ensure_ascii=False, indent=2)
+    print(f"\n💾 Failed paper IDs: {failed_ids_file}")
+
     print("\n" + "=" * 60)
     print(f"🎉 批量抽取完成！")
     print(f"   成功: {success_count} 篇")
@@ -579,9 +589,10 @@ def batch_extract(
     print(f"   Paper 节点: {len(all_paper_nodes)} 个")
     print(f"   Review 节点: {len(all_review_nodes)} 个")
     print("=" * 60)
+    return fail_count
 
 
-def main():
+def main() -> int:
     """主函数"""
     import sys
     
@@ -633,10 +644,12 @@ def main():
             with open(review_output_file, 'w', encoding='utf-8') as f:
                 json.dump([asdict(r) for r in review_nodes], f, indent=2, ensure_ascii=False)
             print(f"💾 {len(review_nodes)} 个 Review 节点已保存到: {review_output_file}")
+        return 0
     else:
-        # 批量模式
-        batch_extract(paper_dir, review_dir, metadata_dir, output_dir, limit)
+        # Batch mode treats any failed input as an incomplete run for callers/CI.
+        fail_count = batch_extract(paper_dir, review_dir, metadata_dir, output_dir, limit)
+        return 1 if fail_count else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
